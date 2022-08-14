@@ -1,0 +1,12 @@
+.idea
+*.pyc
+quickfix
+*.egg-info
+target
+.bsp
+*.class
+*.tasty
+.bloop
+.vscode
+project
+.metals

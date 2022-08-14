@@ -1,0 +1,12 @@
+T__0=1
+T__1=2
+T__2=3
+IDENT=4
+INTEGER=5
+DECIMAL=6
+STRING=7
+CHAR=8
+WS=9
+'='=1
+'('=2
+')'=3
