@@ -79,7 +79,7 @@ case class AntlrAstParser() {
     val lexer = SHLLLexer(CharStreams.fromString(s))
     val stream = CommonTokenStream(lexer)
     val parser = SHLLParser(stream)
-    val term = parser.term()
-    convertTerm(term)
+    val term = parser.program()
+    convertTerm(term.term())
   }
 }

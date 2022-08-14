@@ -17,3 +17,5 @@ kwArg: IDENT '=' term;
 kwArgs: kwArg *;
 posArgs: term *;
 apply: '(' term posArgs kwArgs ')';
+
+program: term EOF;
