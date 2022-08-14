@@ -4,7 +4,7 @@ import shll.AntlrAstParser
 
 class ShllAstTest {
   @Test def test_parser(): Unit = {
-    val t = AntlrAstParser().parse("(A)")
+    val t = AntlrAstParser().parse("(block (A) (B))")
     println(t)
   }
 
