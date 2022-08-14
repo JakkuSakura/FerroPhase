@@ -5,7 +5,7 @@ case class Ident(name: String) extends AST
 // basic elements
 case class Literal[T](value: T, raw: String) extends AST
 case class Field(name: String, ty: AST) extends AST
-case class Apply(fun: AST, args: List[AST], kw_args: List[Field]) extends AST
+case class Apply(fun: AST, args: List[AST], kwArgs: List[Field]) extends AST
 // other elements
 case class DefFunc(name: String, args: List[Field], ret: Type, body: AST) extends AST
 case class Let(name: String, ty: Type, value: AST) extends AST
