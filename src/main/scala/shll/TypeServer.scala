@@ -1,23 +1,24 @@
 package shll
 
 trait TypeServer {
-  def isList(ty: Type): Boolean
-  def getListElementType(ty: Type): Type
-  def isInt(ty: Type): Boolean
-  def isBool(ty: Type): Boolean
-  def isUnit(ty: Type): Boolean
-  def isDecimal(ty: Type): Boolean
-  def isString(ty: Type): Boolean
-  def isChar(ty: Type): Boolean
-  def isFunction(ty: Type): Boolean
-  def getFunctionArgTypes(ty: Type): List[Type]
-  def getFunctionKwArgTypes(ty: Type): List[Type]
-  def isField(ty: Type): Boolean
-  def getFieldName(ty: Type): String
-  def getFieldType(ty: Type): Type
-  def getFunctionReturnType(ty: Type): Type
-  def isStruct(ty: Type): Boolean
-  def getStructFieldTypes(ty: Type): List[(String, Type)]
+  def isConcreteType(t: AST): Boolean
+  def isList(ty: AST): Boolean
+  def getListElementType(ty: AST): AST
+  def isInt(ty: AST): Boolean
+  def isBool(ty: AST): Boolean
+  def isUnit(ty: AST): Boolean
+  def isDecimal(ty: AST): Boolean
+  def isString(ty: AST): Boolean
+  def isChar(ty: AST): Boolean
+  def isFunction(ty: AST): Boolean
+  def getFunctionArgTypes(ty: AST): List[AST]
+  def getFunctionKwArgTypes(ty: AST): List[AST]
+  def isField(ty: AST): Boolean
+  def getFieldName(ty: AST): String
+  def getFieldType(ty: AST): AST
+  def getFunctionReturnType(ty: AST): AST
+  def isStruct(ty: AST): Boolean
+  def getStructFieldTypes(ty: AST): List[(String, AST)]
 
-  def toDebug(ty: Type): String
+  def toDebug(ty: AST): String
 }

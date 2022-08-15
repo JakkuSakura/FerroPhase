@@ -1,42 +1,48 @@
 package shll
 
-case class TyList(ty: Type)
-case class TyInt(v: Int)
+case class TyList(ty: AST) extends AST
+case class TyInt(v: Int) extends AST
 
 case class BasicTypeServer () extends TypeServer {
-  def isList(ty: Type): Boolean = ty.isInstanceOf[TyList]
+  def isConcreteType(t: AST): Boolean = t match {
+    case TyInt(_) => true
+    case TyList(ty) => isConcreteType(ty)
+    case _ => false
+  }
 
-  def getListElementType(ty: Type): Type = ty.asInstanceOf[TyList].ty
+  def isList(ty: AST): Boolean = ty.isInstanceOf[TyList]
 
-  def isInt(ty: Type): Boolean = ty.isInstanceOf[TyInt]
+  def getListElementType(ty: AST): AST = ty.asInstanceOf[TyList].ty
 
-  def isBool(ty: Type): Boolean = false
+  def isInt(ty: AST): Boolean = ty.isInstanceOf[TyInt]
 
-  def isUnit(ty: Type): Boolean = false
+  def isBool(ty: AST): Boolean = false
 
-  def isDecimal(ty: Type): Boolean = false
+  def isUnit(ty: AST): Boolean = false
 
-  def isString(ty: Type): Boolean = false
+  def isDecimal(ty: AST): Boolean = false
 
-  def isChar(ty: Type): Boolean  = false
+  def isString(ty: AST): Boolean = false
 
-  def isFunction(ty: Type): Boolean = false
+  def isChar(ty: AST): Boolean  = false
 
-  def getFunctionArgTypes(ty: Type): List[Type] = Nil
+  def isFunction(ty: AST): Boolean = false
 
-  def getFunctionKwArgTypes(ty: Type): List[Type] = Nil
+  def getFunctionArgTypes(ty: AST): List[AST] = Nil
 
-  def isField(ty: Type): Boolean = false
+  def getFunctionKwArgTypes(ty: AST): List[AST] = Nil
 
-  def getFieldName(ty: Type): String = ""
+  def isField(ty: AST): Boolean = false
 
-  def getFieldType(ty: Type): Type = null
+  def getFieldName(ty: AST): String = ""
 
-  def getFunctionReturnType(ty: Type): Type = null
+  def getFieldType(ty: AST): AST = null
 
-  def isStruct(ty: Type): Boolean = false
+  def getFunctionReturnType(ty: AST): AST = null
 
-  def getStructFieldTypes(ty: Type): List[(String, Type)] = Nil
+  def isStruct(ty: AST): Boolean = false
 
-  def toDebug(ty: Type): String = ty.toString
+  def getStructFieldTypes(ty: AST): List[(String, AST)] = Nil
+
+  def toDebug(ty: AST): String = ty.toString
 }
