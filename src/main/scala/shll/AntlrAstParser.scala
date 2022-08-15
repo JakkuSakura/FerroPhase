@@ -7,23 +7,23 @@ import org.antlr.v4.runtime.{CharStreams, CommonTokenStream}
 import scala.jdk.CollectionConverters._
 
 case class AntlrAstParser() {
-  def convertChar(ctx: TerminalNode): Literal[Char] = {
+  def convertChar(ctx: TerminalNode): LiteralChar = {
     val char = ctx.getText
-    Literal(char.charAt(1), char)
+    LiteralChar(char.charAt(1), char)
   }
 
-  def convertString(ctx: TerminalNode): Literal[String] = {
+  def convertString(ctx: TerminalNode): LiteralString = {
     val string = ctx.getText
-    Literal(string.substring(1, string.length - 1), string)
+    LiteralString(string.substring(1, string.length - 1), string)
 
   }
   def convertIdent(ctx: TerminalNode): Ident = {
     val ident = ctx.getText
     Ident(ident)
   }
-  def convertInteger(ctx: TerminalNode): Literal[Int] = {
+  def convertInteger(ctx: TerminalNode): LiteralInt = {
     val integer = ctx.getText
-    Literal(
+    LiteralInt(
       integer.toIntOption.getOrElse(
         throw IllegalArgumentException(s"Invalid integer at ${ctx.getSymbol}: $integer")
       ),
@@ -32,9 +32,9 @@ case class AntlrAstParser() {
 
   }
 
-  def convertDecimal(ctx: TerminalNode): Literal[Double] = {
+  def convertDecimal(ctx: TerminalNode): LiteralDecimal = {
     val decimal = ctx.getText
-    Literal(
+    LiteralDecimal(
       decimal.toDoubleOption.getOrElse(
         throw IllegalArgumentException(s"Invalid decimal at ${ctx.getSymbol}: $decimal")
       ),
@@ -47,13 +47,13 @@ case class AntlrAstParser() {
     ctx.term().asScala.map(convertTerm).toList
   }
 
-  def convertKwArg(ctx: KwArgContext): Field = {
+  def convertKwArg(ctx: KwArgContext): KeyValue = {
     val ident = convertIdent(ctx.IDENT())
     val expr = convertTerm(ctx.term())
-    Field(ident, expr)
+    KeyValue(ident, expr)
   }
 
-  def convertKwArgs(ctx: KwArgsContext): List[Field] = {
+  def convertKwArgs(ctx: KwArgsContext): List[KeyValue] = {
     ctx.kwArg().asScala.toList.map(convertKwArg)
   }
   def convertApply(ctx: ApplyContext): Apply = {
