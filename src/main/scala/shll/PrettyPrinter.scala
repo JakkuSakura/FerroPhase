@@ -11,13 +11,19 @@ case class PrettyPrinter() {
   }
   def printImpl(a: AST): String = {
     a match {
+      case Apply(f, Nil, Nil) =>
+        s"(${printImpl(f)})"
+      case Apply(f, Nil, kwArgs) =>
+        s"(${printImpl(f)} ${printDict(kwArgs)})"
+      case Apply(f, args, Nil) =>
+        s"(${printImpl(f)} ${printList(args)})"
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)})"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
       case ForIn(target, iter, body) =>
         s"(for ${target.name} ${printImpl(iter)} ${printImpl(body)})"
-      case Block(body) if body.isEmpty =>
+      case Block(Nil) =>
         "(block)"
       case Block(body) =>
         s"(block\n${body.map(x => IDENT + printImpl(x)).mkString("\n")}\n)"
@@ -31,6 +37,8 @@ case class PrettyPrinter() {
         raw
       case LiteralString(_, raw) =>
         raw
+      case LiteralList(Nil) =>
+        s"(list)"
       case LiteralList(value) =>
         s"(list ${printList(value)})"
       case KeyValue(name, value) =>
@@ -50,7 +58,5 @@ case class PrettyPrinter() {
   def print(a: AST): String = {
     val raw = printImpl(a)
     raw
-      .replaceAll("[ \t]+", " ")
-      .replaceAll("[ \t]+\\)", ")")
   }
 }
