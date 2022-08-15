@@ -21,24 +21,26 @@ case class ApplyParser() {
   def parse(n: AST): AST = {
     n match {
       case a @ Apply(Ident("if"), args, kwArgs) =>
-        If(getArg(a, 0, "cond"), getArg(a, 1, "then"), getArg(a, 2, "else"))
+        Cond(getArg(a, 0, "cond"), getArg(a, 1, "then"), getArg(a, 2, "else"))
       case a @ Apply(Ident("while"), args, kwArgs) =>
         While(getArg(a, 0, "cond"), getArg(a, 1, "body"))
       case a @ Apply(Ident("for"), args, kwArgs) =>
         ForIn(getIdentArg(a, 0, "name"), getArg(a, 1, "iter"), getArg(a, 2, "body"))
       case a @ Apply(Ident("def-fun"), args, kwArgs) =>
-        DefFunc(
+        DefFun(
           getIdentArg(a, 0, "name"),
-          getArg(a, 1, "args"),
+          parse(getArg(a, 1, "args")).asInstanceOf[LiteralList],
           getArg(a, 2, "ret"),
           getArg(a, 3, "body")
         )
-      case a @ Apply(Ident("let"), args, kwArgs) =>
-        Let(getIdentArg(a, 0, "name"), getArg(a, 1, "value"))
+      case a @ Apply(Ident("def-val"), args, kwArgs) =>
+        DefVal(getIdentArg(a, 0, "name"), getArg(a, 1, "value"))
       case a @ Apply(Ident("assign"), args, kwArgs) =>
         Assign(getIdentArg(a, 0, "name"), getArg(a, 1, "value"))
       case a @ Apply(Ident("block"), args, kwArgs) =>
-        Block(args)
+        Block(args.map(parse))
+      case a @ Apply(Ident("list"), args, kwArgs) =>
+        LiteralList(args.map(parse))
       case a @ Apply(Ident("type"), args, kwArgs) =>
         TypeApply(args.head, args.slice(1, args.length), kwArgs)
       case _ => n
