@@ -1,3 +1,0 @@
-package shll
-
-trait Type

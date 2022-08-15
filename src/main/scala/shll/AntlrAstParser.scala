@@ -50,7 +50,7 @@ case class AntlrAstParser() {
   def convertKwArg(ctx: KwArgContext): Field = {
     val ident = convertIdent(ctx.IDENT())
     val expr = convertTerm(ctx.term())
-    Field(ident.name, expr)
+    Field(ident, expr)
   }
 
   def convertKwArgs(ctx: KwArgsContext): List[Field] = {
