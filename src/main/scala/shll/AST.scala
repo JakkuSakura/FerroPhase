@@ -15,5 +15,5 @@ case class While(cond: AST, body: AST) extends AST
 case class Block(body: List[AST]) extends AST
 case class ForIn(name: Ident, iter: AST, body: AST) extends AST
 case class DefStruct(name: Ident, fields: List[Field]) extends AST
-case class TypeApply(fun: AST, args: List[AST], kw_args: List[Field]) extends AST
+case class TypeApply(fun: AST, args: List[AST], kwArgs: List[Field]) extends AST
 
