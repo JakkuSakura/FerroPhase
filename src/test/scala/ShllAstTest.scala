@@ -1,10 +1,10 @@
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import shll.AntlrAstParser
+import shll.ShllParser
 
 class ShllAstTest {
   @Test def test_parser(): Unit = {
-    val t = AntlrAstParser().parse("(block (A) (B))")
+    val t = ShllParser().parse("(block (A) (B))")
     println(t)
   }
 
