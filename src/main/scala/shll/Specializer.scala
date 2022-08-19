@@ -89,8 +89,8 @@ case class Specializer() {
     KeyValue(kv.name, specializeNode(kv.value, ctx))
   }
   def specializeField(n: Field, ctx: ValueContext): Field = {
-      val value = specializeNode(n.ty, ctx)
-      Field(n.name, value)
+    val value = specializeNode(n.ty, ctx)
+    Field(n.name, value)
   }
   def specializeDefVal(n: DefVal, ctx: ValueContext): DefVal = {
     val value = specializeNode(n.value, ctx)
@@ -142,7 +142,7 @@ case class Specializer() {
   def isSpecializedFunctionDecl(d: DefFun): Boolean = {
     d.args match {
       case LiteralList(value) => value.isEmpty
-      case _ => false
+//      case _ => false
     }
   }
   def isConstant(n: AST): Boolean = {
@@ -192,10 +192,10 @@ case class Specializer() {
   }
 
   def specializeFunctionApply(
-                               func: DefFun,
-                               args: List[AST],
-                               kwArgs: List[KeyValue],
-                               ctx: ValueContext
+      func: DefFun,
+      args: List[AST],
+      kwArgs: List[KeyValue],
+      ctx: ValueContext
   ): Apply = {
     // TODO: process args
     val mapping = kwArgs.map { a =>
@@ -221,7 +221,7 @@ case class Specializer() {
   ): DefFun = {
     cache.funcDeclMap(d.name.name) = d
     if (isSpecializedFunctionDecl(d)) {
-      // TODO evaluate contestant
+      // TODO evaluate constants
       val body = specializeNode(d.body, ctx)
       d.copy(body = body)
     } else {

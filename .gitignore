@@ -8,5 +8,5 @@ target
 *.tasty
 .bloop
 .vscode
-project
+project/project
 .metals
