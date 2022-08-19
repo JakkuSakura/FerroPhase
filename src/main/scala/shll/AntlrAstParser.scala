@@ -1,10 +1,10 @@
 package shll
 
-import antlr4.SHLLParser.*
-import antlr4.{SHLLLexer, SHLLParser}
 import org.antlr.v4.runtime.tree.{ParseTree, TerminalNode}
 import org.antlr.v4.runtime.{CharStreams, CommonTokenStream}
-import scala.jdk.CollectionConverters._
+import shll.SHLLParser.*
+
+import scala.jdk.CollectionConverters.*
 
 case class AntlrAstParser() {
   def convertChar(ctx: TerminalNode): LiteralChar = {
@@ -59,6 +59,10 @@ case class AntlrAstParser() {
   def convertApply(ctx: ApplyContext): Apply = {
     Apply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
   }
+
+  def convertTypeApply(ctx: ApplyContext): TypeApply = {
+    TypeApply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
+  }
   def convertTerm(ctx: TermContext): AST = {
     ctx match {
       case _ if ctx.CHAR() != null =>
@@ -73,6 +77,8 @@ case class AntlrAstParser() {
         convertString(ctx.STRING())
       case _ if ctx.apply() != null =>
         convertApply(ctx.apply())
+      case _ if ctx.typeApply() != null =>
+        convertTypeApply(ctx.apply())
     }
   }
   def parse(s: String): AST = {

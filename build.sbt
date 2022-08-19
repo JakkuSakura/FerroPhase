@@ -1,5 +1,4 @@
 import ReleaseTransformations._
-
 scalaVersion := "3.1.2"
 ThisBuild / organization := "com.jeekrs"
 ThisBuild / name := "shll"
@@ -40,7 +39,6 @@ libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.12.0"
 
 // https://mvnrepository.com/artifact/org.apache.commons/commons-text
 libraryDependencies += "org.apache.commons" % "commons-text" % "1.9"
-
 
 // https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-api
 libraryDependencies += "org.junit.jupiter" % "junit-jupiter-api" % "5.9.0" % Test

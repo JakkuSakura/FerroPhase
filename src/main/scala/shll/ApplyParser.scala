@@ -41,8 +41,6 @@ case class ApplyParser() {
         Block(args.map(parse))
       case a @ Apply(Ident("list"), args, kwArgs) =>
         LiteralList(args.map(parse))
-      case a @ Apply(Ident("type"), args, kwArgs) =>
-        TypeApply(args.head, args.slice(1, args.length), kwArgs)
       case _ => n
     }
   }
