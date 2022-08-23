@@ -1,19 +1,37 @@
 # SHLL: Simple High Level Language
 
-The language provides a minimal set of orthogonal beautiful syntax, but generates high performance optimized human-readable source code of a general purpose programming language.
-The language utilized Scala3 as the frontend, and tries to keep the semantics whenever possible.
-With this language, you can write performance-critical business logic in an expression form, without worrying about the runtime cost of abstractions, as abstractions are reduced to a minimal set of primitives.
+The language is a statically typed language, compiled LISP variant. It's intended to be used a platform for high level optimization and tranpilation.
+The syntax is deliberately simple yet expressive: everything is an application, either of type or of value. 
+This way, it's easy to generate and parse, and versatile enough to maintain all high level information
+```text
+(block
+   (def-fun foo (list (field a [int])) [int]
+     a
+   )
+   (foo 1)
+)
+```
+This program defines a function `foo` that takes `a` of integer and returns `a`, then apply 1 to `foo`.
 
-For example, you may want to write declarative business logic, and along with an interpreter/template/generics/polymorphism/codegen/meteprogramming
+The language is designed to be compatible with multiple frontend, ideally Scala 3, and multiple backend, ideally Rust and C.
+
+With this language, you can write logic the comfortable way, and then the optimizer will rewrite it into a performant low level code.
+
+Here's a list of techniques you can use in ordinary languages:
 
 - interpreter is slow
 - template is fastest, but with weird syntax
-- generics doesn't provide much runtime performance benefit
+- generics(in Java) doesn't provide much runtime performance benefit
 - polymorphism involves calling dynamic dispatched methods, which involves a runtime cost
 - codegen requires an external tool, and writing such tool involves much work
-  The ideal solution is this language, which specialize the interpreter against the declarative business logic during comptime, to achieve the best performance just like template
+- macros(in Rust/Scala/C) is hard to debug, and limited to decorate a function/struct(or text replacement in C)
+- lisp is powerful in metaprogramming, but it's an interpreter language
 
-Our goal is a simple high-level language that gives you confident of high-level real zero cost abstraction
+
+The ideal solution is the SHLL language, which specialize code into low level languages:
+
+- Write declarative code, and then the optimizer will optimize it into a imperative code. 
+
 
 ## Implementation
 
