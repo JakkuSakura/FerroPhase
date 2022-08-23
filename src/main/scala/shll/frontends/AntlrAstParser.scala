@@ -1,10 +1,12 @@
-package shll
+package shll.frontends
 
-import org.antlr.v4.runtime.tree.{ParseTree, TerminalNode}
+import org.antlr.v4.runtime.tree.TerminalNode
 import org.antlr.v4.runtime.{CharStreams, CommonTokenStream}
-import shll.SHLLParser.*
+import shll.ast._
+import shll._
+import shll.frontends.SHLLParser._
 
-import scala.jdk.CollectionConverters.*
+import scala.jdk.CollectionConverters._
 
 case class AntlrAstParser() {
   def convertChar(ctx: TerminalNode): LiteralChar = {

@@ -1,4 +1,6 @@
-package shll
+package shll.ast
+
+import shll.*
 
 trait AST
 case class Ident(name: String) extends AST

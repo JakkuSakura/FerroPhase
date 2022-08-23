@@ -1,4 +1,6 @@
-package shll
+package shll.frontends
+
+import shll.ast.*
 
 case class ApplyParser() {
   def getArgOpt(a: Apply, pos: Int, key: String): Option[AST] = {
