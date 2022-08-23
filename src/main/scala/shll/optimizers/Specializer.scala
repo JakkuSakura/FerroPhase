@@ -1,6 +1,8 @@
-package shll
+package shll.optimizers
 
 import com.typesafe.scalalogging.Logger
+import shll.ast.*
+
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST) extends Exception(msg + ": " + node)
 case class ValueContext(
