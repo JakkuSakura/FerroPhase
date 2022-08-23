@@ -16,7 +16,9 @@ class ShllAstTest {
     val t = ShllLexerAndParser().parse(
       """
         |(block
-        |   (def-fun foo (list (field a (type Int))) (type Int) a)
+        |   (def-fun foo (list (field a [int])) [int]
+        |     a
+        |   )
         |   (foo 1)
         |)
         |""".stripMargin)
