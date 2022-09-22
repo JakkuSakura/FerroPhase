@@ -56,8 +56,6 @@ case class PrettyPrinter() {
         s"${name.name}=${printImpl(value)}"
       case Field(name, ty) =>
         s"${name.name}=${printImpl(ty)}"
-      case TypeApply(f, args, kwArgs) =>
-        s"(type ${printImpl(f)} ${printList(args)} ${printDict(kwArgs)})"
       case DefVal(name, body) =>
         s"(def-val ${name.name} ${printImpl(body)})"
       case DefFun(name, args, ret, body) =>
