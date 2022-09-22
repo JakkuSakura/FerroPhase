@@ -13,7 +13,7 @@ class ShllAstTest {
   }
 
   @Test def testSpecializer(): Unit = {
-    val t = ShllLexerAndParser().parse(
+    val src = ShllLexerAndParser().parse(
       """
         |(block
         |   (def-fun foo (list (field a [int])) [int]
@@ -22,9 +22,17 @@ class ShllAstTest {
         |   (foo 1)
         |)
         |""".stripMargin)
-    println(PrettyPrinter().print(t))
-    val t2 = Specializer().specialize(t)
-    println(PrettyPrinter().print(t2))
-
+    println(PrettyPrinter().print(src))
+    val specialized = Specializer().specialize(src)
+    println(PrettyPrinter().print(specialized))
+    val expected = ShllLexerAndParser().parse(
+      """
+        |(block
+        |  (def-fun foo_0 (list) [int] a)
+        |  (def-fun foo (list (field a [int])) [int] a)
+        |  (foo_0)
+        |)
+        |""".stripMargin)
+    assertEquals(expected, specialized)
   }
 }
