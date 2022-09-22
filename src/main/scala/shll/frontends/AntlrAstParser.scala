@@ -62,7 +62,7 @@ case class AntlrAstParser() {
     Apply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
   }
 
-  def convertTypeApply(ctx: ApplyContext): TypeApply = {
+  def convertTypeApply(ctx: TypeApplyContext): TypeApply = {
     TypeApply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
   }
   def convertTerm(ctx: TermContext): AST = {
@@ -80,7 +80,7 @@ case class AntlrAstParser() {
       case _ if ctx.apply() != null =>
         convertApply(ctx.apply())
       case _ if ctx.typeApply() != null =>
-        convertTypeApply(ctx.apply())
+        convertTypeApply(ctx.typeApply())
     }
   }
   def parse(s: String): AST = {

@@ -22,6 +22,14 @@ case class PrettyPrinter() {
         s"(${printImpl(f)} ${printList(args)})"
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)})"
+      case TypeApply(f, Nil, Nil) =>
+        s"[${printImpl(f)}]"
+      case TypeApply(f, Nil, kwArgs) =>
+        s"[${printImpl(f)} ${printDict(kwArgs)}]"
+      case TypeApply(f, args, Nil) =>
+        s"[${printImpl(f)} ${printList(args)}]"
+      case TypeApply(f, args, kwArgs) =>
+        s"[(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)}]"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
       case ForIn(target, iter, body) =>
