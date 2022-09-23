@@ -8,7 +8,7 @@ import shll.frontends.ParamUtil.*
 import scala.collection.mutable
 
 case class DeadCodeEliminatorContext(
-    used: mutable.Set[Int] = mutable.Set.empty,
+    used: mutable.Set[AST] = mutable.Set.empty,
     context: ValueContext = ValueContext()
 ) {
   def withValues(values: Map[String, AST]): DeadCodeEliminatorContext = copy(context = context.withValues(values))
@@ -25,7 +25,7 @@ case class DeadCodeEliminator() {
 
   def eliminateNode(n: AST, ctx: DeadCodeEliminatorContext): AST = {
     logger.debug("Eliminating " + pp.print(n))
-    return n
+
     n match {
       case n: Block => eliminateBlock(n, ctx)
       case n: Apply => eliminateApply(n, ctx)
@@ -40,6 +40,7 @@ case class DeadCodeEliminator() {
       case n: Cond => eliminateCond(n, ctx)
       case n: ForEach => eliminateForEach(n, ctx)
       case n: TypeApply => eliminateTypeApply(n, ctx)
+      case n: DefType => eliminateDefType(n, ctx)
       case x => throw SpecializeException("cannot eliminate", x)
     }
 
@@ -69,32 +70,36 @@ case class DeadCodeEliminator() {
   }
 
   def eliminateApply(n: Apply, ctx: DeadCodeEliminatorContext): AST = {
-    n.fun match {
-      case Ident(name) if ctx.context.getStruct(name).isDefined =>
-        val struct = ctx.context.getStruct(name).get
-        eliminateStructApply(struct, n.args, n.kwArgs, ctx)
-      case _ =>
-        val f = eliminateNode(n.fun, ctx)
-        Apply(
-          f,
-          n.args.map(eliminateNode(_, ctx)),
-          n.kwArgs.map(eliminateKeyValue(_, ctx))
-        )
-    }
+    ctx.used += n
+    ctx.used += n.fun
+    ctx.used ++= n.args
+    ctx.used ++= n.kwArgs.map(_.value)
+
+    eliminateNode(n.fun, ctx)
+    n.args.map(eliminateNode(_, ctx))
+    n.kwArgs.map(_.value).map(eliminateNode(_, ctx))
+    n
   }
 
   def eliminateTypeApply(n: TypeApply, ctx: DeadCodeEliminatorContext): AST = {
-    n.fun match {
-      case _ =>
-        val f = eliminateNode(n.fun, ctx)
-        TypeApply(
-          f,
-          n.args.map(eliminateNode(_, ctx)),
-          n.kwArgs.map(eliminateKeyValue(_, ctx))
-        )
-    }
+    ctx.used += n
+    ctx.used += n.fun
+    ctx.used ++= n.args
+    ctx.used ++= n.kwArgs.map(_.value)
+
+    eliminateNode(n.fun, ctx)
+    n.args.map(eliminateNode(_, ctx))
+    n.kwArgs.map(_.value).map(eliminateNode(_, ctx))
+    n
   }
-  def eliminateBlock(d: Block, ctx0: DeadCodeEliminatorContext): Block = {
+
+  def eliminateDefType(n: DefType, context: DeadCodeEliminatorContext): AST = {
+    context.used += n
+    context.used += n.value
+    n
+  }
+
+  def eliminateBlock(d: Block, ctx0: DeadCodeEliminatorContext): AST = {
     var ctx = ctx0
     val stmts = d.body.map {
       case s: DefVal =>
@@ -116,11 +121,13 @@ case class DeadCodeEliminator() {
       case s =>
         eliminateNode(s, ctx)
     }
-    val filteredStmts = stmts.filter {
-      case DefVal(_, LiteralBool(false)) => false
-      case _ => true
-    }
-    Block(filteredStmts)
+    ctx.used ++= stmts.lastOption
+    val filteredStmts = stmts.filter(ctx.used.contains)
+    if (filteredStmts.length > 1)
+      Block(filteredStmts)
+    else
+      filteredStmts.head
+
   }
 
   def eliminateDefStruct(
@@ -196,31 +203,9 @@ case class DeadCodeEliminator() {
       ctx: DeadCodeEliminatorContext
   ): (DefFun, DeadCodeEliminatorContext) = {
     val newCtx = ctx.withFunctions( Map(d.name.name -> d))
-    if (d.body.isDefined) {
-      val body = eliminateNode(d.body.get, ctx)
-      (d.copy(body = Some(body)), newCtx)
-    } else {
-      (d, newCtx)
-    }
+    (d, newCtx)
   }
-  def eliminateStructApply(
-      n: DefStruct,
-      args: List[AST],
-      kwArgs: List[KeyValue],
-      ctx: DeadCodeEliminatorContext
-  ): DefStruct = {
-    val mapping =
-      collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map {
-        case k -> v =>
-          KeyValue(Ident(k), eliminateNode(v, ctx))
-      }.toList
 
-    DefStruct(
-      n.name,
-      n.fields,
-      mapping
-    )
-  }
   def eliminateSelect(n: Select, ctx: DeadCodeEliminatorContext): AST = {
     val obj = eliminateNode(n.obj, ctx)
     obj match {

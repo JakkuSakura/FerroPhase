@@ -169,8 +169,9 @@ case class Specializer() {
     checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
     val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
     val newApply = TypeApply(apply.fun, List(value), Nil)
-    if (isKnownType(apply.fun, ctx) && isKnownType(value, ctx)) {
+    if (isKnownType(apply.fun, ctx) && isKnownType(value, ctx) && ctx.cache.isDefined) {
       val newName = Ident(getTypeName(apply.fun, ctx) + "_" + getTypeName(value, ctx))
+      
       ctx.getCache.specializedTypes += newName.name -> DefType(newName, newApply)
       TypeApply(newName, Nil, Nil)
     } else {
