@@ -43,6 +43,9 @@ case class ApplyParser() {
       case Apply(Ident("def-val"), args, kwArgs) =>
         checkArguments(args, kwArgs, Array(0, 1), Array("name", "value"))
         DefVal(getIdentArg(args, kwArgs, 0, "name"), getArgAndParse(args, kwArgs, 1, "value"))
+      case Apply(Ident("def-type"), args, kwArgs) =>
+        checkArguments(args, kwArgs, Array(0, 1), Array("name", "value"))
+        DefType(getIdentArg(args, kwArgs, 0, "name"), getArgAndParse(args, kwArgs, 1, "value"))
       case Apply(Ident("def-struct"), args, kwArgs) =>
         checkArguments(args, kwArgs, Array(0, 1), Array("name", "fields"))
         DefStruct(

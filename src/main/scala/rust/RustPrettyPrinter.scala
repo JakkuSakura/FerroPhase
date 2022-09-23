@@ -13,6 +13,24 @@ case class RustPrettyPrinter() extends PrettyPrinter {
   def printDict(d: List[KeyValue]): String = {
     d.map(printImpl).mkString(", ")
   }
+
+  val primitiveTypes: Map[String, String] = Map(
+    "int" -> "i32",
+    "float" -> "f64",
+    "string" -> "String",
+    "bool" -> "bool",
+    "char" -> "char",
+    "unit" -> "()",
+    "any" -> "Any",
+    "list" -> "Vec",
+  )
+  def printType(a: AST): String = {
+    a match {
+      case Ident(x) => primitiveTypes.getOrElse(x, x)
+      case TypeApply(fun, Nil, Nil) => printType(fun)
+      case TypeApply(fun, args, Nil) => printType(fun) + "<" + printType(args.head) + ">"
+    }
+  }
   def printImpl(a: AST): String = {
     a match {
       case Apply(f, Nil, kwArgs) =>
@@ -29,24 +47,23 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"{\n${body.map(x => IDENT + printImpl(x)).mkString("\n")}\n}"
       case Ident(name) =>
         name
-      case LiteralInt(_, raw) =>
-        raw
-      case LiteralDecimal(_, raw) =>
-        raw
-      case LiteralChar(_, raw) =>
-        raw
-      case LiteralString(_, raw) =>
-        raw
+      case LiteralInt(v, _) =>
+        v.toString
+      case LiteralDecimal(v, _) =>
+        v.toString
+      case LiteralChar(v, _) =>
+        s"'$v'"
+      case LiteralString(v, _) =>
+        s"\"$v\""
+      case LiteralBool(value) => value.toString
       case LiteralList(value) =>
         s"vec![${printList(value)}]"
       case KeyValue(name, value) =>
         s"${name.name}: ${printImpl(value)}"
       case Field(name, ty) =>
         s"pub ${name.name}: ${printImpl(ty)}"
-      case TypeApply(Ident("int"), args, kwArgs) =>
-        "i64"
-      case TypeApply(f, args, kwArgs) =>
-        s"[${printImpl(f)} ${printList(args)} ${printDict(kwArgs)}]".replaceAll(" +", " ")
+      case a: TypeApply =>
+        printType(a)
       case DefVal(name, body) =>
         s"let ${name.name} = ${printImpl(body)};"
       case DefFun(name, args, ret, body) =>
@@ -64,6 +81,8 @@ case class RustPrettyPrinter() extends PrettyPrinter {
             .map(x => s"${x.name} = ${printImpl(x.value)}")
             .mkString(", ")} " +
           s"}"
+      case DefType(name, value) =>
+        s"type ${name.name} = ${printImpl(value)}"
       case Select(obj, field) =>
         s"${printImpl(obj)}.${field.name}"
     }
