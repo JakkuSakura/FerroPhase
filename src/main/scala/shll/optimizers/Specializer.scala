@@ -56,7 +56,6 @@ case class SpecializeCache(
     specializedFunctions: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
     specializeId: mutable.HashMap[String, Int] = mutable.HashMap.empty
 ) {
-  println("SpecializeCache " + this.hashCode())
   def getAndIncrSpecializeId(name: String): Int = {
     specializeId.get(name) match {
       case Some(id) =>
@@ -261,6 +260,7 @@ case class Specializer() {
       case Ident(name) if ctx.getFunction(name).isDefined =>
         val func = ctx.getFunction(name).get
         specializeFunctionApply(func, n.args, n.kwArgs, ctx)
+
       case Ident(name) if ctx.getStruct(name).isDefined =>
         val struct = ctx.getStruct(name).get
         specializeStructApply(struct, n.args, n.kwArgs, ctx)
@@ -388,7 +388,7 @@ case class Specializer() {
       args: List[AST],
       kwArgs: List[KeyValue],
       ctx: ValueContext
-  ): Apply = {
+  ): AST = {
     val mapping =
       collectArguments(args, kwArgs, argsToRange(func.args), argsToKeys(func.args))
         .map { case k -> v =>
@@ -400,16 +400,18 @@ case class Specializer() {
       func.body.getOrElse(throw SpecializeException("cannot specialize: empty body", func))
     )
     val body = specializeNode(newBody, newCtx)
-
-    val newFunc = func
-      .copy(
-        name = ctx.getCache.allocateSpecializedIdent(func.name.name),
-        body = Some(body),
-        args = LiteralList(Nil),
-        ret = func.ret
-      )
-    ctx.getCache.specializedFunctions(newFunc.name.name) = newFunc
-    Apply(newFunc.name, Nil, Nil)
+    body match {
+      case x if isConstant(x) => body
+      case _ => val newFunc = func
+        .copy(
+          name = ctx.getCache.allocateSpecializedIdent(func.name.name),
+          body = Some(body),
+          args = LiteralList(Nil),
+          ret = func.ret
+        )
+        ctx.getCache.specializedFunctions(newFunc.name.name) = newFunc
+        Apply(newFunc.name, Nil, Nil)
+    }
   }
 
   def specializeDefFun(
