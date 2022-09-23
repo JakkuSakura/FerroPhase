@@ -82,10 +82,12 @@ case class Specializer() {
       case n: LiteralInt => n
       case n: LiteralDecimal => n
       case n: LiteralString => n
+      case n: LiteralBool => n
       case n: LiteralList => LiteralList(n.value.map(specializeNode(_, ctx)))
       case n: Field => specializeField(n, ctx)
       case n: DefStruct => specializeDefStruct(n, ctx)
       case n: Select => specializeSelect(n, ctx)
+      case n: Cond => specializeCond(n, ctx)
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -269,6 +271,19 @@ case class Specializer() {
           case None => throw SpecializeException("field not found", n)
         }
       case o => o
+    }
+  }
+  def specializeCond(n: Cond, ctx: ValueContext): AST = {
+    val cond = specializeNode(n.cond, ctx)
+    cond match {
+      case LiteralBool(true, _) => specializeNode(n.consequence, ctx)
+      case LiteralBool(false, _) => specializeNode(n.alternative, ctx)
+      case _ =>
+        Cond(
+          cond,
+          specializeNode(n.consequence, ctx),
+          specializeNode(n.alternative, ctx)
+        )
     }
   }
 }
