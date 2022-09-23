@@ -2,6 +2,7 @@ package shll.optimizers
 
 import com.typesafe.scalalogging.Logger
 import shll.ast.{AST, *}
+import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
 
 import scala.collection.mutable
@@ -64,8 +65,9 @@ case class SpecializeCache(
 }
 
 case class Specializer() {
-  var logger: Logger = Logger[this.type]
-  private var cache: SpecializeCache = SpecializeCache()
+  val logger: Logger = Logger[this.type]
+  val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
+  private val cache: SpecializeCache = SpecializeCache()
 
   val builtinFunctions: Map[String, (Apply, ValueContext) => AST] = Map(
     "==" -> binaryOperator { (apply, lhs, rhs) =>
@@ -196,7 +198,11 @@ case class Specializer() {
     apply
   }
   def specialize(n: AST): AST = {
-    cache = SpecializeCache()
+    cache.specializedTypes.clear()
+    cache.specializedFunctions.clear()
+    cache.specializeId.clear()
+    cache.specializedStructs.clear()
+
     val v = specializeNode(n, ValueContext.empty)
     val specialized: List[AST] =
       cache.specializedFunctions.values.toList ::: cache.specializedTypes.values.toList
@@ -211,7 +217,7 @@ case class Specializer() {
   }
 
   def specializeNode(n: AST, ctx: ValueContext): AST = {
-    logger.debug("Specializing " + n)
+    logger.debug("Specializing " + pp.print(n))
     n match {
       case n: Block => specializeBlock(n, ctx)
       case n: Apply => specializeApply(n, ctx)

@@ -3,9 +3,11 @@ package shll.backends
 import shll.*
 import shll.ast.*
 case class ShllPrettyPrinter(
-  useRawLiteral: Boolean = false
-                            ) extends PrettyPrinter {
-  val IDENT = "  "
+    useRawLiteral: Boolean = false,
+    newlines: Boolean = true
+) extends PrettyPrinter {
+  val IDENT: String = if (newlines) "  " else ""
+  val NL: String = if (newlines) "\n" else ""
   def printList(l: List[AST]): String = {
     l.map(printImpl).mkString(" ")
   }
@@ -38,7 +40,7 @@ case class ShllPrettyPrinter(
       case Block(Nil) =>
         "(block)"
       case Block(body) =>
-        s"(block\n${body.map(x => IDENT + printImpl(x)).mkString("\n")}\n)"
+        s"(block$NL${body.map(x => IDENT + printImpl(x)).mkString(NL)}$NL)"
       case Ident(name) =>
         name
       case LiteralInt(_, raw) if useRawLiteral =>
