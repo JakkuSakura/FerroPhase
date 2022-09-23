@@ -24,8 +24,10 @@ class ShllAstTest {
     val optimized = Specializer().specialize(ast)
     if (showProgress)
         println(s"Optimized " + pp.print(optimized))
+    val optimizedPrinted = pp.print(optimized)
     val exp = ShllLexerAndParser().parse(expected)
-    if (exp != optimized)
+    val expectedPrinted = pp.print(exp)
+    if (expectedPrinted != optimizedPrinted)
       if (showProgress)
           println(s"Expected " + pp.print(exp))
       assertEquals(exp, optimized)
@@ -91,22 +93,64 @@ class ShllAstTest {
     )
   }
 
-  @Test def testEq(): Unit = {
+  @Test def testOrd(): Unit = {
     specializedEquals(
-      """
-        |(== 1 2)
-        |""".stripMargin,
-      """
-        |false
-        |""".stripMargin
+      "(== 1 2)",
+      "false"
     )
     specializedEquals(
-      """
-        |(== 1 1)
-        |""".stripMargin,
+      "(== 1 1)",
       """
         |true
         |""".stripMargin
+    )
+    specializedEquals(
+      "(!= 1 2)",
+      "true"
+    )
+    specializedEquals(
+      "(!= 1 1)",
+      "false"
+    )
+
+    specializedEquals(
+      "(> 15 5)",
+      "true"
+    )
+    specializedEquals(
+      "(>= 15 5)",
+      "true"
+    )
+    specializedEquals(
+      "(< 15 5)",
+      "false"
+    )
+    specializedEquals(
+      "(<= 15 5)",
+      "false"
+    )
+  }
+
+  @Test def testBasicOps(): Unit = {
+    specializedEquals(
+      "(+ 1 2)",
+      "3"
+    )
+    specializedEquals(
+      "(- 1 2)",
+      "-1"
+    )
+    specializedEquals(
+      "(* 3 5)",
+      "15"
+    )
+    specializedEquals(
+      "(/ 15 5)",
+      "3"
+    )
+    specializedEquals(
+      "(% 15 5)",
+      "0"
     )
   }
 }
