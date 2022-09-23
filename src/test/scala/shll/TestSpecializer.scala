@@ -6,22 +6,27 @@ import rust.RustPrettyPrinter
 import shll.ast.AST
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ShllLexerAndParser
-import shll.optimizers.Specializer
+import shll.optimizers.{DeadCodeEliminator, Specializer}
 
-class ShllAstTest {
+class TestSpecializer {
   val pp: PrettyPrinter = ShllPrettyPrinter()
   val showProgress = true
   def printAst(input: AST): Unit = {
     println(pp.print(input))
   }
-
+  def optimize(node: AST): AST = {
+    val specialized = Specializer().specialize(node)
+    val eliminated = DeadCodeEliminator().eliminate(specialized)
+    eliminated
+  }
   def specializedEquals(input: String, expected: String): Unit = {
     if (showProgress)
         println(s"Parsing $input")
     val ast = ShllLexerAndParser().parse(input)
     if (showProgress)
         println(s"Specializing " + pp.print(ast))
-    val optimized = Specializer().specialize(ast)
+    val optimized = optimize(ast)
+
     if (showProgress)
         println(s"Optimized " + pp.print(optimized))
     val optimizedPrinted = pp.print(optimized)
@@ -32,11 +37,6 @@ class ShllAstTest {
           println(s"Expected " + pp.print(exp))
       assertEquals(exp, optimized)
   }
-  @Test def testParser(): Unit = {
-    val t = ShllLexerAndParser().parse("(block (A) (B))")
-    printAst(t)
-  }
-
   @Test def testFunc(): Unit = {
     specializedEquals(
       """
@@ -47,13 +47,7 @@ class ShllAstTest {
         |   (foo 1)
         |)
         |""".stripMargin,
-      """
-        |(block
-        |  (def-fun foo_0 (list) [int] 1)
-        |  (def-fun foo (list (field a [int])) [int] a)
-        |  (foo_0)
-        |)
-        |""".stripMargin
+      "1"
     )
   }
 
@@ -65,31 +59,18 @@ class ShllAstTest {
         |   (select (Foo a=1) a)
         |)
         |""".stripMargin,
-      """
-        |(block
-        |  (def-struct Foo (list (field a [int])))
-        |  1
-        |)
-        |""".stripMargin
+      "1"
     )
   }
 
   @Test def testIfElse(): Unit = {
     specializedEquals(
-      """
-        |(if true 1 2)
-        |""".stripMargin,
-      """
-        |1
-        |""".stripMargin
+      "(if true 1 2)",
+      "1"
     )
     specializedEquals(
-      """
-        |(if false 1 2)
-        |""".stripMargin,
-      """
-        |2
-        |""".stripMargin
+      "(if false 1 2)",
+      "2"
     )
   }
 
@@ -196,12 +177,7 @@ class ShllAstTest {
         |   (sum 1 2)
         |)
         |""".stripMargin,
-      """
-        |(block
-        |  (def-fun sum (list (field a [int]) (field b [int])) [int] (+ a b))
-        |  3
-        |)
-        |""".stripMargin
+      "3"
     )
   }
 }
