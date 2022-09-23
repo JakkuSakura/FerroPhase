@@ -23,5 +23,5 @@ case class Block(body: List[AST]) extends AST
 case class ForIn(name: Ident, iter: AST, body: AST) extends AST
 
 case class TypeApply(fun: AST, args: List[AST], kwArgs: List[KeyValue]) extends AST
-case class DefStruct(name: Ident, fields: LiteralList) extends AST
-case class Select(name: Ident, field: Ident) extends AST
+case class DefStruct(name: Ident, fields: LiteralList, values: List[KeyValue] = Nil) extends AST
+case class Select(obj: AST, field: Ident) extends AST

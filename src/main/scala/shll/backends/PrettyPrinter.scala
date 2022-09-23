@@ -1,8 +1,7 @@
 package shll.backends
 
 import shll.*
-import shll.ast.{AST, Apply, Assign, Block, Cond, DefFun, DefVal, Field, ForIn, Ident, KeyValue, LiteralChar, LiteralDecimal, LiteralInt, LiteralList, LiteralString, TypeApply}
-
+import shll.ast.*
 case class PrettyPrinter() {
   val IDENT = "  "
   def printList(l: List[AST]): String = {
@@ -55,13 +54,19 @@ case class PrettyPrinter() {
       case KeyValue(name, value) =>
         s"${name.name}=${printImpl(value)}"
       case Field(name, ty) =>
-        s"${name.name}=${printImpl(ty)}"
+        s"(field ${name.name} ${printImpl(ty)})"
       case DefVal(name, body) =>
         s"(def-val ${name.name} ${printImpl(body)})"
       case DefFun(name, args, ret, body) =>
         s"(def-fun ${name.name} ${printImpl(args)} ${printImpl(ret)} ${printImpl(body)})"
       case Assign(target, value) =>
         s"(assign ${target.name} ${printImpl(value)})"
+      case DefStruct(name, fields, Nil) =>
+        s"(def-struct ${name.name} ${printImpl(fields)})"
+      case DefStruct(name, fields, values) =>
+        printImpl(Apply(name, Nil, values))
+      case Select(obj, field) =>
+        s"(select ${printImpl(obj)} ${field.name})"
     }
   }
   def print(a: AST): String = {
