@@ -13,7 +13,8 @@ case class DeadCodeEliminatorContext(
     private val nameNodeMapping: mutable.Map[AST, String] = mutable.Map.empty,
     private val userDependency: mutable.Map[String, mutable.Set[String]] = mutable.Map.empty,
     private val revUserDependency: mutable.Map[String, mutable.Set[String]] = mutable.Map.empty,
-    private val used: mutable.Set[String] = mutable.Set.empty
+    private val used: mutable.Set[String] = mutable.Set.empty,
+    private val parent: Option[DeadCodeEliminatorContext] = None,
 ) {
   def addMapping(node: AST, name: String): Unit = {
     if (!nameNodeMapping.contains(node)) {
@@ -39,7 +40,7 @@ case class DeadCodeEliminatorContext(
     if (isConstant(node)) {
       Some("constant")
     } else {
-      nameNodeMapping.get(node)
+      nameNodeMapping.get(node).orElse(parent.flatMap(_.getName(node)))
     }
   }
   def addDependency(user: AST, usee: AST): Unit = {
@@ -75,12 +76,14 @@ case class DeadCodeEliminatorContext(
   def isUsed(node: AST): Boolean = {
     getName(node).exists(isUsed)
   }
+  def child(): DeadCodeEliminatorContext =
+    copy(parent = Some(this))
   def withValues(values: Map[String, AST]): DeadCodeEliminatorContext =
-    copy(context = context.withValues(values))
+    copy(context = context.withValues(values), parent = Some(this))
   def withStructs(structs: Map[String, DefStruct]): DeadCodeEliminatorContext =
-    copy(context = context.withStructs(structs))
+    copy(context = context.withStructs(structs), parent = Some(this))
   def withFunctions(functions: Map[String, DefFun]): DeadCodeEliminatorContext =
-    copy(context = context.withFunctions(functions))
+    copy(context = context.withFunctions(functions), parent = Some(this))
 }
 case class DeadCodeEliminator() {
   val logger: Logger = Logger[this.type]
@@ -182,7 +185,7 @@ case class DeadCodeEliminator() {
   }
 
   def eliminateBlock(d: Block, ctx0: DeadCodeEliminatorContext): AST = {
-    var ctx = ctx0
+    var ctx = ctx0.child()
     val stmts = d.body.map {
       case s: DefVal =>
         val (x, newCtx) = eliminateDefVal(s, ctx)
