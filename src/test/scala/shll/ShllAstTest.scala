@@ -167,4 +167,11 @@ class ShllAstTest {
       "(block (print 1) (print 2) (print 3))"
     )
   }
+
+  @Test def testVariable(): Unit = {
+    specializedEquals(
+      "(block (def-val i 5) i)",
+      "(block (def-val i 5) 5)"
+    )
+  }
 }
