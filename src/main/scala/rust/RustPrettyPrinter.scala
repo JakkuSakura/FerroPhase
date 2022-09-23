@@ -4,6 +4,9 @@ import shll.*
 import shll.ast.*
 import shll.backends.PrettyPrinter
 
+import java.lang.ProcessBuilder.Redirect
+import scala.io.Source
+
 case class RustPrettyPrinter() extends PrettyPrinter {
   val IDENT = "  "
   def printList(l: List[AST]): String = {
@@ -36,13 +39,15 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case Apply(f, Nil, kwArgs) =>
         s"${printImpl(f)}{${printDict(kwArgs)}}"
       case Apply(Ident("print"), List(arg), Nil) =>
-        s"println!(\"{:?}\", ${printImpl(arg)});"
+        s"print!(\"{:?} \", ${printImpl(arg)});"
+      case Apply(Ident("range"), List(lhs, rhs), Nil) =>
+        s"${printImpl(lhs)}..${printImpl(rhs)}"
       case Apply(f, args, Nil) =>
         s"${printImpl(f)}(${printList(args)})"
       case Cond(cond, consequence, alternative) =>
         s"if ${printImpl(cond)} { ${printImpl(consequence)} } else {${printImpl(alternative)}}"
       case ForEach(target, iter, body) =>
-        s"for ${target.name} in ${printImpl(iter)} { ${printImpl(body)} }"
+        s"for ${target.name} in ${printImpl(iter)} {\n ${printImpl(body)} \n}"
       case Block(Nil) =>
         "{}"
       case Block(body) =>
