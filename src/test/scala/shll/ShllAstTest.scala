@@ -37,7 +37,7 @@ class ShllAstTest {
     printAst(t)
   }
 
-  @Test def testSpecializer(): Unit = {
+  @Test def testFunc(): Unit = {
     specializedEquals(
       """
         |(block
