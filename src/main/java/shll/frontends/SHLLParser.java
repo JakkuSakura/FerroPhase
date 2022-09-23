@@ -1,4 +1,4 @@
-// Generated from src/main/antlr4/SHLL.g4 by ANTLR 4.10.1
+// Generated from java-escape by ANTLR 4.11.1
 package shll.frontends;
 import org.antlr.v4.runtime.atn.*;
 import org.antlr.v4.runtime.dfa.DFA;
@@ -9,9 +9,9 @@ import java.util.List;
 import java.util.Iterator;
 import java.util.ArrayList;
 
-@SuppressWarnings({"all", "warnings", "unchecked", "unused", "cast"})
+@SuppressWarnings({"all", "warnings", "unchecked", "unused", "cast", "CheckReturnValue"})
 public class SHLLParser extends Parser {
-	static { RuntimeMetaData.checkVersion("4.10.1", RuntimeMetaData.VERSION); }
+	static { RuntimeMetaData.checkVersion("4.11.1", RuntimeMetaData.VERSION); }
 
 	protected static final DFA[] _decisionToDFA;
 	protected static final PredictionContextCache _sharedContextCache =
@@ -76,7 +76,7 @@ public class SHLLParser extends Parser {
 	}
 
 	@Override
-	public String getGrammarFileName() { return "SHLL.g4"; }
+	public String getGrammarFileName() { return "java-escape"; }
 
 	@Override
 	public String[] getRuleNames() { return ruleNames; }
@@ -92,6 +92,7 @@ public class SHLLParser extends Parser {
 		_interp = new ParserATNSimulator(this,_ATN,_decisionToDFA,_sharedContextCache);
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class TermContext extends ParserRuleContext {
 		public ApplyContext apply() {
 			return getRuleContext(ApplyContext.class,0);
@@ -189,6 +190,7 @@ public class SHLLParser extends Parser {
 		return _localctx;
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class KwArgContext extends ParserRuleContext {
 		public TerminalNode IDENT() { return getToken(SHLLParser.IDENT, 0); }
 		public TermContext term() {
@@ -233,6 +235,7 @@ public class SHLLParser extends Parser {
 		return _localctx;
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class KwArgsContext extends ParserRuleContext {
 		public List<KwArgContext> kwArg() {
 			return getRuleContexts(KwArgContext.class);
@@ -288,6 +291,7 @@ public class SHLLParser extends Parser {
 		return _localctx;
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class PosArgsContext extends ParserRuleContext {
 		public List<TermContext> term() {
 			return getRuleContexts(TermContext.class);
@@ -345,6 +349,7 @@ public class SHLLParser extends Parser {
 		return _localctx;
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class ApplyContext extends ParserRuleContext {
 		public TermContext term() {
 			return getRuleContext(TermContext.class,0);
@@ -398,6 +403,7 @@ public class SHLLParser extends Parser {
 		return _localctx;
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class TypeApplyContext extends ParserRuleContext {
 		public TermContext term() {
 			return getRuleContext(TermContext.class,0);
@@ -451,6 +457,7 @@ public class SHLLParser extends Parser {
 		return _localctx;
 	}
 
+	@SuppressWarnings("CheckReturnValue")
 	public static class ProgramContext extends ParserRuleContext {
 		public TermContext term() {
 			return getRuleContext(TermContext.class,0);
