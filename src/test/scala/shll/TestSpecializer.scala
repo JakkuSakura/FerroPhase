@@ -2,14 +2,16 @@ package shll
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import rust.RustPrettyPrinter
+import rust.{RustPrettyPrinter, RustRunnerBackend}
 import shll.ast.AST
-import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
+import shll.backends.{Backend, NothingBackend, PrettyPrinter, PrettyPrinterBackend, ShllPrettyPrinter}
 import shll.frontends.ShllLexerAndParser
 import shll.optimizers.{DeadCodeEliminator, Specializer}
 
 class TestSpecializer {
   val pp: PrettyPrinter = ShllPrettyPrinter()
+//  val backend: Backend = NothingBackend()
+  val backend: Backend = RustRunnerBackend()
   val showProgress = true
   def printAst(input: AST): Unit = {
     println(pp.print(input))
@@ -25,7 +27,7 @@ class TestSpecializer {
       println(s"Optimized " + pp.print(eliminated))
     eliminated
   }
-  def specializedEquals(input: String, expected: String): Unit = {
+  def specializedEquals(input: String, expected: String, feedBackend: Boolean=true): Unit = {
     if (showProgress)
         println(s"Parsing $input")
     val ast = ShllLexerAndParser().parse(input)
@@ -37,6 +39,8 @@ class TestSpecializer {
       if (showProgress)
           println(s"Expected " + pp.print(exp))
       assertEquals(exp, optimized)
+    if (feedBackend)
+      backend.process(optimized)
   }
   @Test def testFunc(): Unit = {
     specializedEquals(
@@ -164,7 +168,8 @@ class TestSpecializer {
   @Test def testTypeApply(): Unit = {
     specializedEquals(
       "(block [list int])",
-      "(block (def-type list_int [list int]) [list_int])"
+      "(block (def-type list_int [list int]) [list_int])",
+      feedBackend = false
     )
   }
 

@@ -6,6 +6,7 @@ case class ShllPrettyPrinter(
     useRawLiteral: Boolean = false,
     newlines: Boolean = true
 ) extends PrettyPrinter {
+  
   val IDENT: String = if (newlines) "  " else ""
   val NL: String = if (newlines) "\n" else ""
   def printList(l: List[AST]): String = {
