@@ -193,9 +193,12 @@ case class Specializer() {
     val value = specializeNode(n.ty, ctx)
     Field(n.name, value)
   }
-  def specializeDefVal(n: DefVal, ctx: ValueContext): DefVal = {
+  def specializeDefVal(n: DefVal, ctx: ValueContext): (DefVal, ValueContext) = {
     val value = specializeNode(n.value, ctx)
-    DefVal(n.name, value)
+    val newCtx = ValueContext.from(ctx, values = Map(
+        n.name.name -> value
+    ))
+    (DefVal(n.name, value), newCtx)
   }
   def specializeIdent(id: Ident, ctx: ValueContext): AST = {
     ctx.getValue(id.name).getOrElse(id)
@@ -225,8 +228,8 @@ case class Specializer() {
     var ctx1 = ctx
     val stmts = d.body.map {
       case s: DefVal =>
-        val x = specializeDefVal(s, ctx1)
-        ctx1 = ValueContext.from(ctx1, Map(s.name.name -> s.value))
+        val (x, ctx2) = specializeDefVal(s, ctx1)
+        ctx1 = ctx2
         x
       case s =>
         specializeNode(s, ctx1)
