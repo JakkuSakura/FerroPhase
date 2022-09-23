@@ -216,13 +216,13 @@ case class Specializer() {
         .map { case k -> v =>
           k -> specializeNode(v, ctx)
         }
-    val (newBody, newCtx) = prepareCtx(ctx, mapping, func.body)
+    val (newBody, newCtx) = prepareCtx(ctx, mapping, func.body.getOrElse(throw SpecializeException("cannot specialize: empty body", func)))
     val body = specializeNode(newBody, newCtx)
 
     val newFunc = func
       .copy(
         name = cache.allocateSpecializedIdent(func.name.name),
-        body = body,
+        body = Some(body),
         args = LiteralList(Nil),
         ret = func.ret
       )
@@ -235,10 +235,10 @@ case class Specializer() {
       ctx: ValueContext
   ): DefFun = {
     cache.funcDeclMap(d.name.name) = d
-    if (isSpecializedFunctionDecl(d)) {
+    if (isSpecializedFunctionDecl(d) && d.body.isDefined) {
       // TODO evaluate constants
-      val body = specializeNode(d.body, ctx)
-      d.copy(body = body)
+      val body = specializeNode(d.body.get, ctx)
+      d.copy(body = Some(body))
     } else {
       d
     }

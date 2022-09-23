@@ -23,7 +23,7 @@ case class ApplyParser() {
           getIdentArg(a, 0, "name"),
           parse(getArg(a, 1, "args")).asInstanceOf[LiteralList],
           getArg(a, 2, "ret"),
-          getArg(a, 3, "body")
+          getArgOpt(a, 3, "body")
         )
       case a @ Apply(Ident("def-val"), args, kwArgs) =>
         checkParams(a, Array(0, 1), Array("name", "value"))
