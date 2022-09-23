@@ -88,9 +88,7 @@ class TestOptimizers {
     )
     specializedEquals(
       "(== 1 1)",
-      """
-        |true
-        |""".stripMargin
+      "true"
     )
     specializedEquals(
       "(!= 1 2)",
@@ -236,9 +234,19 @@ class TestOptimizers {
         |   )
         |)
         |""".stripMargin,
+      "(print 1)",
+      false
+    )
+    specializedEquals(
       """
-        |(print 1)
+        |(block
+        |   (def-val a 1)
+        |   (block
+        |     a
+        |   )
+        |)
         |""".stripMargin,
+      "1",
       false
     )
   }
