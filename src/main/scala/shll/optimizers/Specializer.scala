@@ -287,6 +287,10 @@ case class Specializer() {
         val (x, ctx2) = specializeDefVal(s, ctx1)
         ctx1 = ctx2
         x
+      case s: Assign =>
+        val (x, ctx2) = specializeDefVal(DefVal(s.name, s.value), ctx1)
+        ctx1 = ctx2
+        Assign(x.name, x.value)
       case s =>
         specializeNode(s, ctx1)
     }
