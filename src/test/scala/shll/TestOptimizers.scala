@@ -222,4 +222,22 @@ class TestOptimizers {
         |)""".stripMargin
     )
   }
+
+  @Test def testScopedEliminator(): Unit = {
+    specializedEquals(
+      """
+        |(block
+        |   (def-val a 1)
+        |   (block
+        |     (def-val a 1)
+        |     (print a)
+        |   )
+        |)
+        |""".stripMargin,
+      """
+        |(print 1)
+        |""".stripMargin,
+      false
+    )
+  }
 }
