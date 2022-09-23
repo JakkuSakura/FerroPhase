@@ -152,17 +152,17 @@ class TestSpecializer {
   @Test def testVariable(): Unit = {
     specializedEquals(
       "(block (def-val i 5) i)",
-      "(block (def-val i 5) 5)"
+      "5"
     )
     specializedEquals(
       "(block (def-val i 5) (assign i 6) i)",
-      "(block (def-val i 5) (assign i 6) 6)"
+      "6"
     )
   }
 
   @Test def testTypeApply(): Unit = {
     specializedEquals(
-      "[list int]",
+      "(block [list int])",
       "(block (def-type list_int [list int]) [list_int])"
     )
   }
