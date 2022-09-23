@@ -6,9 +6,10 @@ case class ShllPrettyPrinter(
     useRawLiteral: Boolean = false,
     newlines: Boolean = true
 ) extends PrettyPrinter {
-  
+
   val IDENT: String = if (newlines) "  " else ""
-  val NL: String = if (newlines) "\n" else ""
+  val NL: String = if (newlines) "\n" else " "
+  val textTool: TextTool = TextTool(NL, IDENT)
   def printList(l: List[AST]): String = {
     l.map(printImpl).mkString(" ")
   }
@@ -37,11 +38,11 @@ case class ShllPrettyPrinter(
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
       case ForEach(target, iter, body) =>
-        s"(for ${target.name} ${printImpl(iter)} ${printImpl(body)})"
+        s"(for ${target.name} ${printImpl(iter)} $NL ${textTool.indent(printImpl(body))} $NL)"
       case Block(Nil) =>
         "(block)"
       case Block(body) =>
-        s"(block$NL${body.map(x => IDENT + printImpl(x)).mkString(NL)}$NL)"
+        s"(block$NL${textTool.indent(body.map(printImpl).mkString(NL))}$NL)"
       case Ident(name) =>
         name
       case LiteralInt(_, raw) if useRawLiteral =>
@@ -76,11 +77,11 @@ case class ShllPrettyPrinter(
         s"(def-fun ${name.name} ${printImpl(args)} ${printImpl(ret)} ${body.map(printImpl).getOrElse("")})"
       case Assign(target, value) =>
         s"(assign ${target.name} ${printImpl(value)})"
-      case DefStruct(name, fields, Nil) =>
+      case DefStruct(name, fields) =>
         s"(def-struct ${name.name} ${printImpl(fields)})"
       case DefType(name, value) =>
         s"(def-type ${name.name} ${printImpl(value)})"
-      case DefStruct(name, fields, values) =>
+      case StructApply(name, values) =>
         printImpl(Apply(name, Nil, values))
       case Select(obj, field) =>
         s"(select ${printImpl(obj)} ${field.name})"

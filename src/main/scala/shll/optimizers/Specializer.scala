@@ -4,6 +4,7 @@ import com.typesafe.scalalogging.Logger
 import shll.ast.{AST, *}
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
+import shll.optimizers.AstTool.{argsToKeys, argsToRange, isConstant}
 
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST) extends Exception(msg + ": " + node)
@@ -14,14 +15,16 @@ case class SpecializeContext(
     parent: Option[SpecializeContext] = None
 ) {
   def getCache: SpecializeCache = cache.getOrElse(parent.get.getCache)
-  def withCache(cache: SpecializeCache): SpecializeContext = copy(cache = Some(cache), parent = Some(this))
+  def withCache(cache: SpecializeCache): SpecializeContext =
+    copy(cache = Some(cache), parent = Some(this))
   def withValues(values: Map[String, AST]): SpecializeContext = {
     copy(context = context.withValues(values))
   }
   def withStructs(structs: Map[String, DefStruct]): SpecializeContext = {
     copy(context = context.withStructs(structs))
   }
-  def withFunctions(functions: Map[String, DefFun]): SpecializeContext = copy(context = context.withFunctions(functions))
+  def withFunctions(functions: Map[String, DefFun]): SpecializeContext =
+    copy(context = context.withFunctions(functions))
 }
 
 case class SpecializeCache(
@@ -47,7 +50,10 @@ case class SpecializeCache(
   }
 }
 
-case class Specializer() {
+case class Specializer(
+    inlineFunctionApply: Boolean = true,
+    inlineVariable: Boolean = true
+) {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
 
@@ -171,7 +177,7 @@ case class Specializer() {
     val newApply = TypeApply(apply.fun, List(value), Nil)
     if (isKnownType(apply.fun, ctx) && isKnownType(value, ctx) && ctx.cache.isDefined) {
       val newName = Ident(getTypeName(apply.fun, ctx) + "_" + getTypeName(value, ctx))
-      
+
       ctx.getCache.specializedTypes += newName.name -> DefType(newName, newApply)
       TypeApply(newName, Nil, Nil)
     } else {
@@ -202,6 +208,7 @@ case class Specializer() {
       case n: Cond => specializeCond(n, ctx)
       case n: ForEach => specializeForEach(n, ctx)
       case n: TypeApply => specializeTypeApply(n, ctx)
+      case n: Assign => specializeAssign(n, ctx)._1
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -224,7 +231,14 @@ case class Specializer() {
     (DefVal(n.name, value), newCtx)
   }
   def specializeIdent(id: Ident, ctx: SpecializeContext): AST = {
-    ctx.context.getValue(id.name).getOrElse(id)
+    if (inlineVariable) {
+      ctx.context.getValue(id.name) match {
+        case Some(value) if isConstant(value) => value
+        case _ => id
+      }
+    } else {
+      id
+    }
   }
 
   def specializeApply(n: Apply, ctx: SpecializeContext): AST = {
@@ -272,9 +286,9 @@ case class Specializer() {
         ctx = newCtx
         x
       case s: Assign =>
-        val (x, newCtx) = specializeDefVal(DefVal(s.name, s.value), ctx)
+        val (x, newCtx) = specializeAssign(s, ctx)
         ctx = newCtx
-        Assign(x.name, x.value)
+        x
       case d: DefFun =>
         val (x, newCtx) = specializeDefFun(d, ctx)
         ctx = newCtx
@@ -296,35 +310,14 @@ case class Specializer() {
     (c, ctx.withStructs(Map(c.name.name -> c)))
   }
 
-  def isConstant(n: AST): Boolean = {
-    n match {
-      case _: LiteralInt => true
-      case _: LiteralBool => true
-      case _: LiteralDecimal => true
-      case _: LiteralChar => true
-      case _: LiteralString => true
-      case x: LiteralList => x.value.map(isConstant).forall(identity)
-      case _ => false
-    }
-  }
-
   def prepareCtx(
       ctx: SpecializeContext,
       d: Map[String, AST],
       oldBody: AST
   ): (AST, SpecializeContext) = {
-    val newCtx = ctx.withValues(
-      d.map {
-        case k -> v if isConstant(v) => k -> v
-        case k -> v => k -> v
-      }
-    )
-    val prepareValues = d.flatMap {
-      case k -> v if !isConstant(v) =>
-        Some(
-          DefVal(Ident(k), v)
-        )
-      case _ => None
+    val newCtx = ctx.withValues(d)
+    val prepareValues = d.map { case k -> v =>
+      DefVal(Ident(k), v)
     }.toList
     val newBody = if (prepareValues.nonEmpty) {
       oldBody match {
@@ -343,19 +336,6 @@ case class Specializer() {
     (newBody, newCtx)
   }
 
-  def argsToRange(
-      args: LiteralList
-  ): Array[Int] = {
-    args.value.indices.toArray
-  }
-  def argsToKeys(
-      args: LiteralList
-  ): Array[String] = {
-    args.value.map {
-      case a: Field => a.name.name
-      case a => throw SpecializeException("cannot convert to keys", a)
-    }.toArray
-  }
   def specializeFunctionApply(
       func: DefFun,
       args: List[AST],
@@ -375,6 +355,7 @@ case class Specializer() {
     val body = specializeNode(newBody, newCtx)
     body match {
       case x if isConstant(x) => body
+      case _ if inlineFunctionApply => body
       case _ =>
         val newFunc = func
           .copy(
@@ -405,23 +386,22 @@ case class Specializer() {
       args: List[AST],
       kwArgs: List[KeyValue],
       ctx: SpecializeContext
-  ): DefStruct = {
+  ): StructApply = {
     val mapping =
       collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map {
         case k -> v =>
           KeyValue(Ident(k), specializeNode(v, ctx))
       }.toList
 
-    DefStruct(
+    StructApply(
       n.name,
-      n.fields,
       mapping
     )
   }
   def specializeSelect(n: Select, ctx: SpecializeContext): AST = {
     val obj = specializeNode(n.obj, ctx)
     obj match {
-      case DefStruct(name, fields, values) =>
+      case StructApply(name, values) =>
         values.find(_.name.name == n.field.name) match {
           case Some(v) => v.value
           case None => throw SpecializeException("field not found", n)
@@ -468,5 +448,11 @@ case class Specializer() {
       )
     }
   }
-
+  def specializeAssign(n: Assign, ctx: SpecializeContext): (AST, SpecializeContext) = {
+    // FIXME: this fix is not correct
+    ctx.context.updateValue(n.name.name, LiteralUnknown())
+    val value = specializeNode(n.value, ctx)
+    ctx.context.updateValue(n.name.name, value)
+    (Assign(n.name, value), ctx)
+  }
 }

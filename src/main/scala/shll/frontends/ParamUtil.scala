@@ -29,7 +29,7 @@ case object ParamUtil {
     val res = collection.mutable.Map[String, AST]()
     for (i <- args.indices) {
       knownArgs.lift(i) match {
-        case None => throw ParserException(s"Unknown positional argument: $i")
+        case None => throw ParserException(s"Unknown positional argument: $i " + args(i))
         case Some(x) if kwArgs.exists(_.name.name == knownKwArgs(x)) =>
           throw Exception(s"Duplicate key: $i vs ${knownKwArgs(x)}")
         case Some(x) =>

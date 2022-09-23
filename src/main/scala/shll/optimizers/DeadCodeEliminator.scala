@@ -4,16 +4,83 @@ import com.typesafe.scalalogging.Logger
 import shll.ast.*
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
+import shll.optimizers.AstTool.isConstant
 
 import scala.collection.mutable
 
 case class DeadCodeEliminatorContext(
-    used: mutable.Set[AST] = mutable.Set.empty,
-    context: ValueContext = ValueContext()
+    context: ValueContext = ValueContext(),
+    private val nameNodeMapping: mutable.Map[AST, String] = mutable.Map.empty,
+    private val userDependency: mutable.Map[String, mutable.Set[String]] = mutable.Map.empty,
+    private val revUserDependency: mutable.Map[String, mutable.Set[String]] = mutable.Map.empty,
+    private val used: mutable.Set[String] = mutable.Set.empty
 ) {
-  def withValues(values: Map[String, AST]): DeadCodeEliminatorContext = copy(context = context.withValues(values))
-  def withStructs(structs: Map[String, DefStruct]): DeadCodeEliminatorContext = copy(context = context.withStructs(structs))
-  def withFunctions(functions: Map[String, DefFun]): DeadCodeEliminatorContext = copy(context = context.withFunctions(functions))
+  def addMapping(node: AST, name: String): Unit = {
+    if (!nameNodeMapping.contains(node)) {
+      nameNodeMapping += node -> name
+    }
+  }
+
+  def addMapping(node: AST, parent: AST): Unit = {
+    if (getName(parent).isDefined) {
+      val parentName = getName(parent).get
+      addMapping(node, parentName)
+    }
+  }
+
+  def addDependency(user: String, usee: String): Unit = {
+    userDependency.getOrElseUpdate(user, mutable.Set.empty) += usee
+    revUserDependency.getOrElseUpdate(usee, mutable.Set.empty) += user
+    if (used.contains(user)) {
+      markUsed(usee)
+    }
+  }
+  def getName(node: AST): Option[String] = {
+    if (isConstant(node)) {
+      Some("constant")
+    } else {
+      nameNodeMapping.get(node)
+    }
+  }
+  def addDependency(user: AST, usee: AST): Unit = {
+    if (nameNodeMapping.contains(user) && nameNodeMapping.contains(usee)) {
+      val userName = getName(user).get
+      val useeName = getName(usee).get
+      if (userName != useeName) {
+        addDependency(userName, useeName)
+      }
+    }
+  }
+
+  def markUsed(usee: String): Unit = {
+    if (!used.contains(usee)) {
+      used += usee
+      userDependency.getOrElse(usee, mutable.Set.empty).foreach { user =>
+        markUsed(user)
+      }
+    }
+
+  }
+
+  def markUsed(usee: AST): Unit = {
+    if (getName(usee).isDefined) {
+      val useeName = getName(usee).get
+      markUsed(useeName)
+    }
+  }
+  def isUsed(name: String): Boolean = {
+    used.contains(name)
+  }
+
+  def isUsed(node: AST): Boolean = {
+    getName(node).exists(isUsed)
+  }
+  def withValues(values: Map[String, AST]): DeadCodeEliminatorContext =
+    copy(context = context.withValues(values))
+  def withStructs(structs: Map[String, DefStruct]): DeadCodeEliminatorContext =
+    copy(context = context.withStructs(structs))
+  def withFunctions(functions: Map[String, DefFun]): DeadCodeEliminatorContext =
+    copy(context = context.withFunctions(functions))
 }
 case class DeadCodeEliminator() {
   val logger: Logger = Logger[this.type]
@@ -41,14 +108,12 @@ case class DeadCodeEliminator() {
       case n: ForEach => eliminateForEach(n, ctx)
       case n: TypeApply => eliminateTypeApply(n, ctx)
       case n: DefType => eliminateDefType(n, ctx)
+      case n: Assign => eliminateAssign(n, ctx)
       case x => throw SpecializeException("cannot eliminate", x)
     }
 
   }
 
-  def eliminateKeyValue(kv: KeyValue, ctx: DeadCodeEliminatorContext): KeyValue = {
-    KeyValue(kv.name, eliminateNode(kv.value, ctx))
-  }
   def eliminateField(n: Field, ctx: DeadCodeEliminatorContext): Field = {
     val value = eliminateNode(n.ty, ctx)
     Field(n.name, value)
@@ -63,39 +128,56 @@ case class DeadCodeEliminator() {
         n.name.name -> value
       )
     )
+    ctx.addMapping(n, n.name.name)
+    ctx.addMapping(n.name, n.name.name)
+    ctx.addDependency(n, value)
+    ctx.addDependency(n.name, value)
     (DefVal(n.name, value), newCtx)
   }
   def eliminateIdent(id: Ident, ctx: DeadCodeEliminatorContext): AST = {
-    ctx.context.getValue(id.name).getOrElse(id)
+    ctx.addMapping(id, id.name)
+    id
   }
 
   def eliminateApply(n: Apply, ctx: DeadCodeEliminatorContext): AST = {
-    ctx.used += n
-    ctx.used += n.fun
-    ctx.used ++= n.args
-    ctx.used ++= n.kwArgs.map(_.value)
-
-    eliminateNode(n.fun, ctx)
-    n.args.map(eliminateNode(_, ctx))
-    n.kwArgs.map(_.value).map(eliminateNode(_, ctx))
-    n
+    val fun = eliminateNode(n.fun, ctx)
+    val args = n.args.map(eliminateNode(_, ctx))
+    val kwArgs = n.kwArgs.map(x => KeyValue(x.name, eliminateNode(x.value, ctx)))
+    val newApply = Apply(fun, args, kwArgs)
+    ctx.addDependency(newApply, fun)
+    args.foreach(ctx.addDependency(newApply, _))
+    kwArgs.map(_.value).foreach(ctx.addDependency(newApply, _))
+    fun match {
+      case Ident(name) if ctx.context.getFunction(name).isEmpty =>
+        ctx.addMapping(newApply, "external")
+        ctx.markUsed(newApply)
+    }
+    newApply
   }
 
   def eliminateTypeApply(n: TypeApply, ctx: DeadCodeEliminatorContext): AST = {
-    ctx.used += n
-    ctx.used += n.fun
-    ctx.used ++= n.args
-    ctx.used ++= n.kwArgs.map(_.value)
-
-    eliminateNode(n.fun, ctx)
-    n.args.map(eliminateNode(_, ctx))
-    n.kwArgs.map(_.value).map(eliminateNode(_, ctx))
-    n
+    val fun = eliminateNode(n.fun, ctx)
+    val args = n.args.map(eliminateNode(_, ctx))
+    val kwArgs = n.kwArgs.map(x => KeyValue(x.name, eliminateNode(x.value, ctx)))
+    val newApply = TypeApply(fun, args, kwArgs)
+    ctx.addDependency(newApply, fun)
+    args.foreach(ctx.addDependency(newApply, _))
+    kwArgs.map(_.value).foreach(ctx.addDependency(newApply, _))
+    fun match {
+      case Ident(name) if ctx.context.getTyValue(name).isEmpty =>
+        if (args.isEmpty) {
+          ctx.addMapping(newApply, name)
+        } else {
+          ctx.addMapping(newApply, "builtin_type")
+        }
+        ctx.markUsed(newApply)
+    }
+    newApply
   }
 
   def eliminateDefType(n: DefType, context: DeadCodeEliminatorContext): AST = {
-    context.used += n
-    context.used += n.value
+    context.addMapping(n, n.name.name)
+    context.addMapping(n.name, n.name.name)
     n
   }
 
@@ -119,14 +201,16 @@ case class DeadCodeEliminator() {
         ctx = newCtx
         x
       case s =>
-        eliminateNode(s, ctx)
+        val n = eliminateNode(s, ctx)
+        ctx.addMapping(d, n)
+        n
     }
-    ctx.used ++= stmts.lastOption
-    val filteredStmts = stmts.filter(ctx.used.contains)
-    if (filteredStmts.length > 1)
-      Block(filteredStmts)
-    else
+    stmts.lastOption.foreach(ctx.markUsed(_))
+    val filteredStmts = stmts.filter(ctx.isUsed)
+    if (filteredStmts.length == 1)
       filteredStmts.head
+    else
+      Block(filteredStmts)
 
   }
 
@@ -134,127 +218,57 @@ case class DeadCodeEliminator() {
       c: DefStruct,
       ctx: DeadCodeEliminatorContext
   ): (DefStruct, DeadCodeEliminatorContext) = {
+    // TODO: process values
+    ctx.addMapping(c, c.name.name)
     (c, ctx.withStructs(Map(c.name.name -> c)))
-  }
-
-  def isConstant(n: AST): Boolean = {
-    n match {
-      case _: LiteralInt => true
-      case _: LiteralBool => true
-      case _: LiteralDecimal => true
-      case _: LiteralChar => true
-      case _: LiteralString => true
-      case x: LiteralList => x.value.map(isConstant).forall(identity)
-      case _ => false
-    }
-  }
-
-  def prepareCtx(
-      ctx: DeadCodeEliminatorContext,
-      d: Map[String, AST],
-      oldBody: AST
-  ): (AST, DeadCodeEliminatorContext) = {
-    val newCtx = ctx.withValues(
-      d.map {
-        case k -> v if isConstant(v) => k -> v
-        case k -> v => k -> v
-      }
-    )
-    val prepareValues = d.flatMap {
-      case k -> v if !isConstant(v) =>
-        Some(
-          DefVal(Ident(k), v)
-        )
-      case _ => None
-    }.toList
-    val newBody = if (prepareValues.nonEmpty) {
-      oldBody match {
-        case b: Block =>
-          Block(
-            prepareValues ::: b.body
-          )
-        case _ =>
-          Block(
-            prepareValues :+ oldBody
-          )
-      }
-    } else {
-      oldBody
-    }
-    (newBody, newCtx)
-  }
-
-  def argsToRange(
-      args: LiteralList
-  ): Array[Int] = {
-    args.value.indices.toArray
-  }
-  def argsToKeys(
-      args: LiteralList
-  ): Array[String] = {
-    args.value.map {
-      case a: Field => a.name.name
-      case a => throw SpecializeException("cannot convert to keys", a)
-    }.toArray
   }
 
   def eliminateDefFun(
       d: DefFun,
       ctx: DeadCodeEliminatorContext
   ): (DefFun, DeadCodeEliminatorContext) = {
-    val newCtx = ctx.withFunctions( Map(d.name.name -> d))
-    (d, newCtx)
+    ctx.addMapping(d, d.name.name)
+    d.args.value.foreach { case Field(name, ty) =>
+      ctx.addMapping(name, name.name)
+    }
+    val body = d.body.map(eliminateNode(_, ctx))
+    val dd = d.copy(body = body)
+    ctx.addMapping(dd, dd.name.name)
+    val newCtx = ctx.withFunctions(Map(d.name.name -> d))
+    (dd, newCtx)
   }
 
   def eliminateSelect(n: Select, ctx: DeadCodeEliminatorContext): AST = {
     val obj = eliminateNode(n.obj, ctx)
-    obj match {
-      case DefStruct(name, fields, values) =>
-        values.find(_.name.name == n.field.name) match {
-          case Some(v) => v.value
-          case None => throw SpecializeException("field not found", n)
-        }
-      case o => o
-    }
+    ctx.addDependency(n.field, obj)
+    Select(obj, n.field)
   }
-  def eliminateCond(n: Cond, ctx: DeadCodeEliminatorContext): AST = {
+  def eliminateCond(n: Cond, ctx: DeadCodeEliminatorContext): AST =
     val cond = eliminateNode(n.cond, ctx)
-    cond match {
-      case LiteralBool(true) => eliminateNode(n.consequence, ctx)
-      case LiteralBool(false) => eliminateNode(n.alternative, ctx)
-      case _ =>
-        Cond(
-          cond,
-          eliminateNode(n.consequence, ctx),
-          eliminateNode(n.alternative, ctx)
-        )
-    }
-  }
-  def isFinite(n: AST): Boolean = {
-    n match {
-      case x: LiteralList => true
-      case _ => false
-    }
-  }
-  def eliminateForEach(n: ForEach, ctx: DeadCodeEliminatorContext): AST = {
-    val iterable = eliminateNode(n.iterable, ctx)
-    if (isFinite(iterable)) {
-      Block(
-        iterable match {
-          case LiteralList(value) =>
-            value.map { v =>
-              val ctx1 = ctx.withValues(Map(n.variable.name -> v))
-              eliminateNode(n.body, ctx1)
-            }
-          case _ => throw SpecializeException("cannot eliminate: not finite", n)
-        }
-      )
-    } else {
-      n.copy(
-        iterable = iterable,
-        body = eliminateNode(n.body, ctx)
-      )
-    }
-  }
+    val conseq = eliminateNode(n.consequence, ctx)
+    val alt = eliminateNode(n.alternative, ctx)
+    val condTotal = Cond(cond, conseq, alt)
+    condTotal
 
+  def eliminateForEach(n: ForEach, ctx: DeadCodeEliminatorContext): AST = {
+    ctx.addMapping(n.variable, n.variable.name)
+    ctx.addMapping(n, n.variable.name)
+    val iterable = eliminateNode(n.iterable, ctx)
+    val body = eliminateNode(n.body, ctx)
+    val f = ForEach(n.variable, iterable, body)
+    ctx.addDependency(f.variable, iterable)
+    ctx.addDependency(f.variable, f)
+    ctx.addDependency(body, f.variable)
+    ctx.addDependency(body, f)
+    f
+  }
+  def eliminateAssign(n: Assign, ctx: DeadCodeEliminatorContext): AST =
+    val value = eliminateNode(n.value, ctx)
+    val ass = Assign(n.name, value)
+    ctx.addMapping(ass, n.name.name)
+    ctx.addMapping(ass.name, n.name.name)
+    ctx.addDependency(ass, ass.value)
+    ctx.addDependency(ass.name, ass)
+    ctx.addDependency(ass.name, ass.value)
+    ass
 }
