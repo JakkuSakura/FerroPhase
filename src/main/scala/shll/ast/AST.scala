@@ -21,7 +21,7 @@ case class Assign(name: Ident, value: AST) extends AST
 case class Cond(cond: AST, consequence: AST, alternative: AST) extends AST
 case class While(cond: AST, body: AST) extends AST
 case class Block(body: List[AST]) extends AST
-case class ForIn(name: Ident, iter: AST, body: AST) extends AST
+case class ForEach(variable: Ident, iterable: AST, body: AST) extends AST
 
 case class TypeApply(fun: AST, args: List[AST], kwArgs: List[KeyValue]) extends AST
 case class DefStruct(name: Ident, fields: LiteralList, values: List[KeyValue] = Nil) extends AST
