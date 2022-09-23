@@ -35,4 +35,26 @@ class ShllAstTest {
         |""".stripMargin)
     assertEquals(expected, specialized)
   }
+
+  @Test def testStruct(): Unit = {
+    val src = ShllLexerAndParser().parse(
+      """
+        |(block
+        |   (def-struct Foo (list (field a [int])))
+        |   (select (Foo a=1) a)
+        |)
+        |""".stripMargin)
+    println(PrettyPrinter().print(src))
+    val specialized = Specializer().specialize(src)
+    println(PrettyPrinter().print(specialized))
+    val expected = ShllLexerAndParser().parse(
+      """
+        |(block
+        |  (def-struct Foo (list (field a [int])))
+        |  1
+        |)
+        |""".stripMargin)
+    assertEquals(expected, specialized)
+  }
+
 }
