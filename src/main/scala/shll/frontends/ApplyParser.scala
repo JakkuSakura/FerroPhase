@@ -1,7 +1,8 @@
 package shll.frontends
 
 import shll.ast.*
-import ParamUtil._
+import ParamUtil.*
+import shll.ast.AstTool.*
 
 case class ApplyParser() {
   def getArgAndParse(args: List[AST], kwArgs: List[KeyValue], i: Int, name: String): AST = parse(
@@ -73,7 +74,21 @@ case class ApplyParser() {
           throw ParserException("List does not support keyword arguments yet")
         }
         LiteralList(args.map(parse))
-      case _ => n
+      case Apply(Ident("fun"), args, kwArgs) =>
+        checkArguments(args, kwArgs, Array(0, 1, 2), Array("params", "returns", "body"))
+        val params = getArgAndParse(args, kwArgs, 0, "params")
+        val returns = getArgAndParse(args, kwArgs, 1, "returns")
+        val body = getArgAndParse(args, kwArgs, 2, "body")
+        FunApply(params.asInstanceOf[LiteralList], returns, body)
+      case TypeApply(fun, args, kwArgs) =>
+        TypeApply(parse(fun), args.map(parse), kwArgs.map(kv => KeyValue(kv.name, parse(kv.value))))
+      case Ident(name) => Ident(name)
+      case x if isLiteral(x, ValueContext()) => x
+      case Apply(fun, args, kwArgs) =>
+        Apply(parse(fun), args.map(parse), kwArgs.map(kv => KeyValue(kv.name, parse(kv.value))))
+      case LiteralList(items) => LiteralList(items.map(parse))
+      case Field(name, ty) => Field(name, parse(ty))
+      case _ => throw ParserException("Unhandled type: " + n)
     }
   }
 }

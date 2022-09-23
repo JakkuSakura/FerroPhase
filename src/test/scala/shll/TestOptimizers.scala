@@ -7,7 +7,7 @@ import rust.{RustPrettyPrinter, RustRunnerBackend}
 import shll.ast.AST
 import shll.backends.{Backend, NothingBackend, PrettyPrinter, PrettyPrinterBackend, ShllPrettyPrinter}
 import shll.frontends.ShllLexerAndParser
-import shll.optimizers.{DeadCodeEliminator, Specializer}
+import shll.optimizers.{DeadCodeEliminator, SingleBlockEliminator, Specializer}
 
 class TestOptimizers {
   val logger: Logger = Logger[this.type]
@@ -24,10 +24,13 @@ class TestOptimizers {
     val specialized = Specializer().specialize(node)
     if (showProgress)
       logger.info(s"Eliminating " + pp.print(specialized))
-    val eliminated = DeadCodeEliminator().eliminate(specialized)
+    val eliminated1 = DeadCodeEliminator().eliminate(specialized)
     if (showProgress)
-      logger.info(s"Optimized " + pp.print(eliminated))
-    eliminated
+      logger.info(s"Eliminated1 " + pp.print(eliminated1))
+    val eliminated2 = SingleBlockEliminator().eliminate(eliminated1)
+    if (showProgress)
+      logger.info(s"Eliminated2 " + pp.print(eliminated2))
+    eliminated2
   }
   def specializedEquals(input: String, expected: String, feedBackend: Boolean=true): Unit = {
     if (showProgress)
@@ -175,8 +178,8 @@ class TestOptimizers {
 
   @Test def testTypeApply(): Unit = {
     specializedEquals(
-      "(block [list int])",
-      "(block (def-type list_int [list int]) [list_int])",
+      "(block [list [int]])",
+      "(block (def-type list_0 [list [int]]) [list_0])",
       feedBackend = false
     )
   }
@@ -237,6 +240,9 @@ class TestOptimizers {
       "(print 1)",
       false
     )
+  }
+
+  @Test def testScopedEliminator2(): Unit = {
     specializedEquals(
       """
         |(block
@@ -250,4 +256,57 @@ class TestOptimizers {
       false
     )
   }
+
+  @Test def testScopedEliminator3(): Unit = {
+
+    specializedEquals(
+      """
+        |(block
+        |   (def-val a 1)
+        |   (block
+        |     (assign a 2)
+        |   )
+        |   2
+        |)
+        |""".stripMargin,
+      "2",
+      false
+    )
+  }
+
+  @Test def testStaticFunctionCallInList(): Unit = {
+    specializedEquals(
+      """
+        |(block
+        |  (def-type pass [fun (list (field a [int])) [int]])
+        |  (def-fun call (list (field funs [list pass])) [int]
+        |    (block
+        |      (def-val s 0)
+        |      (for f funs
+        |         (assign s (+ s (f 1)))
+        |      )
+        |      s
+        |    )
+        |  )
+        |  (call
+        |   (list
+        |     (fun (list (field a [int])) [int] (+ a 0))
+        |     (fun (list (field a [int])) [int] (+ a 1))
+        |   )
+        |  )
+        |)
+        |""".stripMargin,
+      """
+        |(block
+        |  (def-val funs (list (fun (list (field a [int])) [int] (+ a 0)) (fun (list (field a [int])) [int] (+ a 1)) (fun (list (field a [int])) [int] (+ a 2)) (fun (list (field a [int])) [int] (+ a 3))))
+        |  (def-val s 0)
+        |  (for f funs
+        |     (assign s (+ s (f 1)))
+        |  )
+        |  s
+        |)
+        |""".stripMargin
+    )
+  }
+
 }
