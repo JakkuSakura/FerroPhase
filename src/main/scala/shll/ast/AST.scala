@@ -14,9 +14,10 @@ case class LiteralList(value: List[AST]) extends AST
 case class Field(name: Ident, ty: AST) extends AST
 case class KeyValue(name: Ident, value: AST) extends AST
 case class Apply(fun: AST, args: List[AST], kwArgs: List[KeyValue]) extends AST
-// other elements
+
 case class DefFun(name: Ident, args: LiteralList, ret: AST, body: Option[AST]) extends AST
 case class DefVal(name: Ident, value: AST) extends AST
+case class DefType(name: Ident, value: AST) extends AST
 case class Assign(name: Ident, value: AST) extends AST
 case class Cond(cond: AST, consequence: AST, alternative: AST) extends AST
 case class While(cond: AST, body: AST) extends AST

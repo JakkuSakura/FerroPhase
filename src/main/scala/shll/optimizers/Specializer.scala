@@ -34,6 +34,7 @@ case class SpecializeCache(
     funcDeclMap: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
     structDeclMap: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
     specializedStructs: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
+    specializedTypes: mutable.HashMap[String, DefType] = mutable.HashMap.empty,
     specializedFunctions: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
     specializeId: mutable.HashMap[String, Int] = mutable.HashMap.empty
 ) {
@@ -143,24 +144,60 @@ case class Specializer() {
   def binaryOperator(fn: (apply: AST, lhs: AST, rhs: AST) => AST): (Apply, ValueContext) => AST = {
     (apply, ctx) =>
       {
-        checkArguments(apply, Array(0, 1), Array("lhs", "rhs"))
-        val lhs = specializeNode(getArg(apply, 0, "lhs"), ctx)
-        val rhs = specializeNode(getArg(apply, 1, "rhs"), ctx)
+        checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("lhs", "rhs"))
+        val lhs = specializeNode(getArg(apply.args, apply.kwArgs, 0, "lhs"), ctx)
+        val rhs = specializeNode(getArg(apply.args, apply.kwArgs, 1, "rhs"), ctx)
         val a = Apply(apply.fun, List(lhs, rhs), Nil)
         fn(a, lhs, rhs)
       }
   }
+  val builtinTypes: Map[String, (TypeApply, ValueContext) => AST] = Map(
+    "int" -> simpleType,
+    "bool" -> simpleType,
+    "numeric" -> simpleType,
+    "string" -> simpleType,
+    "char" -> simpleType,
+    "list" -> simpleGenericType
+  )
+
+  def getTypeName(name: AST, ctx: ValueContext): String = {
+    name match {
+      case Ident(name) => name
+      case _ => throw SpecializeException("Unknown type name", name)
+    }
+  }
+  def isKnownType(name: AST, ctx: ValueContext): Boolean = {
+    name match {
+      case Ident(name) if builtinTypes.contains(name) => true
+      case _ => false
+    }
+  }
+  def simpleGenericType: (TypeApply, ValueContext) => AST = { (apply, ctx) =>
+    checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
+    val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
+    val newApply = TypeApply(apply.fun, List(value), Nil)
+    if (isKnownType(apply.fun, ctx) && isKnownType(value, ctx)) {
+      val newName = Ident(getTypeName(apply.fun, ctx) + "_" + getTypeName(value, ctx))
+      cache.specializedTypes += newName.name -> DefType(newName, newApply)
+      TypeApply(newName, Nil, Nil)
+    } else {
+      newApply
+    }
+  }
+  def simpleType: (TypeApply, ValueContext) => AST = { (apply, ctx) =>
+    apply
+  }
   def specialize(n: AST): AST = {
     cache = SpecializeCache()
     val v = specializeNode(n, ValueContext.empty)
-    val specialized = cache.specializedFunctions.values.toList
+    val specialized: List[AST] = cache.specializedFunctions.values.toList ::: cache.specializedTypes.values.toList
     if (specialized.isEmpty) {
       v
     } else
       v match {
         case decls: Block =>
           Block(specialized ::: decls.body)
-        case _ => throw SpecializeException("cannot specialize", v)
+        case o: AST => Block (specialized :+ o)
       }
   }
 
@@ -181,6 +218,7 @@ case class Specializer() {
       case n: Select => specializeSelect(n, ctx)
       case n: Cond => specializeCond(n, ctx)
       case n: ForEach => specializeForEach(n, ctx)
+      case n: TypeApply => specializeTypeApply(n, ctx)
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -195,9 +233,12 @@ case class Specializer() {
   }
   def specializeDefVal(n: DefVal, ctx: ValueContext): (DefVal, ValueContext) = {
     val value = specializeNode(n.value, ctx)
-    val newCtx = ValueContext.from(ctx, values = Map(
+    val newCtx = ValueContext.from(
+      ctx,
+      values = Map(
         n.name.name -> value
-    ))
+      )
+    )
     (DefVal(n.name, value), newCtx)
   }
   def specializeIdent(id: Ident, ctx: ValueContext): AST = {
@@ -218,6 +259,21 @@ case class Specializer() {
       case _ =>
         val f = specializeNode(n.fun, ctx)
         Apply(
+          f,
+          n.args.map(specializeNode(_, ctx)),
+          n.kwArgs.map(specializeKeyValue(_, ctx))
+        )
+    }
+  }
+
+  def specializeTypeApply(n: TypeApply, ctx: ValueContext): AST = {
+    n.fun match {
+      case Ident(name) if builtinTypes.contains(name) =>
+        val ty = builtinTypes(name)
+        ty(n, ctx)
+      case _ =>
+        val f = specializeNode(n.fun, ctx)
+        TypeApply(
           f,
           n.args.map(specializeNode(_, ctx)),
           n.kwArgs.map(specializeKeyValue(_, ctx))
@@ -419,4 +475,5 @@ case class Specializer() {
       )
     }
   }
+
 }

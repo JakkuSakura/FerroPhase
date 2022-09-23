@@ -174,4 +174,11 @@ class ShllAstTest {
       "(block (def-val i 5) 5)"
     )
   }
+
+  @Test def testTypeApply(): Unit = {
+    specializedEquals(
+      "[list int]",
+      "(block (def-type list_int [list int])  [list_int])"
+    )
+  }
 }

@@ -1,29 +1,30 @@
 package shll.frontends
 
-import shll.ast.{AST, Apply, Ident, KeyValue}
+import shll.ast._
 
 case object ParamUtil {
-  def getArgOpt(a: Apply, pos: Int, key: String): Option[AST] = {
-    val p1 = a.args.lift(pos)
-    val p2 = a.kwArgs.find(_.name.name == key)
+  def getArgOpt(args: List[AST], kwArgs: List[KeyValue], pos: Int, key: String): Option[AST] = {
+    val p1 = args.lift(pos)
+    val p2 = kwArgs.find(_.name.name == key)
     if (p1.isDefined && p2.isDefined)
       throw ParserException("Duplicate key: " + key)
     else
       p1.orElse(p2)
   }
 
-  def getArg(a: Apply, pos: Int, key: String): AST =
-    getArgOpt(a, pos, key).getOrElse(throw Exception("Missing key: " + key))
+  def getArg(args: List[AST], kwArgs: List[KeyValue], pos: Int, key: String): AST =
+    getArgOpt(args, kwArgs, pos, key).getOrElse(throw Exception("Missing key: " + key))
 
-  def getIdentArg(a: Apply, pos: Int, key: String): Ident =
-    getArg(a, pos, key) match {
+  def getIdentArg(args: List[AST], kwArgs: List[KeyValue], pos: Int, key: String): Ident =
+    getArg(args, kwArgs, pos, key) match {
       case i: Ident => i
-      case _ => throw ParserException("Expected Ident, got: " + getArg(a, pos, key))
+      case _ => throw ParserException("Expected Ident, got: " + getArg(args, kwArgs, pos, key))
     }
 
-  def checkArguments(a: Apply, knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
-    collectArguments(a.args, a.kwArgs, knownArgs, knownKwArgs)
+  def checkArguments(args: List[AST], kwArgs: List[KeyValue], knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
+    collectArguments(args, kwArgs, knownArgs, knownKwArgs)
   }
+
   def collectArguments(args: List[AST], kwArgs: List[KeyValue], knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
     val res = collection.mutable.Map[String, AST]()
     for (i <- args.indices) {
