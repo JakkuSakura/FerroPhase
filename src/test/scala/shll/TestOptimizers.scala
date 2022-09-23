@@ -8,7 +8,7 @@ import shll.backends.{Backend, NothingBackend, PrettyPrinter, PrettyPrinterBacke
 import shll.frontends.ShllLexerAndParser
 import shll.optimizers.{DeadCodeEliminator, Specializer}
 
-class TestSpecializer {
+class TestOptimizers {
   val pp: PrettyPrinter = ShllPrettyPrinter()
 //  val backend: Backend = NothingBackend()
   val backend: Backend = RustRunnerBackend()
@@ -192,6 +192,34 @@ class TestSpecializer {
         |)
         |""".stripMargin,
       "3"
+    )
+  }
+
+  @Test def testSum(): Unit = {
+    specializedEquals(
+      """
+        |(block
+        |   (def-fun sum (list (field values [list [int]])) [int]
+        |     (block
+        |       (def-val s 0)
+        |       (for i values
+        |         (assign s (+ s i))
+        |       )
+        |       s
+        |     )
+        |   )
+        |   (sum (range 1 101))
+        |)
+        |""".stripMargin,
+      """
+        |(block
+        |  (def-val values (range 1 101))
+        |  (def-val s 0)
+        |  (for i values
+        |     (assign s (+ s i))
+        |  )
+        |  s
+        |)""".stripMargin
     )
   }
 }
