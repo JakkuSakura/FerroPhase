@@ -9,6 +9,8 @@ case class SpecializeException(msg: String, node: AST) extends Exception(msg + "
 case class ValueContext(
     values: Map[String, AST] = Map.empty,
     tyValues: Map[String, AST] = Map.empty,
+    functions: Map[String, DefFun] = Map.empty,
+    structs: Map[String, DefStruct] = Map.empty,
     parent: Option[ValueContext] = None
 ) {
   def getValue(name: String): Option[AST] = {
@@ -18,21 +20,27 @@ case class ValueContext(
   def getTyValue(name: String): Option[AST] = {
     tyValues.get(name).orElse(parent.flatMap(_.getTyValue(name)))
   }
+  def getFunction(name: String): Option[DefFun] = {
+    functions.get(name).orElse(parent.flatMap(_.getFunction(name)))
+  }
+  def getStruct(name: String): Option[DefStruct] = {
+    structs.get(name).orElse(parent.flatMap(_.getStruct(name)))
+  }
 }
 object ValueContext {
   def empty: ValueContext = ValueContext()
   def from(
       parent: ValueContext,
       values: Map[String, AST] = Map.empty,
-      tyValues: Map[String, AST] = Map.empty
+      tyValues: Map[String, AST] = Map.empty,
+      functions: Map[String, DefFun] = Map.empty,
+      structs: Map[String, DefStruct] = Map.empty
   ): ValueContext = {
-    ValueContext(values, tyValues, Some(parent))
+    ValueContext(values, tyValues, functions, structs,Some(parent))
 
   }
 }
 case class SpecializeCache(
-    funcDeclMap: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
-    structDeclMap: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
     specializedStructs: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
     specializedTypes: mutable.HashMap[String, DefType] = mutable.HashMap.empty,
     specializedFunctions: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
@@ -190,21 +198,21 @@ case class Specializer() {
   def specialize(n: AST): AST = {
     cache = SpecializeCache()
     val v = specializeNode(n, ValueContext.empty)
-    val specialized: List[AST] = cache.specializedFunctions.values.toList ::: cache.specializedTypes.values.toList
+    val specialized: List[AST] =
+      cache.specializedFunctions.values.toList ::: cache.specializedTypes.values.toList
     if (specialized.isEmpty) {
       v
     } else
       v match {
         case decls: Block =>
           Block(specialized ::: decls.body)
-        case o: AST => Block (specialized :+ o)
+        case o: AST => Block(specialized :+ o)
       }
   }
 
   def specializeNode(n: AST, ctx: ValueContext): AST = {
     logger.debug("Specializing " + n)
     n match {
-      case d: DefFun => specializeDefFun(d, ctx)
       case n: Block => specializeBlock(n, ctx)
       case n: Apply => specializeApply(n, ctx)
       case n: Ident => specializeIdent(n, ctx)
@@ -214,7 +222,6 @@ case class Specializer() {
       case n: LiteralBool => n
       case n: LiteralList => LiteralList(n.value.map(specializeNode(_, ctx)))
       case n: Field => specializeField(n, ctx)
-      case n: DefStruct => specializeDefStruct(n, ctx)
       case n: Select => specializeSelect(n, ctx)
       case n: Cond => specializeCond(n, ctx)
       case n: ForEach => specializeForEach(n, ctx)
@@ -247,14 +254,14 @@ case class Specializer() {
 
   def specializeApply(n: Apply, ctx: ValueContext): AST = {
     n.fun match {
-      case id: Ident if builtinFunctions.contains(id.name) =>
-        val fn = builtinFunctions(id.name)
+      case Ident(name) if builtinFunctions.contains(name) =>
+        val fn = builtinFunctions(name)
         fn(n, ctx)
-      case id: Ident if cache.funcDeclMap.contains(id.name) =>
-        val func = cache.funcDeclMap(id.name)
+      case Ident(name) if ctx.getFunction(name).isDefined =>
+        val func = ctx.getFunction(name).get
         specializeFunctionApply(func, n.args, n.kwArgs, ctx)
-      case id: Ident if cache.structDeclMap.contains(id.name) =>
-        val struct = cache.structDeclMap(id.name)
+      case Ident(name) if ctx.getStruct(name).isDefined =>
+        val struct = ctx.getStruct(name).get
         specializeStructApply(struct, n.args, n.kwArgs, ctx)
       case _ =>
         val f = specializeNode(n.fun, ctx)
@@ -291,15 +298,22 @@ case class Specializer() {
         val (x, ctx2) = specializeDefVal(DefVal(s.name, s.value), ctx1)
         ctx1 = ctx2
         Assign(x.name, x.value)
+      case d: DefFun =>
+        val (x, ctx2) = specializeDefFun(d, ctx)
+        ctx1 = ctx2
+        x
+      case n: DefStruct =>
+        val (x, ctx2) = specializeDefStruct(n, ctx)
+        ctx1 = ctx2
+        x
       case s =>
         specializeNode(s, ctx1)
     }
     Block(stmts)
   }
 
-  def specializeDefStruct(c: DefStruct, ctx: ValueContext): DefStruct = {
-    cache.structDeclMap(c.name.name) = c
-    c
+  def specializeDefStruct(c: DefStruct, ctx: ValueContext): (DefStruct, ValueContext) = {
+    (c, ValueContext.from(ctx, structs = Map(c.name.name -> c)))
   }
   def isSpecializedFunctionDecl(d: DefFun): Boolean = {
     d.args match {
@@ -401,14 +415,14 @@ case class Specializer() {
   def specializeDefFun(
       d: DefFun,
       ctx: ValueContext
-  ): DefFun = {
-    cache.funcDeclMap(d.name.name) = d
+  ): (DefFun, ValueContext) = {
     if (isSpecializedFunctionDecl(d) && d.body.isDefined) {
       // TODO evaluate constants
       val body = specializeNode(d.body.get, ctx)
-      d.copy(body = Some(body))
+      val newCtx = ValueContext.from(ctx, functions = Map(d.name.name -> d))
+      (d.copy(body = Some(body)), newCtx)
     } else {
-      d
+      (d, ctx)
     }
   }
   def specializeStructApply(
