@@ -185,4 +185,23 @@ class ShllAstTest {
       "(block (def-type list_int [list int]) [list_int])"
     )
   }
+
+  @Test def testFunBodyApply(): Unit = {
+    specializedEquals(
+      """
+        |(block
+        |   (def-fun sum (list (field a [int]) (field b [int])) [int]
+        |     (+ a b)
+        |   )
+        |   (sum 1 2)
+        |)
+        |""".stripMargin,
+      """
+        |(block
+        |  (def-fun sum (list (field a [int]) (field b [int])) [int] (+ a b))
+        |  3
+        |)
+        |""".stripMargin
+    )
+  }
 }
