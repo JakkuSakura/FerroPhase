@@ -21,7 +21,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${printImpl(f)}(${printList(args)})"
       case Cond(cond, consequence, alternative) =>
         s"if ${printImpl(cond)} { ${printImpl(consequence)} } else {${printImpl(alternative)}}"
-      case ForIn(target, iter, body) =>
+      case ForEach(target, iter, body) =>
         s"for ${target.name} in ${printImpl(iter)} { ${printImpl(body)} }"
       case Block(Nil) =>
         "{}"

@@ -180,6 +180,7 @@ case class Specializer() {
       case n: DefStruct => specializeDefStruct(n, ctx)
       case n: Select => specializeSelect(n, ctx)
       case n: Cond => specializeCond(n, ctx)
+      case n: ForEach => specializeForEach(n, ctx)
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -387,6 +388,32 @@ case class Specializer() {
           specializeNode(n.consequence, ctx),
           specializeNode(n.alternative, ctx)
         )
+    }
+  }
+  def isFinite(n: AST): Boolean = {
+    n match {
+      case x: LiteralList => true
+      case _ => false
+    }
+  }
+  def specializeForEach(n: ForEach, ctx: ValueContext): AST = {
+    val iterable = specializeNode(n.iterable, ctx)
+    if (isFinite(iterable)) {
+      Block(
+        iterable match {
+          case LiteralList(value) =>
+            value.map { v =>
+              val ctx1 = ValueContext.from(ctx, Map(n.variable.name -> v))
+              specializeNode(n.body, ctx1)
+            }
+          case _ => throw SpecializeException("cannot specialize: not finite", n)
+        }
+      )
+    } else {
+      n.copy(
+        iterable = iterable,
+        body = specializeNode(n.body, ctx)
+      )
     }
   }
 }
