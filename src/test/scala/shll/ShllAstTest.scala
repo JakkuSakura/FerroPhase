@@ -2,13 +2,14 @@ package shll
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import rust.RustPrettyPrinter
 import shll.ast.AST
-import shll.backends.PrettyPrinter
+import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ShllLexerAndParser
 import shll.optimizers.Specializer
 
 class ShllAstTest {
-  val pp: PrettyPrinter = PrettyPrinter()
+  val pp: PrettyPrinter = RustPrettyPrinter()
   val showProgress = true
   def printAst(input: AST): Unit = {
     println(pp.print(input))
@@ -46,7 +47,7 @@ class ShllAstTest {
         |""".stripMargin,
       """
         |(block
-        |  (def-fun foo_0 (list) [int] a)
+        |  (def-fun foo_0 (list) [int] 1)
         |  (def-fun foo (list (field a [int])) [int] a)
         |  (foo_0)
         |)
