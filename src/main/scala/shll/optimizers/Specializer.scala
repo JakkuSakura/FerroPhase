@@ -7,49 +7,23 @@ import shll.frontends.ParamUtil.*
 
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST) extends Exception(msg + ": " + node)
-case class ValueContext(
-    private val values: Map[String, AST] = Map.empty,
-    private val tyValues: Map[String, AST] = Map.empty,
-    private val functions: Map[String, DefFun] = Map.empty,
-    private val structs: Map[String, DefStruct] = Map.empty,
-    private val cache: Option[SpecializeCache] = None,
-    private val parent: Option[ValueContext] = None
-) {
-  def getCache: SpecializeCache = cache.getOrElse(parent.map(_.getCache).get)
-  def getValue(name: String): Option[AST] = {
-    values.get(name).orElse(parent.flatMap(_.getValue(name)))
-  }
 
-  def getTyValue(name: String): Option[AST] = {
-    tyValues.get(name).orElse(parent.flatMap(_.getTyValue(name)))
+case class SpecializeContext(
+    cache: Option[SpecializeCache] = None,
+    context: ValueContext = ValueContext(),
+    parent: Option[SpecializeContext] = None
+) {
+  def getCache: SpecializeCache = cache.getOrElse(parent.get.getCache)
+  def withCache(cache: SpecializeCache): SpecializeContext = copy(cache = Some(cache), parent = Some(this))
+  def withValues(values: Map[String, AST]): SpecializeContext = {
+    copy(context = context.withValues(values))
   }
-  def getFunction(name: String): Option[DefFun] = {
-    functions.get(name).orElse(parent.flatMap(_.getFunction(name)))
+  def withStructs(structs: Map[String, DefStruct]): SpecializeContext = {
+    copy(context = context.withStructs(structs))
   }
-  def getStruct(name: String): Option[DefStruct] = {
-    structs.get(name).orElse(parent.flatMap(_.getStruct(name)))
-  }
+  def withFunctions(functions: Map[String, DefFun]): SpecializeContext = copy(context = context.withFunctions(functions))
 }
-object ValueContext {
-  def empty: ValueContext = ValueContext()
-  def from(
-      parent: ValueContext,
-      values: Map[String, AST] = Map.empty,
-      tyValues: Map[String, AST] = Map.empty,
-      functions: Map[String, DefFun] = Map.empty,
-      structs: Map[String, DefStruct] = Map.empty,
-      specializeCache: Option[SpecializeCache] = None
-  ): ValueContext = {
-    ValueContext(
-      values,
-      tyValues,
-      functions,
-      structs,
-      specializeCache,
-      Some(parent)
-    )
-  }
-}
+
 case class SpecializeCache(
     specializedStructs: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
     specializedTypes: mutable.HashMap[String, DefType] = mutable.HashMap.empty,
@@ -77,7 +51,7 @@ case class Specializer() {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
 
-  val builtinFunctions: Map[String, (Apply, ValueContext) => AST] = Map(
+  val builtinFunctions: Map[String, (Apply, SpecializeContext) => AST] = Map(
     "==" -> binaryOperator { (apply, lhs, rhs) =>
       if (lhs == rhs)
         LiteralBool(true)
@@ -159,17 +133,18 @@ case class Specializer() {
       }
     }
   )
-  def binaryOperator(fn: (apply: AST, lhs: AST, rhs: AST) => AST): (Apply, ValueContext) => AST = {
-    (apply, ctx) =>
-      {
-        checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("lhs", "rhs"))
-        val lhs = specializeNode(getArg(apply.args, apply.kwArgs, 0, "lhs"), ctx)
-        val rhs = specializeNode(getArg(apply.args, apply.kwArgs, 1, "rhs"), ctx)
-        val a = Apply(apply.fun, List(lhs, rhs), Nil)
-        fn(a, lhs, rhs)
-      }
+  def binaryOperator(
+      fn: (apply: AST, lhs: AST, rhs: AST) => AST
+  ): (Apply, SpecializeContext) => AST = { (apply, ctx) =>
+    {
+      checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("lhs", "rhs"))
+      val lhs = specializeNode(getArg(apply.args, apply.kwArgs, 0, "lhs"), ctx)
+      val rhs = specializeNode(getArg(apply.args, apply.kwArgs, 1, "rhs"), ctx)
+      val a = Apply(apply.fun, List(lhs, rhs), Nil)
+      fn(a, lhs, rhs)
+    }
   }
-  val builtinTypes: Map[String, (TypeApply, ValueContext) => AST] = Map(
+  val builtinTypes: Map[String, (TypeApply, SpecializeContext) => AST] = Map(
     "int" -> simpleType,
     "bool" -> simpleType,
     "numeric" -> simpleType,
@@ -178,19 +153,19 @@ case class Specializer() {
     "list" -> simpleGenericType
   )
 
-  def getTypeName(name: AST, ctx: ValueContext): String = {
+  def getTypeName(name: AST, ctx: SpecializeContext): String = {
     name match {
       case Ident(name) => name
       case _ => throw SpecializeException("Unknown type name", name)
     }
   }
-  def isKnownType(name: AST, ctx: ValueContext): Boolean = {
+  def isKnownType(name: AST, ctx: SpecializeContext): Boolean = {
     name match {
       case Ident(name) if builtinTypes.contains(name) => true
       case _ => false
     }
   }
-  def simpleGenericType: (TypeApply, ValueContext) => AST = { (apply, ctx) =>
+  def simpleGenericType: (TypeApply, SpecializeContext) => AST = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
     val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
     val newApply = TypeApply(apply.fun, List(value), Nil)
@@ -202,15 +177,15 @@ case class Specializer() {
       newApply
     }
   }
-  def simpleType: (TypeApply, ValueContext) => AST = { (apply, ctx) =>
+  def simpleType: (TypeApply, SpecializeContext) => AST = { (apply, ctx) =>
     apply
   }
   def specialize(n: AST): AST = {
-    specializeNode(n, ValueContext.empty)
+    specializeNode(n, SpecializeContext())
 
   }
 
-  def specializeNode(n: AST, ctx: ValueContext): AST = {
+  def specializeNode(n: AST, ctx: SpecializeContext): AST = {
     logger.debug("Specializing " + pp.print(n))
     n match {
       case n: Block => specializeBlock(n, ctx)
@@ -231,38 +206,37 @@ case class Specializer() {
 
   }
 
-  def specializeKeyValue(kv: KeyValue, ctx: ValueContext): KeyValue = {
+  def specializeKeyValue(kv: KeyValue, ctx: SpecializeContext): KeyValue = {
     KeyValue(kv.name, specializeNode(kv.value, ctx))
   }
-  def specializeField(n: Field, ctx: ValueContext): Field = {
+  def specializeField(n: Field, ctx: SpecializeContext): Field = {
     val value = specializeNode(n.ty, ctx)
     Field(n.name, value)
   }
-  def specializeDefVal(n: DefVal, ctx: ValueContext): (DefVal, ValueContext) = {
+  def specializeDefVal(n: DefVal, ctx: SpecializeContext): (DefVal, SpecializeContext) = {
     val value = specializeNode(n.value, ctx)
-    val newCtx = ValueContext.from(
-      ctx,
-      values = Map(
+    val newCtx = ctx.withValues(
+      Map(
         n.name.name -> value
       )
     )
     (DefVal(n.name, value), newCtx)
   }
-  def specializeIdent(id: Ident, ctx: ValueContext): AST = {
-    ctx.getValue(id.name).getOrElse(id)
+  def specializeIdent(id: Ident, ctx: SpecializeContext): AST = {
+    ctx.context.getValue(id.name).getOrElse(id)
   }
 
-  def specializeApply(n: Apply, ctx: ValueContext): AST = {
+  def specializeApply(n: Apply, ctx: SpecializeContext): AST = {
     n.fun match {
       case Ident(name) if builtinFunctions.contains(name) =>
         val fn = builtinFunctions(name)
         fn(n, ctx)
-      case Ident(name) if ctx.getFunction(name).isDefined =>
-        val func = ctx.getFunction(name).get
+      case Ident(name) if ctx.context.getFunction(name).isDefined =>
+        val func = ctx.context.getFunction(name).get
         specializeFunctionApply(func, n.args, n.kwArgs, ctx)
 
-      case Ident(name) if ctx.getStruct(name).isDefined =>
-        val struct = ctx.getStruct(name).get
+      case Ident(name) if ctx.context.getStruct(name).isDefined =>
+        val struct = ctx.context.getStruct(name).get
         specializeStructApply(struct, n.args, n.kwArgs, ctx)
       case _ =>
         val f = specializeNode(n.fun, ctx)
@@ -274,7 +248,7 @@ case class Specializer() {
     }
   }
 
-  def specializeTypeApply(n: TypeApply, ctx: ValueContext): AST = {
+  def specializeTypeApply(n: TypeApply, ctx: SpecializeContext): AST = {
     n.fun match {
       case Ident(name) if builtinTypes.contains(name) =>
         val ty = builtinTypes(name)
@@ -288,9 +262,9 @@ case class Specializer() {
         )
     }
   }
-  def specializeBlock(d: Block, ctx0: ValueContext): Block = {
+  def specializeBlock(d: Block, ctx0: SpecializeContext): Block = {
     val cache = SpecializeCache()
-    var ctx = ValueContext.from(ctx0, specializeCache = Some(cache))
+    var ctx = ctx0.withCache(cache)
     val stmts = d.body.map {
       case s: DefVal =>
         val (x, newCtx) = specializeDefVal(s, ctx)
@@ -317,8 +291,8 @@ case class Specializer() {
     )
   }
 
-  def specializeDefStruct(c: DefStruct, ctx: ValueContext): (DefStruct, ValueContext) = {
-    (c, ValueContext.from(ctx, structs = Map(c.name.name -> c)))
+  def specializeDefStruct(c: DefStruct, ctx: SpecializeContext): (DefStruct, SpecializeContext) = {
+    (c, ctx.withStructs(Map(c.name.name -> c)))
   }
 
   def isConstant(n: AST): Boolean = {
@@ -334,17 +308,15 @@ case class Specializer() {
   }
 
   def prepareCtx(
-      ctx: ValueContext,
+      ctx: SpecializeContext,
       d: Map[String, AST],
       oldBody: AST
-  ): (AST, ValueContext) = {
-    val newCtx = ValueContext.from(
-      ctx,
+  ): (AST, SpecializeContext) = {
+    val newCtx = ctx.withValues(
       d.map {
         case k -> v if isConstant(v) => k -> v
         case k -> v => k -> v
-      },
-      Map.empty
+      }
     )
     val prepareValues = d.flatMap {
       case k -> v if !isConstant(v) =>
@@ -387,7 +359,7 @@ case class Specializer() {
       func: DefFun,
       args: List[AST],
       kwArgs: List[KeyValue],
-      ctx: ValueContext
+      ctx: SpecializeContext
   ): AST = {
     val mapping =
       collectArguments(args, kwArgs, argsToRange(func.args), argsToKeys(func.args))
@@ -402,13 +374,14 @@ case class Specializer() {
     val body = specializeNode(newBody, newCtx)
     body match {
       case x if isConstant(x) => body
-      case _ => val newFunc = func
-        .copy(
-          name = ctx.getCache.allocateSpecializedIdent(func.name.name),
-          body = Some(body),
-          args = LiteralList(Nil),
-          ret = func.ret
-        )
+      case _ =>
+        val newFunc = func
+          .copy(
+            name = ctx.getCache.allocateSpecializedIdent(func.name.name),
+            body = Some(body),
+            args = LiteralList(Nil),
+            ret = func.ret
+          )
         ctx.getCache.specializedFunctions(newFunc.name.name) = newFunc
         Apply(newFunc.name, Nil, Nil)
     }
@@ -416,9 +389,9 @@ case class Specializer() {
 
   def specializeDefFun(
       d: DefFun,
-      ctx: ValueContext
-  ): (DefFun, ValueContext) = {
-    val newCtx = ValueContext.from(ctx, functions = Map(d.name.name -> d))
+      ctx: SpecializeContext
+  ): (DefFun, SpecializeContext) = {
+    val newCtx = ctx.withFunctions(Map(d.name.name -> d))
     if (d.body.isDefined) {
       val body = specializeNode(d.body.get, ctx)
       (d.copy(body = Some(body)), newCtx)
@@ -430,7 +403,7 @@ case class Specializer() {
       n: DefStruct,
       args: List[AST],
       kwArgs: List[KeyValue],
-      ctx: ValueContext
+      ctx: SpecializeContext
   ): DefStruct = {
     val mapping =
       collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map {
@@ -444,7 +417,7 @@ case class Specializer() {
       mapping
     )
   }
-  def specializeSelect(n: Select, ctx: ValueContext): AST = {
+  def specializeSelect(n: Select, ctx: SpecializeContext): AST = {
     val obj = specializeNode(n.obj, ctx)
     obj match {
       case DefStruct(name, fields, values) =>
@@ -455,7 +428,7 @@ case class Specializer() {
       case o => o
     }
   }
-  def specializeCond(n: Cond, ctx: ValueContext): AST = {
+  def specializeCond(n: Cond, ctx: SpecializeContext): AST = {
     val cond = specializeNode(n.cond, ctx)
     cond match {
       case LiteralBool(true) => specializeNode(n.consequence, ctx)
@@ -474,14 +447,14 @@ case class Specializer() {
       case _ => false
     }
   }
-  def specializeForEach(n: ForEach, ctx: ValueContext): AST = {
+  def specializeForEach(n: ForEach, ctx: SpecializeContext): AST = {
     val iterable = specializeNode(n.iterable, ctx)
     if (isFinite(iterable)) {
       Block(
         iterable match {
           case LiteralList(value) =>
             value.map { v =>
-              val ctx1 = ValueContext.from(ctx, Map(n.variable.name -> v))
+              val ctx1 = ctx.withValues(Map(n.variable.name -> v))
               specializeNode(n.body, ctx1)
             }
           case _ => throw SpecializeException("cannot specialize: not finite", n)
