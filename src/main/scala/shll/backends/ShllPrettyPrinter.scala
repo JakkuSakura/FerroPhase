@@ -2,7 +2,9 @@ package shll.backends
 
 import shll.*
 import shll.ast.*
-case class ShllPrettyPrinter() extends PrettyPrinter {
+case class ShllPrettyPrinter(
+  useRawLiteral: Boolean = false
+                            ) extends PrettyPrinter {
   val IDENT = "  "
   def printList(l: List[AST]): String = {
     l.map(printImpl).mkString(" ")
@@ -39,14 +41,22 @@ case class ShllPrettyPrinter() extends PrettyPrinter {
         s"(block\n${body.map(x => IDENT + printImpl(x)).mkString("\n")}\n)"
       case Ident(name) =>
         name
-      case LiteralInt(_, raw) =>
+      case LiteralInt(_, raw) if useRawLiteral =>
         raw
-      case LiteralDecimal(_, raw) =>
+      case LiteralInt(value, _) =>
+        value.toString
+      case LiteralDecimal(_, raw) if useRawLiteral =>
         raw
-      case LiteralChar(_, raw) =>
+      case LiteralDecimal(value, _) =>
+        value.toString
+      case LiteralChar(_, raw) if useRawLiteral =>
         raw
-      case LiteralString(_, raw) =>
+      case LiteralChar(value, _) =>
+        s"'$value'"
+      case LiteralString(_, raw) if useRawLiteral =>
         raw
+      case LiteralString(value, _) =>
+        s"\"$value\""
       case LiteralBool(x) =>
         x.toString
       case LiteralList(Nil) =>
