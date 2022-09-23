@@ -1,8 +1,8 @@
 package shll.optimizers
 
 import com.typesafe.scalalogging.Logger
-import shll.ast.*
-import shll.frontends.ParamUtil._
+import shll.ast.{AST, *}
+import shll.frontends.ParamUtil.*
 
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST) extends Exception(msg + ": " + node)
@@ -57,24 +57,102 @@ case class SpecializeCache(
 case class Specializer() {
   var logger: Logger = Logger[this.type]
   private var cache: SpecializeCache = SpecializeCache()
-  val builtinFunctions: Map[String, Apply => AST] = Map(
-    "==" -> { (apply: Apply) =>
-      checkArguments(apply, Array(0, 1), Array("lhs", "rhs"))
-      val lhs = getArg(apply, 0, "lhs")
-      val rhs = getArg(apply, 1, "rhs")
-      if (isConstant(lhs) && isConstant(rhs)) {
-        if (lhs == rhs)
-          LiteralBool(true)
-        else
-          LiteralBool(false)
-      } else {
+
+  val builtinFunctions: Map[String, (Apply, ValueContext) => AST] = Map(
+    "==" -> binaryOperator { (apply, lhs, rhs) =>
+      if (lhs == rhs)
+        LiteralBool(true)
+      else if (isConstant(lhs) && isConstant(rhs))
+        LiteralBool(false)
+      else
         apply
+    },
+    "!=" -> binaryOperator { (apply, lhs, rhs) =>
+      if (lhs == rhs)
+        LiteralBool(false)
+      else if (isConstant(lhs) && isConstant(rhs))
+        LiteralBool(true)
+      else
+        apply
+    },
+    ">" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l > r)
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l > r)
+        case _ => apply
+      }
+    },
+    ">=" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l >= r)
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l >= r)
+        case _ => apply
+      }
+    },
+    "<" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l < r)
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l < r)
+        case _ => apply
+      }
+    },
+    "<=" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l <= r)
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l <= r)
+        case _ => apply
+      }
+    },
+    "+" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l + r, s"(+ $lr $rr)")
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l + r, s"(+ $lr $rr)")
+        case (LiteralString(l, lr), LiteralString(r, rr)) => LiteralString(l + r, s"(+ $lr $rr)")
+        case _ => apply
+      }
+    },
+    "-" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l - r, s"(- $lr $rr)")
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l - r, s"(- $lr $rr)")
+        case _ => apply
+      }
+    },
+    "*" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l * r, s"(* $lr $rr)")
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l * r, s"(* $lr $rr)")
+        case _ => apply
+      }
+    },
+    "/" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l / r, s"(/ $lr $rr)")
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l / r, s"(/ $lr $rr)")
+        case _ => apply
+      }
+    },
+    "%" -> binaryOperator { (apply, lhs, rhs) =>
+      (lhs, rhs) match {
+        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l % r, s"(% $lr $rr)")
+        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l % r, s"(% $lr $rr)")
+        case _ => apply
       }
     }
   )
+  def binaryOperator(fn: (apply: AST, lhs: AST, rhs: AST) => AST): (Apply, ValueContext) => AST = {
+    (apply, ctx) =>
+      {
+        checkArguments(apply, Array(0, 1), Array("lhs", "rhs"))
+        val lhs = specializeNode(getArg(apply, 0, "lhs"), ctx)
+        val rhs = specializeNode(getArg(apply, 1, "rhs"), ctx)
+        val a = Apply(apply.fun, List(lhs, rhs), Nil)
+        fn(a, lhs, rhs)
+      }
+  }
   def specialize(n: AST): AST = {
     cache = SpecializeCache()
-    val v = specializeNode(n, ValueContext())
+    val v = specializeNode(n, ValueContext.empty)
     val specialized = cache.specializedFunctions.values.toList
     if (specialized.isEmpty) {
       v
@@ -126,7 +204,7 @@ case class Specializer() {
     n.fun match {
       case id: Ident if builtinFunctions.contains(id.name) =>
         val fn = builtinFunctions(id.name)
-        fn(n)
+        fn(n, ctx)
       case id: Ident if cache.funcDeclMap.contains(id.name) =>
         val func = cache.funcDeclMap(id.name)
         specializeFunctionApply(func, n.args, n.kwArgs, ctx)
@@ -276,8 +354,9 @@ case class Specializer() {
       ctx: ValueContext
   ): DefStruct = {
     val mapping =
-      collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map { case k -> v =>
-        KeyValue(Ident(k), specializeNode(v, ctx))
+      collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map {
+        case k -> v =>
+          KeyValue(Ident(k), specializeNode(v, ctx))
       }.toList
 
     DefStruct(
