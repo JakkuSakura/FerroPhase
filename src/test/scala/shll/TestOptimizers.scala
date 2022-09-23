@@ -1,5 +1,6 @@
 package shll
 
+import com.typesafe.scalalogging.Logger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import rust.{RustPrettyPrinter, RustRunnerBackend}
@@ -9,6 +10,7 @@ import shll.frontends.ShllLexerAndParser
 import shll.optimizers.{DeadCodeEliminator, Specializer}
 
 class TestOptimizers {
+  val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter()
 //  val backend: Backend = NothingBackend()
   val backend: Backend = RustRunnerBackend()
@@ -18,18 +20,18 @@ class TestOptimizers {
   }
   def optimize(node: AST): AST = {
     if (showProgress)
-      println(s"Optimizing " + pp.print(node))
+      logger.info(s"Optimizing " + pp.print(node))
     val specialized = Specializer().specialize(node)
     if (showProgress)
-      println(s"Eliminating " + pp.print(specialized))
+      logger.info(s"Eliminating " + pp.print(specialized))
     val eliminated = DeadCodeEliminator().eliminate(specialized)
     if (showProgress)
-      println(s"Optimized " + pp.print(eliminated))
+      logger.info(s"Optimized " + pp.print(eliminated))
     eliminated
   }
   def specializedEquals(input: String, expected: String, feedBackend: Boolean=true): Unit = {
     if (showProgress)
-        println(s"Parsing $input")
+        logger.info(s"Parsing $input")
     val ast = ShllLexerAndParser().parse(input)
     val optimized = optimize(ast)
     val optimizedPrinted = pp.print(optimized)
@@ -37,7 +39,7 @@ class TestOptimizers {
     val expectedPrinted = pp.print(exp)
     if (expectedPrinted != optimizedPrinted)
       if (showProgress)
-          println(s"Expected " + pp.print(exp))
+          logger.info(s"Expected " + pp.print(exp))
       assertEquals(exp, optimized)
     if (feedBackend)
       backend.process(optimized)
