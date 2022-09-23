@@ -416,13 +416,12 @@ case class Specializer() {
       d: DefFun,
       ctx: ValueContext
   ): (DefFun, ValueContext) = {
-    if (isSpecializedFunctionDecl(d) && d.body.isDefined) {
-      // TODO evaluate constants
+    val newCtx = ValueContext.from(ctx, functions = Map(d.name.name -> d))
+    if (d.body.isDefined) {
       val body = specializeNode(d.body.get, ctx)
-      val newCtx = ValueContext.from(ctx, functions = Map(d.name.name -> d))
       (d.copy(body = Some(body)), newCtx)
     } else {
-      (d, ctx)
+      (d, newCtx)
     }
   }
   def specializeStructApply(
