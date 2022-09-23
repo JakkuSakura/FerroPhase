@@ -2,6 +2,7 @@ package shll.optimizers
 
 import com.typesafe.scalalogging.Logger
 import shll.ast.*
+import shll.frontends.ParamUtil._
 
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST) extends Exception(msg + ": " + node)
@@ -31,7 +32,8 @@ object ValueContext {
 }
 case class SpecializeCache(
     funcDeclMap: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
-    clsDeclMap: mutable.HashMap[String, Nothing] = mutable.HashMap.empty,
+    structDeclMap: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
+    specializedStructs: mutable.HashMap[String, DefStruct] = mutable.HashMap.empty,
     specializedFunctions: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
     specializeId: mutable.HashMap[String, Int] = mutable.HashMap.empty
 ) {
@@ -82,6 +84,8 @@ case class Specializer() {
       case n: LiteralString => n
       case n: LiteralList => LiteralList(n.value.map(specializeNode(_, ctx)))
       case n: Field => specializeField(n, ctx)
+      case n: DefStruct => specializeDefStruct(n, ctx)
+      case n: Select => specializeSelect(n, ctx)
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -107,6 +111,9 @@ case class Specializer() {
       case id: Ident if cache.funcDeclMap.contains(id.name) =>
         val func = cache.funcDeclMap(id.name)
         specializeFunctionApply(func, n.args, n.kwArgs, ctx)
+      case id: Ident if cache.structDeclMap.contains(id.name) =>
+        val struct = cache.structDeclMap(id.name)
+        specializeStructApply(struct, n.args, n.kwArgs, ctx)
       case _ =>
         val f = specializeNode(n.fun, ctx)
         Apply(
@@ -129,18 +136,10 @@ case class Specializer() {
     Block(stmts)
   }
 
-  def specializeDecl(d: AST, ctx: ValueContext): AST = {
-    logger.debug("Specializing decl " + d)
-    d match {
-      case d: DefFun => specializeDefFun(d, ctx)
-//      case c: AstClassDecl => specializeClassDecl(c, ctx)
-      case _ => throw SpecializeException("cannot specialize ", d)
-    }
+  def specializeDefStruct(c: DefStruct, ctx: ValueContext): DefStruct = {
+    cache.structDeclMap(c.name.name) = c
+    c
   }
-//  def specializeClassDecl(c: AstClassDecl, ctx: ValueContext): AstClassDecl = {
-//    cache.clsDeclMap(c.name) = c
-//    c
-//  }
   def isSpecializedFunctionDecl(d: DefFun): Boolean = {
     d.args match {
       case LiteralList(value) => value.isEmpty
@@ -193,16 +192,30 @@ case class Specializer() {
     (newBody, newCtx)
   }
 
+  def argsToRange(
+      args: LiteralList
+  ): Array[Int] = {
+    args.value.indices.toArray
+  }
+  def argsToKeys(
+      args: LiteralList
+  ): Array[String] = {
+    args.value.map {
+      case a: Field => a.name.name
+      case a => throw SpecializeException("cannot convert to keys", a)
+    }.toArray
+  }
   def specializeFunctionApply(
       func: DefFun,
       args: List[AST],
       kwArgs: List[KeyValue],
       ctx: ValueContext
   ): Apply = {
-    // TODO: process args
-    val mapping = kwArgs.map { a =>
-      a.name.name -> specializeNode(a, ctx)
-    }.toMap
+    val mapping =
+      collectParams(args, kwArgs, argsToRange(func.args), argsToKeys(func.args))
+        .map { case k -> v =>
+          k -> specializeNode(v, ctx)
+        }
     val (newBody, newCtx) = prepareCtx(ctx, mapping, func.body)
     val body = specializeNode(newBody, newCtx)
 
@@ -228,6 +241,34 @@ case class Specializer() {
       d.copy(body = body)
     } else {
       d
+    }
+  }
+  def specializeStructApply(
+      n: DefStruct,
+      args: List[AST],
+      kwArgs: List[KeyValue],
+      ctx: ValueContext
+  ): DefStruct = {
+    val mapping =
+      collectParams(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map { case k -> v =>
+        KeyValue(Ident(k), specializeNode(v, ctx))
+      }.toList
+
+    DefStruct(
+      n.name,
+      n.fields,
+      mapping
+    )
+  }
+  def specializeSelect(n: Select, ctx: ValueContext): AST = {
+    val obj = specializeNode(n.obj, ctx)
+    obj match {
+      case DefStruct(name, fields, values) =>
+        values.find(_.name.name == n.field.name) match {
+          case Some(v) => v.value
+          case None => throw SpecializeException("field not found", n)
+        }
+      case o => o
     }
   }
 }
