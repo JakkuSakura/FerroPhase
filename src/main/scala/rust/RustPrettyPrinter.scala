@@ -35,6 +35,8 @@ case class RustPrettyPrinter() extends PrettyPrinter {
     a match {
       case Apply(f, Nil, kwArgs) =>
         s"${printImpl(f)}{${printDict(kwArgs)}}"
+      case Apply(Ident("print"), List(arg), Nil) =>
+        s"println!(\"{:?}\", ${printImpl(arg)});"
       case Apply(f, args, Nil) =>
         s"${printImpl(f)}(${printList(args)})"
       case Cond(cond, consequence, alternative) =>
