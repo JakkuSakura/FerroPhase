@@ -1,14 +1,23 @@
 package shll.frontends
 
+import com.typesafe.scalalogging.Logger
 import org.antlr.v4.runtime.tree.TerminalNode
 import org.antlr.v4.runtime.{CharStreams, CommonTokenStream}
-import shll.ast._
-import shll._
-import shll.frontends.SHLLParser._
+import shll.ast.*
+import shll.*
+import shll.frontends.SHLLParser.*
 
-import scala.jdk.CollectionConverters._
+import scala.jdk.CollectionConverters.*
 
 case class AntlrAstParser() {
+  val logger: Logger = Logger(this.getClass)
+  def convertBool(ctx: TerminalNode): LiteralBool = {
+    val value = ctx.getText match {
+      case "true" => true
+      case "false" => false
+    }
+    LiteralBool(value, ctx.getText)
+  }
   def convertChar(ctx: TerminalNode): LiteralChar = {
     val char = ctx.getText
     LiteralChar(char.charAt(1), char)
@@ -66,11 +75,16 @@ case class AntlrAstParser() {
     TypeApply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
   }
   def convertTerm(ctx: TermContext): AST = {
+    logger.debug(s"Converting term: ${ctx.getText}")
     ctx match {
       case _ if ctx.CHAR() != null =>
         convertChar(ctx.CHAR())
       case _ if ctx.IDENT() != null =>
-        convertIdent(ctx.IDENT())
+        convertIdent(ctx.IDENT()) match {
+          case Ident("true") => convertBool(ctx.IDENT())
+          case Ident("false") => convertBool(ctx.IDENT())
+          case _ => convertIdent(ctx.IDENT())
+        }
       case _ if ctx.INTEGER() != null =>
         convertInteger(ctx.INTEGER())
       case _ if ctx.DECIMAL() != null =>
@@ -81,6 +95,7 @@ case class AntlrAstParser() {
         convertApply(ctx.apply())
       case _ if ctx.typeApply() != null =>
         convertTypeApply(ctx.typeApply())
+
     }
   }
   def parse(s: String): AST = {

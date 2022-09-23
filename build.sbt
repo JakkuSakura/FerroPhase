@@ -44,4 +44,4 @@ libraryDependencies += "org.apache.commons" % "commons-text" % "1.9"
 libraryDependencies += "org.junit.jupiter" % "junit-jupiter-api" % "5.9.0" % Test
 
 // https://mvnrepository.com/artifact/org.antlr/antlr4-runtime
-libraryDependencies += "org.antlr" % "antlr4-runtime" % "4.10.1"
+libraryDependencies += "org.antlr" % "antlr4-runtime" % "4.11.1"

@@ -9,7 +9,7 @@ import shll.frontends.ShllLexerAndParser
 import shll.optimizers.Specializer
 
 class ShllAstTest {
-  val pp: PrettyPrinter = RustPrettyPrinter()
+  val pp: PrettyPrinter = ShllPrettyPrinter()
   val showProgress = true
   def printAst(input: AST): Unit = {
     println(pp.print(input))
@@ -72,4 +72,22 @@ class ShllAstTest {
     )
   }
 
+  @Test def testIfElse(): Unit = {
+    specializedEquals(
+      """
+        |(if true 1 2)
+        |""".stripMargin,
+      """
+        |1
+        |""".stripMargin
+    )
+    specializedEquals(
+      """
+        |(if false 1 2)
+        |""".stripMargin,
+      """
+        |2
+        |""".stripMargin
+    )
+  }
 }
