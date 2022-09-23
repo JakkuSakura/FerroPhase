@@ -75,6 +75,8 @@ case class ShllPrettyPrinter(
         s"(assign ${target.name} ${printImpl(value)})"
       case DefStruct(name, fields, Nil) =>
         s"(def-struct ${name.name} ${printImpl(fields)})"
+      case DefType(name, value) =>
+        s"(def-type ${name.name} ${printImpl(value)})"
       case DefStruct(name, fields, values) =>
         printImpl(Apply(name, Nil, values))
       case Select(obj, field) =>
