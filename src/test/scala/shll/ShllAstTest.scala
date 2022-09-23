@@ -153,4 +153,18 @@ class ShllAstTest {
       "0"
     )
   }
+
+  @Test def testList(): Unit = {
+    specializedEquals(
+      "(list (+ 1 2))",
+      "(list 3)"
+    )
+  }
+
+  @Test def testForLoop(): Unit = {
+    specializedEquals(
+      "(for i (list 1 2 3) (print i))",
+      "(block (print 1) (print 2) (print 3))"
+    )
+  }
 }

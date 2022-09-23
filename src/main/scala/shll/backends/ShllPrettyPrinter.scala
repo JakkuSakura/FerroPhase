@@ -33,7 +33,7 @@ case class ShllPrettyPrinter(
         s"[(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)}]"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
-      case ForIn(target, iter, body) =>
+      case ForEach(target, iter, body) =>
         s"(for ${target.name} ${printImpl(iter)} ${printImpl(body)})"
       case Block(Nil) =>
         "(block)"
