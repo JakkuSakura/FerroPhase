@@ -154,6 +154,14 @@ class TestSpecializer {
     )
   }
 
+  @Test def testForLoopRange(): Unit = {
+    specializedEquals(
+      "(for i (range 0 10) (print i))",
+      "(for i (range 0 10) (print i))"
+    )
+  }
+
+
   @Test def testVariable(): Unit = {
     specializedEquals(
       "(block (def-val i 5) i)",

@@ -42,7 +42,7 @@ case class RustRunnerBackend(time: Boolean = true) extends Backend {
     if (!code.contains("fn main()")) {
       code = augmentWithPrint(code)
     }
-
+    code = Rustfmt().rustfmt(code)
     val path = Files.createTempFile("", "")
     logger.debug("Compiling to " + path + "\n" + code)
     RustCompiler().compileTo(code, path.toFile)
