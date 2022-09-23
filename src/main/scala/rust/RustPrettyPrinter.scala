@@ -2,13 +2,15 @@ package rust
 
 import shll.*
 import shll.ast.*
-import shll.backends.PrettyPrinter
+import shll.backends.{PrettyPrinter, TextTool}
 
 import java.lang.ProcessBuilder.Redirect
 import scala.io.Source
 
 case class RustPrettyPrinter() extends PrettyPrinter {
   val IDENT = "  "
+  val NL = "\n"
+  val textTool: TextTool = TextTool(NL = NL, INDENT = IDENT)
   def printList(l: List[AST]): String = {
     l.map(printImpl).mkString(", ")
   }
@@ -42,16 +44,18 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"print!(\"{:?} \", ${printImpl(arg)});"
       case Apply(Ident("range"), List(lhs, rhs), Nil) =>
         s"${printImpl(lhs)}..${printImpl(rhs)}"
+      case Apply(Ident("+"), List(lhs, rhs), Nil) =>
+        s"(${printImpl(lhs)}+${printImpl(rhs)})"
       case Apply(f, args, Nil) =>
         s"${printImpl(f)}(${printList(args)})"
       case Cond(cond, consequence, alternative) =>
         s"if ${printImpl(cond)} { ${printImpl(consequence)} } else {${printImpl(alternative)}}"
       case ForEach(target, iter, body) =>
-        s"for ${target.name} in ${printImpl(iter)} {\n ${printImpl(body)} \n}"
+        s"for ${target.name} in ${printImpl(iter)} {$NL ${textTool.indent(printImpl(body))} $NL}"
       case Block(Nil) =>
         "{}"
       case Block(body) =>
-        s"{\n${body.map(x => IDENT + printImpl(x)).mkString("\n")}\n}"
+        s"{$NL${body.map(x => IDENT + printImpl(x)).mkString(NL)}$NL}"
       case Ident(name) =>
         name
       case LiteralInt(v, _) =>
@@ -72,7 +76,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case a: TypeApply =>
         printType(a)
       case DefVal(name, body) =>
-        s"let ${name.name} = ${printImpl(body)};"
+        s"let mut ${name.name} = ${printImpl(body)};"
       case DefFun(name, args, ret, body) =>
         s"fn ${name.name}(${printList(args.value)}) -> ${printImpl(ret)}" + (body match {
           case Some(b) => s" { ${printImpl(b)} }"
@@ -81,10 +85,10 @@ case class RustPrettyPrinter() extends PrettyPrinter {
 
       case Assign(target, value) =>
         s"${target.name} = ${printImpl(value)}"
-      case DefStruct(name, fields, Nil) =>
+      case DefStruct(name, fields) =>
         s"struct ${name.name} { ${printList(fields.value)} }"
-      case DefStruct(name, fields, values) =>
-        s"${name.name} { ${values
+      case StructApply(s, values) =>
+        s"${printImpl(s)} { ${values
             .map(x => s"${x.name} = ${printImpl(x.value)}")
             .mkString(", ")} " +
           s"}"

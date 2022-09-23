@@ -3,10 +3,10 @@ package shll.optimizers
 import shll.ast.{AST, DefFun, DefStruct}
 
 case class ValueContext(
-    private val values: Map[String, AST] = Map.empty,
-    private val tyValues: Map[String, AST] = Map.empty,
-    private val functions: Map[String, DefFun] = Map.empty,
-    private val structs: Map[String, DefStruct] = Map.empty,
+    private var values: Map[String, AST] = Map.empty,
+    private var tyValues: Map[String, AST] = Map.empty,
+    private var functions: Map[String, DefFun] = Map.empty,
+    private var structs: Map[String, DefStruct] = Map.empty,
     private val parent: Option[ValueContext] = None
 ) {
   def getParent: Option[this.type] = parent.asInstanceOf[Option[this.type]]
@@ -15,6 +15,16 @@ case class ValueContext(
   }
   def withValues(values: Map[String, AST]): ValueContext = {
     ValueContext(values, tyValues, functions, structs, Some(this))
+  }
+  def updateValue(name: String, value: AST): Unit = {
+    if (values.contains(name)) {
+      values = values + (name -> value)
+    } else {
+      parent match {
+        case Some(p) => p.updateValue(name, value)
+        case None => throw new RuntimeException(s"Cannot find value $name to update")
+      }
+    }
   }
   def getTyValue(name: String): Option[AST] = {
     tyValues.get(name).orElse(parent.flatMap(_.getTyValue(name)))
