@@ -75,7 +75,7 @@ case class AntlrAstParser() {
     TypeApply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
   }
   def convertTerm(ctx: TermContext): AST = {
-    logger.debug(s"Converting term: ${ctx.getText}")
+//    logger.debug(s"Converting term: ${ctx.getText}")
     ctx match {
       case _ if ctx.CHAR() != null =>
         convertChar(ctx.CHAR())
