@@ -8,12 +8,14 @@ import shll.frontends.ParamUtil.*
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST) extends Exception(msg + ": " + node)
 case class ValueContext(
-    values: Map[String, AST] = Map.empty,
-    tyValues: Map[String, AST] = Map.empty,
-    functions: Map[String, DefFun] = Map.empty,
-    structs: Map[String, DefStruct] = Map.empty,
-    parent: Option[ValueContext] = None
+    private val values: Map[String, AST] = Map.empty,
+    private val tyValues: Map[String, AST] = Map.empty,
+    private val functions: Map[String, DefFun] = Map.empty,
+    private val structs: Map[String, DefStruct] = Map.empty,
+    private val cache: Option[SpecializeCache] = None,
+    private val parent: Option[ValueContext] = None
 ) {
+  def getCache: SpecializeCache = cache.getOrElse(parent.map(_.getCache).get)
   def getValue(name: String): Option[AST] = {
     values.get(name).orElse(parent.flatMap(_.getValue(name)))
   }
@@ -35,10 +37,17 @@ object ValueContext {
       values: Map[String, AST] = Map.empty,
       tyValues: Map[String, AST] = Map.empty,
       functions: Map[String, DefFun] = Map.empty,
-      structs: Map[String, DefStruct] = Map.empty
+      structs: Map[String, DefStruct] = Map.empty,
+      specializeCache: Option[SpecializeCache] = None
   ): ValueContext = {
-    ValueContext(values, tyValues, functions, structs,Some(parent))
-
+    ValueContext(
+      values,
+      tyValues,
+      functions,
+      structs,
+      specializeCache,
+      Some(parent)
+    )
   }
 }
 case class SpecializeCache(
@@ -47,6 +56,7 @@ case class SpecializeCache(
     specializedFunctions: mutable.HashMap[String, DefFun] = mutable.HashMap.empty,
     specializeId: mutable.HashMap[String, Int] = mutable.HashMap.empty
 ) {
+  println("SpecializeCache " + this.hashCode())
   def getAndIncrSpecializeId(name: String): Int = {
     specializeId.get(name) match {
       case Some(id) =>
@@ -67,7 +77,6 @@ case class SpecializeCache(
 case class Specializer() {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
-  private val cache: SpecializeCache = SpecializeCache()
 
   val builtinFunctions: Map[String, (Apply, ValueContext) => AST] = Map(
     "==" -> binaryOperator { (apply, lhs, rhs) =>
@@ -188,7 +197,7 @@ case class Specializer() {
     val newApply = TypeApply(apply.fun, List(value), Nil)
     if (isKnownType(apply.fun, ctx) && isKnownType(value, ctx)) {
       val newName = Ident(getTypeName(apply.fun, ctx) + "_" + getTypeName(value, ctx))
-      cache.specializedTypes += newName.name -> DefType(newName, newApply)
+      ctx.getCache.specializedTypes += newName.name -> DefType(newName, newApply)
       TypeApply(newName, Nil, Nil)
     } else {
       newApply
@@ -198,22 +207,8 @@ case class Specializer() {
     apply
   }
   def specialize(n: AST): AST = {
-    cache.specializedTypes.clear()
-    cache.specializedFunctions.clear()
-    cache.specializeId.clear()
-    cache.specializedStructs.clear()
+    specializeNode(n, ValueContext.empty)
 
-    val v = specializeNode(n, ValueContext.empty)
-    val specialized: List[AST] =
-      cache.specializedFunctions.values.toList ::: cache.specializedTypes.values.toList
-    if (specialized.isEmpty) {
-      v
-    } else
-      v match {
-        case decls: Block =>
-          Block(specialized ::: decls.body)
-        case o: AST => Block(specialized :+ o)
-      }
   }
 
   def specializeNode(n: AST, ctx: ValueContext): AST = {
@@ -293,40 +288,39 @@ case class Specializer() {
         )
     }
   }
-  def specializeBlock(d: Block, ctx: ValueContext): Block = {
-    var ctx1 = ctx
+  def specializeBlock(d: Block, ctx0: ValueContext): Block = {
+    val cache = SpecializeCache()
+    var ctx = ValueContext.from(ctx0, specializeCache = Some(cache))
     val stmts = d.body.map {
       case s: DefVal =>
-        val (x, ctx2) = specializeDefVal(s, ctx1)
-        ctx1 = ctx2
+        val (x, newCtx) = specializeDefVal(s, ctx)
+        ctx = newCtx
         x
       case s: Assign =>
-        val (x, ctx2) = specializeDefVal(DefVal(s.name, s.value), ctx1)
-        ctx1 = ctx2
+        val (x, newCtx) = specializeDefVal(DefVal(s.name, s.value), ctx)
+        ctx = newCtx
         Assign(x.name, x.value)
       case d: DefFun =>
-        val (x, ctx2) = specializeDefFun(d, ctx)
-        ctx1 = ctx2
+        val (x, newCtx) = specializeDefFun(d, ctx)
+        ctx = newCtx
         x
       case n: DefStruct =>
-        val (x, ctx2) = specializeDefStruct(n, ctx)
-        ctx1 = ctx2
+        val (x, newCtx) = specializeDefStruct(n, ctx)
+        ctx = newCtx
         x
       case s =>
-        specializeNode(s, ctx1)
+        specializeNode(s, ctx)
     }
-    Block(stmts)
+
+    Block(
+      cache.specializedFunctions.values.toList ::: cache.specializedTypes.values.toList ::: stmts
+    )
   }
 
   def specializeDefStruct(c: DefStruct, ctx: ValueContext): (DefStruct, ValueContext) = {
     (c, ValueContext.from(ctx, structs = Map(c.name.name -> c)))
   }
-  def isSpecializedFunctionDecl(d: DefFun): Boolean = {
-    d.args match {
-      case LiteralList(value) => value.isEmpty
-//      case _ => false
-    }
-  }
+
   def isConstant(n: AST): Boolean = {
     n match {
       case _: LiteralInt => true
@@ -409,12 +403,12 @@ case class Specializer() {
 
     val newFunc = func
       .copy(
-        name = cache.allocateSpecializedIdent(func.name.name),
+        name = ctx.getCache.allocateSpecializedIdent(func.name.name),
         body = Some(body),
         args = LiteralList(Nil),
         ret = func.ret
       )
-    cache.specializedFunctions(newFunc.name.name) = newFunc
+    ctx.getCache.specializedFunctions(newFunc.name.name) = newFunc
     Apply(newFunc.name, Nil, Nil)
   }
 
