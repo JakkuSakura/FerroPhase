@@ -56,7 +56,22 @@ case class SpecializeCache(
 
 case class Specializer() {
   var logger: Logger = Logger[this.type]
-  var cache: SpecializeCache = SpecializeCache()
+  private var cache: SpecializeCache = SpecializeCache()
+  val builtinFunctions: Map[String, Apply => AST] = Map(
+    "==" -> { (apply: Apply) =>
+      checkArguments(apply, Array(0, 1), Array("lhs", "rhs"))
+      val lhs = getArg(apply, 0, "lhs")
+      val rhs = getArg(apply, 1, "rhs")
+      if (isConstant(lhs) && isConstant(rhs)) {
+        if (lhs == rhs)
+          LiteralBool(true)
+        else
+          LiteralBool(false)
+      } else {
+        apply
+      }
+    }
+  )
   def specialize(n: AST): AST = {
     cache = SpecializeCache()
     val v = specializeNode(n, ValueContext())
@@ -76,7 +91,6 @@ case class Specializer() {
     n match {
       case d: DefFun => specializeDefFun(d, ctx)
       case n: Block => specializeBlock(n, ctx)
-//      case ds: AstDecls => AstDeclsImpl(ds.decls.map(specializeDecl(_, ctx)))
       case n: Apply => specializeApply(n, ctx)
       case n: Ident => specializeIdent(n, ctx)
       case n: LiteralInt => n
@@ -110,6 +124,9 @@ case class Specializer() {
 
   def specializeApply(n: Apply, ctx: ValueContext): AST = {
     n.fun match {
+      case id: Ident if builtinFunctions.contains(id.name) =>
+        val fn = builtinFunctions(id.name)
+        fn(n)
       case id: Ident if cache.funcDeclMap.contains(id.name) =>
         val func = cache.funcDeclMap(id.name)
         specializeFunctionApply(func, n.args, n.kwArgs, ctx)
@@ -151,8 +168,11 @@ case class Specializer() {
   def isConstant(n: AST): Boolean = {
     n match {
       case _: LiteralInt => true
+      case _: LiteralBool => true
       case _: LiteralDecimal => true
+      case _: LiteralChar => true
       case _: LiteralString => true
+      case x: LiteralList => x.value.map(isConstant).forall(identity)
       case _ => false
     }
   }
@@ -214,11 +234,15 @@ case class Specializer() {
       ctx: ValueContext
   ): Apply = {
     val mapping =
-      collectParams(args, kwArgs, argsToRange(func.args), argsToKeys(func.args))
+      collectArguments(args, kwArgs, argsToRange(func.args), argsToKeys(func.args))
         .map { case k -> v =>
           k -> specializeNode(v, ctx)
         }
-    val (newBody, newCtx) = prepareCtx(ctx, mapping, func.body.getOrElse(throw SpecializeException("cannot specialize: empty body", func)))
+    val (newBody, newCtx) = prepareCtx(
+      ctx,
+      mapping,
+      func.body.getOrElse(throw SpecializeException("cannot specialize: empty body", func))
+    )
     val body = specializeNode(newBody, newCtx)
 
     val newFunc = func
@@ -252,7 +276,7 @@ case class Specializer() {
       ctx: ValueContext
   ): DefStruct = {
     val mapping =
-      collectParams(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map { case k -> v =>
+      collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map { case k -> v =>
         KeyValue(Ident(k), specializeNode(v, ctx))
       }.toList
 
@@ -276,8 +300,8 @@ case class Specializer() {
   def specializeCond(n: Cond, ctx: ValueContext): AST = {
     val cond = specializeNode(n.cond, ctx)
     cond match {
-      case LiteralBool(true, _) => specializeNode(n.consequence, ctx)
-      case LiteralBool(false, _) => specializeNode(n.alternative, ctx)
+      case LiteralBool(true) => specializeNode(n.consequence, ctx)
+      case LiteralBool(false) => specializeNode(n.alternative, ctx)
       case _ =>
         Cond(
           cond,

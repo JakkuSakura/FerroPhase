@@ -21,10 +21,10 @@ case object ParamUtil {
       case _ => throw ParserException("Expected Ident, got: " + getArg(a, pos, key))
     }
 
-  def checkParams(a: Apply, knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
-    collectParams(a.args, a.kwArgs, knownArgs, knownKwArgs)
+  def checkArguments(a: Apply, knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
+    collectArguments(a.args, a.kwArgs, knownArgs, knownKwArgs)
   }
-  def collectParams(args: List[AST], kwArgs: List[KeyValue], knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
+  def collectArguments(args: List[AST], kwArgs: List[KeyValue], knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
     val res = collection.mutable.Map[String, AST]()
     for (i <- args.indices) {
       knownArgs.lift(i) match {

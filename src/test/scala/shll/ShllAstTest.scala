@@ -90,4 +90,23 @@ class ShllAstTest {
         |""".stripMargin
     )
   }
+
+  @Test def testEq(): Unit = {
+    specializedEquals(
+      """
+        |(== 1 2)
+        |""".stripMargin,
+      """
+        |false
+        |""".stripMargin
+    )
+    specializedEquals(
+      """
+        |(== 1 1)
+        |""".stripMargin,
+      """
+        |true
+        |""".stripMargin
+    )
+  }
 }
