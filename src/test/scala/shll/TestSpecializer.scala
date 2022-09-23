@@ -15,20 +15,21 @@ class TestSpecializer {
     println(pp.print(input))
   }
   def optimize(node: AST): AST = {
+    if (showProgress)
+      println(s"Optimizing " + pp.print(node))
     val specialized = Specializer().specialize(node)
+    if (showProgress)
+      println(s"Eliminating " + pp.print(specialized))
     val eliminated = DeadCodeEliminator().eliminate(specialized)
+    if (showProgress)
+      println(s"Optimized " + pp.print(eliminated))
     eliminated
   }
   def specializedEquals(input: String, expected: String): Unit = {
     if (showProgress)
         println(s"Parsing $input")
     val ast = ShllLexerAndParser().parse(input)
-    if (showProgress)
-        println(s"Specializing " + pp.print(ast))
     val optimized = optimize(ast)
-
-    if (showProgress)
-        println(s"Optimized " + pp.print(optimized))
     val optimizedPrinted = pp.print(optimized)
     val exp = ShllLexerAndParser().parse(expected)
     val expectedPrinted = pp.print(exp)
