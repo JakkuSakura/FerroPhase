@@ -81,6 +81,10 @@ case class ShllPrettyPrinter(
         s"(def-struct ${name.name} ${printImpl(fields)})"
       case DefType(name, value) =>
         s"(def-type ${name.name} ${printImpl(value)})"
+      case FunApply(args, ret, body) =>
+        s"(fun ${printImpl(args)} ${printImpl(ret)} ${printImpl(body)})"
+      case LiteralUnknown() =>
+        "???"
       case StructApply(name, values) =>
         printImpl(Apply(name, Nil, values))
       case Select(obj, field) =>
