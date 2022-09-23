@@ -47,8 +47,8 @@ case class ShllPrettyPrinter() extends PrettyPrinter {
         raw
       case LiteralString(_, raw) =>
         raw
-      case LiteralBool(_, raw) =>
-        raw
+      case LiteralBool(x) =>
+        x.toString
       case LiteralList(Nil) =>
         s"(list)"
       case LiteralList(value) =>

@@ -11,12 +11,12 @@ import scala.jdk.CollectionConverters.*
 
 case class AntlrAstParser() {
   val logger: Logger = Logger(this.getClass)
-  def convertBool(ctx: TerminalNode): LiteralBool = {
-    val value = ctx.getText match {
-      case "true" => true
-      case "false" => false
+  def convertBool(ctx: TerminalNode): Option[LiteralBool] = {
+    ctx.getText match {
+      case "true" => Some(LiteralBool(true))
+      case "false" => Some(LiteralBool(false))
+      case _ => None
     }
-    LiteralBool(value, ctx.getText)
   }
   def convertChar(ctx: TerminalNode): LiteralChar = {
     val char = ctx.getText
@@ -80,11 +80,8 @@ case class AntlrAstParser() {
       case _ if ctx.CHAR() != null =>
         convertChar(ctx.CHAR())
       case _ if ctx.IDENT() != null =>
-        convertIdent(ctx.IDENT()) match {
-          case Ident("true") => convertBool(ctx.IDENT())
-          case Ident("false") => convertBool(ctx.IDENT())
-          case _ => convertIdent(ctx.IDENT())
-        }
+        convertBool(ctx.IDENT())
+          .getOrElse(convertIdent(ctx.IDENT()))
       case _ if ctx.INTEGER() != null =>
         convertInteger(ctx.INTEGER())
       case _ if ctx.DECIMAL() != null =>

@@ -6,7 +6,7 @@ trait AST
 case class Ident(name: String) extends AST
 // basic elements
 case class LiteralInt(value: Int, raw: String) extends AST
-case class LiteralBool(value: Boolean, raw: String) extends AST
+case class LiteralBool(value: Boolean) extends AST
 case class LiteralDecimal(value: Double, raw: String) extends AST
 case class LiteralChar(value: Char, raw: String) extends AST
 case class LiteralString(value: String, raw: String) extends AST
