@@ -89,65 +89,65 @@ case class Specializer(
     },
     ">" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l > r)
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l > r)
+        case (LiteralInt(l), LiteralInt(r)) => LiteralBool(l > r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralBool(l > r)
         case _ => apply
       }
     },
     ">=" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l >= r)
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l >= r)
+        case (LiteralInt(l), LiteralInt(r)) => LiteralBool(l >= r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralBool(l >= r)
         case _ => apply
       }
     },
     "<" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l < r)
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l < r)
+        case (LiteralInt(l), LiteralInt(r)) => LiteralBool(l < r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralBool(l < r)
         case _ => apply
       }
     },
     "<=" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralBool(l <= r)
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralBool(l <= r)
+        case (LiteralInt(l), LiteralInt(r)) => LiteralBool(l <= r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralBool(l <= r)
         case _ => apply
       }
     },
     "+" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l + r, s"(+ $lr $rr)")
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l + r, s"(+ $lr $rr)")
-        case (LiteralString(l, lr), LiteralString(r, rr)) => LiteralString(l + r, s"(+ $lr $rr)")
+        case (LiteralInt(l), LiteralInt(r)) => LiteralInt(l + r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralDecimal(l + r)
+        case (LiteralString(l), LiteralString(r)) => LiteralString(l + r)
         case _ => apply
       }
     },
     "-" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l - r, s"(- $lr $rr)")
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l - r, s"(- $lr $rr)")
+        case (LiteralInt(l), LiteralInt(r)) => LiteralInt(l - r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralDecimal(l - r)
         case _ => apply
       }
     },
     "*" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l * r, s"(* $lr $rr)")
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l * r, s"(* $lr $rr)")
+        case (LiteralInt(l), LiteralInt(r)) => LiteralInt(l * r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralDecimal(l * r)
         case _ => apply
       }
     },
     "/" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l / r, s"(/ $lr $rr)")
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l / r, s"(/ $lr $rr)")
+        case (LiteralInt(l), LiteralInt(r)) => LiteralInt(l / r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralDecimal(l / r)
         case _ => apply
       }
     },
     "%" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       (lhs, rhs) match {
-        case (LiteralInt(l, lr), LiteralInt(r, rr)) => LiteralInt(l % r, s"(% $lr $rr)")
-        case (LiteralDecimal(l, lr), LiteralDecimal(r, rr)) => LiteralDecimal(l % r, s"(% $lr $rr)")
+        case (LiteralInt(l), LiteralInt(r)) => LiteralInt(l % r)
+        case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralDecimal(l % r)
         case _ => apply
       }
     }
@@ -163,7 +163,7 @@ case class Specializer(
       fn(a, lhs, rhs, ctx.context)
     }
   }
-  val builtinTypes: Map[String, (TypeApply, SpecializeContext) => AST] = Map(
+  val builtinTypes: Map[String, (ApplyType, SpecializeContext) => AST] = Map(
     "int" -> simpleType,
     "bool" -> simpleType,
     "numeric" -> simpleType,
@@ -176,21 +176,21 @@ case class Specializer(
   def getTypeName(n: AST, ctx: SpecializeContext): String = {
     n match {
       case Ident(name) => ctx.context.getType(name).map(getTypeName(_, ctx)).getOrElse(builtinTypes.keys.filter(_ == name).head)
-      case TypeApply(Ident(name), args, kwArgs) => getTypeName(Ident(name), ctx)
+      case ApplyType(Ident(name), args, kwArgs) => getTypeName(Ident(name), ctx)
       case _ => throw SpecializeException("Unknown type name", n)
     }
   }
   def isKnownType(n: AST, ctx: SpecializeContext): Boolean = {
     n match {
       case Ident(name) => ctx.context.getType(name).isDefined || builtinTypes.contains(name)
-      case TypeApply(Ident(name), args, kwArgs) => isKnownType(Ident(name), ctx) && args.forall(isKnownType(_, ctx)) && kwArgs.forall(x => isKnownType(x.value, ctx))
+      case ApplyType(Ident(name), args, kwArgs) => isKnownType(Ident(name), ctx) && args.forall(isKnownType(_, ctx)) && kwArgs.forall(x => isKnownType(x.value, ctx))
       case _ => false
     }
   }
-  def simpleGenericType: (TypeApply, SpecializeContext) => AST = { (apply, ctx) =>
+  def simpleGenericType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
     val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
-    val newApply = TypeApply(apply.fun, List(value), Nil)
+    val newApply = ApplyType(apply.fun, List(value), Nil)
     if (
       isKnownType(apply.fun, ctx) && isKnownType(
         value,
@@ -200,21 +200,21 @@ case class Specializer(
       val newName = ctx.getCache.allocateSpecializedIdent(getTypeName(apply.fun, ctx))
 
       ctx.getCache.specializedTypes += newName.name -> DefType(newName, newApply)
-      TypeApply(newName, Nil, Nil)
+      ApplyType(newName, Nil, Nil)
     } else {
       newApply
     }
   }
 
-  def funcType: (TypeApply, SpecializeContext) => AST = { (apply, ctx) =>
+  def funcType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("params", "return"))
     val params = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
     val returns = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
 
-    val newApply = TypeApply(apply.fun, List(params, returns), Nil)
+    val newApply = ApplyType(apply.fun, List(params, returns), Nil)
     newApply
   }
-  def simpleType: (TypeApply, SpecializeContext) => AST = { (apply, ctx) =>
+  def simpleType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
     apply
   }
   def specialize(n: AST): AST = {
@@ -237,9 +237,9 @@ case class Specializer(
       case n: Select => specializeSelect(n, ctx)
       case n: Cond => specializeCond(n, ctx)
       case n: ForEach => specializeForEach(n, ctx)
-      case n: TypeApply => specializeTypeApply(n, ctx)
+      case n: ApplyType => specializeTypeApply(n, ctx)
       case n: Assign => specializeAssign(n, ctx)._1
-      case n: FunApply => specializeFunApply(n, ctx)
+      case n: ApplyFun => specializeFunApply(n, ctx)
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -290,7 +290,7 @@ case class Specializer(
     }
   }
 
-  def specializeTypeApply(n: TypeApply, ctx: SpecializeContext): AST = {
+  def specializeTypeApply(n: ApplyType, ctx: SpecializeContext): AST = {
     n.fun match {
       case Ident(name) if builtinTypes.contains(name) =>
         val ty = builtinTypes(name)
@@ -413,14 +413,14 @@ case class Specializer(
       args: List[AST],
       kwArgs: List[KeyValue],
       ctx: SpecializeContext
-  ): StructApply = {
+  ): ApplyStruct = {
     val mapping =
       collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map {
         case k -> v =>
           KeyValue(Ident(k), specializeNode(v, ctx))
       }.toList
 
-    StructApply(
+    ApplyStruct(
       n.name,
       mapping
     )
@@ -428,7 +428,7 @@ case class Specializer(
   def specializeSelect(n: Select, ctx: SpecializeContext): AST = {
     val obj = specializeNode(n.obj, ctx)
     obj match {
-      case StructApply(name, values) =>
+      case ApplyStruct(name, values) =>
         values.find(_.name.name == n.field.name) match {
           case Some(v) => v.value
           case None => throw SpecializeException("field not found", n)
@@ -497,10 +497,10 @@ case class Specializer(
     val newCtx = ctx.withTypes(Map(n.name.name -> n))
     (t, newCtx)
   }
-  def specializeFunApply(n: FunApply, ctx: SpecializeContext): AST = {
+  def specializeFunApply(n: ApplyFun, ctx: SpecializeContext): AST = {
     val args = specializeNode(n.args, ctx).asInstanceOf[LiteralList]
     val returns = specializeNode(n.ret, ctx)
     val body = specializeNode(n.body, ctx)
-    FunApply(args, returns, body)
+    ApplyFun(args, returns, body)
   }
 }

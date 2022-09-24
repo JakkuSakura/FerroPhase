@@ -11,46 +11,45 @@ import scala.jdk.CollectionConverters.*
 
 case class AntlrAstParser() {
   val logger: Logger = Logger(this.getClass)
-  def convertBool(ctx: TerminalNode): Option[LiteralBool] = {
-    ctx.getText match {
-      case "true" => Some(LiteralBool(true))
-      case "false" => Some(LiteralBool(false))
+  def convertBool(n: TerminalNode): Option[LiteralBool] = {
+    n.getText match {
+      case "true" => Some(LiteralBool(true).withToken(n.getSymbol))
+      case "false" => Some(LiteralBool(false).withToken(n.getSymbol))
       case _ => None
     }
   }
-  def convertChar(ctx: TerminalNode): LiteralChar = {
-    val char = ctx.getText
-    LiteralChar(char.charAt(1), char)
+  def convertChar(n: TerminalNode): LiteralChar = {
+    val char = n.getText
+    LiteralChar(char.charAt(1)).withToken(n.getSymbol)
   }
 
-  def convertString(ctx: TerminalNode): LiteralString = {
-    val string = ctx.getText
-    LiteralString(string.substring(1, string.length - 1), string)
+  def convertString(n: TerminalNode): LiteralString = {
+    val string = n.getText
+    LiteralString(string.substring(1, string.length - 1)).withToken(n.getSymbol)
 
   }
-  def convertIdent(ctx: TerminalNode): Ident = {
-    val ident = ctx.getText
-    Ident(ident)
+  def convertIdent(n: TerminalNode): Ident = {
+    val ident = n.getText
+    Ident(ident).withToken(n.getSymbol)
   }
-  def convertInteger(ctx: TerminalNode): LiteralInt = {
-    val integer = ctx.getText
+  def convertInteger(n: TerminalNode): LiteralInt = {
+    val integer = n.getText
     LiteralInt(
       integer.toIntOption.getOrElse(
-        throw IllegalArgumentException(s"Invalid integer at ${ctx.getSymbol}: $integer")
-      ),
-      integer
-    )
+        throw ParserException(s"Invalid integer at ${n.getSymbol}: $integer")
+      )
+    ).withToken(n.getSymbol)
 
   }
 
-  def convertDecimal(ctx: TerminalNode): LiteralDecimal = {
-    val decimal = ctx.getText
+  def convertDecimal(n: TerminalNode): LiteralDecimal = {
+    val decimal = n.getText
     LiteralDecimal(
       decimal.toDoubleOption.getOrElse(
-        throw IllegalArgumentException(s"Invalid decimal at ${ctx.getSymbol}: $decimal")
+        throw ParserException(s"Invalid decimal at ${n.getSymbol}: $decimal")
       ),
-      decimal
-    )
+
+    ).withToken(n.getSymbol)
 
   }
 
@@ -61,7 +60,7 @@ case class AntlrAstParser() {
   def convertKwArg(ctx: KwArgContext): KeyValue = {
     val ident = convertIdent(ctx.IDENT())
     val expr = convertTerm(ctx.term())
-    KeyValue(ident, expr)
+    KeyValue(ident, expr).withToken(ctx.getStart)
   }
 
   def convertKwArgs(ctx: KwArgsContext): List[KeyValue] = {
@@ -69,10 +68,12 @@ case class AntlrAstParser() {
   }
   def convertApply(ctx: ApplyContext): Apply = {
     Apply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
+      .withToken(ctx.getStart)
   }
 
-  def convertTypeApply(ctx: TypeApplyContext): TypeApply = {
-    TypeApply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
+  def convertApplyType(ctx: ApplyTypeContext): ApplyType = {
+    ApplyType(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
+      .withToken(ctx.getStart)
   }
   def convertTerm(ctx: TermContext): AST = {
 //    logger.debug(s"Converting term: ${ctx.getText}")
@@ -90,8 +91,8 @@ case class AntlrAstParser() {
         convertString(ctx.STRING())
       case _ if ctx.apply() != null =>
         convertApply(ctx.apply())
-      case _ if ctx.typeApply() != null =>
-        convertTypeApply(ctx.typeApply())
+      case _ if ctx.applyType() != null =>
+        convertApplyType(ctx.applyType())
 
     }
   }

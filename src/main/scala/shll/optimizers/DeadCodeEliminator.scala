@@ -33,10 +33,10 @@ case class DeadCodeEliminator() {
       case n: Select => eliminateSelect(n, flow.contextHistory.getOrElse(n, ctx))
       case n: Cond => eliminateCond(n, flow.contextHistory.getOrElse(n, ctx))
       case n: ForEach => eliminateForEach(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: TypeApply => eliminateTypeApply(n, flow.contextHistory.getOrElse(n, ctx))
+      case n: ApplyType => eliminateTypeApply(n, flow.contextHistory.getOrElse(n, ctx))
       case n: DefType => eliminateDefType(n, flow.contextHistory.getOrElse(n, ctx))
       case n: Assign => eliminateAssign(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: FunApply => eliminateFunApply(n, flow.contextHistory.getOrElse(n, ctx))
+      case n: ApplyFun => eliminateFunApply(n, flow.contextHistory.getOrElse(n, ctx))
       case x => throw SpecializeException("cannot eliminate", x)
     }
     val orig = pp.print(n)
@@ -64,7 +64,7 @@ case class DeadCodeEliminator() {
     n
   }
 
-  def eliminateTypeApply(n: TypeApply, ctx: FlowAnalysisContext): AST = { n }
+  def eliminateTypeApply(n: ApplyType, ctx: FlowAnalysisContext): AST = { n }
 
   def eliminateDefType(n: DefType, ctx: FlowAnalysisContext): AST = {
     n
@@ -117,11 +117,11 @@ case class DeadCodeEliminator() {
     val ass = Assign(n.name, value)
     ass
   }
-  def eliminateFunApply(n: FunApply, ctx: FlowAnalysisContext): AST = {
+  def eliminateFunApply(n: ApplyFun, ctx: FlowAnalysisContext): AST = {
     val args = eliminateNode(n.args, ctx).asInstanceOf[LiteralList]
     val ret = eliminateNode(n.ret, ctx)
     val body = eliminateNode(n.body, ctx)
-    val newApply = FunApply(args, ret, body)
+    val newApply = ApplyFun(args, ret, body)
     newApply
   }
 }

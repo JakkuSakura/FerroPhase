@@ -12,11 +12,11 @@ STRING: '"' ([^"]|'\\"')* '"';
 CHAR: '\'' ([^"]|'\\"'|'\\'.+?) '\'';
 WS : (' ' | '\t' | '\n' )+ -> skip;
 
-term: apply | typeApply | IDENT | INTEGER | DECIMAL | STRING | CHAR ;
+term: apply | applyType | IDENT | INTEGER | DECIMAL | STRING | CHAR ;
 kwArg: IDENT '=' term;
 kwArgs: kwArg *;
 posArgs: term *;
 apply: '(' term posArgs kwArgs ')';
-typeApply: '[' term posArgs kwArgs ']';
+applyType: '[' term posArgs kwArgs ']';
 
 program: term EOF;
