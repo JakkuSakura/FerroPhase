@@ -150,7 +150,7 @@ class TestOptimizers {
     )
   }
 
-  @Test def testForLoop(): Unit = {
+  @Test def testForLoopExpansion(): Unit = {
     specializedEquals(
       "(for i (list 1 2 3) (print i))",
       "(block (print 1) (print 2) (print 3))"
@@ -199,6 +199,30 @@ class TestOptimizers {
   }
 
   @Test def testSum(): Unit = {
+    specializedEquals(
+      """
+        |(block
+        |  (def-val s 0)
+        |  (def-val values (range 1 101))
+        |  (for i values
+        |    (assign s (+ s i))
+        |  )
+        |  s
+        |)
+        |""".stripMargin,
+      """
+        |(block
+        |  (def-val s 0)
+        |  (def-val values (range 1 101 ))
+        |  (for i values
+        |      (assign s (+ s i ))
+        |  )
+        |  s
+        |)
+        |""".stripMargin
+    )
+  }
+  @Test def testSumFun(): Unit = {
     specializedEquals(
       """
         |(block

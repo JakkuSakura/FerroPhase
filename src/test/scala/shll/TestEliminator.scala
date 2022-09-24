@@ -43,15 +43,15 @@ class TestEliminator {
     eliminatedEquals(
       """
         |(block
-        | (def-val x 1)
-        | (def-val y 2)
-        | x
+        |  (def-val x 1)
+        |  (def-val y 2)
+        |  x
         |)
         |""".stripMargin,
       """
             |(block
-            | (def-val x 1)
-            | x
+            |  (def-val x 1)
+            |  x
             |)
             |""".stripMargin
     )
@@ -61,12 +61,14 @@ class TestEliminator {
     eliminatedEquals(
       """
         |(block
-        | (def-val x 1)
-        | 1
+        |  (def-val x 1)
+        |  1
         |)
         |""".stripMargin,
       """
-        |1
+        |(block
+        |  1
+        |)
         |""".stripMargin
     )
   }

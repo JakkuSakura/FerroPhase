@@ -150,6 +150,9 @@ case class Specializer(
         case (LiteralDecimal(l), LiteralDecimal(r)) => LiteralDecimal(l % r)
         case _ => apply
       }
+    },
+    "range" -> binaryOperator { (apply, lhs, rhs, ctx) =>
+      apply
     }
   )
   def binaryOperator(
@@ -489,7 +492,7 @@ case class Specializer(
     } else {
       n.copy(
         iterable = iterable,
-        body = specializeNode(n.body, ctx)
+        body = Block(specializeNode(n.body, ctx))
       )
     }
   }
