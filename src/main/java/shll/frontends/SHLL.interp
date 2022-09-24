@@ -32,7 +32,7 @@ kwArg
 kwArgs
 posArgs
 apply
-typeApply
+applyType
 program
 
 

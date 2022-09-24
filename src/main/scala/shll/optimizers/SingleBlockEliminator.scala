@@ -32,10 +32,10 @@ case class SingleBlockEliminator() {
       case n: Select => eliminateSelect(n, ctx)
       case n: Cond => eliminateCond(n, ctx)
       case n: ForEach => eliminateForEach(n, ctx)
-      case n: TypeApply => eliminateTypeApply(n, ctx)
+      case n: ApplyType => eliminateTypeApply(n, ctx)
       case n: DefType => eliminateDefType(n, ctx)
       case n: Assign => eliminateAssign(n, ctx)
-      case n: FunApply => eliminateFunApply(n, ctx)
+      case n: ApplyFun => eliminateFunApply(n, ctx)
       case x => throw SpecializeException("cannot eliminate", x)
     }
     val orig = pp.print(n)
@@ -65,7 +65,7 @@ case class SingleBlockEliminator() {
     n
   }
 
-  def eliminateTypeApply(n: TypeApply, ctx: FlowAnalysisContext): AST = {
+  def eliminateTypeApply(n: ApplyType, ctx: FlowAnalysisContext): AST = {
     n
   }
 
@@ -109,11 +109,11 @@ case class SingleBlockEliminator() {
     ass
   }
 
-  def eliminateFunApply(n: FunApply, ctx: FlowAnalysisContext): AST = {
+  def eliminateFunApply(n: ApplyFun, ctx: FlowAnalysisContext): AST = {
     val args = eliminateNode(n.args, ctx).asInstanceOf[LiteralList]
     val ret = eliminateNode(n.ret, ctx)
     val body = eliminateNode(n.body, ctx)
-    val newApply = FunApply(args, ret, body)
+    val newApply = ApplyFun(args, ret, body)
     newApply
   }
   def eliminateBlock(d: Block, ctx: FlowAnalysisContext): AST = {

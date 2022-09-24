@@ -21,10 +21,10 @@ public class SHLLParser extends Parser {
 		STRING=9, CHAR=10, WS=11;
 	public static final int
 		RULE_term = 0, RULE_kwArg = 1, RULE_kwArgs = 2, RULE_posArgs = 3, RULE_apply = 4, 
-		RULE_typeApply = 5, RULE_program = 6;
+		RULE_applyType = 5, RULE_program = 6;
 	private static String[] makeRuleNames() {
 		return new String[] {
-			"term", "kwArg", "kwArgs", "posArgs", "apply", "typeApply", "program"
+			"term", "kwArg", "kwArgs", "posArgs", "apply", "applyType", "program"
 		};
 	}
 	public static final String[] ruleNames = makeRuleNames();
@@ -97,8 +97,8 @@ public class SHLLParser extends Parser {
 		public ApplyContext apply() {
 			return getRuleContext(ApplyContext.class,0);
 		}
-		public TypeApplyContext typeApply() {
-			return getRuleContext(TypeApplyContext.class,0);
+		public ApplyTypeContext applyType() {
+			return getRuleContext(ApplyTypeContext.class,0);
 		}
 		public TerminalNode IDENT() { return getToken(SHLLParser.IDENT, 0); }
 		public TerminalNode INTEGER() { return getToken(SHLLParser.INTEGER, 0); }
@@ -137,7 +137,7 @@ public class SHLLParser extends Parser {
 				enterOuterAlt(_localctx, 2);
 				{
 				setState(15);
-				typeApply();
+				applyType();
 				}
 				break;
 			case IDENT:
@@ -404,7 +404,7 @@ public class SHLLParser extends Parser {
 	}
 
 	@SuppressWarnings("CheckReturnValue")
-	public static class TypeApplyContext extends ParserRuleContext {
+	public static class ApplyTypeContext extends ParserRuleContext {
 		public TermContext term() {
 			return getRuleContext(TermContext.class,0);
 		}
@@ -414,23 +414,23 @@ public class SHLLParser extends Parser {
 		public KwArgsContext kwArgs() {
 			return getRuleContext(KwArgsContext.class,0);
 		}
-		public TypeApplyContext(ParserRuleContext parent, int invokingState) {
+		public ApplyTypeContext(ParserRuleContext parent, int invokingState) {
 			super(parent, invokingState);
 		}
-		@Override public int getRuleIndex() { return RULE_typeApply; }
+		@Override public int getRuleIndex() { return RULE_applyType; }
 		@Override
 		public void enterRule(ParseTreeListener listener) {
-			if ( listener instanceof SHLLListener ) ((SHLLListener)listener).enterTypeApply(this);
+			if ( listener instanceof SHLLListener ) ((SHLLListener)listener).enterApplyType(this);
 		}
 		@Override
 		public void exitRule(ParseTreeListener listener) {
-			if ( listener instanceof SHLLListener ) ((SHLLListener)listener).exitTypeApply(this);
+			if ( listener instanceof SHLLListener ) ((SHLLListener)listener).exitApplyType(this);
 		}
 	}
 
-	public final TypeApplyContext typeApply() throws RecognitionException {
-		TypeApplyContext _localctx = new TypeApplyContext(_ctx, getState());
-		enterRule(_localctx, 10, RULE_typeApply);
+	public final ApplyTypeContext applyType() throws RecognitionException {
+		ApplyTypeContext _localctx = new ApplyTypeContext(_ctx, getState());
+		enterRule(_localctx, 10, RULE_applyType);
 		try {
 			enterOuterAlt(_localctx, 1);
 			{

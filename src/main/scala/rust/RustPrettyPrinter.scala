@@ -32,8 +32,8 @@ case class RustPrettyPrinter() extends PrettyPrinter {
   def printType(a: AST): String = {
     a match {
       case Ident(x) => primitiveTypes.getOrElse(x, x)
-      case TypeApply(fun, Nil, Nil) => printType(fun)
-      case TypeApply(fun, args, Nil) => printType(fun) + "<" + printType(args.head) + ">"
+      case ApplyType(fun, Nil, Nil) => printType(fun)
+      case ApplyType(fun, args, Nil) => printType(fun) + "<" + printType(args.head) + ">"
     }
   }
   def printImpl(a: AST): String = {
@@ -58,13 +58,13 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"{$NL${body.map(x => IDENT + printImpl(x)).mkString(NL)}$NL}"
       case Ident(name) =>
         name
-      case LiteralInt(v, _) =>
+      case LiteralInt(v) =>
         v.toString
-      case LiteralDecimal(v, _) =>
+      case LiteralDecimal(v) =>
         v.toString
-      case LiteralChar(v, _) =>
+      case LiteralChar(v) =>
         s"'$v'"
-      case LiteralString(v, _) =>
+      case LiteralString(v) =>
         s"\"$v\""
       case LiteralBool(value) => value.toString
       case LiteralList(value) =>
@@ -73,7 +73,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${name.name}: ${printImpl(value)}"
       case Field(name, ty) =>
         s"pub ${name.name}: ${printImpl(ty)}"
-      case a: TypeApply =>
+      case a: ApplyType =>
         printType(a)
       case DefVal(name, body) =>
         s"let mut ${name.name} = ${printImpl(body)};"
@@ -87,7 +87,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${target.name} = ${printImpl(value)}"
       case DefStruct(name, fields) =>
         s"struct ${name.name} { ${printList(fields.value)} }"
-      case StructApply(s, values) =>
+      case ApplyStruct(s, values) =>
         s"${printImpl(s)} { ${values
             .map(x => s"${x.name} = ${printImpl(x.value)}")
             .mkString(", ")} " +
