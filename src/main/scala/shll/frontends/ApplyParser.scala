@@ -79,9 +79,9 @@ case class ApplyParser() {
         val params = getArgAndParse(args, kwArgs, 0, "params")
         val returns = getArgAndParse(args, kwArgs, 1, "returns")
         val body = getArgAndParse(args, kwArgs, 2, "body")
-        FunApply(params.asInstanceOf[LiteralList], returns, body)
-      case TypeApply(fun, args, kwArgs) =>
-        TypeApply(parse(fun), args.map(parse), kwArgs.map(kv => KeyValue(kv.name, parse(kv.value))))
+        ApplyFun(params.asInstanceOf[LiteralList], returns, body)
+      case ApplyType(fun, args, kwArgs) =>
+        ApplyType(parse(fun), args.map(parse), kwArgs.map(kv => KeyValue(kv.name, parse(kv.value))))
       case Ident(name) => Ident(name)
       case x if isLiteral(x, ValueContext()) => x
       case Apply(fun, args, kwArgs) =>

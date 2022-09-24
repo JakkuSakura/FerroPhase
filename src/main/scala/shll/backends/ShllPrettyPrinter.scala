@@ -3,7 +3,6 @@ package shll.backends
 import shll.*
 import shll.ast.*
 case class ShllPrettyPrinter(
-    useRawLiteral: Boolean = false,
     newlines: Boolean = true
 ) extends PrettyPrinter {
 
@@ -27,13 +26,13 @@ case class ShllPrettyPrinter(
         s"(${printImpl(f)} ${printList(args)})"
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)})"
-      case TypeApply(f, Nil, Nil) =>
+      case ApplyType(f, Nil, Nil) =>
         s"[${printImpl(f)}]"
-      case TypeApply(f, Nil, kwArgs) =>
+      case ApplyType(f, Nil, kwArgs) =>
         s"[${printImpl(f)} ${printDict(kwArgs)}]"
-      case TypeApply(f, args, Nil) =>
+      case ApplyType(f, args, Nil) =>
         s"[${printImpl(f)} ${printList(args)}]"
-      case TypeApply(f, args, kwArgs) =>
+      case ApplyType(f, args, kwArgs) =>
         s"[(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)}]"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
@@ -45,21 +44,13 @@ case class ShllPrettyPrinter(
         s"(block$NL${textTool.indent(body.map(printImpl).mkString(NL))}$NL)"
       case Ident(name) =>
         name
-      case LiteralInt(_, raw) if useRawLiteral =>
-        raw
-      case LiteralInt(value, _) =>
+      case LiteralInt(value) =>
         value.toString
-      case LiteralDecimal(_, raw) if useRawLiteral =>
-        raw
-      case LiteralDecimal(value, _) =>
+      case LiteralDecimal(value) =>
         value.toString
-      case LiteralChar(_, raw) if useRawLiteral =>
-        raw
-      case LiteralChar(value, _) =>
+      case LiteralChar(value) =>
         s"'$value'"
-      case LiteralString(_, raw) if useRawLiteral =>
-        raw
-      case LiteralString(value, _) =>
+      case LiteralString(value) =>
         s"\"$value\""
       case LiteralBool(x) =>
         x.toString
@@ -81,11 +72,11 @@ case class ShllPrettyPrinter(
         s"(def-struct ${name.name} ${printImpl(fields)})"
       case DefType(name, value) =>
         s"(def-type ${name.name} ${printImpl(value)})"
-      case FunApply(args, ret, body) =>
+      case ApplyFun(args, ret, body) =>
         s"(fun ${printImpl(args)} ${printImpl(ret)} ${printImpl(body)})"
       case LiteralUnknown() =>
         "???"
-      case StructApply(name, values) =>
+      case ApplyStruct(name, values) =>
         printImpl(Apply(name, Nil, values))
       case Select(obj, field) =>
         s"(select ${printImpl(obj)} ${field.name})"

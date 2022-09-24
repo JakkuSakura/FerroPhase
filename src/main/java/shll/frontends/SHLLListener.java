@@ -58,15 +58,15 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitApply(SHLLParser.ApplyContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#typeApply}.
+	 * Enter a parse tree produced by {@link SHLLParser#applyType}.
 	 * @param ctx the parse tree
 	 */
-	void enterTypeApply(SHLLParser.TypeApplyContext ctx);
+	void enterApplyType(SHLLParser.ApplyTypeContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link SHLLParser#typeApply}.
+	 * Exit a parse tree produced by {@link SHLLParser#applyType}.
 	 * @param ctx the parse tree
 	 */
-	void exitTypeApply(SHLLParser.TypeApplyContext ctx);
+	void exitApplyType(SHLLParser.ApplyTypeContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SHLLParser#program}.
 	 * @param ctx the parse tree

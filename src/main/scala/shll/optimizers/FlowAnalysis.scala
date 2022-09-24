@@ -131,10 +131,10 @@ case class FlowAnalysis() {
       case n: Select => analyzeSelect(n, ctx)
       case n: Cond => analyzeCond(n, ctx)
       case n: ForEach => analyzeForEach(n, ctx)
-      case n: TypeApply => analyzeTypeApply(n, ctx)
+      case n: ApplyType => analyzeTypeApply(n, ctx)
       case n: DefType => analyzeDefType(n, ctx)
       case n: Assign => analyzeAssign(n, ctx)
-      case n: FunApply => analyzeFunApply(n, ctx)
+      case n: ApplyFun => analyzeFunApply(n, ctx)
       case x => throw SpecializeException("cannot analyze", x)
     }
     contextHistory += n -> ctx
@@ -179,7 +179,7 @@ case class FlowAnalysis() {
 
   }
 
-  def analyzeTypeApply(n: TypeApply, ctx: FlowAnalysisContext): Unit = {
+  def analyzeTypeApply(n: ApplyType, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.fun, ctx)
     n.args.foreach(analyzeNode(_, ctx))
     n.kwArgs.foreach(x => analyzeNode(x.value, ctx))
@@ -284,7 +284,7 @@ case class FlowAnalysis() {
     ctx.getCache.addDependency(n.name, n.value)
 
   }
-  def analyzeFunApply(n: FunApply, ctx: FlowAnalysisContext): Unit = {
+  def analyzeFunApply(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.args, ctx)
     analyzeNode(n.ret, ctx)
     analyzeNode(n.body, ctx)
