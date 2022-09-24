@@ -26,12 +26,13 @@ case class ApplyParser() {
       case Apply(Ident("while"), args, kwArgs) =>
         checkArguments(args, kwArgs, Array(0, 1), Array("cond", "body"))
         While(getArgAndParse(args, kwArgs, 0, "cond"), getArgAndParse(args, kwArgs, 1, "body"))
+
       case Apply(Ident("for"), args, kwArgs) =>
         checkArguments(args, kwArgs, Array(0, 1, 2), Array("name", "iter", "body"))
         ForEach(
           getIdentArg(args, kwArgs, 0, "name"),
           getArgAndParse(args, kwArgs, 1, "iter"),
-          getArgAndParse(args, kwArgs, 2, "body")
+          Block(getArgAndParse(args, kwArgs, 2, "body"))
         )
       case Apply(Ident("def-fun"), args, kwArgs) =>
         checkArguments(args, kwArgs, Array(0, 1, 2, 3), Array("name", "args", "ret", "body"))

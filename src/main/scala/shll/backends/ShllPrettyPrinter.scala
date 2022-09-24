@@ -3,15 +3,16 @@ package shll.backends
 import shll.*
 import shll.ast.*
 case class ShllPrettyPrinter(
-    newlines: Boolean = true
+    newlines: Boolean = true,
+    withNumber: Boolean = false
 ) extends PrettyPrinter {
 
   val IDENT: String = if (newlines) "  " else ""
   val NL: String = if (newlines) "\n" else " "
   val textTool: TextTool = TextTool(NL, IDENT)
 
-  def printImpl(a: AST): String = {
-    a match {
+  def printImpl(a: AST): String =
+    (a match {
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)})"
       case ApplyType(f, args, kwArgs) =>
@@ -70,8 +71,8 @@ case class ShllPrettyPrinter(
         "(lf " + fields.map(printImpl).mkString(" ") + ")"
       case Select(obj, field) =>
         s"(select ${printImpl(obj)} ${field.name})"
-    }
-  }
+    }) + (if (withNumber) s"#${a.num}" else "")
+
   def print(a: AST): String = {
     val raw = printImpl(a)
     raw

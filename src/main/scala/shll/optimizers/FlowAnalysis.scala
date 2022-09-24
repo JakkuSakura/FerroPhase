@@ -8,116 +8,105 @@ import shll.ast.AstTool.*
 
 import scala.collection.mutable
 
-case class FlowAnalysisCache(
-    private val ufs: mutable.Map[String, String] = mutable.Map.empty,
-    private val parent: Option[FlowAnalysisCache] = None
-) {
-  def findCacheForElement(name: String): FlowAnalysisCache = {
-    if (ufs.contains(name)) {
-      this
-    } else {
-      parent.map(_.findCacheForElement(name)).getOrElse(this)
-    }
-  }
-  def findUfsParent(s: String): String = {
-    val p = findCacheForElement(s)
-
-    if (p.ufs.get(s).contains(s)) p.ufs(s)
-    else {
-      if (!p.ufs.contains(s))
-        p.ufs += s -> s
-      val root = p.findUfsParent(p.ufs(s))
-      p.ufs += s -> root
-      root
-    }
-
-  }
-  def forceAddUfs(s: AST): Unit = {
-    val name = getName(s)
-    if (name.isEmpty) return
-    ufs += name.get -> name.get
-  }
-
-  def mergeUfs(s1: String, s2: String): Unit = {
-    val p1 = findCacheForElement(s1)
-    val p2 = findCacheForElement(s2)
-    p1.ufs += p1.findUfsParent(s1) -> p2.findUfsParent(s2)
-    p2.ufs += p1.findUfsParent(s1) -> p2.findUfsParent(s2)
-  }
-
-  def getName(node: AST): Option[String] = {
-    Some(ShllPrettyPrinter().print(node) + "@" + node.num)
-//    node match {
-//      case Ident(name)
-//          if !Specializer().builtinTypes.contains(name)
-//            && !Specializer().builtinFunctions.contains(name) =>
-//        None
-//      case x if isLiteral(x, ValueContext()) => None
-//      case _ => Some(ShllPrettyPrinter().print(node) + "@" + node.num)
-//    }
-  }
-  def addDependency(user: AST, usee: AST): Unit = {
-    val userN = getName(user)
-    if (userN.isEmpty) return
-    val useeN = getName(usee)
-    if (useeN.isEmpty) return
-    mergeUfs(userN.get, useeN.get)
-  }
-  def isUnion(s1: AST, s2: AST): Boolean = {
-    val userN = getName(s1)
-    if (userN.isEmpty) return false
-    val useeN = getName(s2)
-    if (useeN.isEmpty) return false
-    findUfsParent(userN.get) == findUfsParent(useeN.get)
-  }
-}
 case class FlowAnalysisContext(
     context: ValueContext = ValueContext(),
-    private val cache: FlowAnalysisCache = FlowAnalysisCache(),
+//    private val decls: mutable.Map[String, String] = mutable.Map.empty,
+    private val internalNodes: mutable.Set[String] = mutable.Set.empty,
+    private val externalNodes: mutable.Set[String] = mutable.Set.empty,
+    private val dataflow: mutable.Set[(String, String)] = mutable.Set.empty,
     private val parent: Option[FlowAnalysisContext] = None
 ) {
-  def getCache: FlowAnalysisCache = cache
-  def childContext: FlowAnalysisContext = FlowAnalysisContext(context, FlowAnalysisCache(parent = Some(cache)), parent = Some(this))
-  def withValues(values: Map[String, AST]): FlowAnalysisContext =
-    FlowAnalysisContext(
-      context = context.withValues(values),
-      cache = cache,
-      parent = Some(this)
+  def child(): FlowAnalysisContext = {
+    val child = FlowAnalysisContext(
+      context,
+      mutable.Set.empty,
+      mutable.Set.empty,
+      mutable.Set.empty,
+      Some(this)
     )
+    child
+  }
 
-  def withValue(name: String, value: AST): FlowAnalysisContext =
-    FlowAnalysisContext(
-      context = context.withValue(name, value),
-      cache = cache,
-      parent = Some(this)
-    )
-  def withStruct(name: String, struct: DefStruct): FlowAnalysisContext =
-    FlowAnalysisContext(
-      context = context.withStruct(name, struct),
-      cache = cache,
-      parent = Some(this)
-    )
-  def withFunction(name: String, func: DefFun): FlowAnalysisContext =
-    FlowAnalysisContext(
-      context = context.withFunction(name, func),
-      cache = cache,
-      parent = Some(this)
-    )
+  def printDataflow(): Unit = {
+    dataflow.foreach { case (k, v) => println(s"$k\n->\n$v\n---") }
+    parent.foreach(_.printDataflow())
+  }
+
+  def internalVisitable(from: String, to: String): Boolean = {
+    val queue: mutable.Queue[String] = mutable.Queue(from)
+    val visited: mutable.Set[String] = mutable.Set()
+    while (queue.nonEmpty) {
+      val current = queue.dequeue()
+
+      visited.add(current)
+      dataflow.filter(_._1 == current).foreach {
+        case (_, v) if (!visited.contains(v)) =>
+          queue.enqueue(v)
+        case _ =>
+      }
+    }
+    visited.contains(to)
+  }
+
+  def getName(node: AST): String = {
+    node match {
+      case x: Ident
+          if !isLiteral(x, ValueContext())
+            && !Specializer().builtinTypes.contains(x.name)
+            && !Specializer().builtinTypes.contains(x.name) =>
+        x.name
+      case _ => ShllPrettyPrinter().print(node) + "#" + node.num
+    }
+  }
+
+  // distinguish between read and write data flow
+  def addDataFlow(pair: (AST, AST)): Unit = {
+    val (from, to) = pair
+    val fromN = getName(from)
+    val toN = getName(to)
+    dataflow += fromN -> toN
+  }
+//  def addDecl(name: String, ast: AST): Unit = {
+//    decls += name -> getName(ast)
+//  }
+//  def getDecl(name: String): Option[String] = {
+//    decls.get(name)
+//  }
+  def addInternalNode(node: AST): Unit = {
+    internalNodes += getName(node)
+  }
+  def internalVisitable(from: AST, to: AST): Boolean = {
+    val fromN = getName(from)
+    val toN = getName(to)
+    internalVisitable(fromN, toN)
+  }
+  def hasExternalNodes: Boolean = {
+    externalNodes.nonEmpty
+  }
+  def mergeChildNodes(node: AST, other: FlowAnalysisContext): Unit = {
+    externalNodes ++= other.externalNodes
+    internalNodes ++= other.internalNodes
+    externalNodes ++= dataflow.map(_._2).diff(internalNodes)
+    externalNodes --= internalNodes
+    dataflow ++= internalNodes.intersect(other.externalNodes).map(x => x -> getName(node))
+  }
 }
 case class FlowAnalysis() {
   val logger: Logger = Logger[this.type]
-  val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
+  val pp: PrettyPrinter = ShllPrettyPrinter(newlines = true, withNumber = true)
   val contextHistory: mutable.Map[AST, FlowAnalysisContext] = mutable.Map.empty
 
-  def analyze(n: AST): FlowAnalysisContext = {
+  def analyze(n: AST): Unit = {
     val ctx = FlowAnalysisContext()
-    ctx.getCache.addDependency(n, LiteralUnknown())
+    ctx.addDataFlow(n -> LiteralUnknown())
     analyzeNode(n, ctx)
-    ctx
+
   }
 
   def analyzeNode(n: AST, ctx: FlowAnalysisContext): Unit = {
 //    logger.debug("Eliminating " + pp.print(n))
+    if (!n.isInstanceOf[Ident])
+      ctx.addInternalNode(n)
     n match {
       case n: Block => analyzeBlock(n, ctx)
       case n: Apply => analyzeApply(n, ctx)
@@ -131,15 +120,21 @@ case class FlowAnalysis() {
       case n: Select => analyzeSelect(n, ctx)
       case n: Cond => analyzeCond(n, ctx)
       case n: ForEach => analyzeForEach(n, ctx)
-      case n: ApplyType => analyzeTypeApply(n, ctx)
+      case n: ApplyType => analyzeApplyType(n, ctx)
       case n: DefType => analyzeDefType(n, ctx)
       case n: Assign => analyzeAssign(n, ctx)
-      case n: ApplyFun => analyzeFunApply(n, ctx)
+      case n: ApplyFun => analyzeApplyFun(n, ctx)
       case n: Parameters => n.params.foreach(analyzeNode(_, ctx))
       case n: Fields => n.fields.foreach(analyzeNode(_, ctx))
+      case s: DefVal => analyzeDefVal(s, ctx)
+      case d: DefFun => analyzeDefFun(d, ctx)
+      case n: DefStruct => analyzeDefStruct(n, ctx)
       case x => throw SpecializeException("cannot analyze", x)
     }
-    contextHistory += n -> ctx
+    println("Dataflow at: " + pp.print(n) + "\n===")
+    if (!contextHistory.contains(n))
+      contextHistory += n -> ctx
+    contextHistory(n).printDataflow()
   }
 
   def analyzeField(n: Field, ctx: FlowAnalysisContext): Unit = {
@@ -148,151 +143,136 @@ case class FlowAnalysis() {
   def analyzeDefVal(
       n: DefVal,
       ctx: FlowAnalysisContext
-  ): FlowAnalysisContext = {
+  ): Unit = {
     analyzeNode(n.value, ctx)
-    ctx.getCache.forceAddUfs(n)
-    ctx.getCache.addDependency(n, n.value)
-    ctx.getCache.addDependency(n.name, n.value)
-    ctx.withValue(n.name.name, n.value)
+    ctx.addInternalNode(n.name)
+    ctx.addDataFlow(n.value -> n)
+    ctx.addDataFlow(n -> n.name)
   }
-  def analyzeIdent(id: Ident, ctx: FlowAnalysisContext): AST = {
-    ctx.context.getValue(id.name).foreach(ctx.getCache.addDependency(id, _))
-    ctx.context.getType(id.name).foreach(ctx.getCache.addDependency(id, _))
-    ctx.context.getFunction(id.name).foreach(ctx.getCache.addDependency(id, _))
-    ctx.context.getStruct(id.name).foreach(ctx.getCache.addDependency(id, _))
-    id
+  def analyzeIdent(id: Ident, ctx: FlowAnalysisContext): Unit = {
   }
 
   def analyzeApply(n: Apply, ctx: FlowAnalysisContext): Unit = {
+    if (n.fun == Ident("print"))
+      ctx.addDataFlow(n -> n.fun)
     analyzeNode(n.fun, ctx)
     n.args.args.foreach(analyzeNode(_, ctx))
     n.kwArgs.args.foreach(x => analyzeNode(x.value, ctx))
 
-    n.args.args.foreach(ctx.getCache.addDependency(n, _))
-    n.kwArgs.args.map(_.value).foreach(ctx.getCache.addDependency(n, _))
-    n.fun match {
-      case Ident(name)
-          if ctx.context.getFunction(name).isEmpty && !Specializer().builtinFunctions.contains(
-            name
-          ) =>
-        ctx.getCache.addDependency(n, LiteralUnknown())
-      case _ =>
-    }
+    n.args.args.foreach(x => ctx.addDataFlow(x -> n))
+    n.kwArgs.args.map(_.value).foreach(x => ctx.addDataFlow(x -> n))
+    ctx.addDataFlow(n.fun -> n)
+//    n.fun match {
+//      case Ident(name)
+//          if ctx.context.getFunction(name).isEmpty && !Specializer().builtinFunctions.contains(
+//            name
+//          ) =>
+//      case _ =>
+//    }
 
   }
 
-  def analyzeTypeApply(n: ApplyType, ctx: FlowAnalysisContext): Unit = {
+  def analyzeApplyType(n: ApplyType, ctx: FlowAnalysisContext): Unit = {
+
     analyzeNode(n.fun, ctx)
-    n.args.args.foreach(analyzeNode(_, ctx))
+    n.args.args.foreach(x => analyzeNode(x, ctx))
     n.kwArgs.args.foreach(x => analyzeNode(x.value, ctx))
 
-    ctx.getCache.addDependency(n, n.fun)
-    n.args.args.foreach(ctx.getCache.addDependency(n, _))
-    n.kwArgs.args.map(_.value).foreach(ctx.getCache.addDependency(n, _))
-    n.fun match {
-      case i: Ident =>
-        ctx.getCache.addDependency(n, i)
-      case _ =>
-    }
+    ctx.addDataFlow(n.fun -> n)
+    n.args.args.foreach(x => ctx.addDataFlow(x -> n))
+    n.kwArgs.args.map(_.value).foreach(x => ctx.addDataFlow(x -> n))
   }
 
-  def analyzeDefType(n: DefType, context: FlowAnalysisContext): AST = {
-    analyzeNode(n.value, context)
-
-    context.getCache.addDependency(n, n.name)
-    context.getCache.addDependency(n, n.value)
-    n
+  def analyzeDefType(n: DefType, ctx: FlowAnalysisContext): Unit = {
+    analyzeNode(n.value, ctx)
+    ctx.addInternalNode(n.name)
+    ctx.addDataFlow(n -> n.name)
+    ctx.addDataFlow(n.value -> n.name)
   }
 
-  def analyzeBlock(d: Block, ctx0: FlowAnalysisContext): Unit = {
-    var ctx = ctx0
-//    var ctx = ctx0.childContext
-    d.body.foreach { x =>
-      x match {
-        case s: DefVal =>
-          val newCtx = analyzeDefVal(s, ctx)
-          ctx = newCtx
-        case s: Assign =>
-          analyzeAssign(s, ctx)
-        case d: DefFun =>
-          val newCtx = analyzeDefFun(d, ctx)
-          ctx = newCtx
-        case n: DefStruct =>
-          val newCtx = analyzeDefStruct(n, ctx)
-          ctx = newCtx
-        case s =>
-          analyzeNode(s, ctx)
-          if (hasSideEffects(s, ctx.context)) {
-            ctx.getCache.addDependency(d, s)
-          }
-      }
-      contextHistory += x -> ctx
+  def analyzeBlock(n: Block, ctx0: FlowAnalysisContext): Unit = {
+    val ctx = ctx0.child()
+    // TODO: current flow analysis is far from complete
+    n.body.foreach { x =>
+      analyzeNode(x, ctx)
     }
-    d.body.lastOption.foreach(x => ctx.getCache.addDependency(d, x))
-
+    n.body.foreach { x =>
+      ctx.mergeChildNodes(n, contextHistory(x))
+    }
+    n.body.lastOption.foreach(x => ctx.addDataFlow(x -> n))
+    contextHistory += n -> ctx
   }
 
   def analyzeDefStruct(
       d: DefStruct,
       ctx: FlowAnalysisContext
-  ): FlowAnalysisContext = {
-    // TODO: process values
+  ): Unit = {
     analyzeNode(d.fields, ctx)
+    ctx.addInternalNode(d.name)
 
-    ctx.getCache.addDependency(d, d.fields)
-    ctx.getCache.addDependency(d.name, d.fields)
-    ctx.withStruct(d.name.name, d)
+    ctx.addDataFlow(d.fields -> d)
+    ctx.addDataFlow(d -> d.name)
   }
 
   def analyzeDefFun(
-      d: DefFun,
-      ctx: FlowAnalysisContext
-  ): FlowAnalysisContext = {
-    analyzeNode(d.args, ctx)
-    analyzeNode(d.ret, ctx)
-    d.body.foreach(analyzeNode(_, ctx))
-
-    d.body.foreach(ctx.getCache.addDependency(d, _))
-    ctx.getCache.addDependency(d, d.args)
-    ctx.getCache.addDependency(d, d.ret)
-    ctx.getCache.addDependency(d.name, d)
-    ctx.withFunction(d.name.name, d)
+                     n: DefFun,
+                     ctx0: FlowAnalysisContext
+  ): Unit = {
+    val ctx = ctx0.child()
+    analyzeNode(n.args, ctx)
+    analyzeNode(n.ret, ctx)
+    n.body.foreach(analyzeNode(_, ctx))
+    n.body.foreach(x => ctx.addDataFlow(x -> n))
+    ctx.addInternalNode(n.name)
+    ctx.addDataFlow(n.args -> n)
+    ctx.addDataFlow(n.ret -> n)
+    ctx.addDataFlow(n -> n.name)
+    n.body.foreach(x => ctx.mergeChildNodes(n, contextHistory(x)))
+    contextHistory += n -> ctx
   }
 
   def analyzeSelect(n: Select, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.obj, ctx)
-    ctx.getCache.addDependency(n.field, n.obj)
-
+    ctx.addDataFlow(n.obj -> n)
   }
-  def analyzeCond(n: Cond, ctx: FlowAnalysisContext): Unit =
+  def analyzeCond(n: Cond, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.cond, ctx)
     analyzeNode(n.consequence, ctx)
     analyzeNode(n.alternative, ctx)
+    ctx.addDataFlow(n.cond -> n)
+    ctx.addDataFlow(n.consequence -> n)
+    ctx.addDataFlow(n.alternative -> n)
+  }
 
-  def analyzeForEach(n: ForEach, ctx: FlowAnalysisContext): Unit = {
+  def analyzeForEach(n: ForEach, ctx0: FlowAnalysisContext): Unit = {
+    val ctx = ctx0.child()
+    ctx.addInternalNode(n.variable)
+
     analyzeNode(n.iterable, ctx)
     analyzeNode(n.body, ctx)
+    analyzeNode(n.variable, ctx)
 
-    ctx.getCache.addDependency(n.variable, n.iterable)
-    ctx.getCache.addDependency(n.variable, n)
-    ctx.getCache.addDependency(n.body, n.variable)
-    ctx.getCache.addDependency(n.body, n)
+    // TODO: this should be in the context of the body
+    ctx.addDataFlow(n.iterable -> n.variable)
+    ctx.addDataFlow(n.variable -> n.body)
+    ctx.addDataFlow(n.body -> n)
+    ctx.mergeChildNodes(n, contextHistory(n.variable))
+    ctx.mergeChildNodes(n, contextHistory(n.body))
+    contextHistory += n -> ctx
   }
 
   def analyzeAssign(n: Assign, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.value, ctx)
-    ctx.getCache.addDependency(n, n.value)
-    ctx.getCache.addDependency(n.name, n)
-    ctx.getCache.addDependency(n.name, n.value)
-
+    ctx.addDataFlow(n.value -> n)
+    ctx.addDataFlow(n -> n.name)
   }
-  def analyzeFunApply(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
+  def analyzeApplyFun(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.args, ctx)
     analyzeNode(n.ret, ctx)
     analyzeNode(n.body, ctx)
 
-    ctx.getCache.addDependency(n, n.args)
-    ctx.getCache.addDependency(n, n.ret)
-    ctx.getCache.addDependency(n, n.body)
+    ctx.addDataFlow(n.args -> n)
+    ctx.addDataFlow(n.ret -> n)
+    ctx.addDataFlow(n.body -> n)
   }
 }

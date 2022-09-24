@@ -14,30 +14,32 @@ case class DeadCodeEliminator() {
   private val flow = FlowAnalysis()
 
   def eliminate(n: AST): AST = {
-    val ctx = flow.analyze(n)
-    eliminateNode(n, flow.contextHistory.getOrElse(n, ctx))
+    flow.analyze(n)
+    eliminateNode(n)
   }
 
-  def eliminateNode(n: AST, ctx: FlowAnalysisContext): AST = {
-//    logger.debug("Eliminating " + pp.print(n))
+  def eliminateNode(n: AST): AST = {
+    val ctx = flow.contextHistory(n)
     val x = n match {
-      case n: Block => eliminateBlock(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: Apply => eliminateApply(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: Ident => eliminateIdent(n, flow.contextHistory.getOrElse(n, ctx))
+      case n: Block => eliminateBlock(n, ctx)
+      case n: Apply => eliminateApply(n, ctx)
+      case n: Ident => eliminateIdent(n, ctx)
       case n: LiteralInt => n
       case n: LiteralDecimal => n
       case n: LiteralString => n
       case n: LiteralBool => n
-      case n: LiteralList => LiteralList(n.value.map(x => eliminateNode(x, flow.contextHistory.getOrElse(x, ctx))))
-      case n: Field => eliminateField(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: Select => eliminateSelect(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: Cond => eliminateCond(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: ForEach => eliminateForEach(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: ApplyType => eliminateTypeApply(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: DefType => eliminateDefType(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: Assign => eliminateAssign(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: ApplyFun => eliminateFunApply(n, flow.contextHistory.getOrElse(n, ctx))
-      case n: Parameters => Parameters(n.params.map(x => eliminateNode(x, flow.contextHistory.getOrElse(x, ctx)).asInstanceOf[Field]))
+      case n: LiteralList => LiteralList(n.value.map(eliminateNode))
+      case n: Field => eliminateField(n, ctx)
+      case n: Select => eliminateSelect(n, ctx)
+      case n: Cond => eliminateCond(n, ctx)
+      case n: ForEach => eliminateForEach(n, ctx)
+      case n: ApplyType => eliminateTypeApply(n, ctx)
+      case n: DefType => eliminateDefType(n, ctx)
+      case n: Assign => eliminateAssign(n, ctx)
+      case n: ApplyFun => eliminateFunApply(n, ctx)
+      case n: DefFun => eliminateDefFun(n, ctx)
+      case n: DefVal => eliminateDefVal(n, ctx)
+      case n: Parameters => Parameters(n.params.map(eliminateNode(_).asInstanceOf[Field]))
       case x => throw SpecializeException("cannot eliminate", x)
     }
     val orig = pp.print(n)
@@ -48,14 +50,14 @@ case class DeadCodeEliminator() {
   }
 
   def eliminateField(n: Field, ctx: FlowAnalysisContext): Field = {
-    val value = eliminateNode(n.ty, ctx)
+    val value = eliminateNode(n.ty)
     Field(n.name, value)
   }
   def eliminateDefVal(
       n: DefVal,
       ctx: FlowAnalysisContext
   ): DefVal = {
-    DefVal(n.name, eliminateNode(n.value, ctx))
+    DefVal(n.name, eliminateNode(n.value))
   }
   def eliminateIdent(id: Ident, ctx: FlowAnalysisContext): AST = {
     id
@@ -71,57 +73,51 @@ case class DeadCodeEliminator() {
     n
   }
 
-  def eliminateBlock(d: Block, ctx: FlowAnalysisContext): AST = {
-    val filteredStmts = d.body
-      .filter(x => ctx.getCache.isUnion(d, x))
-      .map {
-        case n: DefFun =>
-          eliminateDefFun(n, flow.contextHistory.getOrElse(n, ctx))
-        case n: DefVal =>
-          eliminateDefVal(n, flow.contextHistory.getOrElse(n, ctx))
-        case n => eliminateNode(n, flow.contextHistory.getOrElse(n, ctx))
-      }
+  def eliminateBlock(n: Block, ctx: FlowAnalysisContext): AST = {
+    val filteredStmts = n.body
+      .filter(x => ctx.internalVisitable(x, n) || flow.contextHistory(n).hasExternalNodes)
+      .map(x => eliminateNode(x))
 
     Block(filteredStmts)
   }
 
   def eliminateSelect(n: Select, ctx: FlowAnalysisContext): AST = {
-    val obj = eliminateNode(n.obj, ctx)
+    val obj = eliminateNode(n.obj)
     Select(obj, n.field)
   }
   def eliminateCond(n: Cond, ctx: FlowAnalysisContext): AST = {
-    val cond = eliminateNode(n.cond, ctx)
-    val conseq = eliminateNode(n.consequence, ctx)
-    val alt = eliminateNode(n.alternative, ctx)
+    val cond = eliminateNode(n.cond)
+    val conseq = eliminateNode(n.consequence)
+    val alt = eliminateNode(n.alternative)
     val condTotal = Cond(cond, conseq, alt)
     condTotal
 
   }
 
   def eliminateForEach(n: ForEach, ctx: FlowAnalysisContext): AST = {
-    val iterable = eliminateNode(n.iterable, ctx)
-    val body = eliminateNode(n.body, ctx)
+    val iterable = eliminateNode(n.iterable)
+    val body = eliminateNode(n.body)
     val f = ForEach(n.variable, iterable, body)
     f
   }
   def eliminateDefFun(fun: DefFun, ctx: FlowAnalysisContext): DefFun = {
     DefFun (
         fun.name,
-        eliminateNode(fun.args, ctx).asInstanceOf,
-        eliminateNode(fun.ret, ctx),
-      fun.body.map(eliminateNode(_, ctx))
+        eliminateNode(fun.args).asInstanceOf,
+        eliminateNode(fun.ret),
+      fun.body.map(eliminateNode)
     )
   }
 
   def eliminateAssign(n: Assign, ctx: FlowAnalysisContext): AST = {
-    val value = eliminateNode(n.value, ctx)
+    val value = eliminateNode(n.value)
     val ass = Assign(n.name, value)
     ass
   }
   def eliminateFunApply(n: ApplyFun, ctx: FlowAnalysisContext): AST = {
-    val args = eliminateNode(n.args, ctx).asInstanceOf[Parameters]
-    val ret = eliminateNode(n.ret, ctx)
-    val body = eliminateNode(n.body, ctx)
+    val args = eliminateNode(n.args).asInstanceOf[Parameters]
+    val ret = eliminateNode(n.ret)
+    val body = eliminateNode(n.body)
     val newApply = ApplyFun(args, ret, body)
     newApply
   }
