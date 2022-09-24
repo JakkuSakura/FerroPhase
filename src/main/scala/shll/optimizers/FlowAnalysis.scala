@@ -135,6 +135,8 @@ case class FlowAnalysis() {
       case n: DefType => analyzeDefType(n, ctx)
       case n: Assign => analyzeAssign(n, ctx)
       case n: ApplyFun => analyzeFunApply(n, ctx)
+      case n: Parameters => n.params.foreach(analyzeNode(_, ctx))
+      case n: Fields => n.fields.foreach(analyzeNode(_, ctx))
       case x => throw SpecializeException("cannot analyze", x)
     }
     contextHistory += n -> ctx
@@ -163,11 +165,11 @@ case class FlowAnalysis() {
 
   def analyzeApply(n: Apply, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.fun, ctx)
-    n.args.foreach(analyzeNode(_, ctx))
-    n.kwArgs.foreach(x => analyzeNode(x.value, ctx))
+    n.args.args.foreach(analyzeNode(_, ctx))
+    n.kwArgs.args.foreach(x => analyzeNode(x.value, ctx))
 
-    n.args.foreach(ctx.getCache.addDependency(n, _))
-    n.kwArgs.map(_.value).foreach(ctx.getCache.addDependency(n, _))
+    n.args.args.foreach(ctx.getCache.addDependency(n, _))
+    n.kwArgs.args.map(_.value).foreach(ctx.getCache.addDependency(n, _))
     n.fun match {
       case Ident(name)
           if ctx.context.getFunction(name).isEmpty && !Specializer().builtinFunctions.contains(
@@ -181,12 +183,12 @@ case class FlowAnalysis() {
 
   def analyzeTypeApply(n: ApplyType, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.fun, ctx)
-    n.args.foreach(analyzeNode(_, ctx))
-    n.kwArgs.foreach(x => analyzeNode(x.value, ctx))
+    n.args.args.foreach(analyzeNode(_, ctx))
+    n.kwArgs.args.foreach(x => analyzeNode(x.value, ctx))
 
     ctx.getCache.addDependency(n, n.fun)
-    n.args.foreach(ctx.getCache.addDependency(n, _))
-    n.kwArgs.map(_.value).foreach(ctx.getCache.addDependency(n, _))
+    n.args.args.foreach(ctx.getCache.addDependency(n, _))
+    n.kwArgs.args.map(_.value).foreach(ctx.getCache.addDependency(n, _))
     n.fun match {
       case i: Ident =>
         ctx.getCache.addDependency(n, i)

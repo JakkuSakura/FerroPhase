@@ -3,40 +3,40 @@ package shll.frontends
 import shll.ast._
 
 case object ParamUtil {
-  def getArgOpt(args: List[AST], kwArgs: List[KeyValue], pos: Int, key: String): Option[AST] = {
-    val p1 = args.lift(pos)
-    val p2 = kwArgs.find(_.name.name == key)
+  def getArgOpt(args: PosArgs, kwArgs: KwArgs, pos: Int, key: String): Option[AST] = {
+    val p1 = args.args.lift(pos)
+    val p2 = kwArgs.args.find(_.name.name == key)
     if (p1.isDefined && p2.isDefined)
       throw ParserException("Duplicate key: " + key)
     else
       p1.orElse(p2)
   }
 
-  def getArg(args: List[AST], kwArgs: List[KeyValue], pos: Int, key: String): AST =
+  def getArg(args: PosArgs, kwArgs: KwArgs, pos: Int, key: String): AST =
     getArgOpt(args, kwArgs, pos, key).getOrElse(throw Exception("Missing key: " + key))
 
-  def getIdentArg(args: List[AST], kwArgs: List[KeyValue], pos: Int, key: String): Ident =
+  def getIdentArg(args: PosArgs, kwArgs: KwArgs, pos: Int, key: String): Ident =
     getArg(args, kwArgs, pos, key) match {
       case i: Ident => i
       case _ => throw ParserException("Expected Ident, got: " + getArg(args, kwArgs, pos, key))
     }
 
-  def checkArguments(args: List[AST], kwArgs: List[KeyValue], knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
+  def checkArguments(args: PosArgs, kwArgs: KwArgs, knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
     collectArguments(args, kwArgs, knownArgs, knownKwArgs)
   }
 
-  def collectArguments(args: List[AST], kwArgs: List[KeyValue], knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
+  def collectArguments(args: PosArgs, kwArgs: KwArgs, knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
     val res = collection.mutable.Map[String, AST]()
-    for (i <- args.indices) {
+    for (i <- args.args.indices) {
       knownArgs.lift(i) match {
-        case None => throw ParserException(s"Unknown positional argument: $i " + args(i))
-        case Some(x) if kwArgs.exists(_.name.name == knownKwArgs(x)) =>
+        case None => throw ParserException(s"Unknown positional argument: $i " + args.args(i))
+        case Some(x) if kwArgs.args.exists(_.name.name == knownKwArgs(x)) =>
           throw Exception(s"Duplicate key: $i vs ${knownKwArgs(x)}")
         case Some(x) =>
-          res(knownKwArgs(x)) = args(i)
+          res(knownKwArgs(x)) = args.args(i)
       }
     }
-    for (kw <- kwArgs) {
+    for (kw <- kwArgs.args) {
       if (res.contains(kw.name.name))
         throw ParserException(s"Duplicate key: ${kw.name.name}")
       res(kw.name.name) = kw.value
