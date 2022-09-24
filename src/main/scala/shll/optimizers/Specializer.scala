@@ -159,7 +159,7 @@ case class Specializer(
       checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("lhs", "rhs"))
       val lhs = specializeNode(getArg(apply.args, apply.kwArgs, 0, "lhs"), ctx)
       val rhs = specializeNode(getArg(apply.args, apply.kwArgs, 1, "rhs"), ctx)
-      val a = Apply(apply.fun, List(lhs, rhs), Nil)
+      val a = Apply(apply.fun, PosArgs(List(lhs, rhs)), KwArgs(Nil))
       fn(a, lhs, rhs, ctx.context)
     }
   }
@@ -175,7 +175,11 @@ case class Specializer(
 
   def getTypeName(n: AST, ctx: SpecializeContext): String = {
     n match {
-      case Ident(name) => ctx.context.getType(name).map(getTypeName(_, ctx)).getOrElse(builtinTypes.keys.filter(_ == name).head)
+      case Ident(name) =>
+        ctx.context
+          .getType(name)
+          .map(getTypeName(_, ctx))
+          .getOrElse(builtinTypes.keys.filter(_ == name).head)
       case ApplyType(Ident(name), args, kwArgs) => getTypeName(Ident(name), ctx)
       case _ => throw SpecializeException("Unknown type name", n)
     }
@@ -183,14 +187,16 @@ case class Specializer(
   def isKnownType(n: AST, ctx: SpecializeContext): Boolean = {
     n match {
       case Ident(name) => ctx.context.getType(name).isDefined || builtinTypes.contains(name)
-      case ApplyType(Ident(name), args, kwArgs) => isKnownType(Ident(name), ctx) && args.forall(isKnownType(_, ctx)) && kwArgs.forall(x => isKnownType(x.value, ctx))
+      case ApplyType(Ident(name), args, kwArgs) =>
+        isKnownType(Ident(name), ctx) && args.args.forall(isKnownType(_, ctx)) && kwArgs.args
+          .forall(x => isKnownType(x.value, ctx))
       case _ => false
     }
   }
   def simpleGenericType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
     val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
-    val newApply = ApplyType(apply.fun, List(value), Nil)
+    val newApply = ApplyType(apply.fun, PosArgs(List(value)), KwArgs(Nil))
     if (
       isKnownType(apply.fun, ctx) && isKnownType(
         value,
@@ -200,7 +206,7 @@ case class Specializer(
       val newName = ctx.getCache.allocateSpecializedIdent(getTypeName(apply.fun, ctx))
 
       ctx.getCache.specializedTypes += newName.name -> DefType(newName, newApply)
-      ApplyType(newName, Nil, Nil)
+      ApplyType(newName, PosArgs(Nil), KwArgs(Nil))
     } else {
       newApply
     }
@@ -211,7 +217,7 @@ case class Specializer(
     val params = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
     val returns = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
 
-    val newApply = ApplyType(apply.fun, List(params, returns), Nil)
+    val newApply = ApplyType(apply.fun, PosArgs(List(params, returns)), KwArgs(Nil))
     newApply
   }
   def simpleType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
@@ -240,6 +246,9 @@ case class Specializer(
       case n: ApplyType => specializeTypeApply(n, ctx)
       case n: Assign => specializeAssign(n, ctx)._1
       case n: ApplyFun => specializeFunApply(n, ctx)
+      case n: KwArgs => KwArgs(n.args.map(x => specializeNode(x.value, ctx).asInstanceOf[KeyValue]))
+      case n: PosArgs => PosArgs(n.args.map(specializeNode(_, ctx)))
+      case n: Parameters => Parameters(n.params.map(specializeNode(_, ctx).asInstanceOf[Field]))
       case x => throw SpecializeException("cannot specialize", x)
     }
 
@@ -284,8 +293,8 @@ case class Specializer(
         val f = specializeNode(n.fun, ctx)
         Apply(
           f,
-          n.args.map(specializeNode(_, ctx)),
-          n.kwArgs.map(specializeKeyValue(_, ctx))
+          specializeNode(n.args, ctx).asInstanceOf,
+          specializeNode(n.kwArgs, ctx).asInstanceOf
         )
     }
   }
@@ -367,8 +376,8 @@ case class Specializer(
 
   def specializeFunctionApply(
       func: DefFun,
-      args: List[AST],
-      kwArgs: List[KeyValue],
+      args: PosArgs,
+      kwArgs: KwArgs,
       ctx: SpecializeContext
   ): AST = {
     val mapping =
@@ -387,12 +396,12 @@ case class Specializer(
       case _ =>
         val newFunc = DefFun(
           name = ctx.getCache.allocateSpecializedIdent(func.name.name),
-          body = Some(body),
-          args = LiteralList(Nil),
-          ret = func.ret
+          args = Parameters(Nil),
+          ret = func.ret,
+          body = Some(body)
         )
         ctx.getCache.specializedFunctions(newFunc.name.name) = newFunc
-        Apply(newFunc.name, Nil, Nil)
+        Apply(newFunc.name, PosArgs(Nil), KwArgs(Nil))
     }
   }
 
@@ -410,8 +419,8 @@ case class Specializer(
   }
   def specializeStructApply(
       n: DefStruct,
-      args: List[AST],
-      kwArgs: List[KeyValue],
+      args: PosArgs,
+      kwArgs: KwArgs,
       ctx: SpecializeContext
   ): ApplyStruct = {
     val mapping =
@@ -422,14 +431,14 @@ case class Specializer(
 
     ApplyStruct(
       n.name,
-      mapping
+      KwArgs(mapping)
     )
   }
   def specializeSelect(n: Select, ctx: SpecializeContext): AST = {
     val obj = specializeNode(n.obj, ctx)
     obj match {
       case ApplyStruct(name, values) =>
-        values.find(_.name.name == n.field.name) match {
+        values.args.find(_.name.name == n.field.name) match {
           case Some(v) => v.value
           case None => throw SpecializeException("field not found", n)
         }
@@ -498,7 +507,7 @@ case class Specializer(
     (t, newCtx)
   }
   def specializeFunApply(n: ApplyFun, ctx: SpecializeContext): AST = {
-    val args = specializeNode(n.args, ctx).asInstanceOf[LiteralList]
+    val args = specializeNode(n.args, ctx).asInstanceOf[Parameters]
     val returns = specializeNode(n.ret, ctx)
     val body = specializeNode(n.body, ctx)
     ApplyFun(args, returns, body)

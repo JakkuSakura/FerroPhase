@@ -51,7 +51,7 @@ class TestOptimizers {
     specializedEquals(
       """
         |(block
-        |   (def-fun foo (list (field a [int])) [int]
+        |   (def-fun foo (lp (: a [int])) [int]
         |     a
         |   )
         |   (foo 1)
@@ -65,7 +65,7 @@ class TestOptimizers {
     specializedEquals(
       """
         |(block
-        |   (def-struct Foo (list (field a [int])))
+        |   (def-struct Foo (lf (: a [int])))
         |   (select (Foo a=1) a)
         |)
         |""".stripMargin,
@@ -188,7 +188,7 @@ class TestOptimizers {
     specializedEquals(
       """
         |(block
-        |   (def-fun sum (list (field a [int]) (field b [int])) [int]
+        |   (def-fun sum (lp (: a [int]) (: b [int])) [int]
         |     (+ a b)
         |   )
         |   (sum 1 2)
@@ -202,7 +202,7 @@ class TestOptimizers {
     specializedEquals(
       """
         |(block
-        |   (def-fun sum (list (field values [list [int]])) [int]
+        |   (def-fun sum (lp (: values [list [int]])) [int]
         |     (block
         |       (def-val s 0)
         |       (for i values
@@ -278,8 +278,8 @@ class TestOptimizers {
     specializedEquals(
       """
         |(block
-        |  (def-type pass [fun (list (field a [int])) [int]])
-        |  (def-fun call (list (field funs [list pass])) [int]
+        |  (def-type pass [fun (lp (: a [int])) [int]])
+        |  (def-fun call (lp (: funs [list pass])) [int]
         |    (block
         |      (def-val s 0)
         |      (for f funs
@@ -290,15 +290,15 @@ class TestOptimizers {
         |  )
         |  (call
         |   (list
-        |     (fun (list (field a [int])) [int] (+ a 0))
-        |     (fun (list (field a [int])) [int] (+ a 1))
+        |     (fun (lp (: a [int])) [int] (+ a 0))
+        |     (fun (lp (: a [int])) [int] (+ a 1))
         |   )
         |  )
         |)
         |""".stripMargin,
       """
         |(block
-        |  (def-val funs (list (fun (list (field a [int])) [int] (+ a 0)) (fun (list (field a [int])) [int] (+ a 1)) (fun (list (field a [int])) [int] (+ a 2)) (fun (list (field a [int])) [int] (+ a 3))))
+        |  (def-val funs (list (fun (lp (: a [int])) [int] (+ a 0)) (fun (lp (: a [int])) [int] (+ a 1)) (fun (lp (: a [int])) [int] (+ a 2)) (fun (lp (: a [int])) [int] (+ a 3))))
         |  (def-val s 0)
         |  (for f funs
         |     (assign s (+ s (f 1)))

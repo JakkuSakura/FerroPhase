@@ -9,31 +9,13 @@ case class ShllPrettyPrinter(
   val IDENT: String = if (newlines) "  " else ""
   val NL: String = if (newlines) "\n" else " "
   val textTool: TextTool = TextTool(NL, IDENT)
-  def printList(l: List[AST]): String = {
-    l.map(printImpl).mkString(" ")
-  }
 
-  def printDict(d: List[KeyValue]): String = {
-    d.map(printImpl).mkString(" ")
-  }
   def printImpl(a: AST): String = {
     a match {
-      case Apply(f, Nil, Nil) =>
-        s"(${printImpl(f)})"
-      case Apply(f, Nil, kwArgs) =>
-        s"(${printImpl(f)} ${printDict(kwArgs)})"
-      case Apply(f, args, Nil) =>
-        s"(${printImpl(f)} ${printList(args)})"
       case Apply(f, args, kwArgs) =>
-        s"(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)})"
-      case ApplyType(f, Nil, Nil) =>
-        s"[${printImpl(f)}]"
-      case ApplyType(f, Nil, kwArgs) =>
-        s"[${printImpl(f)} ${printDict(kwArgs)}]"
-      case ApplyType(f, args, Nil) =>
-        s"[${printImpl(f)} ${printList(args)}]"
+        s"(${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)})"
       case ApplyType(f, args, kwArgs) =>
-        s"[(${printImpl(f)} ${printList(args)} ${printDict(kwArgs)}]"
+        s"[${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)}]"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
       case ForEach(target, iter, body) =>
@@ -57,11 +39,17 @@ case class ShllPrettyPrinter(
       case LiteralList(Nil) =>
         s"(list)"
       case LiteralList(value) =>
-        s"(list ${printList(value)})"
+        s"(list ${value.map(printImpl).mkString(" ")})"
       case KeyValue(name, value) =>
         s"${name.name}=${printImpl(value)}"
       case Field(name, ty) =>
-        s"(field ${name.name} ${printImpl(ty)})"
+        s"(: ${name.name} ${printImpl(ty)})"
+      case PosArgs(args) =>
+        args.map(printImpl).mkString(" ")
+      case KwArgs(args) =>
+        args.map(x => printImpl(x)).mkString(" ")
+      case Parameters(params) =>
+        s"(lp ${params.map(printImpl).mkString(" ")})"
       case DefVal(name, body) =>
         s"(def-val ${name.name} ${printImpl(body)})"
       case DefFun(name, args, ret, body) =>
@@ -77,7 +65,9 @@ case class ShllPrettyPrinter(
       case LiteralUnknown() =>
         "???"
       case ApplyStruct(name, values) =>
-        printImpl(Apply(name, Nil, values))
+        s"(${printImpl(name)} ${printImpl(values)})"
+      case Fields(fields) =>
+        "(lf " + fields.map(printImpl).mkString(" ") + ")"
       case Select(obj, field) =>
         s"(select ${printImpl(obj)} ${field.name})"
     }

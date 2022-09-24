@@ -53,8 +53,8 @@ case class AntlrAstParser() {
 
   }
 
-  def convertPosArgs(ctx: PosArgsContext): List[AST] = {
-    ctx.term().asScala.map(convertTerm).toList
+  def convertPosArgs(ctx: PosArgsContext): PosArgs = {
+    PosArgs(ctx.term().asScala.map(convertTerm).toList).withToken(ctx.start)
   }
 
   def convertKwArg(ctx: KwArgContext): KeyValue = {
@@ -63,8 +63,8 @@ case class AntlrAstParser() {
     KeyValue(ident, expr).withToken(ctx.getStart)
   }
 
-  def convertKwArgs(ctx: KwArgsContext): List[KeyValue] = {
-    ctx.kwArg().asScala.toList.map(convertKwArg)
+  def convertKwArgs(ctx: KwArgsContext): KwArgs = {
+    KwArgs(ctx.kwArg().asScala.toList.map(convertKwArg)).withToken(ctx.start)
   }
   def convertApply(ctx: ApplyContext): Apply = {
     Apply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
