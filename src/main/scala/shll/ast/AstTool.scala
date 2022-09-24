@@ -2,7 +2,6 @@ package shll.ast
 
 import shll.frontends.ParserException
 
-
 case object AstTool {
   def isLiteral(n: AST, ctx: ValueContext): Boolean = {
     n match {
@@ -29,23 +28,33 @@ case object AstTool {
     // TODO: more compenrehensive side effect analysis
     n match {
       case Apply(Ident(name), _, _) if ctx.getStruct(name).isEmpty => true
-      case Assign(name, value) => ctx.getValue(name.name).isDefined && ctx.getValueShallow(name.name).isEmpty
+      case Assign(name, value) =>
+        ctx.getValue(name.name).isDefined && ctx.getValueShallow(name.name).isEmpty
       case Block(body) => body.exists(hasSideEffects(_, ctx))
       case _ => false
     }
   }
   def argsToRange(
-      args: LiteralList
+      args: Parameters
   ): Array[Int] = {
-    args.value.indices.toArray
+    args.params.indices.toArray
   }
 
   def argsToKeys(
-      args: LiteralList
+      args: Parameters
   ): Array[String] = {
-    args.value.map {
-      case a: Field => a.name.name
-      case a => throw ParserException("cannot convert to keys " + a)
-    }.toArray
+    args.params.map { a => a.name.name }.toArray
+  }
+
+  def argsToRange(
+      args: Fields
+  ): Array[Int] = {
+    args.fields.indices.toArray
+  }
+
+  def argsToKeys(
+      args: Fields
+  ): Array[String] = {
+    args.fields.map { a => a.name.name }.toArray
   }
 }
