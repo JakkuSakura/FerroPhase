@@ -87,6 +87,7 @@ case class FlowAnalysisContext(
     externalNodes.nonEmpty
   }
   def mergeChildNodes(node: AST, other: FlowAnalysisContext): Unit = {
+    decls ++= other.decls
     externalNodes ++= other.externalNodes
     internalNodes ++= other.internalNodes
     externalNodes ++= dataflow.map(_._2).diff(internalNodes)
@@ -145,18 +146,20 @@ case class FlowAnalysis() {
   }
   def analyzeDefVal(
       n: DefVal,
-      ctx: FlowAnalysisContext
+      ctx0: FlowAnalysisContext
   ): Unit = {
+    val ctx = ctx0.child()
+    ctx.addDecl(n.name, n)
     analyzeNode(n.value, ctx)
-    ctx.addInternalNode(n.name)
+    ctx.addInternalNode(n)
     ctx.addDataFlow(n.value -> n)
-    ctx.addDataFlow(n -> n.name)
+    contextHistory += n -> ctx
   }
   def analyzeIdent(id: Ident, ctx: FlowAnalysisContext): Unit = {}
 
   def analyzeApply(n: Apply, ctx: FlowAnalysisContext): Unit = {
     if (n.fun == Ident("print"))
-      ctx.addDataFlow(n -> n.fun)
+      ctx.addDataFlow(n -> LiteralUnknown())
     analyzeNode(n.fun, ctx)
     n.args.args.foreach(analyzeNode(_, ctx))
     n.kwArgs.args.foreach(x => analyzeNode(x.value, ctx))
@@ -193,7 +196,8 @@ case class FlowAnalysis() {
   }
 
   def analyzeBlock(n: Block, ctx0: FlowAnalysisContext): Unit = {
-    var ctx = ctx0.child()
+    var ctx1 = ctx0.child()
+    var ctx = ctx1
     // TODO: current flow analysis is far from complete
     n.body.foreach { x =>
       analyzeNode(x, ctx)
@@ -201,10 +205,10 @@ case class FlowAnalysis() {
     }
 
     n.body.foreach { x =>
-      ctx.mergeChildNodes(n, contextHistory(x))
+      ctx1.mergeChildNodes(n, contextHistory(x))
     }
-    n.body.lastOption.foreach(x => ctx.addDataFlow(x -> n))
-    contextHistory += n -> ctx
+    n.body.lastOption.foreach(x => ctx1.addDataFlow(x -> n))
+    contextHistory += n -> ctx1
   }
 
   def analyzeDefStruct(
@@ -258,14 +262,13 @@ case class FlowAnalysis() {
     analyzeNode(n.iterable, ctx)
     analyzeNode(n.body, ctx)
     analyzeNode(n.variable, ctx)
-
+    ctx0.mergeChildNodes(n, ctx)
     // TODO: this should be in the context of the body
-    ctx.addDataFlow(n.iterable -> n.variable)
-    ctx.addDataFlow(n.variable -> n.body)
-    ctx.addDataFlow(n.body -> n)
-    ctx.mergeChildNodes(n, contextHistory(n.variable))
-    ctx.mergeChildNodes(n, contextHistory(n.body))
-    contextHistory += n -> ctx
+    ctx0.addDataFlow(n.iterable -> n.variable)
+    ctx0.addDataFlow(n.variable -> n.body)
+    ctx0.addDataFlow(n.body -> n)
+    ctx0.mergeChildNodes(n, contextHistory(n.variable))
+    ctx0.mergeChildNodes(n, contextHistory(n.body))
   }
 
   def analyzeAssign(n: Assign, ctx: FlowAnalysisContext): Unit = {
@@ -274,13 +277,14 @@ case class FlowAnalysis() {
     ctx.addDataFlow(n -> n.name)
   }
   def analyzeApplyFun(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
+    val ctx1 = ctx.child()
     // TODO: process arguments
-    analyzeNode(n.args, ctx)
-    analyzeNode(n.ret, ctx)
-    analyzeNode(n.body, ctx)
-
-    ctx.addDataFlow(n.args -> n)
-    ctx.addDataFlow(n.ret -> n)
-    ctx.addDataFlow(n.body -> n)
+    analyzeNode(n.args, ctx1)
+    analyzeNode(n.ret, ctx1)
+    analyzeNode(n.body, ctx1)
+    ctx.mergeChildNodes(n, ctx1)
+    ctx1.addDataFlow(n.args -> n)
+    ctx1.addDataFlow(n.ret -> n)
+    ctx1.addDataFlow(n.body -> n)
   }
 }
