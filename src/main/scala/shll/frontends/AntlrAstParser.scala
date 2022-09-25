@@ -80,9 +80,10 @@ case class AntlrAstParser() {
     ctx match {
       case _ if ctx.CHAR() != null =>
         convertChar(ctx.CHAR())
+      case _ if ctx.BOOL() != null =>
+        convertBool(ctx.BOOL()).get
       case _ if ctx.IDENT() != null =>
-        convertBool(ctx.IDENT())
-          .getOrElse(convertIdent(ctx.IDENT()))
+        convertIdent(ctx.IDENT())
       case _ if ctx.INTEGER() != null =>
         convertInteger(ctx.INTEGER())
       case _ if ctx.DECIMAL() != null =>
