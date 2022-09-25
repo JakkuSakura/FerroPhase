@@ -73,9 +73,16 @@ case class DeadCodeEliminator() {
     n
   }
 
+  def checkKeepStatement(n: Block, x: AST): Boolean = {
+    val ctx = flow.contextHistory(n)
+    val subCtx = flow.contextHistory(x)
+    val visitable = ctx.internalVisitable(x, n)
+    val hasExternalEffect =  subCtx.hasExternalNodes
+    visitable || hasExternalEffect
+  }
   def eliminateBlock(n: Block, ctx: FlowAnalysisContext): AST = {
     val filteredStmts = n.body
-      .filter(x => ctx.internalVisitable(x, n) || flow.contextHistory(n).hasExternalNodes)
+      .filter(x => checkKeepStatement(n, x))
       .map(x => eliminateNode(x))
 
     Block(filteredStmts)
