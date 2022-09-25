@@ -10,7 +10,7 @@ import scala.collection.mutable
 
 case class FlowAnalysisContext(
     context: ValueContext = ValueContext(),
-//    private val decls: mutable.Map[String, String] = mutable.Map.empty,
+    private val decls: mutable.Map[String, String] = mutable.Map.empty,
     private val internalNodes: mutable.Set[String] = mutable.Set.empty,
     private val externalNodes: mutable.Set[String] = mutable.Set.empty,
     private val dataflow: mutable.Set[(String, String)] = mutable.Set.empty,
@@ -19,6 +19,7 @@ case class FlowAnalysisContext(
   def child(): FlowAnalysisContext = {
     val child = FlowAnalysisContext(
       context,
+      mutable.Map.empty,
       mutable.Set.empty,
       mutable.Set.empty,
       mutable.Set.empty,
@@ -50,6 +51,8 @@ case class FlowAnalysisContext(
 
   def getName(node: AST): String = {
     node match {
+      case Ident(name) if getDecl(name).isDefined =>
+        getDecl(name).get
       case x: Ident
           if !isLiteral(x, ValueContext())
             && !Specializer().builtinTypes.contains(x.name)
@@ -66,12 +69,12 @@ case class FlowAnalysisContext(
     val toN = getName(to)
     dataflow += fromN -> toN
   }
-//  def addDecl(name: String, ast: AST): Unit = {
-//    decls += name -> getName(ast)
-//  }
-//  def getDecl(name: String): Option[String] = {
-//    decls.get(name)
-//  }
+  def addDecl(name: Ident, ast: AST): Unit = {
+    decls += name.name -> getName(ast)
+  }
+  def getDecl(name: String): Option[String] = {
+    decls.get(name).orElse(parent.flatMap(_.getDecl(name)))
+  }
   def addInternalNode(node: AST): Unit = {
     internalNodes += getName(node)
   }
@@ -149,8 +152,7 @@ case class FlowAnalysis() {
     ctx.addDataFlow(n.value -> n)
     ctx.addDataFlow(n -> n.name)
   }
-  def analyzeIdent(id: Ident, ctx: FlowAnalysisContext): Unit = {
-  }
+  def analyzeIdent(id: Ident, ctx: FlowAnalysisContext): Unit = {}
 
   def analyzeApply(n: Apply, ctx: FlowAnalysisContext): Unit = {
     if (n.fun == Ident("print"))
@@ -191,11 +193,13 @@ case class FlowAnalysis() {
   }
 
   def analyzeBlock(n: Block, ctx0: FlowAnalysisContext): Unit = {
-    val ctx = ctx0.child()
+    var ctx = ctx0.child()
     // TODO: current flow analysis is far from complete
     n.body.foreach { x =>
       analyzeNode(x, ctx)
+      ctx = contextHistory(x)
     }
+
     n.body.foreach { x =>
       ctx.mergeChildNodes(n, contextHistory(x))
     }
@@ -205,28 +209,30 @@ case class FlowAnalysis() {
 
   def analyzeDefStruct(
       d: DefStruct,
-      ctx: FlowAnalysisContext
+      ctx0: FlowAnalysisContext
   ): Unit = {
+    val ctx = ctx0.child()
+    ctx.addDecl(d.name, d)
     analyzeNode(d.fields, ctx)
-    ctx.addInternalNode(d.name)
+    ctx.addInternalNode(d)
 
     ctx.addDataFlow(d.fields -> d)
-    ctx.addDataFlow(d -> d.name)
+    contextHistory += d -> ctx
   }
 
   def analyzeDefFun(
-                     n: DefFun,
-                     ctx0: FlowAnalysisContext
+      n: DefFun,
+      ctx0: FlowAnalysisContext
   ): Unit = {
     val ctx = ctx0.child()
+    ctx.addDecl(n.name, n)
     analyzeNode(n.args, ctx)
     analyzeNode(n.ret, ctx)
     n.body.foreach(analyzeNode(_, ctx))
     n.body.foreach(x => ctx.addDataFlow(x -> n))
-    ctx.addInternalNode(n.name)
+    ctx.addInternalNode(n)
     ctx.addDataFlow(n.args -> n)
     ctx.addDataFlow(n.ret -> n)
-    ctx.addDataFlow(n -> n.name)
     n.body.foreach(x => ctx.mergeChildNodes(n, contextHistory(x)))
     contextHistory += n -> ctx
   }
@@ -248,6 +254,7 @@ case class FlowAnalysis() {
     val ctx = ctx0.child()
     ctx.addInternalNode(n.variable)
 
+    // TODO: process iterable
     analyzeNode(n.iterable, ctx)
     analyzeNode(n.body, ctx)
     analyzeNode(n.variable, ctx)
@@ -267,6 +274,7 @@ case class FlowAnalysis() {
     ctx.addDataFlow(n -> n.name)
   }
   def analyzeApplyFun(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
+    // TODO: process arguments
     analyzeNode(n.args, ctx)
     analyzeNode(n.ret, ctx)
     analyzeNode(n.body, ctx)
