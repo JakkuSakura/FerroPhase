@@ -13,7 +13,8 @@ case class FlowAnalysisContext(
     private val decls: mutable.Map[String, String] = mutable.Map.empty,
     private val internalNodes: mutable.Set[String] = mutable.Set.empty,
     private val externalNodes: mutable.Set[String] = mutable.Set.empty,
-    private val dataflow: mutable.Set[(String, String)] = mutable.Set.empty,
+    private val dataFlow: mutable.Set[(String, String)] = mutable.Set.empty,
+    private val executionFlow: mutable.Set[(String, String)] = mutable.Set.empty,
     private val parent: Option[FlowAnalysisContext] = None
 ) {
   def child(): FlowAnalysisContext = {
@@ -22,15 +23,15 @@ case class FlowAnalysisContext(
       mutable.Map.empty,
       mutable.Set.empty,
       mutable.Set.empty,
-      mutable.Set.empty,
+      dataFlow,
+      executionFlow,
       Some(this)
     )
     child
   }
 
   def printDataflow(): Unit = {
-    dataflow.foreach { case (k, v) => println(s"$k\n->\n$v\n---") }
-    parent.foreach(_.printDataflow())
+    dataFlow.foreach { case (k, v) => println(s"$k\n->\n$v\n---") }
   }
 
   def internalVisitable(from: String, to: String): Boolean = {
@@ -40,8 +41,8 @@ case class FlowAnalysisContext(
       val current = queue.dequeue()
 
       visited.add(current)
-      dataflow.filter(_._1 == current).foreach {
-        case (_, v) if (!visited.contains(v)) =>
+      dataFlow.filter(_._1 == current).foreach {
+        case (_, v) if !visited.contains(v) =>
           queue.enqueue(v)
         case _ =>
       }
@@ -51,6 +52,7 @@ case class FlowAnalysisContext(
 
   def getName(node: AST): String = {
     node match {
+      case LiteralUnknown() => "???"
       case Ident(name) if getDecl(name).isDefined =>
         getDecl(name).get
       case x: Ident
@@ -62,12 +64,18 @@ case class FlowAnalysisContext(
     }
   }
 
-  // distinguish between read and write data flow
   def addDataFlow(pair: (AST, AST)): Unit = {
     val (from, to) = pair
     val fromN = getName(from)
     val toN = getName(to)
-    dataflow += fromN -> toN
+    dataFlow += fromN -> toN
+  }
+
+  def addExecutionFlow(pair: (AST, AST)): Unit = {
+    val (from, to) = pair
+    val fromN = getName(from)
+    val toN = getName(to)
+    executionFlow += fromN -> toN
   }
   def addDecl(name: Ident, ast: AST): Unit = {
     decls += name.name -> getName(ast)
@@ -78,21 +86,17 @@ case class FlowAnalysisContext(
   def addInternalNode(node: AST): Unit = {
     internalNodes += getName(node)
   }
-  def internalVisitable(from: AST, to: AST): Boolean = {
+  def isVisitable(from: AST, to: AST): Boolean = {
     val fromN = getName(from)
     val toN = getName(to)
     internalVisitable(fromN, toN)
   }
-  def hasExternalNodes: Boolean = {
-    externalNodes.nonEmpty
-  }
+
   def mergeChildNodes(node: AST, other: FlowAnalysisContext): Unit = {
     decls ++= other.decls
     externalNodes ++= other.externalNodes
     internalNodes ++= other.internalNodes
-    externalNodes ++= dataflow.map(_._2).diff(internalNodes)
     externalNodes --= internalNodes
-    dataflow ++= internalNodes.intersect(other.externalNodes).map(x => x -> getName(node))
   }
 }
 case class FlowAnalysis() {
@@ -256,6 +260,7 @@ case class FlowAnalysis() {
 
   def analyzeForEach(n: ForEach, ctx0: FlowAnalysisContext): Unit = {
     val ctx = ctx0.child()
+    ctx.addDecl(n.variable, DefVal(n.variable, LiteralUnknown()))
     ctx.addInternalNode(n.variable)
 
     // TODO: process iterable
@@ -266,9 +271,8 @@ case class FlowAnalysis() {
     // TODO: this should be in the context of the body
     ctx0.addDataFlow(n.iterable -> n.variable)
     ctx0.addDataFlow(n.variable -> n.body)
-    ctx0.addDataFlow(n.body -> n)
-    ctx0.mergeChildNodes(n, contextHistory(n.variable))
-    ctx0.mergeChildNodes(n, contextHistory(n.body))
+    ctx0.addDataFlow(n -> n.body)
+
   }
 
   def analyzeAssign(n: Assign, ctx: FlowAnalysisContext): Unit = {
