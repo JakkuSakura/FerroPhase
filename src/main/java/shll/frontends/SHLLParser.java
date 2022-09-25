@@ -17,8 +17,8 @@ public class SHLLParser extends Parser {
 	protected static final PredictionContextCache _sharedContextCache =
 		new PredictionContextCache();
 	public static final int
-		T__0=1, T__1=2, T__2=3, T__3=4, T__4=5, IDENT=6, INTEGER=7, DECIMAL=8, 
-		STRING=9, CHAR=10, WS=11;
+		T__0=1, T__1=2, T__2=3, T__3=4, T__4=5, IDENT=6, BOOL=7, INTEGER=8, DECIMAL=9, 
+		STRING=10, CHAR=11, WS=12;
 	public static final int
 		RULE_term = 0, RULE_kwArg = 1, RULE_kwArgs = 2, RULE_posArgs = 3, RULE_apply = 4, 
 		RULE_applyType = 5, RULE_program = 6;
@@ -37,8 +37,8 @@ public class SHLLParser extends Parser {
 	private static final String[] _LITERAL_NAMES = makeLiteralNames();
 	private static String[] makeSymbolicNames() {
 		return new String[] {
-			null, null, null, null, null, null, "IDENT", "INTEGER", "DECIMAL", "STRING", 
-			"CHAR", "WS"
+			null, null, null, null, null, null, "IDENT", "BOOL", "INTEGER", "DECIMAL", 
+			"STRING", "CHAR", "WS"
 		};
 	}
 	private static final String[] _SYMBOLIC_NAMES = makeSymbolicNames();
@@ -100,6 +100,7 @@ public class SHLLParser extends Parser {
 		public ApplyTypeContext applyType() {
 			return getRuleContext(ApplyTypeContext.class,0);
 		}
+		public TerminalNode BOOL() { return getToken(SHLLParser.BOOL, 0); }
 		public TerminalNode IDENT() { return getToken(SHLLParser.IDENT, 0); }
 		public TerminalNode INTEGER() { return getToken(SHLLParser.INTEGER, 0); }
 		public TerminalNode DECIMAL() { return getToken(SHLLParser.DECIMAL, 0); }
@@ -123,7 +124,7 @@ public class SHLLParser extends Parser {
 		TermContext _localctx = new TermContext(_ctx, getState());
 		enterRule(_localctx, 0, RULE_term);
 		try {
-			setState(21);
+			setState(22);
 			_errHandler.sync(this);
 			switch (_input.LA(1)) {
 			case T__1:
@@ -140,38 +141,45 @@ public class SHLLParser extends Parser {
 				applyType();
 				}
 				break;
-			case IDENT:
+			case BOOL:
 				enterOuterAlt(_localctx, 3);
 				{
 				setState(16);
+				match(BOOL);
+				}
+				break;
+			case IDENT:
+				enterOuterAlt(_localctx, 4);
+				{
+				setState(17);
 				match(IDENT);
 				}
 				break;
 			case INTEGER:
-				enterOuterAlt(_localctx, 4);
+				enterOuterAlt(_localctx, 5);
 				{
-				setState(17);
+				setState(18);
 				match(INTEGER);
 				}
 				break;
 			case DECIMAL:
-				enterOuterAlt(_localctx, 5);
+				enterOuterAlt(_localctx, 6);
 				{
-				setState(18);
+				setState(19);
 				match(DECIMAL);
 				}
 				break;
 			case STRING:
-				enterOuterAlt(_localctx, 6);
+				enterOuterAlt(_localctx, 7);
 				{
-				setState(19);
+				setState(20);
 				match(STRING);
 				}
 				break;
 			case CHAR:
-				enterOuterAlt(_localctx, 7);
+				enterOuterAlt(_localctx, 8);
 				{
-				setState(20);
+				setState(21);
 				match(CHAR);
 				}
 				break;
@@ -216,11 +224,11 @@ public class SHLLParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(23);
-			match(IDENT);
 			setState(24);
-			match(T__0);
+			match(IDENT);
 			setState(25);
+			match(T__0);
+			setState(26);
 			term();
 			}
 		}
@@ -264,17 +272,17 @@ public class SHLLParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(30);
+			setState(31);
 			_errHandler.sync(this);
 			_la = _input.LA(1);
 			while (_la==IDENT) {
 				{
 				{
-				setState(27);
+				setState(28);
 				kwArg();
 				}
 				}
-				setState(32);
+				setState(33);
 				_errHandler.sync(this);
 				_la = _input.LA(1);
 			}
@@ -320,19 +328,19 @@ public class SHLLParser extends Parser {
 			int _alt;
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(36);
+			setState(37);
 			_errHandler.sync(this);
 			_alt = getInterpreter().adaptivePredict(_input,2,_ctx);
 			while ( _alt!=2 && _alt!=org.antlr.v4.runtime.atn.ATN.INVALID_ALT_NUMBER ) {
 				if ( _alt==1 ) {
 					{
 					{
-					setState(33);
+					setState(34);
 					term();
 					}
 					} 
 				}
-				setState(38);
+				setState(39);
 				_errHandler.sync(this);
 				_alt = getInterpreter().adaptivePredict(_input,2,_ctx);
 			}
@@ -380,15 +388,15 @@ public class SHLLParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(39);
-			match(T__1);
 			setState(40);
-			term();
+			match(T__1);
 			setState(41);
-			posArgs();
+			term();
 			setState(42);
-			kwArgs();
+			posArgs();
 			setState(43);
+			kwArgs();
+			setState(44);
 			match(T__2);
 			}
 		}
@@ -434,15 +442,15 @@ public class SHLLParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(45);
-			match(T__3);
 			setState(46);
-			term();
+			match(T__3);
 			setState(47);
-			posArgs();
+			term();
 			setState(48);
-			kwArgs();
+			posArgs();
 			setState(49);
+			kwArgs();
+			setState(50);
 			match(T__4);
 			}
 		}
@@ -483,9 +491,9 @@ public class SHLLParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(51);
-			term();
 			setState(52);
+			term();
+			setState(53);
 			match(EOF);
 			}
 		}
@@ -501,41 +509,42 @@ public class SHLLParser extends Parser {
 	}
 
 	public static final String _serializedATN =
-		"\u0004\u0001\u000b7\u0002\u0000\u0007\u0000\u0002\u0001\u0007\u0001\u0002"+
+		"\u0004\u0001\f8\u0002\u0000\u0007\u0000\u0002\u0001\u0007\u0001\u0002"+
 		"\u0002\u0007\u0002\u0002\u0003\u0007\u0003\u0002\u0004\u0007\u0004\u0002"+
 		"\u0005\u0007\u0005\u0002\u0006\u0007\u0006\u0001\u0000\u0001\u0000\u0001"+
-		"\u0000\u0001\u0000\u0001\u0000\u0001\u0000\u0001\u0000\u0003\u0000\u0016"+
-		"\b\u0000\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0002\u0005"+
-		"\u0002\u001d\b\u0002\n\u0002\f\u0002 \t\u0002\u0001\u0003\u0005\u0003"+
-		"#\b\u0003\n\u0003\f\u0003&\t\u0003\u0001\u0004\u0001\u0004\u0001\u0004"+
-		"\u0001\u0004\u0001\u0004\u0001\u0004\u0001\u0005\u0001\u0005\u0001\u0005"+
-		"\u0001\u0005\u0001\u0005\u0001\u0005\u0001\u0006\u0001\u0006\u0001\u0006"+
-		"\u0001\u0006\u0000\u0000\u0007\u0000\u0002\u0004\u0006\b\n\f\u0000\u0000"+
-		"7\u0000\u0015\u0001\u0000\u0000\u0000\u0002\u0017\u0001\u0000\u0000\u0000"+
-		"\u0004\u001e\u0001\u0000\u0000\u0000\u0006$\u0001\u0000\u0000\u0000\b"+
-		"\'\u0001\u0000\u0000\u0000\n-\u0001\u0000\u0000\u0000\f3\u0001\u0000\u0000"+
-		"\u0000\u000e\u0016\u0003\b\u0004\u0000\u000f\u0016\u0003\n\u0005\u0000"+
-		"\u0010\u0016\u0005\u0006\u0000\u0000\u0011\u0016\u0005\u0007\u0000\u0000"+
-		"\u0012\u0016\u0005\b\u0000\u0000\u0013\u0016\u0005\t\u0000\u0000\u0014"+
-		"\u0016\u0005\n\u0000\u0000\u0015\u000e\u0001\u0000\u0000\u0000\u0015\u000f"+
-		"\u0001\u0000\u0000\u0000\u0015\u0010\u0001\u0000\u0000\u0000\u0015\u0011"+
-		"\u0001\u0000\u0000\u0000\u0015\u0012\u0001\u0000\u0000\u0000\u0015\u0013"+
-		"\u0001\u0000\u0000\u0000\u0015\u0014\u0001\u0000\u0000\u0000\u0016\u0001"+
-		"\u0001\u0000\u0000\u0000\u0017\u0018\u0005\u0006\u0000\u0000\u0018\u0019"+
-		"\u0005\u0001\u0000\u0000\u0019\u001a\u0003\u0000\u0000\u0000\u001a\u0003"+
-		"\u0001\u0000\u0000\u0000\u001b\u001d\u0003\u0002\u0001\u0000\u001c\u001b"+
-		"\u0001\u0000\u0000\u0000\u001d \u0001\u0000\u0000\u0000\u001e\u001c\u0001"+
-		"\u0000\u0000\u0000\u001e\u001f\u0001\u0000\u0000\u0000\u001f\u0005\u0001"+
-		"\u0000\u0000\u0000 \u001e\u0001\u0000\u0000\u0000!#\u0003\u0000\u0000"+
-		"\u0000\"!\u0001\u0000\u0000\u0000#&\u0001\u0000\u0000\u0000$\"\u0001\u0000"+
-		"\u0000\u0000$%\u0001\u0000\u0000\u0000%\u0007\u0001\u0000\u0000\u0000"+
-		"&$\u0001\u0000\u0000\u0000\'(\u0005\u0002\u0000\u0000()\u0003\u0000\u0000"+
-		"\u0000)*\u0003\u0006\u0003\u0000*+\u0003\u0004\u0002\u0000+,\u0005\u0003"+
-		"\u0000\u0000,\t\u0001\u0000\u0000\u0000-.\u0005\u0004\u0000\u0000./\u0003"+
-		"\u0000\u0000\u0000/0\u0003\u0006\u0003\u000001\u0003\u0004\u0002\u0000"+
-		"12\u0005\u0005\u0000\u00002\u000b\u0001\u0000\u0000\u000034\u0003\u0000"+
-		"\u0000\u000045\u0005\u0000\u0000\u00015\r\u0001\u0000\u0000\u0000\u0003"+
-		"\u0015\u001e$";
+		"\u0000\u0001\u0000\u0001\u0000\u0001\u0000\u0001\u0000\u0001\u0000\u0003"+
+		"\u0000\u0017\b\u0000\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001"+
+		"\u0002\u0005\u0002\u001e\b\u0002\n\u0002\f\u0002!\t\u0002\u0001\u0003"+
+		"\u0005\u0003$\b\u0003\n\u0003\f\u0003\'\t\u0003\u0001\u0004\u0001\u0004"+
+		"\u0001\u0004\u0001\u0004\u0001\u0004\u0001\u0004\u0001\u0005\u0001\u0005"+
+		"\u0001\u0005\u0001\u0005\u0001\u0005\u0001\u0005\u0001\u0006\u0001\u0006"+
+		"\u0001\u0006\u0001\u0006\u0000\u0000\u0007\u0000\u0002\u0004\u0006\b\n"+
+		"\f\u0000\u00009\u0000\u0016\u0001\u0000\u0000\u0000\u0002\u0018\u0001"+
+		"\u0000\u0000\u0000\u0004\u001f\u0001\u0000\u0000\u0000\u0006%\u0001\u0000"+
+		"\u0000\u0000\b(\u0001\u0000\u0000\u0000\n.\u0001\u0000\u0000\u0000\f4"+
+		"\u0001\u0000\u0000\u0000\u000e\u0017\u0003\b\u0004\u0000\u000f\u0017\u0003"+
+		"\n\u0005\u0000\u0010\u0017\u0005\u0007\u0000\u0000\u0011\u0017\u0005\u0006"+
+		"\u0000\u0000\u0012\u0017\u0005\b\u0000\u0000\u0013\u0017\u0005\t\u0000"+
+		"\u0000\u0014\u0017\u0005\n\u0000\u0000\u0015\u0017\u0005\u000b\u0000\u0000"+
+		"\u0016\u000e\u0001\u0000\u0000\u0000\u0016\u000f\u0001\u0000\u0000\u0000"+
+		"\u0016\u0010\u0001\u0000\u0000\u0000\u0016\u0011\u0001\u0000\u0000\u0000"+
+		"\u0016\u0012\u0001\u0000\u0000\u0000\u0016\u0013\u0001\u0000\u0000\u0000"+
+		"\u0016\u0014\u0001\u0000\u0000\u0000\u0016\u0015\u0001\u0000\u0000\u0000"+
+		"\u0017\u0001\u0001\u0000\u0000\u0000\u0018\u0019\u0005\u0006\u0000\u0000"+
+		"\u0019\u001a\u0005\u0001\u0000\u0000\u001a\u001b\u0003\u0000\u0000\u0000"+
+		"\u001b\u0003\u0001\u0000\u0000\u0000\u001c\u001e\u0003\u0002\u0001\u0000"+
+		"\u001d\u001c\u0001\u0000\u0000\u0000\u001e!\u0001\u0000\u0000\u0000\u001f"+
+		"\u001d\u0001\u0000\u0000\u0000\u001f \u0001\u0000\u0000\u0000 \u0005\u0001"+
+		"\u0000\u0000\u0000!\u001f\u0001\u0000\u0000\u0000\"$\u0003\u0000\u0000"+
+		"\u0000#\"\u0001\u0000\u0000\u0000$\'\u0001\u0000\u0000\u0000%#\u0001\u0000"+
+		"\u0000\u0000%&\u0001\u0000\u0000\u0000&\u0007\u0001\u0000\u0000\u0000"+
+		"\'%\u0001\u0000\u0000\u0000()\u0005\u0002\u0000\u0000)*\u0003\u0000\u0000"+
+		"\u0000*+\u0003\u0006\u0003\u0000+,\u0003\u0004\u0002\u0000,-\u0005\u0003"+
+		"\u0000\u0000-\t\u0001\u0000\u0000\u0000./\u0005\u0004\u0000\u0000/0\u0003"+
+		"\u0000\u0000\u000001\u0003\u0006\u0003\u000012\u0003\u0004\u0002\u0000"+
+		"23\u0005\u0005\u0000\u00003\u000b\u0001\u0000\u0000\u000045\u0003\u0000"+
+		"\u0000\u000056\u0005\u0000\u0000\u00016\r\u0001\u0000\u0000\u0000\u0003"+
+		"\u0016\u001f%";
 	public static final ATN _ATN =
 		new ATNDeserializer().deserialize(_serializedATN.toCharArray());
 	static {

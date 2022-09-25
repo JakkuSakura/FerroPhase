@@ -497,10 +497,11 @@ case class Specializer(
     }
   }
   def specializeAssign(n: Assign, ctx: SpecializeContext): (AST, SpecializeContext) = {
+    val name = n.name.asInstanceOf[Ident]
     // FIXME: this fix is not correct
-    ctx.context.updateValue(n.name.name, LiteralUnknown())
+    ctx.context.updateValue(name.name, LiteralUnknown())
     val value = specializeNode(n.value, ctx)
-    ctx.context.updateValue(n.name.name, value)
+    ctx.context.updateValue(name.name, value)
     (Assign(n.name, value), ctx)
   }
   def specializeDefType(n: DefType, ctx: SpecializeContext): (DefType, SpecializeContext) = {

@@ -46,8 +46,7 @@ case class DefFun(name: Ident, args: Parameters, ret: AST, body: Option[AST]) ex
 case class ApplyFun(args: Parameters, ret: AST, body: AST) extends AST()
 case class DefVal(name: Ident, value: AST) extends AST()
 case class DefType(name: Ident, value: AST) extends AST()
-// make name AST
-case class Assign(name: Ident, value: AST) extends AST()
+case class Assign(name: AST, value: AST) extends AST()
 case class Cond(cond: AST, consequence: AST, alternative: AST) extends AST()
 case class While(cond: AST, body: AST) extends AST()
 case class Block(body: List[AST]) extends AST() {
@@ -66,4 +65,5 @@ case class ApplyType(fun: AST, args: PosArgs, kwArgs: KwArgs) extends AST()
 case class DefStruct(name: Ident, fields: Fields) extends AST()
 // form of (struct key=value)
 case class ApplyStruct(s: AST, values: KwArgs) extends AST()
+
 case class Select(obj: AST, field: Ident) extends AST()

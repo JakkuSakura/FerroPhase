@@ -24,16 +24,6 @@ case object AstTool {
     }
   }
 
-  def hasSideEffects(n: AST, ctx: ValueContext): Boolean = {
-    // TODO: more compenrehensive side effect analysis
-    n match {
-      case Apply(Ident(name), _, _) if ctx.getStruct(name).isEmpty => true
-      case Assign(name, value) =>
-        ctx.getValue(name.name).isDefined && ctx.getValueShallow(name.name).isEmpty
-      case Block(body) => body.exists(hasSideEffects(_, ctx))
-      case _ => false
-    }
-  }
   def argsToRange(
       args: Parameters
   ): Array[Int] = {

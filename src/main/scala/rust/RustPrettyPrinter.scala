@@ -83,7 +83,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         })
 
       case Assign(target, value) =>
-        s"${target.name} = ${printImpl(value)}"
+        s"${printImpl(target)} = ${printImpl(value)}"
       case DefStruct(name, fields) =>
         s"struct ${name.name} { ${fields.fields.map(printImpl).mkString(", ")} }"
       case ApplyStruct(s, values) =>
