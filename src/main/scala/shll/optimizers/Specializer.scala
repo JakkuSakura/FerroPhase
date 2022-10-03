@@ -317,7 +317,7 @@ case class Specializer(
   def specializeBlock(d: Block, ctx0: SpecializeContext): Block = {
     val cache = SpecializeCache()
     var ctx = ctx0.withCache(cache)
-    val stmts = d.body.map {
+    val stmts = d.children.map {
       case s: DefVal =>
         val (x, newCtx) = specializeDefVal(s, ctx)
         ctx = newCtx
@@ -364,7 +364,7 @@ case class Specializer(
       oldBody match {
         case b: Block =>
           Block(
-            prepareValues ::: b.body
+            prepareValues ::: b.children
           )
         case _ =>
           Block(
