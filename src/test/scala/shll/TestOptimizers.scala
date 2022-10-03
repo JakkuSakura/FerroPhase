@@ -7,7 +7,7 @@ import rust.{RustPrettyPrinter, RustRunnerBackend}
 import shll.ast.AST
 import shll.backends.{Backend, NothingBackend, PrettyPrinter, PrettyPrinterBackend, ShllPrettyPrinter}
 import shll.frontends.ShllLexerAndParser
-import shll.optimizers.{DeadCodeEliminator, SingleBlockEliminator, Specializer}
+import shll.optimizers.{DeadCodeEliminator, Flattener, Specializer}
 
 class TestOptimizers {
   val logger: Logger = Logger[this.type]
@@ -27,7 +27,7 @@ class TestOptimizers {
     val eliminated1 = DeadCodeEliminator().eliminate(specialized)
     if (showProgress)
       logger.info(s"Eliminated1 " + pp.print(eliminated1))
-    val eliminated2 = SingleBlockEliminator().eliminate(eliminated1)
+    val eliminated2 = Flattener().flatten(eliminated1)
     if (showProgress)
       logger.info(s"Eliminated2 " + pp.print(eliminated2))
     eliminated2
@@ -44,8 +44,8 @@ class TestOptimizers {
       if (showProgress)
           logger.info(s"Expected " + pp.print(exp))
       assertEquals(exp, optimized)
-    if (feedBackend)
-      backend.process(optimized)
+//    if (feedBackend)
+//      backend.process(optimized)
   }
   @Test def testFunc(): Unit = {
     specializedEquals(
@@ -322,10 +322,14 @@ class TestOptimizers {
         |""".stripMargin,
       """
         |(block
-        |  (def-val funs (list (fun (lp (: a [int])) [int] (+ a 0)) (fun (lp (: a [int])) [int] (+ a 1)) (fun (lp (: a [int])) [int] (+ a 2)) (fun (lp (: a [int])) [int] (+ a 3))))
         |  (def-val s 0)
-        |  (for f funs
-        |     (assign s (+ s (f 1)))
+        |  (block
+        |    (def-val f (fun (lp (: a [int  ])) [int  ] (+ a 0 )))
+        |    (assign s (+ s (f 1 ) ))
+        |  )
+        |  (block
+        |    (def-val f (fun (lp (: a [int  ])) [int  ] (+ a 1 )))
+        |    (assign s (+ s (f 1 ) ))
         |  )
         |  s
         |)

@@ -4,13 +4,13 @@ import com.typesafe.scalalogging.Logger
 import shll.ast.*
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
-import shll.ast.AstTool.*
+import shll.ast.AstHelper.*
 
 import scala.collection.mutable
 
 case class FlowAnalysisContext(
     context: ValueContext = ValueContext(),
-    private val decls: mutable.Map[String, String] = mutable.Map.empty,
+    private val decls: mutable.Map[String, AST] = mutable.Map.empty,
     private val internalNodes: mutable.Set[String] = mutable.Set.empty,
     private val externalNodes: mutable.Set[String] = mutable.Set.empty,
     private val dataFlow: mutable.Set[(String, String)] = mutable.Set.empty,
@@ -34,7 +34,7 @@ case class FlowAnalysisContext(
     dataFlow.foreach { case (k, v) => println(s"$k\n->\n$v\n---") }
   }
 
-  def internalVisitable(from: String, to: String): Boolean = {
+  def isDataflowReachable(from: String, to: String): Boolean = {
     val queue: mutable.Queue[String] = mutable.Queue(from)
     val visited: mutable.Set[String] = mutable.Set()
     while (queue.nonEmpty) {
@@ -50,16 +50,32 @@ case class FlowAnalysisContext(
     visited.contains(to)
   }
 
+  def isReachable(from: String, to: String): Boolean = {
+    val queue: mutable.Queue[String] = mutable.Queue(from)
+    val visited: mutable.Set[String] = mutable.Set()
+    while (queue.nonEmpty) {
+      val current = queue.dequeue()
+      if (isDataflowReachable(current, to)) {
+        return true
+      }
+      visited.add(current)
+      executionFlow.filter(_._1 == current).foreach {
+        case (_, v) if !visited.contains(v) =>
+          queue.enqueue(v)
+        case _ =>
+      }
+    }
+    false
+  }
+
   def getName(node: AST): String = {
     node match {
       case LiteralUnknown() => "???"
-      case Ident(name) if getDecl(name).isDefined =>
-        getDecl(name).get
-      case x: Ident
-          if !isLiteral(x, ValueContext())
-            && !Specializer().builtinTypes.contains(x.name)
-            && !Specializer().builtinTypes.contains(x.name) =>
-        x.name
+//      case x: Ident
+//          if !isLiteral(x, ValueContext())
+//            && !Specializer().builtinTypes.contains(x.name)
+//            && !Specializer().builtinTypes.contains(x.name) =>
+//        x.name
       case _ => ShllPrettyPrinter().print(node) + "#" + node.num
     }
   }
@@ -78,18 +94,24 @@ case class FlowAnalysisContext(
     executionFlow += fromN -> toN
   }
   def addDecl(name: Ident, ast: AST): Unit = {
-    decls += name.name -> getName(ast)
+    decls += name.name -> ast
   }
-  def getDecl(name: String): Option[String] = {
+  def getDecl(name: String): Option[AST] = {
     decls.get(name).orElse(parent.flatMap(_.getDecl(name)))
   }
   def addInternalNode(node: AST): Unit = {
     internalNodes += getName(node)
   }
-  def isVisitable(from: AST, to: AST): Boolean = {
+  def isDataflowReachable(from: AST, to: AST): Boolean = {
     val fromN = getName(from)
     val toN = getName(to)
-    internalVisitable(fromN, toN)
+    isDataflowReachable(fromN, toN)
+  }
+
+  def isReachable(from: AST, to: AST): Boolean = {
+    val fromN = getName(from)
+    val toN = getName(to)
+    isReachable(fromN, toN)
   }
 
   def mergeChildNodes(node: AST, other: FlowAnalysisContext): Unit = {
@@ -104,11 +126,11 @@ case class FlowAnalysis() {
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = true, withNumber = true)
   val contextHistory: mutable.Map[AST, FlowAnalysisContext] = mutable.Map.empty
 
-  def analyze(n: AST): Unit = {
+  def analyze(n: AST): FlowAnalysisContext = {
     val ctx = FlowAnalysisContext()
     ctx.addDataFlow(n -> LiteralUnknown())
     analyzeNode(n, ctx)
-
+    contextHistory(n)
   }
 
   def analyzeNode(n: AST, ctx: FlowAnalysisContext): Unit = {
@@ -118,7 +140,7 @@ case class FlowAnalysis() {
     n match {
       case n: Block => analyzeBlock(n, ctx)
       case n: Apply => analyzeApply(n, ctx)
-      case n: Ident => analyzeIdent(n, ctx)
+      case n: Ident => analyzeReadIdent(n, ctx)
       case n: LiteralInt =>
       case n: LiteralDecimal =>
       case n: LiteralString =>
@@ -139,10 +161,10 @@ case class FlowAnalysis() {
       case n: DefStruct => analyzeDefStruct(n, ctx)
       case x => throw SpecializeException("cannot analyze", x)
     }
-    println("Dataflow at: " + pp.print(n) + "\n===")
+//    println("Dataflow at: " + pp.print(n) + "\n===")
     if (!contextHistory.contains(n))
       contextHistory += n -> ctx
-    contextHistory(n).printDataflow()
+//    contextHistory(n).printDataflow()
   }
 
   def analyzeField(n: Field, ctx: FlowAnalysisContext): Unit = {
@@ -159,7 +181,11 @@ case class FlowAnalysis() {
     ctx.addDataFlow(n.value -> n)
     contextHistory += n -> ctx
   }
-  def analyzeIdent(id: Ident, ctx: FlowAnalysisContext): Unit = {}
+  def analyzeReadIdent(id: Ident, ctx: FlowAnalysisContext): Unit = {
+    if (ctx.getDecl(id.name).isDefined) {
+      ctx.addDataFlow(ctx.getDecl(id.name).get -> id)
+    }
+  }
 
   def analyzeApply(n: Apply, ctx: FlowAnalysisContext): Unit = {
     if (n.fun == Ident("print"))
@@ -210,6 +236,7 @@ case class FlowAnalysis() {
 
     n.body.foreach { x =>
       ctx1.mergeChildNodes(n, contextHistory(x))
+      ctx1.addExecutionFlow(n -> x)
     }
     n.body.lastOption.foreach(x => ctx1.addDataFlow(x -> n))
     contextHistory += n -> ctx1
@@ -271,14 +298,22 @@ case class FlowAnalysis() {
     // TODO: this should be in the context of the body
     ctx0.addDataFlow(n.iterable -> n.variable)
     ctx0.addDataFlow(n.variable -> n.body)
-    ctx0.addDataFlow(n -> n.body)
+
+    ctx0.addExecutionFlow(n -> n.body)
+    ctx0.addExecutionFlow(n -> n.iterable)
 
   }
 
   def analyzeAssign(n: Assign, ctx: FlowAnalysisContext): Unit = {
+//    analyzeNodeWrite(n.target, ctx)
+    n.target match {
+      case x: Ident if ctx.getDecl(x.name).isDefined =>
+        ctx.addDataFlow(x -> ctx.getDecl(x.name).get)
+      case _ => throw new Exception("Not implemented")
+    }
     analyzeNode(n.value, ctx)
     ctx.addDataFlow(n.value -> n)
-    ctx.addDataFlow(n -> n.name)
+    ctx.addDataFlow(n -> n.target)
   }
   def analyzeApplyFun(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
     val ctx1 = ctx.child()
