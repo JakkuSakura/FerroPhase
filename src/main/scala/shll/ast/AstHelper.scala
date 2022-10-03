@@ -2,7 +2,14 @@ package shll.ast
 
 import shll.frontends.ParserException
 
-case object AstTool {
+case object AstHelper {
+  def defFun(name: String, args: List[(String, AST)], ret: AST, body: AST): DefFun =
+    DefFun(Ident(name), Parameters(args.map(x => Field(Ident(x._1), x._2))), ret, Some(body))
+  def literalType(s: String): ApplyType = ApplyType(Ident(s), PosArgs(Nil), KwArgs(Nil))
+  def block(n: AST*): Block = Block(n.toList)
+  def forEach(i: String, iterable: AST, body: AST): ForEach = ForEach(Ident(i), iterable, body)
+  def applyFun(n: String, args: AST*): Apply = Apply(Ident(n), PosArgs(args.toList), KwArgs(Nil))
+
   def isLiteral(n: AST, ctx: ValueContext): Boolean = {
     n match {
       case _: LiteralInt => true

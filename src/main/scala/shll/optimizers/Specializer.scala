@@ -4,7 +4,7 @@ import com.typesafe.scalalogging.Logger
 import shll.ast.*
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
-import AstTool.*
+import AstHelper.*
 
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST)
@@ -492,17 +492,17 @@ case class Specializer(
     } else {
       n.copy(
         iterable = iterable,
-        body = Block(specializeNode(n.body, ctx))
+        body = specializeNode(n.body, ctx)
       )
     }
   }
   def specializeAssign(n: Assign, ctx: SpecializeContext): (AST, SpecializeContext) = {
-    val name = n.name.asInstanceOf[Ident]
+    val name = n.target.asInstanceOf[Ident]
     // FIXME: this fix is not correct
     ctx.context.updateValue(name.name, LiteralUnknown())
     val value = specializeNode(n.value, ctx)
     ctx.context.updateValue(name.name, value)
-    (Assign(n.name, value), ctx)
+    (Assign(n.target, value), ctx)
   }
   def specializeDefType(n: DefType, ctx: SpecializeContext): (DefType, SpecializeContext) = {
     val value = specializeNode(n.value, ctx)

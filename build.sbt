@@ -1,7 +1,6 @@
 import ReleaseTransformations._
 scalaVersion := "3.1.2"
 ThisBuild / organization := "com.jeekrs"
-ThisBuild / name := "shll"
 
 releaseUseGlobalVersion := false
 Global / onChangedBuildSource := ReloadOnSourceChanges

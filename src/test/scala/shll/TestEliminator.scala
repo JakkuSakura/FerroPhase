@@ -73,4 +73,36 @@ class TestEliminator {
     )
   }
 
+  @Test def testSumFun(): Unit = {
+    eliminatedEquals(
+      """
+        |(block
+        |   (def-fun sum (lp (: values [list [int]])) [int]
+        |     (block
+        |       (def-val s 0)
+        |       (for i values
+        |         (assign s (+ s i))
+        |       )
+        |       s
+        |     )
+        |   )
+        |   (sum (range 1 101))
+        |)
+        |""".stripMargin,
+      """
+        |(block
+        |   (def-fun sum (lp (: values [list [int]])) [int]
+        |     (block
+        |       (def-val s 0)
+        |       (for i values
+        |         (assign s (+ s i))
+        |       )
+        |       s
+        |     )
+        |   )
+        |   (sum (range 1 101))
+        |)
+        |""".stripMargin
+    )
+  }
 }

@@ -2,7 +2,7 @@ package shll.frontends
 
 import shll.ast.*
 import shll.frontends.ParamUtil.*
-import shll.ast.AstTool.*
+import shll.ast.AstHelper.*
 
 case class ApplyParser() {
   def getArgAndParse(args: PosArgs, kwArgs: KwArgs, i: Int, name: String): AST = parse(
@@ -32,7 +32,7 @@ case class ApplyParser() {
         ForEach(
           getIdentArg(args, kwArgs, 0, "name"),
           getArgAndParse(args, kwArgs, 1, "iter"),
-          Block(getArgAndParse(args, kwArgs, 2, "body"))
+          getArgAndParse(args, kwArgs, 2, "body")
         )
       case Apply(Ident("def-fun"), args, kwArgs) =>
         checkArguments(args, kwArgs, Array(0, 1, 2, 3), Array("name", "args", "ret", "body"))
