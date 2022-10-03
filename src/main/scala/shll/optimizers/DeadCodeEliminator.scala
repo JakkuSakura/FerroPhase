@@ -42,10 +42,10 @@ case class DeadCodeEliminator() {
       case n: Parameters => Parameters(n.params.map(eliminateNode(_).asInstanceOf[Field]))
       case x => throw SpecializeException("cannot eliminate", x)
     }
-    val orig = pp.print(n)
-    val res = pp.print(x)
-    if (orig != res)
-      logger.debug("Eliminated " + orig + " => " + res)
+//    val orig = pp.print(n)
+//    val res = pp.print(x)
+//    if (orig != res)
+//      logger.debug("Eliminated " + orig + " => " + res)
     x
   }
 
