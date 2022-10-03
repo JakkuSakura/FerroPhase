@@ -17,7 +17,7 @@ public class SHLLParser extends Parser {
 	protected static final PredictionContextCache _sharedContextCache =
 		new PredictionContextCache();
 	public static final int
-		T__0=1, T__1=2, T__2=3, T__3=4, T__4=5, IDENT=6, BOOL=7, INTEGER=8, DECIMAL=9, 
+		T__0=1, T__1=2, T__2=3, T__3=4, T__4=5, BOOL=6, IDENT=7, INTEGER=8, DECIMAL=9, 
 		STRING=10, CHAR=11, WS=12;
 	public static final int
 		RULE_term = 0, RULE_kwArg = 1, RULE_kwArgs = 2, RULE_posArgs = 3, RULE_apply = 4, 
@@ -37,7 +37,7 @@ public class SHLLParser extends Parser {
 	private static final String[] _LITERAL_NAMES = makeLiteralNames();
 	private static String[] makeSymbolicNames() {
 		return new String[] {
-			null, null, null, null, null, null, "IDENT", "BOOL", "INTEGER", "DECIMAL", 
+			null, null, null, null, null, null, "BOOL", "IDENT", "INTEGER", "DECIMAL", 
 			"STRING", "CHAR", "WS"
 		};
 	}
@@ -523,14 +523,14 @@ public class SHLLParser extends Parser {
 		"\u0000\u0000\u0000\u0004\u001f\u0001\u0000\u0000\u0000\u0006%\u0001\u0000"+
 		"\u0000\u0000\b(\u0001\u0000\u0000\u0000\n.\u0001\u0000\u0000\u0000\f4"+
 		"\u0001\u0000\u0000\u0000\u000e\u0017\u0003\b\u0004\u0000\u000f\u0017\u0003"+
-		"\n\u0005\u0000\u0010\u0017\u0005\u0007\u0000\u0000\u0011\u0017\u0005\u0006"+
+		"\n\u0005\u0000\u0010\u0017\u0005\u0006\u0000\u0000\u0011\u0017\u0005\u0007"+
 		"\u0000\u0000\u0012\u0017\u0005\b\u0000\u0000\u0013\u0017\u0005\t\u0000"+
 		"\u0000\u0014\u0017\u0005\n\u0000\u0000\u0015\u0017\u0005\u000b\u0000\u0000"+
 		"\u0016\u000e\u0001\u0000\u0000\u0000\u0016\u000f\u0001\u0000\u0000\u0000"+
 		"\u0016\u0010\u0001\u0000\u0000\u0000\u0016\u0011\u0001\u0000\u0000\u0000"+
 		"\u0016\u0012\u0001\u0000\u0000\u0000\u0016\u0013\u0001\u0000\u0000\u0000"+
 		"\u0016\u0014\u0001\u0000\u0000\u0000\u0016\u0015\u0001\u0000\u0000\u0000"+
-		"\u0017\u0001\u0001\u0000\u0000\u0000\u0018\u0019\u0005\u0006\u0000\u0000"+
+		"\u0017\u0001\u0001\u0000\u0000\u0000\u0018\u0019\u0005\u0007\u0000\u0000"+
 		"\u0019\u001a\u0005\u0001\u0000\u0000\u001a\u001b\u0003\u0000\u0000\u0000"+
 		"\u001b\u0003\u0001\u0000\u0000\u0000\u001c\u001e\u0003\u0002\u0001\u0000"+
 		"\u001d\u001c\u0001\u0000\u0000\u0000\u001e!\u0001\u0000\u0000\u0000\u001f"+
