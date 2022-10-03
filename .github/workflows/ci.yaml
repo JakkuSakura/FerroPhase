@@ -19,6 +19,9 @@ jobs:
           components: rustfmt
           override: true
       - uses: olafurpg/setup-scala@v11
+        with:
+          java-version: openjdk@1.18
+
       - name: Run tests
         run: sbt coverage test
       - name: Coverage Report
