@@ -229,16 +229,16 @@ case class FlowAnalysis() {
     var ctx1 = ctx0.child()
     var ctx = ctx1
     // TODO: current flow analysis is far from complete
-    n.body.foreach { x =>
+    n.children.foreach { x =>
       analyzeNode(x, ctx)
       ctx = contextHistory(x)
     }
 
-    n.body.foreach { x =>
+    n.children.foreach { x =>
       ctx1.mergeChildNodes(n, contextHistory(x))
       ctx1.addExecutionFlow(n -> x)
     }
-    n.body.lastOption.foreach(x => ctx1.addDataFlow(x -> n))
+    n.children.lastOption.foreach(x => ctx1.addDataFlow(x -> n))
     contextHistory += n -> ctx1
   }
 

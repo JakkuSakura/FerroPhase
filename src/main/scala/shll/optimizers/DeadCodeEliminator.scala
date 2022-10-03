@@ -77,7 +77,7 @@ case class DeadCodeEliminator() {
     ctx.isReachable(x, LiteralUnknown())
   }
   def eliminateBlock(n: Block, ctx: FlowAnalysisContext): AST = {
-    val filteredStmts = n.body
+    val filteredStmts = n.children
       .filter(x => checkKeepStatement(ctx, x))
       .map(x => eliminateNode(x))
 

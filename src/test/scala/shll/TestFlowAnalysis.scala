@@ -16,7 +16,7 @@ class TestFlowAnalysis {
     val ctx = fl.analyze(blk)
 
     assertEquals(true, ctx.isReachable(blk, LiteralUnknown()))
-    assertEquals(true, ctx.isReachable(blk.body.head, LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children.head, LiteralUnknown()))
   }
 
   @Test def testBlockAssign(): Unit = {
@@ -29,8 +29,8 @@ class TestFlowAnalysis {
       )
     )
     val ctx = fl.analyze(blk)
-    assertEquals(true, ctx.isReachable(blk.body(0), LiteralUnknown()))
-    assertEquals(false, ctx.isReachable(blk.body(1), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(0), LiteralUnknown()))
+    assertEquals(false, ctx.isReachable(blk.children(1), LiteralUnknown()))
   }
 
   @Test def testBlockDefFun(): Unit = {
@@ -45,8 +45,8 @@ class TestFlowAnalysis {
       Ident("a")
     )
     val ctx = fl.analyze(blk)
-    assertEquals(true, ctx.isReachable(blk.body(0), LiteralUnknown()))
-    assertEquals(true, ctx.isReachable(blk.body(1), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(0), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(1), LiteralUnknown()))
   }
 
   @Test def testBlockFor(): Unit = {
@@ -63,10 +63,10 @@ class TestFlowAnalysis {
       Ident("s")
     )
     val ctx = fl.analyze(blk)
-    assertEquals(true, ctx.isReachable(blk.body(0), LiteralUnknown()))
-    assertEquals(true, ctx.isReachable(blk.body(1), LiteralUnknown()))
-    assertEquals(true, ctx.isReachable(blk.body(2), LiteralUnknown()))
-    assertEquals(true, ctx.isReachable(blk.body(3), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(0), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(1), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(2), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(3), LiteralUnknown()))
     assertEquals(true, ctx.isReachable(foreach.body, LiteralUnknown()))
   }
 
@@ -89,18 +89,18 @@ class TestFlowAnalysis {
       .asInstanceOf[Block]
     val fl = FlowAnalysis()
     val ctx = fl.analyze(blk)
-    assertEquals(true, ctx.isReachable(blk.body(0), LiteralUnknown()))
-    assertEquals(true, ctx.isReachable(blk.body(1), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(0), LiteralUnknown()))
+    assertEquals(true, ctx.isReachable(blk.children(1), LiteralUnknown()))
     assertEquals(
       true,
       fl.contextHistory(blk)
-        .isReachable(blk.body(0).asInstanceOf[DefFun].body.get, LiteralUnknown())
+        .isReachable(blk.children(0).asInstanceOf[DefFun].body.get, LiteralUnknown())
     )
     assertEquals(
       true,
       fl.contextHistory(blk)
         .isReachable(
-          blk.body(0).asInstanceOf[DefFun].body.get.asInstanceOf[Block].body(1),
+          blk.children(0).asInstanceOf[DefFun].body.get.asInstanceOf[Block].children(1),
           LiteralUnknown()
         )
     )
@@ -125,7 +125,7 @@ class TestFlowAnalysis {
     val fl = FlowAnalysis()
     val ctx = fl.analyze(blk)
 
-    for (x <- blk.body) {
+    for (x <- blk.children) {
       assertEquals(true, ctx.isReachable(x, LiteralUnknown()))
 
     }
