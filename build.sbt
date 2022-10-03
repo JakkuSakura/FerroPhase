@@ -49,3 +49,5 @@ val circeVersion = "0.14.3"
 
 libraryDependencies += "io.circe" %% "circe-parser" % circeVersion
 libraryDependencies += "io.circe" %% "circe-generic" % circeVersion
+
+libraryDependencies += "net.aichler" % "jupiter-interface" % JupiterKeys.jupiterVersion.value % Test

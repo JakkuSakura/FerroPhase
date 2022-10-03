@@ -287,15 +287,16 @@ case class FlowAnalysis() {
 
   def analyzeForEach(n: ForEach, ctx0: FlowAnalysisContext): Unit = {
     val ctx = ctx0.child()
-    ctx.addDecl(n.variable, DefVal(n.variable, LiteralUnknown()))
+    val df = DefVal(n.variable, Select(n.iterable, Ident("next")))
+    ctx.addDecl(n.variable, df)
     ctx.addInternalNode(n.variable)
 
-    // TODO: process iterable
+    analyzeNode(df, ctx)
     analyzeNode(n.iterable, ctx)
     analyzeNode(n.body, ctx)
     analyzeNode(n.variable, ctx)
     ctx0.mergeChildNodes(n, ctx)
-    // TODO: this should be in the context of the body
+
     ctx0.addDataFlow(n.iterable -> n.variable)
     ctx0.addDataFlow(n.variable -> n.body)
 
