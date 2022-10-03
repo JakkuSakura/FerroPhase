@@ -26,11 +26,11 @@ class TestOptimizers {
       logger.info(s"Eliminating " + pp.print(specialized))
     val eliminated1 = DeadCodeEliminator().eliminate(specialized)
     if (showProgress)
-      logger.info(s"Eliminated1 " + pp.print(eliminated1))
-    val eliminated2 = Flattener().flatten(eliminated1)
+      logger.info(s"Flattening " + pp.print(eliminated1))
+    val flatten = Flattener().flatten(eliminated1)
     if (showProgress)
-      logger.info(s"Eliminated2 " + pp.print(eliminated2))
-    eliminated2
+      logger.info(s"Optimized " + pp.print(flatten))
+    flatten
   }
   def specializedEquals(input: String, expected: String, feedBackend: Boolean=true): Unit = {
     if (showProgress)
