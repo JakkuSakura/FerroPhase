@@ -20,7 +20,7 @@ jobs:
           override: true
       - uses: olafurpg/setup-scala@v11
         with:
-          java-version: openjdk@1.18
+          java-version: openjdk@1.17.0
 
       - name: Run tests
         run: sbt coverage test
