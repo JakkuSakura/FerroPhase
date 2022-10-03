@@ -40,7 +40,9 @@ case class LiteralDecimal(value: Double) extends AST()
 case class LiteralChar(value: Char) extends AST()
 case class LiteralString(value: String) extends AST()
 case class LiteralList(value: List[AST]) extends AST()
-// may use List[Param] in the future
+case class Param(name: Ident, ty: AST) extends AST()
+
+// TODO: use List[Param] in the future
 case class Parameters(params: List[Field]) extends AST()
 case class PosArgs(args: List[AST]) extends AST()
 case class KwArgs(args: List[KeyValue]) extends AST()
