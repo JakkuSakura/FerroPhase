@@ -69,3 +69,4 @@ case class DefStruct(name: Ident, fields: Fields) extends AST()
 case class ApplyStruct(s: AST, values: KwArgs) extends AST()
 
 case class Select(obj: AST, field: Ident) extends AST()
+case class Get(obj: AST, field: Ident) extends AST()
