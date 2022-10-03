@@ -1,5 +1,5 @@
 import ReleaseTransformations.*
-scalaVersion := "3.1.2"
+scalaVersion := "3.2.0"
 ThisBuild / organization := "com.jeekrs"
 
 releaseUseGlobalVersion := false
