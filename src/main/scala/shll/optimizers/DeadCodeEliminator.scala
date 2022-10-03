@@ -4,7 +4,7 @@ import com.typesafe.scalalogging.Logger
 import shll.ast.*
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
-import shll.ast.AstTool.*
+import shll.ast.AstHelper.*
 
 import scala.collection.mutable
 
@@ -73,16 +73,12 @@ case class DeadCodeEliminator() {
     n
   }
 
-  def checkKeepStatement(n: Block, x: AST): Boolean = {
-    val ctx = flow.contextHistory(n)
-    val subCtx = flow.contextHistory(x)
-    val visitable = ctx.isVisitable(x, n)
-    val hasExternalEffect = subCtx.isVisitable(x, LiteralUnknown())
-    visitable || hasExternalEffect
+  def checkKeepStatement(ctx: FlowAnalysisContext, x: AST): Boolean = {
+    ctx.isReachable(x, LiteralUnknown())
   }
   def eliminateBlock(n: Block, ctx: FlowAnalysisContext): AST = {
     val filteredStmts = n.body
-      .filter(x => checkKeepStatement(n, x))
+      .filter(x => checkKeepStatement(ctx, x))
       .map(x => eliminateNode(x))
 
     Block(filteredStmts)
@@ -108,17 +104,17 @@ case class DeadCodeEliminator() {
     f
   }
   def eliminateDefFun(fun: DefFun, ctx: FlowAnalysisContext): DefFun = {
-    DefFun (
-        fun.name,
-        eliminateNode(fun.args).asInstanceOf,
-        eliminateNode(fun.ret),
+    DefFun(
+      fun.name,
+      eliminateNode(fun.args).asInstanceOf,
+      eliminateNode(fun.ret),
       fun.body.map(eliminateNode)
     )
   }
 
   def eliminateAssign(n: Assign, ctx: FlowAnalysisContext): AST = {
     val value = eliminateNode(n.value)
-    val ass = Assign(n.name, value)
+    val ass = Assign(n.target, value)
     ass
   }
   def eliminateFunApply(n: ApplyFun, ctx: FlowAnalysisContext): AST = {

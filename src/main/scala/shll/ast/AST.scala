@@ -2,15 +2,22 @@ package shll.ast
 
 import org.antlr.v4.runtime.Token
 import shll.*
+import shll.backends.ShllPrettyPrinter
 
 object AST {
+  val pp = ShllPrettyPrinter(newlines = false)
   var count: Int = 0
   def genNum: Int = {
     count += 1
     count
   }
+
 }
-trait AST(var num: Int = AST.genNum, var token: Option[Token] = None, var origin: Option[AST] = None) extends Cloneable{
+trait AST(
+    var num: Int = AST.genNum,
+    var token: Option[Token] = None,
+    var origin: Option[AST] = None,
+) extends Cloneable {
 
   def duplicate(): this.type = {
     val dup: this.type = this.clone().asInstanceOf[this.type]
@@ -21,6 +28,8 @@ trait AST(var num: Int = AST.genNum, var token: Option[Token] = None, var origin
     this.token = Some(token)
     this
   }
+
+  override def toString: String = AST.pp.print(this)
 }
 
 case class Ident(name: String) extends AST()
@@ -46,19 +55,10 @@ case class DefFun(name: Ident, args: Parameters, ret: AST, body: Option[AST]) ex
 case class ApplyFun(args: Parameters, ret: AST, body: AST) extends AST()
 case class DefVal(name: Ident, value: AST) extends AST()
 case class DefType(name: Ident, value: AST) extends AST()
-case class Assign(name: AST, value: AST) extends AST()
+case class Assign(target: AST, value: AST) extends AST()
 case class Cond(cond: AST, consequence: AST, alternative: AST) extends AST()
 case class While(cond: AST, body: AST) extends AST()
-case class Block(body: List[AST]) extends AST() {
-
-}
-case object Block {
-  def apply(block: Block): Block = block
-
-  def apply(block: AST): Block = Block(List(block))
-
-  def apply(): Block = Block(Nil)
-}
+case class Block(body: List[AST]) extends AST()
 case class ForEach(variable: Ident, iterable: AST, body: AST) extends AST()
 // form of [type args]
 case class ApplyType(fun: AST, args: PosArgs, kwArgs: KwArgs) extends AST()

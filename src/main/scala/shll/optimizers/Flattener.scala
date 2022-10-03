@@ -1,22 +1,22 @@
 package shll.optimizers
 
 import com.typesafe.scalalogging.Logger
-import shll.ast.{AST, *}
-import shll.ast.AstTool.*
+import shll.ast.*
+import shll.ast.AstHelper.*
 import shll.backends.{PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ParamUtil.*
 
 import scala.collection.mutable
 
-case class SingleBlockEliminator() {
+case class Flattener() {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
 
-  def eliminate(n: AST): AST = {
-    eliminateNode(n)
+  def flatten(n: AST): AST = {
+    flattenNode(n)
   }
 
-  def eliminateNode(n: AST): AST = {
+  def flattenNode(n: AST): AST = {
     //    logger.debug("Eliminating " + pp.print(n))
     val x = n match {
       case n: Block => eliminateBlock(n)
@@ -26,34 +26,36 @@ case class SingleBlockEliminator() {
       case n: LiteralDecimal => n
       case n: LiteralString => n
       case n: LiteralBool => n
-      case n: LiteralList => LiteralList(n.value.map(eliminateNode))
+      case n: LiteralList => LiteralList(n.value.map(flattenNode))
       case n: Field => eliminateField(n)
       case n: Select => eliminateSelect(n)
       case n: Cond => eliminateCond(n)
       case n: ForEach => eliminateForEach(n)
       case n: ApplyType => eliminateTypeApply(n)
       case n: DefType => eliminateDefType(n)
+      case n: DefVal => eliminateDefVal(n)
+      case n: DefFun => eliminateDefFun(n)
       case n: Assign => eliminateAssign(n)
       case n: ApplyFun => eliminateFunApply(n)
-      case n: Parameters => Parameters(n.params.map(eliminateNode(_).asInstanceOf[Field]))
+      case n: Parameters => Parameters(n.params.map(flattenNode(_).asInstanceOf[Field]))
       case x => throw SpecializeException("cannot eliminate", x)
     }
-    val orig = pp.print(n)
-    val res = pp.print(x)
-    if (orig != res)
-      logger.debug("Eliminated " + orig + " => " + res)
+//    val orig = pp.print(n)
+//    val res = pp.print(x)
+//    if (orig != res)
+//      logger.debug("Eliminated " + orig + " => " + res)
     x
   }
 
   def eliminateField(n: Field): Field = {
-    val value = eliminateNode(n.ty)
+    val value = flattenNode(n.ty)
     Field(n.name, value)
   }
 
   def eliminateDefVal(
       n: DefVal
   ): DefVal = {
-    DefVal(n.name, eliminateNode(n.value))
+    DefVal(n.name, flattenNode(n.value))
   }
 
   def eliminateIdent(id: Ident): AST = {
@@ -73,21 +75,21 @@ case class SingleBlockEliminator() {
   }
 
   def eliminateSelect(n: Select): AST = {
-    val obj = eliminateNode(n.obj)
+    val obj = flattenNode(n.obj)
     Select(obj, n.field)
   }
 
   def eliminateCond(n: Cond): AST = {
-    val cond = eliminateNode(n.cond)
-    val conseq = eliminateNode(n.consequence)
-    val alt = eliminateNode(n.alternative)
+    val cond = flattenNode(n.cond)
+    val conseq = flattenNode(n.consequence)
+    val alt = flattenNode(n.alternative)
     val condTotal = Cond(cond, conseq, alt)
     condTotal
   }
 
   def eliminateForEach(n: ForEach): AST = {
-    val iterable = eliminateNode(n.iterable)
-    val body = Block(eliminateNode(n.body))
+    val iterable = flattenNode(n.iterable)
+    val body = flattenNode(n.body)
     val f = ForEach(n.variable, iterable, body)
     f
   }
@@ -95,33 +97,31 @@ case class SingleBlockEliminator() {
   def eliminateDefFun(fun: DefFun): DefFun = {
     DefFun(
       fun.name,
-      eliminateNode(fun.args).asInstanceOf,
-      eliminateNode(fun.ret),
-      fun.body.map(eliminateNode)
+      flattenNode(fun.args).asInstanceOf,
+      flattenNode(fun.ret),
+      fun.body.map(flattenNode)
     )
   }
 
   def eliminateAssign(n: Assign): AST = {
-    val value = eliminateNode(n.value)
-    val ass = Assign(n.name, value)
+    val value = flattenNode(n.value)
+    val ass = Assign(n.target, value)
     ass
   }
 
   def eliminateFunApply(n: ApplyFun): AST = {
-    val args = eliminateNode(n.args).asInstanceOf[Parameters]
-    val ret = eliminateNode(n.ret)
-    val body = eliminateNode(n.body)
+    val args = flattenNode(n.args).asInstanceOf[Parameters]
+    val ret = flattenNode(n.ret)
+    val body = flattenNode(n.body)
     val newApply = ApplyFun(args, ret, body)
     newApply
   }
   def eliminateBlock(d: Block): AST = {
     val filteredStmts = d.body
-      .map {
-        case n: DefFun =>
-          eliminateDefFun(n)
-        case n: DefVal =>
-          eliminateDefVal(n)
-        case x => eliminateNode(x)
+      .flatMap {
+        case Block(stmts) if stmts.forall(_.isInstanceOf[Block]) =>
+          stmts.map(flattenNode)
+        case x => List(flattenNode(x))
       }
 
     if (filteredStmts.length == 1)
