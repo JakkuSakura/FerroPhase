@@ -55,8 +55,8 @@ Then AST gets passed through multiple optimization phrases, while maintaining th
 
 Current optimization phrases:
 - [x] Specialization and inlining
-- [ ] Flow analysis
-- [ ] Dead code elimination (WIP)
+- [x] Flow analysis
+- [x] Dead code elimination
 
 ### Specialization
 
@@ -102,7 +102,7 @@ Unless the function is too big, inlining does not perform
 Graph-based(and effects and contexts):
 
 - [x] build a graph of data flow
-- [ ] build a graph of control flow(WIP)
+- [x] build a graph of control flow
 - [ ] Falliblity: The effect of a section of code failing to complete and evaluate to its expected value (in Rust, think Result)
 - [ ] Multiplicity: The effect of a section of code being evaluated multiple times, yielding many values or operating over many values (in Rust, think Iterator)
 - [ ] Asynchrony: The effect of a section of code yielding control when it cannot immediately progress, to allow other sections of code to progress instead (in Rust, think Future)
@@ -119,7 +119,7 @@ https://internals.rust-lang.org/t/can-we-make-a-rusty-effect-system/11697
 ### Dead code elimination
 
 - [x] use graph-based data flow to eliminate dead code
-- [ ] combine data flow and control flow to eliminate dead code
+- [x] combine data flow and control flow to eliminate dead code
 
 
 ## Backend
@@ -129,4 +129,3 @@ The language aims to experiment simple syntax, maximum runtime performance.
 Compile time is not a concern, as we maintain the same semantics between phrases, some optimization can be disabled for fast compilation, or even use interpretation mode.
 
 The ideal usage is to build a high frequency trading system and write strategies for it.
-
