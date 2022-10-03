@@ -25,7 +25,7 @@ case class ValueContext(
   }
 
   def withValue(name: String, value: AST): ValueContext = {
-    ValueContext.logger.debug(s"Adding value $name -> $value in ${this.hashCode()}")
+//    ValueContext.logger.debug(s"Adding value $name -> $value in ${this.hashCode()}")
     withValues(Map(name -> value))
   }
   def updateValue(name: String, value: AST): Unit = {
