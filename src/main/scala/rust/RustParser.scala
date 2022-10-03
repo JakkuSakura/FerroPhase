@@ -22,7 +22,8 @@ case class RustDefFun(name: String, args: RustParams, ret: String, body: RustBod
 case class RustIdent(name: String) extends RustAST
 class RustParser {
   def getAST(n: String): RustItems = {
-    // rustc -Z ast-json -
+    // rustc -Z ast-json - on old rust, in json format
+    // rustc -Z unpretty=ast-tree - on latest rust, in ron format
     val proc = ProcessBuilder("rustc", "-Z", "ast-json", "-")
       .redirectError(Redirect.INHERIT)
       .start()
