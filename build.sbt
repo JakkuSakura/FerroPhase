@@ -1,4 +1,4 @@
-import ReleaseTransformations._
+import ReleaseTransformations.*
 scalaVersion := "3.1.2"
 ThisBuild / organization := "com.jeekrs"
 
@@ -44,3 +44,10 @@ libraryDependencies += "org.junit.jupiter" % "junit-jupiter-api" % "5.9.0" % Tes
 
 // https://mvnrepository.com/artifact/org.antlr/antlr4-runtime
 libraryDependencies += "org.antlr" % "antlr4-runtime" % "4.11.1"
+
+
+val circeVersion = "0.14.1"
+
+libraryDependencies += "io.circe" %% "circe-yaml" % circeVersion
+libraryDependencies += "io.circe" %% "circe-parser" % circeVersion
+libraryDependencies += "io.circe" %% "circe-generic" % circeVersion

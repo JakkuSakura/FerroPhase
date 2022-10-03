@@ -1,6 +1,6 @@
 package shll.frontends
 
-import shll.ast._
+import shll.ast.*
 
 case object ParamUtil {
   def getArgOpt(args: PosArgs, kwArgs: KwArgs, pos: Int, key: String): Option[AST] = {
