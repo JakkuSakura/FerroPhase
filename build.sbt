@@ -1,6 +1,6 @@
-import ReleaseTransformations.*
+import ReleaseTransformations._
 scalaVersion := "3.2.0"
-ThisBuild / organization := "com.jeekrs"
+Global / organization := "com.jeekrs"
 
 releaseUseGlobalVersion := false
 Global / onChangedBuildSource := ReloadOnSourceChanges
@@ -31,7 +31,7 @@ nativeImageOptions ++= List(
 )
 
 libraryDependencies += "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5"
-libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.2.11"
+libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.1"
 
 // https://mvnrepository.com/artifact/org.apache.commons/commons-lang3
 libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.12.0"
@@ -45,9 +45,7 @@ libraryDependencies += "org.junit.jupiter" % "junit-jupiter-api" % "5.9.0" % Tes
 // https://mvnrepository.com/artifact/org.antlr/antlr4-runtime
 libraryDependencies += "org.antlr" % "antlr4-runtime" % "4.11.1"
 
+val circeVersion = "0.14.3"
 
-val circeVersion = "0.14.1"
-
-libraryDependencies += "io.circe" %% "circe-yaml" % circeVersion
 libraryDependencies += "io.circe" %% "circe-parser" % circeVersion
 libraryDependencies += "io.circe" %% "circe-generic" % circeVersion
