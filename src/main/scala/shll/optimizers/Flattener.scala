@@ -117,7 +117,7 @@ case class Flattener() {
     newApply
   }
   def eliminateBlock(d: Block): AST = {
-    val filteredStmts = d.body
+    val filteredStmts = d.children
       .flatMap {
         case Block(stmts) if stmts.forall(_.isInstanceOf[Block]) =>
           stmts.map(flattenNode)

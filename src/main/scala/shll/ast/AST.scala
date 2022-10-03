@@ -58,7 +58,7 @@ case class DefType(name: Ident, value: AST) extends AST()
 case class Assign(target: AST, value: AST) extends AST()
 case class Cond(cond: AST, consequence: AST, alternative: AST) extends AST()
 case class While(cond: AST, body: AST) extends AST()
-case class Block(body: List[AST]) extends AST()
+case class Block(children: List[AST]) extends AST()
 case class ForEach(variable: Ident, iterable: AST, body: AST) extends AST()
 // form of [type args]
 case class ApplyType(fun: AST, args: PosArgs, kwArgs: KwArgs) extends AST()
