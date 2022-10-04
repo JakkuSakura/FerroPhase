@@ -200,3 +200,126 @@ case class RustParser(
   }
 
 }
+
+case class RustSynParser(
+) {
+  def parse(n: String): RustAST = {
+    val j = callRustAstCli(n, RustAstFlavor.Syn)
+    parseJsonToRustAST(j.hcursor)
+  }
+  def parseJsonToRustAST(j: HCursor): RustAST = {
+    val kind = j.keys.get.headOption.getOrElse(throw Exception("Failed to parse Rust kind: " + j))
+    val value =
+      j.downField(kind).as[HCursor].getOrElse(throw Exception("Failed to parse Rust value: " + j))
+    kind match {
+      case "fn" =>
+        parseJsonToRustDefFun(value)
+      case "expr" =>
+        parseJsonToRustAST(value)
+      case "items" =>
+        parseJsonToRustItems(value)
+      case "path" =>
+        RustIdent(
+          value
+            .downField("segments")
+            .downN(0)
+            .downField("ident")
+            .as[String]
+            .fold(err => throw Exception("Failed to parse JSON: " + err), identity)
+        )
+      case _ =>
+        //        println("Failed to parse: " + j.value.noSpaces)
+        RustUnknownAST(value.value)
+    }
+  }
+
+  def parseJsonToBody(j: HCursor): RustBody = {
+    val stmts = j
+      .as[List[HCursor]]
+      .map(_.map(parseJsonToRustAST))
+      .getOrElse(throw Exception("Failed to parse body: " + j))
+    RustBody(stmts)
+  }
+  def parseJsonToRustParam(j: HCursor): RustParam = {
+    val name =
+      j
+        .downField("typed")
+        .downField("pat")
+        .downField("ident")
+        .downField("ident")
+        .as[String]
+        .fold(
+          err => throw Exception("Failed to parse param name: " + err),
+          identity
+        )
+    val byValue = true // TODO: fix this
+    val ty =
+      j.downField("typed")
+        .downField("ty")
+        .downField("path")
+        .downField("segments")
+        .downN(0)
+        .downField("ident")
+        .as[String]
+        .fold(err => throw Exception("Failed to parse param ty: " + err), identity)
+    RustParam(name, ty, byValue)
+  }
+  def parseJsonToRustParams(j: HCursor): RustParams = {
+    val params = j
+      .as[List[HCursor]]
+      .map(_.map(parseJsonToRustParam))
+      .getOrElse(throw Exception("Failed to parse params: " + j))
+    RustParams(params)
+  }
+  def parseJsonToRustReturnType(j: HCursor): String = {
+    if (j.value == Json.Null)
+      return "()"
+
+    j
+      .downField("path")
+      .downField("segments")
+      .downN(0)
+      .downField("ident")
+      .as[String]
+      .fold(err => throw Exception("Failed to parse return type: " + j.value), identity)
+  }
+  def parseJsonToRustDefFun(j: HCursor): RustDefFun = {
+    //    println("Parsing function: " + j.value.noSpaces)
+    val name = j.downField("ident").as[String].getOrElse("unknown")
+    val args = parseJsonToRustParams(
+      j.downField("inputs")
+        .as[HCursor]
+        .fold(
+          err => throw Exception("Failed to parse args: " + err),
+          identity
+        )
+    )
+
+    val ret = parseJsonToRustReturnType(
+      j.downField("output")
+        .as[HCursor]
+        .fold(
+          err => throw Exception("Failed to parse r: " + err),
+          identity
+        )
+    )
+
+    val body = parseJsonToBody(
+      j
+        .downField("stmts")
+        .as[HCursor]
+        .fold(err => throw Exception("Failed to parse body: " + err), identity)
+    )
+    RustDefFun(name, args, ret, body)
+  }
+  def parseJsonToRustItems(j: HCursor): RustItems = {
+    RustItems(
+      Nil,
+      j
+        .as[List[HCursor]]
+        .fold(err => throw Exception("Failed to parse JSON: " + err), identity)
+        .map(parseJsonToRustAST)
+    )
+  }
+
+}
