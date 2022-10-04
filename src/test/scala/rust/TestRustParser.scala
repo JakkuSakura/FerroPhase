@@ -6,7 +6,7 @@ import shll.TestHelper
 
 class TestRustParser {
   def assertParsedEquals(expected: String, input: String): Unit = {
-    val ast = RustParser().parse(input)
+    val ast = RustSynParser().parse(input)
     val actual = RustConvertor().convert(ast)
     assertEquals(
       TestHelper.parseCode(expected),
