@@ -6,38 +6,37 @@ import io.circe.{Decoder, HCursor, Json}
 import shll.ast.*
 import io.circe.syntax.*
 import scala.io.Source
-trait RustAST
-case class RustUnknownAST(raw: Json) extends RustAST {
-  override def toString: String = {
-    val r = raw.noSpaces
-    "RustUnknownAST(" + r.substring(0, Math.min(10, r.length)) + ")"
-  }
+
+object RustAstFlavor {
+  val RustcOld: String = "rustc-old"
+  val Rustc: String = "rustc"
+  val Syn: String = "syn"
 }
-case class RustUnit() extends RustAST
-case class RustItems(attrs: List[Json], items: List[RustAST]) extends RustAST
-case class RustBody(stmts: List[RustAST]) extends RustAST
-case class RustParam(name: String, ty: String, byValue: Boolean) extends RustAST
-case class RustParams(params: List[RustParam]) extends RustAST
-case class RustDefFun(name: String, args: RustParams, ret: String, body: RustBody) extends RustAST
-case class RustIdent(name: String) extends RustAST
-class RustParser {
-  def getAST(n: String): RustItems = {
-    // rustc -Z ast-json - on old rust, in json format
-    // rustc -Z unpretty=ast-tree - on latest rust, in ron format
-    val proc = ProcessBuilder("rustc", "-Z", "ast-json", "-")
-      .redirectError(Redirect.INHERIT)
-      .start()
-    proc.getOutputStream.write(n.getBytes)
-    proc.getOutputStream.close()
-    val code = proc.waitFor()
-    if (code != 0)
-      throw Exception("Compilation failed, status code " + code)
-    val s = Source.fromInputStream(proc.getInputStream).mkString
 
-    val j = io.circe.parser
-      .parse(s)
-      .fold(err => throw Exception("Failed to parse JSON: " + err), identity)
+def callRustAstCli(n: String, flavor: String): Json = {
+  // rustc -Z ast-json - on old rust, in json format
+  // rustc -Z unpretty=ast-tree - on latest rust, in ron format
+  // rust-ast - wrapper around new rustc, in json format
+  val proc = ProcessBuilder("rust-ast", "--flavor", flavor)
+    .redirectError(Redirect.INHERIT)
+    .start()
+  proc.getOutputStream.write(n.getBytes)
+  proc.getOutputStream.close()
+  val code = proc.waitFor()
+  if (code != 0)
+    throw Exception("Compilation failed, status code " + code)
+  val s = Source.fromInputStream(proc.getInputStream).mkString
 
+  val j = io.circe.parser
+    .parse(s)
+    .fold(err => throw Exception("Failed to parse JSON: " + err), identity)
+  j
+}
+case class RustParser(
+    flavor: String = RustAstFlavor.RustcOld
+) {
+  def parse(n: String): RustItems = {
+    val j = callRustAstCli(n, flavor)
     parseJsonToRustItems(j.hcursor)
   }
   def parseJsonToRustAST(j: HCursor): RustAST = {
@@ -198,44 +197,6 @@ class RustParser {
         .fold(err => throw Exception("Failed to parse JSON: " + err), identity)
         .map(parseJsonToRustAST)
     )
-  }
-  def parse(n: String): AST = {
-    val ast = getAST(n)
-    parseRustAstToShllAST(ast)
-  }
-
-  def mapLiteralType(s: String): String = {
-    s match {
-      case "i32" => "int"
-      case "()" => "unit"
-      case x => x
-    }
-  }
-
-  def parseRustAstToShllAST(n: RustAST): AST = {
-    n match {
-      case RustItems(attrs, items) =>
-        val filtered = items.filterNot(_.isInstanceOf[RustUnknownAST])
-        filtered match {
-          case x if x.length == 1 => parseRustAstToShllAST(x.head)
-          case _ =>
-            Block(filtered.map(parseRustAstToShllAST))
-        }
-      case RustBody(stmts) if stmts.length == 1 => stmts.map(parseRustAstToShllAST).head
-      case RustBody(stmts) => Block(stmts.map(parseRustAstToShllAST))
-      case RustDefFun(name, args, ret, body) =>
-        DefFun(
-          Ident(name),
-          Parameters(args.params.map(parseRustAstToShllAST).map(_.asInstanceOf[Field])),
-          AstHelper.literalType(mapLiteralType(ret)),
-          Some(parseRustAstToShllAST(body))
-        )
-      case RustUnit() => AstHelper.literalType("unit")
-      case RustParam(name, ty, byValue) =>
-        Field(Ident(name), AstHelper.literalType(mapLiteralType(ty)))
-      case RustIdent(name) => Ident(name)
-      case RustUnknownAST(_) => LiteralUnknown()
-    }
   }
 
 }
