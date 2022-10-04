@@ -18,10 +18,11 @@ jobs:
           toolchain: nightly-2022-02-09
           components: rustfmt
           override: true
+      - name: Compile rust-ast
+        run: cargo install --path src/main/rust/rust-ast
       - uses: olafurpg/setup-scala@v11
         with:
           java-version: openjdk@1.17.0
-
       - name: Run tests
         run: sbt coverage test
       - name: Coverage Report
