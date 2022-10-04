@@ -28,9 +28,6 @@ jobs:
         run: cargo install --path src/main/rust/rust-ast
       - name: Cache scala dependencies
         uses: coursier/cache-action@v6
-      - uses: olafurpg/setup-scala@v11
-        with:
-          java-version: openjdk@1.17.0
       - name: Run tests
         run: sbt coverage test
       - name: Coverage Report
