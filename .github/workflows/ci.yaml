@@ -18,8 +18,20 @@ jobs:
           toolchain: nightly-2022-02-09
           components: rustfmt
           override: true
-      - name: Compile rust-ast
+
+      - name: Cache rust build
+        id: cache-rust
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-rust-target
+        with:
+          # npm cache files are stored in `~/.npm` on Linux/macOS
+          path: src/main/rust/rust-ast/target
+          key: hashFiles('src/main/rust/rust-ast/src/*.rs')
+
+      - name: Install rust-ast
         run: cargo install --path src/main/rust/rust-ast
+
       - uses: olafurpg/setup-scala@v11
         with:
           java-version: openjdk@1.17.0
