@@ -8,7 +8,7 @@ import AstHelper.*
 
 import scala.collection.mutable
 case class SpecializeException(msg: String, node: AST)
-    extends Exception(msg + ": " + ShllPrettyPrinter().print(node))
+    extends Exception(msg + ": " + ShllPrettyPrinter.print(node))
 
 case class SpecializeContext(
     cache: Option[SpecializeCache] = None,
