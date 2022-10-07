@@ -34,7 +34,7 @@ case class RustConvertor() {
         )
       case RustUnit() => AstHelper.tUnit
       case RustParam(name, ty, byValue) =>
-        Field(Ident(name), AstHelper.literalType(mapLiteralType(ty)))
+        Param(Ident(name), AstHelper.literalType(mapLiteralType(ty)))
       case RustIdent(name) => Ident(name)
       case RustUnknownAST(_) => LiteralUnknown()
     }
