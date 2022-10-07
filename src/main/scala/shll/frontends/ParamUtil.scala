@@ -25,9 +25,6 @@ case object ParamUtil {
     collectArguments(args, kwArgs, knownArgs, knownKwArgs)
   }
   
-  
-  // TODO: do type check
-
   def collectArguments(args: PosArgs, kwArgs: KwArgs, knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
     val res = collection.mutable.Map[String, AST]()
     for (i <- args.args.indices) {
@@ -43,6 +40,10 @@ case object ParamUtil {
       if (res.contains(kw.name.name))
         throw ParserException(s"Duplicate key: ${kw.name.name}")
       res(kw.name.name) = kw.value
+    }
+    for (kw <- knownKwArgs) {
+      if (!res.contains(kw))
+        throw ParserException(s"Missing key: $kw")
     }
     res.toMap
   }

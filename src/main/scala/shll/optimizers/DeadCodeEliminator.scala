@@ -118,7 +118,7 @@ case class DeadCodeEliminator() {
     ass
   }
   def eliminateFunApply(n: ApplyFun, ctx: FlowAnalysisContext): AST = {
-    val args = eliminateNode(n.args).asInstanceOf[Parameters]
+    val args = eliminateNode(n.params).asInstanceOf[Parameters]
     val ret = eliminateNode(n.ret)
     val body = eliminateNode(n.body)
     val newApply = ApplyFun(args, ret, body)

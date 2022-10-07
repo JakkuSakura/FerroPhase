@@ -35,17 +35,17 @@ case class TypeChecker() {
       "def-fun",
       List(
         ("name", AstHelper.tIdent),
-        ("params", AstHelper.tAny),
+        ("params", AstHelper.tParams),
         ("ret", AstHelper.tAny),
         ("body", AstHelper.tAny)
       ),
       AstHelper.tUnit
     ),
     "decl-fun" -> AstHelper.declFun(
-      "def-fun",
+      "decl-fun",
       List(
         ("name", AstHelper.tIdent),
-        ("params", AstHelper.tAny),
+        ("params", AstHelper.tParams),
         ("ret", AstHelper.tAny)
       ),
       AstHelper.tUnit
@@ -62,6 +62,7 @@ case class TypeChecker() {
       "def-type",
       List(
         ("name", AstHelper.tIdent),
+        ("params", AstHelper.tParams),
         ("value", AstHelper.tAny)
       ),
       AstHelper.tUnit
@@ -70,7 +71,7 @@ case class TypeChecker() {
       "def-struct",
       List(
         ("name", AstHelper.tIdent),
-        ("fields", AstHelper.tList(AstHelper.tAny)) // TODO: make it more explicit
+        ("fields", AstHelper.tFields)
       ),
       AstHelper.tUnit
     ),
@@ -127,6 +128,8 @@ case class TypeChecker() {
   def internalTypeCheck(n: AST, ty: AST): Unit = {
     if (ty == AstHelper.tAny) return
     if (ty == AstHelper.tIdent && !n.isInstanceOf[Ident]) throw TypeCheckException(n, ty)
+    if (ty == AstHelper.tParams && !n.isInstanceOf[Parameters]) throw TypeCheckException(n, ty)
+    if (ty == AstHelper.tFields && !n.isInstanceOf[Fields]) throw TypeCheckException(n, ty)
 
   }
   def typeCheckAndConvert(n: AST): AST = {
@@ -138,10 +141,7 @@ case class TypeChecker() {
             .map(x => x._1 -> typeCheckAndConvert(x._2))
 
         for (p <- d.params.params) {
-          collected.get(p.name.name) match {
-            case Some(x) => internalTypeCheck(x, p.ty)
-            case None => throw new Exception("Missing argument")
-          }
+          internalTypeCheck(collected(p.name.name), p.ty)
         }
 
         name match {
@@ -184,6 +184,7 @@ case class TypeChecker() {
           case "def-type" =>
             DefType(
               collected("name").asInstanceOf[Ident],
+              collected("params").asInstanceOf[Parameters],
               collected("value")
             )
           case "def-struct" =>

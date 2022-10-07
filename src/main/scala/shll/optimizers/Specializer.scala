@@ -208,7 +208,7 @@ case class Specializer(
     ) {
       val newName = ctx.getCache.allocateSpecializedIdent(getTypeName(apply.fun, ctx))
 
-      ctx.getCache.specializedTypes += newName.name -> DefType(newName, newApply)
+      ctx.getCache.specializedTypes += newName.name -> DefType(newName, Parameters(Nil), newApply)
       ApplyType(newName, PosArgs(Nil), KwArgs(Nil))
     } else {
       newApply
@@ -503,12 +503,12 @@ case class Specializer(
   }
   def specializeDefType(n: DefType, ctx: SpecializeContext): (DefType, SpecializeContext) = {
     val value = specializeNode(n.value, ctx)
-    val t = DefType(n.name, value)
+    val t = DefType(n.name, n.params, value)
     val newCtx = ctx.withTypes(Map(n.name.name -> n))
     (t, newCtx)
   }
   def specializeFunApply(n: ApplyFun, ctx: SpecializeContext): AST = {
-    val args = specializeNode(n.args, ctx).asInstanceOf[Parameters]
+    val args = specializeNode(n.params, ctx).asInstanceOf[Parameters]
     val returns = specializeNode(n.ret, ctx)
     val body = specializeNode(n.body, ctx)
     ApplyFun(args, returns, body)
