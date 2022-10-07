@@ -76,7 +76,7 @@ case class FlowAnalysisContext(
 //            && !Specializer().builtinTypes.contains(x.name)
 //            && !Specializer().builtinTypes.contains(x.name) =>
 //        x.name
-      case _ => ShllPrettyPrinter().print(node) + "#" + node.num
+      case _ => ShllPrettyPrinter.print(node) + "#" + node.num
     }
   }
 
@@ -147,6 +147,7 @@ case class FlowAnalysis() {
       case n: LiteralBool =>
       case n: LiteralList => n.value.foreach(analyzeNode(_, ctx))
       case n: Field => analyzeField(n, ctx)
+      case n: Param => analyzeParam(n, ctx)
       case n: Select => analyzeSelect(n, ctx)
       case n: Cond => analyzeCond(n, ctx)
       case n: ForEach => analyzeForEach(n, ctx)
@@ -154,7 +155,7 @@ case class FlowAnalysis() {
       case n: DefType => analyzeDefType(n, ctx)
       case n: Assign => analyzeAssign(n, ctx)
       case n: ApplyFun => analyzeApplyFun(n, ctx)
-      case n: Parameters => n.params.foreach(analyzeNode(_, ctx))
+      case n: Params => n.params.foreach(analyzeNode(_, ctx))
       case n: Fields => n.fields.foreach(analyzeNode(_, ctx))
       case s: DefVal => analyzeDefVal(s, ctx)
       case d: DefFun => analyzeDefFun(d, ctx)
@@ -168,6 +169,10 @@ case class FlowAnalysis() {
   }
 
   def analyzeField(n: Field, ctx: FlowAnalysisContext): Unit = {
+    analyzeNode(n.ty, ctx)
+  }
+
+  def analyzeParam(n: Param, ctx: FlowAnalysisContext): Unit = {
     analyzeNode(n.ty, ctx)
   }
   def analyzeDefVal(

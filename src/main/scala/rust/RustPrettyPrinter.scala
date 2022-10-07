@@ -68,7 +68,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         args.map(printImpl).mkString(", ")
       case KwArgs(args) =>
         args.map(x => printImpl(x)).mkString(", ")
-      case KeyValue(name, value) =>
+      case KwArg(name, value) =>
         s"${name.name}: ${printImpl(value)}"
       case Field(name, ty) =>
         s"pub ${name.name}: ${printImpl(ty)}"
@@ -87,7 +87,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"struct ${name.name} { ${fields.fields.map(printImpl).mkString(", ")} }"
       case ApplyStruct(s, values) =>
         s"${printImpl(s)} {" + printImpl(values) + s"}"
-      case DefType(name, Parameters(Nil), value) =>
+      case DefType(name, Params(Nil), value) =>
         s"type ${name.name} = ${printImpl(value)}"
       case Select(obj, field) =>
         s"${printImpl(obj)}.${field.name}"

@@ -28,7 +28,7 @@ case class RustConvertor() {
       case RustDefFun(name, args, ret, body) =>
         DefFun(
           Ident(name),
-          Parameters(args.params.map(parseRustAstToShllAST).map(_.asInstanceOf[Field])),
+          Params(args.params.map(parseRustAstToShllAST).map(_.asInstanceOf[Param])),
           AstHelper.literalType(mapLiteralType(ret)),
           parseRustAstToShllAST(body)
         )

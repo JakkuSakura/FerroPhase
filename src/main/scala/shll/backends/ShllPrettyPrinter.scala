@@ -46,15 +46,17 @@ case class ShllPrettyPrinter(
         s"(list)"
       case LiteralList(value) =>
         s"(list ${value.map(printImpl).mkString(" ")})"
-      case KeyValue(name, value) =>
+      case KwArg(name, value) =>
         s"${name.name}=${printImpl(value)}"
       case Field(name, ty) =>
+        s"(: ${name.name} ${printImpl(ty)})"
+      case Param(name, ty) =>
         s"(: ${name.name} ${printImpl(ty)})"
       case PosArgs(args) =>
         args.map(printImpl).mkString(" ")
       case KwArgs(args) =>
         args.map(x => printImpl(x)).mkString(" ")
-      case Parameters(params) =>
+      case Params(params) =>
         s"(lp ${params.map(printImpl).mkString(" ")})"
       case DefVal(name, body) =>
         s"(def-val ${name.name} ${printImpl(body)})"

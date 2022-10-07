@@ -4,10 +4,10 @@ import shll.frontends.ParserException
 
 case object AstHelper {
   def defFun(name: String, args: List[(String, AST)], ret: AST, body: AST): DefFun =
-    DefFun(Ident(name), Parameters(args.map(x => Field(Ident(x._1), x._2))), ret, body)
+    DefFun(Ident(name), Params(args.map(x => Param(Ident(x._1), x._2))), ret, body)
 
   def declFun(name: String, args: List[(String, AST)], ret: AST): DeclFun =
-    DeclFun(Ident(name), Parameters(args.map(x => Field(Ident(x._1), x._2))), ret)
+    DeclFun(Ident(name), Params(args.map(x => Param(Ident(x._1), x._2))), ret)
 
   def literalType(s: String): ApplyType = ApplyType(Ident(s), PosArgs(Nil), KwArgs(Nil))
 
@@ -45,13 +45,13 @@ case object AstHelper {
   }
 
   def argsToRange(
-      args: Parameters
+      args: Params
   ): Array[Int] = {
     args.params.indices.toArray
   }
 
   def argsToKeys(
-      args: Parameters
+      args: Params
   ): Array[String] = {
     args.params.map { a => a.name.name }.toArray
   }

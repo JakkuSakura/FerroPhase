@@ -208,7 +208,7 @@ case class Specializer(
     ) {
       val newName = ctx.getCache.allocateSpecializedIdent(getTypeName(apply.fun, ctx))
 
-      ctx.getCache.specializedTypes += newName.name -> DefType(newName, Parameters(Nil), newApply)
+      ctx.getCache.specializedTypes += newName.name -> DefType(newName, Params(Nil), newApply)
       ApplyType(newName, PosArgs(Nil), KwArgs(Nil))
     } else {
       newApply
@@ -243,26 +243,29 @@ case class Specializer(
       case n: LiteralBool => n
       case n: LiteralList => LiteralList(n.value.map(specializeNode(_, ctx)))
       case n: Field => specializeField(n, ctx)
+      case n: Param => specializeParam(n, ctx)
       case n: Select => specializeSelect(n, ctx)
       case n: Cond => specializeCond(n, ctx)
       case n: ForEach => specializeForEach(n, ctx)
       case n: ApplyType => specializeTypeApply(n, ctx)
       case n: Assign => specializeAssign(n, ctx)._1
       case n: ApplyFun => specializeFunApply(n, ctx)
-      case n: KwArgs => KwArgs(n.args.map(x => specializeNode(x.value, ctx).asInstanceOf[KeyValue]))
+      case n: KwArgs => KwArgs(n.args.map(x => specializeNode(x.value, ctx).asInstanceOf[KwArg]))
       case n: PosArgs => PosArgs(n.args.map(specializeNode(_, ctx)))
-      case n: Parameters => Parameters(n.params.map(specializeNode(_, ctx).asInstanceOf[Field]))
+      case n: Params => Params(n.params.map(specializeNode(_, ctx).asInstanceOf[Param]))
       case x => throw SpecializeException("cannot specialize", x)
     }
 
   }
 
-  def specializeKeyValue(kv: KeyValue, ctx: SpecializeContext): KeyValue = {
-    KeyValue(kv.name, specializeNode(kv.value, ctx))
-  }
   def specializeField(n: Field, ctx: SpecializeContext): Field = {
     val value = specializeNode(n.ty, ctx)
     Field(n.name, value)
+  }
+
+  def specializeParam(n: Param, ctx: SpecializeContext): Param = {
+    val value = specializeNode(n.ty, ctx)
+    Param(n.name, value)
   }
   def specializeDefVal(n: DefVal, ctx: SpecializeContext): (DefVal, SpecializeContext) = {
     val value = specializeNode(n.value, ctx)
@@ -399,7 +402,7 @@ case class Specializer(
       case _ =>
         val newFunc = DefFun(
           name = ctx.getCache.allocateSpecializedIdent(func.name.name),
-          params = Parameters(Nil),
+          params = Params(Nil),
           ret = func.ret,
           body = body
         )
@@ -426,7 +429,7 @@ case class Specializer(
     val mapping =
       collectArguments(args, kwArgs, argsToRange(n.fields), argsToKeys(n.fields)).map {
         case k -> v =>
-          KeyValue(Ident(k), specializeNode(v, ctx))
+          KwArg(Ident(k), specializeNode(v, ctx))
       }.toList
 
     ApplyStruct(
@@ -508,7 +511,7 @@ case class Specializer(
     (t, newCtx)
   }
   def specializeFunApply(n: ApplyFun, ctx: SpecializeContext): AST = {
-    val args = specializeNode(n.params, ctx).asInstanceOf[Parameters]
+    val args = specializeNode(n.params, ctx).asInstanceOf[Params]
     val returns = specializeNode(n.ret, ctx)
     val body = specializeNode(n.body, ctx)
     ApplyFun(args, returns, body)
