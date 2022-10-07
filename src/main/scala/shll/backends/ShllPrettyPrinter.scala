@@ -2,6 +2,11 @@ package shll.backends
 
 import shll.*
 import shll.ast.*
+object ShllPrettyPrinter {
+  private val pp = ShllPrettyPrinter()
+  def print(ast: AST): String = pp.print(ast)
+}
+
 case class ShllPrettyPrinter(
     newlines: Boolean = true,
     withNumber: Boolean = false

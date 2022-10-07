@@ -15,7 +15,7 @@ case object AstHelper {
   def tInt: ApplyType = literalType("int")
   def tAny: ApplyType = literalType("any")
   def tUnit: ApplyType = literalType("unit")
-  def tLiteral: ApplyType = literalType("literal")
+  def tIdent: ApplyType = literalType("ident")
   def tList(t: AST): ApplyType = ApplyType(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
   def block(n: AST*): Block = Block(n.toList)
   def forEach(i: String, iterable: AST, body: AST): ForEach = ForEach(Ident(i), iterable, body)
