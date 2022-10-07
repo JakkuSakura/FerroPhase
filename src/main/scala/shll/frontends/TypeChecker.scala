@@ -128,7 +128,7 @@ case class TypeChecker() {
   def internalTypeCheck(n: AST, ty: AST): Unit = {
     if (ty == AstHelper.tAny) return
     if (ty == AstHelper.tIdent && !n.isInstanceOf[Ident]) throw TypeCheckException(n, ty)
-    if (ty == AstHelper.tParams && !n.isInstanceOf[Parameters]) throw TypeCheckException(n, ty)
+    if (ty == AstHelper.tParams && !n.isInstanceOf[Params]) throw TypeCheckException(n, ty)
     if (ty == AstHelper.tFields && !n.isInstanceOf[Fields]) throw TypeCheckException(n, ty)
 
   }
@@ -166,14 +166,14 @@ case class TypeChecker() {
           case "def-fun" =>
             DefFun(
               collected("name").asInstanceOf[Ident],
-              collected("params").asInstanceOf[Parameters],
+              collected("params").asInstanceOf[Params],
               collected("ret"),
               collected("body")
             )
           case "decl-fun" =>
             DeclFun(
               collected("name").asInstanceOf[Ident],
-              collected("params").asInstanceOf[Parameters],
+              collected("params").asInstanceOf[Params],
               collected("ret")
             )
           case "def-val" =>
@@ -184,7 +184,7 @@ case class TypeChecker() {
           case "def-type" =>
             DefType(
               collected("name").asInstanceOf[Ident],
-              collected("params").asInstanceOf[Parameters],
+              collected("params").asInstanceOf[Params],
               collected("value")
             )
           case "def-struct" =>
@@ -210,7 +210,7 @@ case class TypeChecker() {
             )
           case "fun" =>
             ApplyFun(
-              collected("params").asInstanceOf[Parameters],
+              collected("params").asInstanceOf[Params],
               collected("returns"),
               collected("body")
             )
@@ -232,7 +232,10 @@ case class TypeChecker() {
         if (kwArgs.args.nonEmpty) {
           throw ParserException("Parameters does not support keyword arguments yet")
         }
-        Parameters(args.args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
+        Params(args.args.map(typeCheckAndConvert).map {
+          case x: Field => Param(x.name, x.ty)
+          case x: Param => x
+        })
       case Apply(Ident("lf"), args, kwArgs) =>
         // List is special
         if (kwArgs.args.nonEmpty) {
@@ -255,10 +258,11 @@ case class TypeChecker() {
         )
       case LiteralList(items) => LiteralList(items.map(typeCheckAndConvert))
       case Field(name, ty) => Field(name, typeCheckAndConvert(ty))
+      case Param(name, ty) => Param(name, typeCheckAndConvert(ty))
       case PosArgs(args) => PosArgs(args.map(typeCheckAndConvert))
-      case KwArgs(args) => KwArgs(args.map(kv => KeyValue(kv.name, typeCheckAndConvert(kv.value))))
-      case KeyValue(name, value) => KeyValue(name, typeCheckAndConvert(value))
-      case Parameters(args) => Parameters(args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
+      case KwArgs(args) => KwArgs(args.map(kv => KwArg(kv.name, typeCheckAndConvert(kv.value))))
+      case KwArg(name, value) => KwArg(name, typeCheckAndConvert(value))
+      case Params(args) => Params(args.map(typeCheckAndConvert).map(_.asInstanceOf[Param]))
       case Fields(args) => Fields(args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
       case _ => throw ParserException("Unhandled type: " + n)
     }
