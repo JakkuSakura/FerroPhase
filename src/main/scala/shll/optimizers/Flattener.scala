@@ -110,7 +110,7 @@ case class Flattener() {
   }
 
   def eliminateFunApply(n: ApplyFun): AST = {
-    val args = flattenNode(n.args).asInstanceOf[Parameters]
+    val args = flattenNode(n.params).asInstanceOf[Parameters]
     val ret = flattenNode(n.ret)
     val body = flattenNode(n.body)
     val newApply = ApplyFun(args, ret, body)

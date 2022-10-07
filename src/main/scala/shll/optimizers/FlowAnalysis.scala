@@ -321,11 +321,11 @@ case class FlowAnalysis() {
   def analyzeApplyFun(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
     val ctx1 = ctx.child()
     // TODO: process arguments
-    analyzeNode(n.args, ctx1)
+    analyzeNode(n.params, ctx1)
     analyzeNode(n.ret, ctx1)
     analyzeNode(n.body, ctx1)
     ctx.mergeChildNodes(n, ctx1)
-    ctx1.addDataFlow(n.args -> n)
+    ctx1.addDataFlow(n.params -> n)
     ctx1.addDataFlow(n.ret -> n)
     ctx1.addDataFlow(n.body -> n)
   }

@@ -16,7 +16,7 @@ object AST {
 trait AST(
     var num: Int = AST.genNum,
     var token: Option[Token] = None,
-    var origin: Option[AST] = None,
+    var origin: Option[AST] = None
 ) extends Cloneable {
 
   def duplicate(): this.type = {
@@ -55,9 +55,9 @@ case class Apply(fun: AST, args: PosArgs, kwArgs: KwArgs) extends AST()
 case class DefFun(name: Ident, params: Parameters, ret: AST, body: AST) extends AST()
 case class DeclFun(name: Ident, params: Parameters, ret: AST) extends AST()
 // form of (fun (list (field a [int])) x)
-case class ApplyFun(args: Parameters, ret: AST, body: AST) extends AST()
+case class ApplyFun(params: Parameters, ret: AST, body: AST) extends AST()
 case class DefVal(name: Ident, value: AST) extends AST()
-case class DefType(name: Ident, value: AST) extends AST()
+case class DefType(name: Ident, params: Parameters, value: AST) extends AST()
 case class Assign(target: AST, value: AST) extends AST()
 case class Cond(cond: AST, consequence: AST, alternative: AST) extends AST()
 case class While(cond: AST, body: AST) extends AST()

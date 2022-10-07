@@ -66,8 +66,8 @@ case class ShllPrettyPrinter(
         s"(assign ${printImpl(target)} ${printImpl(value)})"
       case DefStruct(name, fields) =>
         s"(def-struct ${name.name} ${printImpl(fields)})"
-      case DefType(name, value) =>
-        s"(def-type ${name.name} ${printImpl(value)})"
+      case DefType(name, params, value) =>
+        s"(def-type ${name.name} ${printImpl(params)} ${printImpl(value)})"
       case ApplyFun(args, ret, body) =>
         s"(fun ${printImpl(args)} ${printImpl(ret)} ${printImpl(body)})"
       case LiteralUnknown() =>
