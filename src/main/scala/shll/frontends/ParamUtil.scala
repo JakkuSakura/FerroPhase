@@ -24,6 +24,9 @@ case object ParamUtil {
   def checkArguments(args: PosArgs, kwArgs: KwArgs, knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
     collectArguments(args, kwArgs, knownArgs, knownKwArgs)
   }
+  
+  
+  // TODO: do type check
 
   def collectArguments(args: PosArgs, kwArgs: KwArgs, knownArgs: Array[Int], knownKwArgs: Array[String]): Map[String, AST] = {
     val res = collection.mutable.Map[String, AST]()

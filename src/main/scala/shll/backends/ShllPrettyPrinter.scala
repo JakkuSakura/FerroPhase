@@ -54,7 +54,9 @@ case class ShllPrettyPrinter(
       case DefVal(name, body) =>
         s"(def-val ${name.name} ${printImpl(body)})"
       case DefFun(name, args, ret, body) =>
-        s"(def-fun ${name.name} ${printImpl(args)} ${printImpl(ret)} ${body.map(printImpl).getOrElse("")})"
+        s"(def-fun ${name.name} ${printImpl(args)} ${printImpl(ret)} ${printImpl(body)})"
+      case DeclFun(name, args, ret) =>
+        s"(decl-fun ${name.name} ${printImpl(args)} ${printImpl(ret)})"
       case Assign(target, value) =>
         s"(assign ${printImpl(target)} ${printImpl(value)})"
       case DefStruct(name, fields) =>

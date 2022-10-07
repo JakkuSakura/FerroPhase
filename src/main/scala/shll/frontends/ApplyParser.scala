@@ -5,70 +5,203 @@ import shll.frontends.ParamUtil.*
 import shll.ast.AstHelper.*
 
 case class ApplyParser() {
-  def getArgAndParse(args: PosArgs, kwArgs: KwArgs, i: Int, name: String): AST = parse(
-    ParamUtil.getArg(args, kwArgs, i, name)
+  val decls: Map[String, DeclFun] = Map(
+    "if" -> AstHelper.declFun(
+      "if",
+      List(("cond", AstHelper.tBool), ("then", AstHelper.tAny), ("else", AstHelper.tAny)),
+      AstHelper.tAny
+    ),
+    "while" -> AstHelper.declFun(
+      "while",
+      List(("cond", AstHelper.tBool), ("body", AstHelper.tAny)),
+      AstHelper.tUnit
+    ),
+    "for" -> AstHelper.declFun(
+      "for",
+      List(
+        ("variable", AstHelper.tLiteral),
+        ("iterable", AstHelper.tAny),
+        ("body", AstHelper.tAny)
+      ),
+      AstHelper.tUnit
+    ),
+    "def-fun" -> AstHelper.declFun(
+      "def-fun",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("params", AstHelper.tAny),
+        ("ret", AstHelper.tAny),
+        ("body", AstHelper.tAny)
+      ),
+      AstHelper.tUnit
+    ),
+    "decl-fun" -> AstHelper.declFun(
+      "def-fun",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("params", AstHelper.tAny),
+        ("ret", AstHelper.tAny)
+      ),
+      AstHelper.tUnit
+    ),
+    "def-val" -> AstHelper.declFun(
+      "def-val",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("value", AstHelper.tAny)
+      ),
+      AstHelper.tUnit
+    ),
+    "def-type" -> AstHelper.declFun(
+      "def-type",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("value", AstHelper.tAny)
+      ),
+      AstHelper.tUnit
+    ),
+    "def-struct" -> AstHelper.declFun(
+      "def-struct",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("fields", AstHelper.tList(AstHelper.tAny)) // TODO: make it more explicit
+      ),
+      AstHelper.tUnit
+    ),
+    "assign" -> AstHelper.declFun(
+      "assign",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("value", AstHelper.tAny)
+      ),
+      AstHelper.tUnit
+    ),
+    ":" -> AstHelper.declFun(
+      ":",
+      List(
+        ("name", AstHelper.tLiteral),
+        ("value", AstHelper.tAny)
+      ),
+      AstHelper.tAny
+    ),
+    "select" -> AstHelper.declFun(
+      "select",
+      List(
+        ("obj", AstHelper.tAny),
+        ("field", AstHelper.tLiteral)
+      ),
+      AstHelper.tAny
+    ),
+    "fun" -> AstHelper.declFun(
+      "fun",
+      List(
+        ("params", AstHelper.tAny),
+        ("returns", AstHelper.tAny),
+        ("body", AstHelper.tAny)
+      ),
+      AstHelper.tAny
+    )
+    // block is special
+    //    "block" -> AstHelper.defFun(
+    //      "block",
+    //      List(
+    //        ("body", AstHelper.tAny)
+    //      ),
+    //      AstHelper.tUnit
+    //    ),
+    // list is special, lp, lf
+    //    "list" -> AstHelper.defFun(
+    //      "list",
+    //      List(
+    //        ("body", AstHelper.tAny)
+    //      ),
+    //      AstHelper.tList(AstHelper.tAny)
+    //    ),
   )
-  def getArgOptAndParse(
-      args: PosArgs,
-      kwArgs: KwArgs,
-      i: Int,
-      name: String
-  ): Option[AST] = ParamUtil.getArgOpt(args, kwArgs, i, name).map(parse)
+
   def parse(n: AST): AST = {
     n match {
-      case Apply(Ident("if"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1, 2), Array("cond", "then", "else"))
-        Cond(
-          getArgAndParse(args, kwArgs, 0, "cond"),
-          getArgAndParse(args, kwArgs, 1, "then"),
-          getArgAndParse(args, kwArgs, 2, "else")
-        )
-      case Apply(Ident("while"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("cond", "body"))
-        While(getArgAndParse(args, kwArgs, 0, "cond"), getArgAndParse(args, kwArgs, 1, "body"))
+      case Apply(Ident(name), args, kwArgs) if decls.contains(name) =>
+        val d: DeclFun = decls(name)
+        val collected =
+          collectArguments(args, kwArgs, argsToRange(d.params), argsToKeys(d.params))
+            .map(x => x._1 -> parse(x._2))
+        name match {
+          case "if" =>
+            Cond(
+              collected("cond"),
+              collected("then"),
+              collected("else")
+            )
+          case "while" =>
+            While(
+              collected("cond"),
+              collected("body")
+            )
 
-      case Apply(Ident("for"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1, 2), Array("name", "iter", "body"))
-        ForEach(
-          getIdentArg(args, kwArgs, 0, "name"),
-          getArgAndParse(args, kwArgs, 1, "iter"),
-          getArgAndParse(args, kwArgs, 2, "body")
-        )
-      case Apply(Ident("def-fun"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1, 2, 3), Array("name", "args", "ret", "body"))
-        DefFun(
-          getIdentArg(args, kwArgs, 0, "name"),
-          getArgAndParse(args, kwArgs, 1, "args").asInstanceOf,
-          getArgAndParse(args, kwArgs, 2, "ret"),
-          getArgOptAndParse(args, kwArgs, 3, "body")
-        )
-      case Apply(Ident("def-val"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("name", "value"))
-        DefVal(getIdentArg(args, kwArgs, 0, "name"), getArgAndParse(args, kwArgs, 1, "value"))
-      case Apply(Ident("def-type"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("name", "value"))
-        DefType(getIdentArg(args, kwArgs, 0, "name"), getArgAndParse(args, kwArgs, 1, "value"))
-      case Apply(Ident("def-struct"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("name", "fields"))
-        DefStruct(
-          getIdentArg(args, kwArgs, 0, "name"),
-          parse(getArgAndParse(args, kwArgs, 1, "fields")).asInstanceOf
-        )
-      case Apply(Ident("assign"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("name", "value"))
-        Assign(getIdentArg(args, kwArgs, 0, "name"), getArgAndParse(args, kwArgs, 1, "value"))
+          case "for" =>
+            ForEach(
+              collected("variable").asInstanceOf[Ident],
+              collected("iterable"),
+              collected("body")
+            )
+          case "def-fun" =>
+            DefFun(
+              collected("name").asInstanceOf[Ident],
+              collected("params").asInstanceOf[Parameters],
+              collected("ret"),
+              collected("body")
+            )
+          case "decl-fun" =>
+            DeclFun(
+              collected("name").asInstanceOf[Ident],
+              collected("params").asInstanceOf[Parameters],
+              collected("ret")
+            )
+          case "def-val" =>
+            DefVal(
+              collected("name").asInstanceOf[Ident],
+              collected("value")
+            )
+          case "def-type" =>
+            DefType(
+              collected("name").asInstanceOf[Ident],
+              collected("value")
+            )
+          case "def-struct" =>
+            DefStruct(
+              collected("name").asInstanceOf[Ident],
+              collected("fields").asInstanceOf[Fields]
+            )
+
+          case "assign" =>
+            Assign(
+              collected("name").asInstanceOf[Ident],
+              collected("value")
+            )
+          case ":" =>
+            Field(
+              collected("name").asInstanceOf[Ident],
+              collected("value")
+            )
+          case "select" =>
+            Select(
+              collected("obj"),
+              collected("field").asInstanceOf[Ident]
+            )
+          case "fun" =>
+            ApplyFun(
+              collected("params").asInstanceOf[Parameters],
+              collected("returns"),
+              collected("body")
+            )
+        }
       case Apply(Ident("block"), args, kwArgs) =>
         // Block is special
         if (kwArgs.args.nonEmpty) {
           throw ParserException("Block does not support keyword arguments yet")
         }
         Block(args.args.map(parse))
-      case Apply(Ident(":"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("name", "type"))
-        Field(getIdentArg(args, kwArgs, 0, "name"), getArgAndParse(args, kwArgs, 1, "type"))
-      case Apply(Ident("select"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1), Array("obj", "field"))
-        Select(getArgAndParse(args, kwArgs, 0, "obj"), getIdentArg(args, kwArgs, 1, "field"))
       case Apply(Ident("list"), args, kwArgs) =>
         // List is special
         if (kwArgs.args.nonEmpty) {
@@ -87,12 +220,6 @@ case class ApplyParser() {
           throw ParserException("Parameters does not support keyword arguments yet")
         }
         Fields(args.args.map(parse).map(_.asInstanceOf[Field]))
-      case Apply(Ident("fun"), args, kwArgs) =>
-        checkArguments(args, kwArgs, Array(0, 1, 2), Array("params", "returns", "body"))
-        val params = getArgAndParse(args, kwArgs, 0, "params")
-        val returns = getArgAndParse(args, kwArgs, 1, "returns")
-        val body = getArgAndParse(args, kwArgs, 2, "body")
-        ApplyFun(params.asInstanceOf, returns, body)
       case ApplyType(fun, args, kwArgs) =>
         ApplyType(parse(fun), parse(args).asInstanceOf, parse(kwArgs).asInstanceOf)
       case Ident(name) => Ident(name)

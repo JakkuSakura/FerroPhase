@@ -261,14 +261,16 @@ case class FlowAnalysis() {
   ): Unit = {
     val ctx = ctx0.child()
     ctx.addDecl(n.name, n)
-    analyzeNode(n.args, ctx)
+    analyzeNode(n.params, ctx)
     analyzeNode(n.ret, ctx)
-    n.body.foreach(analyzeNode(_, ctx))
-    n.body.foreach(x => ctx.addDataFlow(x -> n))
+    analyzeNode(n.body, ctx)
+    ctx.addDataFlow(n.body -> n)
+
     ctx.addInternalNode(n)
-    ctx.addDataFlow(n.args -> n)
+    ctx.addDataFlow(n.params -> n)
     ctx.addDataFlow(n.ret -> n)
-    n.body.foreach(x => ctx.mergeChildNodes(n, contextHistory(x)))
+    ctx.mergeChildNodes(n, contextHistory(n.body))
+
     contextHistory += n -> ctx
   }
 

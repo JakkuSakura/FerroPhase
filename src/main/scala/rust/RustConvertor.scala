@@ -30,9 +30,9 @@ case class RustConvertor() {
           Ident(name),
           Parameters(args.params.map(parseRustAstToShllAST).map(_.asInstanceOf[Field])),
           AstHelper.literalType(mapLiteralType(ret)),
-          Some(parseRustAstToShllAST(body))
+          parseRustAstToShllAST(body)
         )
-      case RustUnit() => AstHelper.literalType("unit")
+      case RustUnit() => AstHelper.tUnit
       case RustParam(name, ty, byValue) =>
         Field(Ident(name), AstHelper.literalType(mapLiteralType(ty)))
       case RustIdent(name) => Ident(name)

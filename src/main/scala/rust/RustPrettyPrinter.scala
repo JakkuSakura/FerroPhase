@@ -77,10 +77,9 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case DefVal(name, body) =>
         s"let mut ${name.name} = ${printImpl(body)};"
       case DefFun(name, args, ret, body) =>
-        s"fn ${name.name}(${args.params.map(printImpl).mkString(", ")}) -> ${printImpl(ret)}" + (body match {
-          case Some(b) => s" { ${printImpl(b)} }"
-          case None => ";"
-        })
+        s"fn ${name.name}(${args.params.map(printImpl).mkString(", ")}) -> ${printImpl(ret)} { ${printImpl(body)} }"
+      case DeclFun(name, args, ret) =>
+        s"fn ${name.name}(${args.params.map(printImpl).mkString(", ")}) -> ${printImpl(ret)};"
 
       case Assign(target, value) =>
         s"${printImpl(target)} = ${printImpl(value)}"
