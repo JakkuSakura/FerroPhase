@@ -11,120 +11,7 @@ case class TypeCheckException(n: Ast, ty: Ast)
     )
 
 case class TypeChecker() {
-  val decls: Map[String, DeclFun] = Map(
-    "if" -> AstHelper.declFun(
-      "if",
-      List(("cond", AstHelper.tBool), ("then", AstHelper.tAny), ("else", AstHelper.tAny)),
-      AstHelper.tAny
-    ),
-    "while" -> AstHelper.declFun(
-      "while",
-      List(("cond", AstHelper.tBool), ("body", AstHelper.tAny)),
-      AstHelper.tUnit
-    ),
-    "for" -> AstHelper.declFun(
-      "for",
-      List(
-        ("variable", AstHelper.tIdent),
-        ("iterable", AstHelper.tAny),
-        ("body", AstHelper.tAny)
-      ),
-      AstHelper.tUnit
-    ),
-    "def-fun" -> AstHelper.declFun(
-      "def-fun",
-      List(
-        ("name", AstHelper.tIdent),
-        ("params", AstHelper.tParams),
-        ("ret", AstHelper.tAny),
-        ("body", AstHelper.tAny)
-      ),
-      AstHelper.tUnit
-    ),
-    "decl-fun" -> AstHelper.declFun(
-      "decl-fun",
-      List(
-        ("name", AstHelper.tIdent),
-        ("params", AstHelper.tParams),
-        ("ret", AstHelper.tAny)
-      ),
-      AstHelper.tUnit
-    ),
-    "def-val" -> AstHelper.declFun(
-      "def-val",
-      List(
-        ("name", AstHelper.tIdent),
-        ("value", AstHelper.tAny)
-      ),
-      AstHelper.tUnit
-    ),
-    "def-type" -> AstHelper.declFun(
-      "def-type",
-      List(
-        ("name", AstHelper.tIdent),
-        ("params", AstHelper.tParams),
-        ("value", AstHelper.tAny)
-      ),
-      AstHelper.tUnit
-    ),
-    "def-struct" -> AstHelper.declFun(
-      "def-struct",
-      List(
-        ("name", AstHelper.tIdent),
-        ("fields", AstHelper.tFields)
-      ),
-      AstHelper.tUnit
-    ),
-    "assign" -> AstHelper.declFun(
-      "assign",
-      List(
-        ("name", AstHelper.tIdent),
-        ("value", AstHelper.tAny)
-      ),
-      AstHelper.tUnit
-    ),
-    ":" -> AstHelper.declFun(
-      ":",
-      List(
-        ("name", AstHelper.tIdent),
-        ("value", AstHelper.tAny)
-      ),
-      AstHelper.tAny
-    ),
-    "select" -> AstHelper.declFun(
-      "select",
-      List(
-        ("obj", AstHelper.tAny),
-        ("field", AstHelper.tIdent)
-      ),
-      AstHelper.tAny
-    ),
-    "fun" -> AstHelper.declFun(
-      "fun",
-      List(
-        ("params", AstHelper.tAny),
-        ("returns", AstHelper.tAny),
-        ("body", AstHelper.tAny)
-      ),
-      AstHelper.tAny
-    )
-    // block is special
-    //    "block" -> AstHelper.defFun(
-    //      "block",
-    //      List(
-    //        ("body", AstHelper.tAny)
-    //      ),
-    //      AstHelper.tUnit
-    //    ),
-    // list is special, lp, lf
-    //    "list" -> AstHelper.defFun(
-    //      "list",
-    //      List(
-    //        ("body", AstHelper.tAny)
-    //      ),
-    //      AstHelper.tList(AstHelper.tAny)
-    //    ),
-  )
+
   def internalTypeCheck(n: Ast, ty: Ast): Unit = {
     if (ty == AstHelper.tAny) return
     if (ty == AstHelper.tIdent && !n.isInstanceOf[Ident]) throw TypeCheckException(n, ty)
@@ -134,8 +21,8 @@ case class TypeChecker() {
   }
   def typeCheckAndConvert(n: Ast): Ast = {
     n match {
-      case Apply(Ident(name), args, kwArgs) if decls.contains(name) =>
-        val d: DeclFun = decls(name)
+      case Apply(Ident(name), args, kwArgs) if Builtins.builtinAsts.contains(name) =>
+        val d: DeclFun = Builtins.builtinAsts(name)
         val collected =
           collectArguments(args, kwArgs, argsToRange(d.params), argsToKeys(d.params))
             .map(x => x._1 -> typeCheckAndConvert(x._2))
