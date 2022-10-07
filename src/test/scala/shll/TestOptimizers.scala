@@ -5,7 +5,13 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import rust.{RustPrettyPrinter, RustRunnerBackend}
 import shll.ast.AST
-import shll.backends.{Backend, NothingBackend, PrettyPrinter, PrettyPrinterBackend, ShllPrettyPrinter}
+import shll.backends.{
+  Backend,
+  NothingBackend,
+  PrettyPrinter,
+  PrettyPrinterBackend,
+  ShllPrettyPrinter
+}
 import shll.frontends.ShllLexerAndParser
 import shll.optimizers.{DeadCodeEliminator, Flattener, Specializer}
 
@@ -32,9 +38,9 @@ class TestOptimizers {
       logger.info(s"Optimized " + pp.print(flatten))
     flatten
   }
-  def specializedEquals(input: String, expected: String, feedBackend: Boolean=true): Unit = {
+  def specializedEquals(input: String, expected: String, feedBackend: Boolean = true): Unit = {
     if (showProgress)
-        logger.info(s"Parsing $input")
+      logger.info(s"Parsing $input")
     val ast = ShllLexerAndParser().parse(input)
     val optimized = optimize(ast)
     val optimizedPrinted = pp.print(optimized)
@@ -42,7 +48,7 @@ class TestOptimizers {
     val expectedPrinted = pp.print(exp)
     if (expectedPrinted != optimizedPrinted)
       if (showProgress)
-          logger.info(s"Expected " + pp.print(exp))
+        logger.info(s"Expected " + pp.print(exp))
       assertEquals(exp, optimized)
 //    if (feedBackend)
 //      backend.process(optimized)
@@ -164,7 +170,6 @@ class TestOptimizers {
     )
   }
 
-
   @Test def testVariable(): Unit = {
     specializedEquals(
       "(block (def-val i 5) i)",
@@ -179,7 +184,7 @@ class TestOptimizers {
   @Test def testTypeApply(): Unit = {
     specializedEquals(
       "(block [list [int]])",
-      "(block (def-type list_0 [list [int]]) [list_0])",
+      "(block (def-type list_0 (lp) [list [int]]) [list_0])",
       feedBackend = false
     )
   }
@@ -302,7 +307,7 @@ class TestOptimizers {
     specializedEquals(
       """
         |(block
-        |  (def-type pass [fun (lp (: a [int])) [int]])
+        |  (def-type pass (lp) [fun (lp (: a [int])) [int]])
         |  (def-fun call (lp (: funs [list pass])) [int]
         |    (block
         |      (def-val s 0)
