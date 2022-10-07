@@ -9,16 +9,23 @@ case object AstHelper {
   def declFun(name: String, args: List[(String, Ast)], ret: Ast): DeclFun =
     DeclFun(Ident(name), Params(args.map(x => Param(Ident(x._1), x._2))), ret)
 
+  def defType(name: String, args: List[String], body: Ast): DefType =
+    DefType(Ident(name), Params(args.map(x => Param(Ident(x), AstHelper.tAny))), body)
   def literalType(s: String): ApplyType = ApplyType(Ident(s), PosArgs(Nil), KwArgs(Nil))
 
   def tBool: ApplyType = literalType("bool")
   def tInt: ApplyType = literalType("int")
+  def tNumeric: ApplyType = literalType("numeric")
+  def tString: ApplyType = literalType("string")
+  def tChar: ApplyType = literalType("char")
   def tAny: ApplyType = literalType("any")
   def tUnit: ApplyType = literalType("unit")
   def tIdent: ApplyType = literalType("ident")
   def tParams: ApplyType = literalType("params")
   def tFields: ApplyType = literalType("fields")
   def tList(t: Ast): ApplyType = ApplyType(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
+  def tFun(params: Ast, ret: Ast): ApplyType =
+    ApplyType(Ident("fun"), PosArgs(List(params, ret)), KwArgs(Nil))
   def block(n: Ast*): Block = Block(n.toList)
   def forEach(i: String, iterable: Ast, body: Ast): ForEach = ForEach(Ident(i), iterable, body)
   def applyFun(n: String, args: Ast*): Apply = Apply(Ident(n), PosArgs(args.toList), KwArgs(Nil))
