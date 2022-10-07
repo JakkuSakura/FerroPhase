@@ -14,13 +14,7 @@ case object ParamUtil {
 
   def getArg(args: PosArgs, kwArgs: KwArgs, pos: Int, key: String): Ast =
     getArgOpt(args, kwArgs, pos, key).getOrElse(throw Exception("Missing key: " + key))
-
-  def getIdentArg(args: PosArgs, kwArgs: KwArgs, pos: Int, key: String): Ident =
-    getArg(args, kwArgs, pos, key) match {
-      case i: Ident => i
-      case _ => throw ParserException("Expected Ident, got: " + getArg(args, kwArgs, pos, key))
-    }
-
+  
   def checkArguments(args: PosArgs, kwArgs: KwArgs, knownArgs: Array[Int], knownKwArgs: Array[String]): Unit = {
     collectArguments(args, kwArgs, knownArgs, knownKwArgs)
   }
