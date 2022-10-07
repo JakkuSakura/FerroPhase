@@ -7,7 +7,7 @@ import shll.frontends.ParamUtil.*
 import AstHelper.*
 
 import scala.collection.mutable
-case class SpecializeException(msg: String, node: AST)
+case class SpecializeException(msg: String, node: Ast)
     extends Exception(msg + ": " + ShllPrettyPrinter.print(node))
 
 case class SpecializeContext(
@@ -18,11 +18,11 @@ case class SpecializeContext(
   def getCache: SpecializeCache = cache.getOrElse(parent.get.getCache)
   def withCache(cache: SpecializeCache): SpecializeContext =
     SpecializeContext(cache = Some(cache), context = context, parent = Some(this))
-  def withValues(values: Map[String, AST]): SpecializeContext = {
+  def withValues(values: Map[String, Ast]): SpecializeContext = {
     SpecializeContext(context = context.withValues(values), parent = Some(this))
   }
 
-  def withValue(name: String, value: AST): SpecializeContext = {
+  def withValue(name: String, value: Ast): SpecializeContext = {
     SpecializeContext(context = context.withValue(name, value), parent = Some(this))
   }
 
@@ -70,7 +70,7 @@ case class Specializer(
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
 
-  val builtinFunctions: Map[String, (Apply, SpecializeContext) => AST] = Map(
+  val builtinFunctions: Map[String, (Apply, SpecializeContext) => Ast] = Map(
     "==" -> binaryOperator { (apply, lhs, rhs, ctx) =>
       if (lhs == rhs)
         LiteralBool(true)
@@ -156,8 +156,8 @@ case class Specializer(
     }
   )
   def binaryOperator(
-      fn: (apply: AST, lhs: AST, rhs: AST, ctx: ValueContext) => AST
-  ): (Apply, SpecializeContext) => AST = { (apply, ctx) =>
+      fn: (apply: Ast, lhs: Ast, rhs: Ast, ctx: ValueContext) => Ast
+  ): (Apply, SpecializeContext) => Ast = { (apply, ctx) =>
     {
       checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("lhs", "rhs"))
       val lhs = specializeNode(getArg(apply.args, apply.kwArgs, 0, "lhs"), ctx)
@@ -166,7 +166,7 @@ case class Specializer(
       fn(a, lhs, rhs, ctx.context)
     }
   }
-  val builtinTypes: Map[String, (ApplyType, SpecializeContext) => AST] = Map(
+  val builtinTypes: Map[String, (ApplyType, SpecializeContext) => Ast] = Map(
     "int" -> simpleType,
     "bool" -> simpleType,
     "numeric" -> simpleType,
@@ -176,7 +176,7 @@ case class Specializer(
     "fun" -> funcType
   )
 
-  def getTypeName(n: AST, ctx: SpecializeContext): String = {
+  def getTypeName(n: Ast, ctx: SpecializeContext): String = {
     n match {
       case Ident(name) =>
         ctx.context
@@ -187,7 +187,7 @@ case class Specializer(
       case _ => throw SpecializeException("Unknown type name", n)
     }
   }
-  def isKnownType(n: AST, ctx: SpecializeContext): Boolean = {
+  def isKnownType(n: Ast, ctx: SpecializeContext): Boolean = {
     n match {
       case Ident(name) => ctx.context.getType(name).isDefined || builtinTypes.contains(name)
       case ApplyType(Ident(name), args, kwArgs) =>
@@ -196,7 +196,7 @@ case class Specializer(
       case _ => false
     }
   }
-  def simpleGenericType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
+  def simpleGenericType: (ApplyType, SpecializeContext) => Ast = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
     val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
     val newApply = ApplyType(apply.fun, PosArgs(List(value)), KwArgs(Nil))
@@ -215,7 +215,7 @@ case class Specializer(
     }
   }
 
-  def funcType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
+  def funcType: (ApplyType, SpecializeContext) => Ast = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("params", "return"))
     val params = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
     val returns = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
@@ -223,15 +223,15 @@ case class Specializer(
     val newApply = ApplyType(apply.fun, PosArgs(List(params, returns)), KwArgs(Nil))
     newApply
   }
-  def simpleType: (ApplyType, SpecializeContext) => AST = { (apply, ctx) =>
+  def simpleType: (ApplyType, SpecializeContext) => Ast = { (apply, ctx) =>
     apply
   }
-  def specialize(n: AST): AST = {
+  def specialize(n: Ast): Ast = {
     specializeNode(n, SpecializeContext())
 
   }
 
-  def specializeNode(n: AST, ctx: SpecializeContext): AST = {
+  def specializeNode(n: Ast, ctx: SpecializeContext): Ast = {
 //    logger.debug("Specializing " + pp.print(n))
     n match {
       case n: Block => specializeBlock(n, ctx)
@@ -272,7 +272,7 @@ case class Specializer(
     val newCtx = ctx.withValue(n.name.name, value)
     (DefVal(n.name, value), newCtx)
   }
-  def specializeIdent(id: Ident, ctx: SpecializeContext): AST = {
+  def specializeIdent(id: Ident, ctx: SpecializeContext): Ast = {
     if (inlineVariable) {
       ctx.context.getValue(id.name) match {
         case Some(value) if isLiteral(value, ctx.context) => value.duplicate()
@@ -283,7 +283,7 @@ case class Specializer(
     }
   }
 
-  def specializeApply(n: Apply, ctx: SpecializeContext): AST = {
+  def specializeApply(n: Apply, ctx: SpecializeContext): Ast = {
     n.fun match {
       case Ident(name) if builtinFunctions.contains(name) =>
         val fn = builtinFunctions(name)
@@ -305,7 +305,7 @@ case class Specializer(
     }
   }
 
-  def specializeTypeApply(n: ApplyType, ctx: SpecializeContext): AST = {
+  def specializeTypeApply(n: ApplyType, ctx: SpecializeContext): Ast = {
     n.fun match {
       case Ident(name) if builtinTypes.contains(name) =>
         val ty = builtinTypes(name)
@@ -356,10 +356,10 @@ case class Specializer(
   }
 
   def prepareBody(
-      ctx: SpecializeContext,
-      values: Map[String, AST],
-      oldBody: AST
-  ): AST = {
+                   ctx: SpecializeContext,
+                   values: Map[String, Ast],
+                   oldBody: Ast
+  ): Ast = {
     val prepareValues = values.map { case k -> v =>
       DefVal(Ident(k), v.duplicate())
     }.toList
@@ -385,7 +385,7 @@ case class Specializer(
       args: PosArgs,
       kwArgs: KwArgs,
       ctx: SpecializeContext
-  ): AST = {
+  ): Ast = {
     val mapping =
       collectArguments(args, kwArgs, argsToRange(func.params), argsToKeys(func.params))
         .map { case k -> v =>
@@ -437,7 +437,7 @@ case class Specializer(
       KwArgs(mapping)
     )
   }
-  def specializeSelect(n: Select, ctx: SpecializeContext): AST = {
+  def specializeSelect(n: Select, ctx: SpecializeContext): Ast = {
     val obj = specializeNode(n.obj, ctx)
     obj match {
       case ApplyStruct(name, values) =>
@@ -448,7 +448,7 @@ case class Specializer(
       case o => o
     }
   }
-  def specializeCond(n: Cond, ctx: SpecializeContext): AST = {
+  def specializeCond(n: Cond, ctx: SpecializeContext): Ast = {
     val cond = specializeNode(n.cond, ctx)
     cond match {
       case LiteralBool(true) => specializeNode(n.consequence, ctx)
@@ -462,7 +462,7 @@ case class Specializer(
     }
   }
 
-  def specializeForEach(n: ForEach, ctx: SpecializeContext): AST = {
+  def specializeForEach(n: ForEach, ctx: SpecializeContext): Ast = {
     val iterable = specializeNode(n.iterable, ctx)
     if (isFinite(iterable, ctx.context)) {
       Block(
@@ -496,7 +496,7 @@ case class Specializer(
       )
     }
   }
-  def specializeAssign(n: Assign, ctx: SpecializeContext): (AST, SpecializeContext) = {
+  def specializeAssign(n: Assign, ctx: SpecializeContext): (Ast, SpecializeContext) = {
     val name = n.target.asInstanceOf[Ident]
     // FIXME: this fix is not correct
     ctx.context.updateValue(name.name, LiteralUnknown())
@@ -510,7 +510,7 @@ case class Specializer(
     val newCtx = ctx.withTypes(Map(n.name.name -> n))
     (t, newCtx)
   }
-  def specializeFunApply(n: ApplyFun, ctx: SpecializeContext): AST = {
+  def specializeFunApply(n: ApplyFun, ctx: SpecializeContext): Ast = {
     val args = specializeNode(n.params, ctx).asInstanceOf[Params]
     val returns = specializeNode(n.ret, ctx)
     val body = specializeNode(n.body, ctx)

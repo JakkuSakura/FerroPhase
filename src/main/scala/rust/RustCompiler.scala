@@ -1,6 +1,6 @@
 package rust
 import com.typesafe.scalalogging.Logger
-import shll.ast.AST
+import shll.ast.Ast
 import shll.backends.Backend
 
 import java.io.File
@@ -37,7 +37,7 @@ case class RustRunnerBackend(time: Boolean = true) extends Backend {
       |""".stripMargin
 
   }
-  override def process(node: AST): Unit = {
+  override def process(node: Ast): Unit = {
     var code = RustPrettyPrinter().print(node)
     if (!code.contains("fn main()")) {
       code = augmentWithPrint(code)

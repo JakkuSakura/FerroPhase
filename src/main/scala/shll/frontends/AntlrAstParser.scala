@@ -75,7 +75,7 @@ case class AntlrAstParser() {
     ApplyType(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
       .withToken(ctx.getStart)
   }
-  def convertTerm(ctx: TermContext): AST = {
+  def convertTerm(ctx: TermContext): Ast = {
 //    logger.debug(s"Converting term: ${ctx.getText}")
     ctx match {
       case _ if ctx.CHAR() != null =>
@@ -97,7 +97,7 @@ case class AntlrAstParser() {
 
     }
   }
-  def parse(s: String): AST = {
+  def parse(s: String): Ast = {
     val lexer = SHLLLexer(CharStreams.fromString(s))
     val stream = CommonTokenStream(lexer)
     val parser = SHLLParser(stream)

@@ -6,29 +6,29 @@ case object ValueContext {
   val logger: Logger = Logger[this.type]
 }
 case class ValueContext(
-    private var values: Map[String, AST] = Map.empty,
-    private var types: Map[String, DefType] = Map.empty,
-    private var functions: Map[String, DefFun] = Map.empty,
-    private var structs: Map[String, DefStruct] = Map.empty,
-    private val parent: Option[ValueContext] = None
+                         private var values: Map[String, Ast] = Map.empty,
+                         private var types: Map[String, DefType] = Map.empty,
+                         private var functions: Map[String, DefFun] = Map.empty,
+                         private var structs: Map[String, DefStruct] = Map.empty,
+                         private val parent: Option[ValueContext] = None
 ) {
   def getParent: Option[this.type] = parent.asInstanceOf[Option[this.type]]
 
-  def getValueShallow(name: String): Option[AST] = {
+  def getValueShallow(name: String): Option[Ast] = {
     values.get(name)
   }
-  def getValue(name: String): Option[AST] = {
+  def getValue(name: String): Option[Ast] = {
     values.get(name).orElse(parent.flatMap(_.getValue(name)))
   }
-  def withValues(values: Map[String, AST]): ValueContext = {
+  def withValues(values: Map[String, Ast]): ValueContext = {
     ValueContext(values = values, parent = Some(this))
   }
 
-  def withValue(name: String, value: AST): ValueContext = {
+  def withValue(name: String, value: Ast): ValueContext = {
 //    ValueContext.logger.debug(s"Adding value $name -> $value in ${this.hashCode()}")
     withValues(Map(name -> value))
   }
-  def updateValue(name: String, value: AST): Unit = {
+  def updateValue(name: String, value: Ast): Unit = {
     if (values.contains(name)) {
       values = values + (name -> value)
     } else {
@@ -38,7 +38,7 @@ case class ValueContext(
       }
     }
   }
-  def getType(name: String): Option[AST] = {
+  def getType(name: String): Option[Ast] = {
     types.get(name).orElse(parent.flatMap(_.getType(name)))
   }
 

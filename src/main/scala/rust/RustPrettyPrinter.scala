@@ -22,7 +22,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
     "any" -> "Any",
     "list" -> "Vec"
   )
-  def printType(a: AST): String = {
+  def printType(a: Ast): String = {
     a match {
       case Ident(x) => primitiveTypes.getOrElse(x, x)
       case ApplyType(fun, PosArgs(Nil), KwArgs(Nil)) =>
@@ -31,7 +31,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         printType(fun) + "<" + args.args.map(printType).mkString(", ") + ">"
     }
   }
-  def printImpl(a: AST): String = {
+  def printImpl(a: Ast): String = {
     a match {
       case x: Apply if x.args.args.isEmpty =>
         s"${printImpl(x.fun)}{${printImpl(x.kwArgs)}}"
@@ -93,7 +93,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${printImpl(obj)}.${field.name}"
     }
   }
-  def print(a: AST): String = {
+  def print(a: Ast): String = {
     val raw = printImpl(a)
     raw
   }
