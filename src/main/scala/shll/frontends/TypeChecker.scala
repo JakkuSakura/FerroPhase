@@ -5,7 +5,7 @@ import shll.frontends.ParamUtil.*
 import shll.ast.AstHelper.*
 import shll.backends.ShllPrettyPrinter
 
-case class TypeCheckException(n: AST, ty: AST)
+case class TypeCheckException(n: Ast, ty: Ast)
     extends Exception(
       "Type error: " + ShllPrettyPrinter.print(n) + " is not of type " + ShllPrettyPrinter.print(ty)
     )
@@ -125,14 +125,14 @@ case class TypeChecker() {
     //      AstHelper.tList(AstHelper.tAny)
     //    ),
   )
-  def internalTypeCheck(n: AST, ty: AST): Unit = {
+  def internalTypeCheck(n: Ast, ty: Ast): Unit = {
     if (ty == AstHelper.tAny) return
     if (ty == AstHelper.tIdent && !n.isInstanceOf[Ident]) throw TypeCheckException(n, ty)
     if (ty == AstHelper.tParams && !n.isInstanceOf[Params]) throw TypeCheckException(n, ty)
     if (ty == AstHelper.tFields && !n.isInstanceOf[Fields]) throw TypeCheckException(n, ty)
 
   }
-  def typeCheckAndConvert(n: AST): AST = {
+  def typeCheckAndConvert(n: Ast): Ast = {
     n match {
       case Apply(Ident(name), args, kwArgs) if decls.contains(name) =>
         val d: DeclFun = decls(name)

@@ -9,13 +9,13 @@ import shll.ast.AstHelper.*
 import scala.collection.mutable
 
 case class FlowAnalysisContext(
-    context: ValueContext = ValueContext(),
-    private val decls: mutable.Map[String, AST] = mutable.Map.empty,
-    private val internalNodes: mutable.Set[String] = mutable.Set.empty,
-    private val externalNodes: mutable.Set[String] = mutable.Set.empty,
-    private val dataFlow: mutable.Set[(String, String)] = mutable.Set.empty,
-    private val executionFlow: mutable.Set[(String, String)] = mutable.Set.empty,
-    private val parent: Option[FlowAnalysisContext] = None
+                                context: ValueContext = ValueContext(),
+                                private val decls: mutable.Map[String, Ast] = mutable.Map.empty,
+                                private val internalNodes: mutable.Set[String] = mutable.Set.empty,
+                                private val externalNodes: mutable.Set[String] = mutable.Set.empty,
+                                private val dataFlow: mutable.Set[(String, String)] = mutable.Set.empty,
+                                private val executionFlow: mutable.Set[(String, String)] = mutable.Set.empty,
+                                private val parent: Option[FlowAnalysisContext] = None
 ) {
   def child(): FlowAnalysisContext = {
     val child = FlowAnalysisContext(
@@ -68,7 +68,7 @@ case class FlowAnalysisContext(
     false
   }
 
-  def getName(node: AST): String = {
+  def getName(node: Ast): String = {
     node match {
       case LiteralUnknown() => "???"
 //      case x: Ident
@@ -80,41 +80,41 @@ case class FlowAnalysisContext(
     }
   }
 
-  def addDataFlow(pair: (AST, AST)): Unit = {
+  def addDataFlow(pair: (Ast, Ast)): Unit = {
     val (from, to) = pair
     val fromN = getName(from)
     val toN = getName(to)
     dataFlow += fromN -> toN
   }
 
-  def addExecutionFlow(pair: (AST, AST)): Unit = {
+  def addExecutionFlow(pair: (Ast, Ast)): Unit = {
     val (from, to) = pair
     val fromN = getName(from)
     val toN = getName(to)
     executionFlow += fromN -> toN
   }
-  def addDecl(name: Ident, ast: AST): Unit = {
+  def addDecl(name: Ident, ast: Ast): Unit = {
     decls += name.name -> ast
   }
-  def getDecl(name: String): Option[AST] = {
+  def getDecl(name: String): Option[Ast] = {
     decls.get(name).orElse(parent.flatMap(_.getDecl(name)))
   }
-  def addInternalNode(node: AST): Unit = {
+  def addInternalNode(node: Ast): Unit = {
     internalNodes += getName(node)
   }
-  def isDataflowReachable(from: AST, to: AST): Boolean = {
+  def isDataflowReachable(from: Ast, to: Ast): Boolean = {
     val fromN = getName(from)
     val toN = getName(to)
     isDataflowReachable(fromN, toN)
   }
 
-  def isReachable(from: AST, to: AST): Boolean = {
+  def isReachable(from: Ast, to: Ast): Boolean = {
     val fromN = getName(from)
     val toN = getName(to)
     isReachable(fromN, toN)
   }
 
-  def mergeChildNodes(node: AST, other: FlowAnalysisContext): Unit = {
+  def mergeChildNodes(node: Ast, other: FlowAnalysisContext): Unit = {
     decls ++= other.decls
     externalNodes ++= other.externalNodes
     internalNodes ++= other.internalNodes
@@ -124,16 +124,16 @@ case class FlowAnalysisContext(
 case class FlowAnalysis() {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = true, withNumber = true)
-  val contextHistory: mutable.Map[AST, FlowAnalysisContext] = mutable.Map.empty
+  val contextHistory: mutable.Map[Ast, FlowAnalysisContext] = mutable.Map.empty
 
-  def analyze(n: AST): FlowAnalysisContext = {
+  def analyze(n: Ast): FlowAnalysisContext = {
     val ctx = FlowAnalysisContext()
     ctx.addDataFlow(n -> LiteralUnknown())
     analyzeNode(n, ctx)
     contextHistory(n)
   }
 
-  def analyzeNode(n: AST, ctx: FlowAnalysisContext): Unit = {
+  def analyzeNode(n: Ast, ctx: FlowAnalysisContext): Unit = {
 //    logger.debug("Eliminating " + pp.print(n))
     if (!n.isInstanceOf[Ident])
       ctx.addInternalNode(n)

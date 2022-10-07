@@ -12,11 +12,11 @@ class AstWalker() {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter(newlines = false)
 
-  def walk(n: AST): AST = {
+  def walk(n: Ast): Ast = {
     walkNode(n)
   }
 
-  def walkNode(n: AST): AST = {
+  def walkNode(n: Ast): Ast = {
     //    logger.debug("Eliminating " + pp.print(n))
     val x = n match {
       case n: Block => walkBlock(n)
@@ -59,28 +59,28 @@ class AstWalker() {
     DefVal(n.name, walkNode(n.value))
   }
 
-  def walkIdent(id: Ident): AST = {
+  def walkIdent(id: Ident): Ast = {
     id
   }
 
-  def walkApply(n: Apply): AST = {
+  def walkApply(n: Apply): Ast = {
     n
   }
 
-  def walkTypeApply(n: ApplyType): AST = {
+  def walkTypeApply(n: ApplyType): Ast = {
     n
   }
 
-  def walkDefType(n: DefType): AST = {
+  def walkDefType(n: DefType): Ast = {
     n
   }
 
-  def walkSelect(n: Select): AST = {
+  def walkSelect(n: Select): Ast = {
     val obj = walkNode(n.obj)
     Select(obj, n.field)
   }
 
-  def walkCond(n: Cond): AST = {
+  def walkCond(n: Cond): Ast = {
     val cond = walkNode(n.cond)
     val conseq = walkNode(n.consequence)
     val alt = walkNode(n.alternative)
@@ -88,7 +88,7 @@ class AstWalker() {
     condTotal
   }
 
-  def walkForEach(n: ForEach): AST = {
+  def walkForEach(n: ForEach): Ast = {
     val iterable = walkNode(n.iterable)
     val body = walkNode(n.body)
     val f = ForEach(n.variable, iterable, body)
@@ -104,20 +104,20 @@ class AstWalker() {
     )
   }
 
-  def walkAssign(n: Assign): AST = {
+  def walkAssign(n: Assign): Ast = {
     val value = walkNode(n.value)
     val ass = Assign(n.target, value)
     ass
   }
 
-  def walkFunApply(n: ApplyFun): AST = {
+  def walkFunApply(n: ApplyFun): Ast = {
     val args = walkNode(n.params).asInstanceOf[Params]
     val ret = walkNode(n.ret)
     val body = walkNode(n.body)
     val newApply = ApplyFun(args, ret, body)
     newApply
   }
-  def walkBlock(d: Block): AST = {
+  def walkBlock(d: Block): Ast = {
     Block(
       d.children.map(walkNode)
     )
