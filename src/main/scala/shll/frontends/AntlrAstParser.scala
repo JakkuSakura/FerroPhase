@@ -57,10 +57,10 @@ case class AntlrAstParser() {
     PosArgs(ctx.term().asScala.map(convertTerm).toList).withToken(ctx.start)
   }
 
-  def convertKwArg(ctx: KwArgContext): KeyValue = {
+  def convertKwArg(ctx: KwArgContext): KwArg = {
     val ident = convertIdent(ctx.IDENT())
     val expr = convertTerm(ctx.term())
-    KeyValue(ident, expr).withToken(ctx.getStart)
+    KwArg(ident, expr).withToken(ctx.getStart)
   }
 
   def convertKwArgs(ctx: KwArgsContext): KwArgs = {

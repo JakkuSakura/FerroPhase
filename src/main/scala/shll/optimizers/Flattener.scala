@@ -28,6 +28,7 @@ case class Flattener() {
       case n: LiteralBool => n
       case n: LiteralList => LiteralList(n.value.map(flattenNode))
       case n: Field => eliminateField(n)
+      case n: Param => eliminateParam(n)
       case n: Select => eliminateSelect(n)
       case n: Cond => eliminateCond(n)
       case n: ForEach => eliminateForEach(n)
@@ -37,7 +38,7 @@ case class Flattener() {
       case n: DefFun => eliminateDefFun(n)
       case n: Assign => eliminateAssign(n)
       case n: ApplyFun => eliminateFunApply(n)
-      case n: Parameters => Parameters(n.params.map(flattenNode(_).asInstanceOf[Field]))
+      case n: Params => Params(n.params.map(flattenNode(_).asInstanceOf[Param]))
       case x => throw SpecializeException("cannot eliminate", x)
     }
 //    val orig = pp.print(n)
@@ -52,6 +53,10 @@ case class Flattener() {
     Field(n.name, value)
   }
 
+  def eliminateParam(n: Param): Param = {
+    val value = flattenNode(n.ty)
+    Param(n.name, value)
+  }
   def eliminateDefVal(
       n: DefVal
   ): DefVal = {
@@ -110,7 +115,7 @@ case class Flattener() {
   }
 
   def eliminateFunApply(n: ApplyFun): AST = {
-    val args = flattenNode(n.params).asInstanceOf[Parameters]
+    val args = flattenNode(n.params).asInstanceOf[Params]
     val ret = flattenNode(n.ret)
     val body = flattenNode(n.body)
     val newApply = ApplyFun(args, ret, body)
