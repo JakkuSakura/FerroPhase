@@ -97,9 +97,9 @@ case class Flattener() {
   def eliminateDefFun(fun: DefFun): DefFun = {
     DefFun(
       fun.name,
-      flattenNode(fun.args).asInstanceOf,
+      flattenNode(fun.params).asInstanceOf,
       flattenNode(fun.ret),
-      fun.body.map(flattenNode)
+      flattenNode(fun.body)
     )
   }
 

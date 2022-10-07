@@ -384,14 +384,14 @@ case class Specializer(
       ctx: SpecializeContext
   ): AST = {
     val mapping =
-      collectArguments(args, kwArgs, argsToRange(func.args), argsToKeys(func.args))
+      collectArguments(args, kwArgs, argsToRange(func.params), argsToKeys(func.params))
         .map { case k -> v =>
           k -> specializeNode(v, ctx)
         }
     val body = prepareBody(
       ctx,
       mapping,
-      func.body.getOrElse(throw SpecializeException("cannot specialize: empty body", func))
+      func.body
     )
     body match {
       case x if isLiteral(x, ctx.context) => body
@@ -399,9 +399,9 @@ case class Specializer(
       case _ =>
         val newFunc = DefFun(
           name = ctx.getCache.allocateSpecializedIdent(func.name.name),
-          args = Parameters(Nil),
+          params = Parameters(Nil),
           ret = func.ret,
-          body = Some(body)
+          body = body
         )
         ctx.getCache.specializedFunctions(newFunc.name.name) = newFunc
         Apply(newFunc.name, PosArgs(Nil), KwArgs(Nil))
@@ -413,12 +413,9 @@ case class Specializer(
       ctx: SpecializeContext
   ): (DefFun, SpecializeContext) = {
     val newCtx = ctx.withFunction(d.name.name, d)
-    if (d.body.isDefined) {
-      val body = specializeNode(d.body.get, ctx)
-      (d.copy(body = Some(body)), newCtx)
-    } else {
-      (d, newCtx)
-    }
+    val body = specializeNode(d.body, ctx)
+    (d.copy(body = body), newCtx)
+
   }
   def specializeStructApply(
       n: DefStruct,

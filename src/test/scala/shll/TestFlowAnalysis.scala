@@ -38,8 +38,8 @@ class TestFlowAnalysis {
     val blk = AstHelper.block(
       AstHelper.defFun(
         "a",
-        List(("a", AstHelper.literalType("int"))),
-        AstHelper.literalType("int"),
+        List(("a", AstHelper.tInt)),
+        AstHelper.tInt,
         AstHelper.applyFun("+", Ident("a"), Ident("a"))
       ),
       Ident("a")
@@ -94,13 +94,13 @@ class TestFlowAnalysis {
     assertEquals(
       true,
       fl.contextHistory(blk)
-        .isReachable(blk.children(0).asInstanceOf[DefFun].body.get, LiteralUnknown())
+        .isReachable(blk.children(0).asInstanceOf[DefFun].body, LiteralUnknown())
     )
     assertEquals(
       true,
       fl.contextHistory(blk)
         .isReachable(
-          blk.children(0).asInstanceOf[DefFun].body.get.asInstanceOf[Block].children(1),
+          blk.children(0).asInstanceOf[DefFun].body.asInstanceOf[Block].children(1),
           LiteralUnknown()
         )
     )
