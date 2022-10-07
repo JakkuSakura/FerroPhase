@@ -3,8 +3,14 @@ package shll.frontends
 import shll.ast.*
 import shll.frontends.ParamUtil.*
 import shll.ast.AstHelper.*
+import shll.backends.ShllPrettyPrinter
 
-case class ApplyParser() {
+case class TypeCheckException(n: AST, ty: AST)
+    extends Exception(
+      "Type error: " + ShllPrettyPrinter.print(n) + " is not of type " + ShllPrettyPrinter.print(ty)
+    )
+
+case class TypeChecker() {
   val decls: Map[String, DeclFun] = Map(
     "if" -> AstHelper.declFun(
       "if",
@@ -19,7 +25,7 @@ case class ApplyParser() {
     "for" -> AstHelper.declFun(
       "for",
       List(
-        ("variable", AstHelper.tLiteral),
+        ("variable", AstHelper.tIdent),
         ("iterable", AstHelper.tAny),
         ("body", AstHelper.tAny)
       ),
@@ -28,7 +34,7 @@ case class ApplyParser() {
     "def-fun" -> AstHelper.declFun(
       "def-fun",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("params", AstHelper.tAny),
         ("ret", AstHelper.tAny),
         ("body", AstHelper.tAny)
@@ -38,7 +44,7 @@ case class ApplyParser() {
     "decl-fun" -> AstHelper.declFun(
       "def-fun",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("params", AstHelper.tAny),
         ("ret", AstHelper.tAny)
       ),
@@ -47,7 +53,7 @@ case class ApplyParser() {
     "def-val" -> AstHelper.declFun(
       "def-val",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("value", AstHelper.tAny)
       ),
       AstHelper.tUnit
@@ -55,7 +61,7 @@ case class ApplyParser() {
     "def-type" -> AstHelper.declFun(
       "def-type",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("value", AstHelper.tAny)
       ),
       AstHelper.tUnit
@@ -63,7 +69,7 @@ case class ApplyParser() {
     "def-struct" -> AstHelper.declFun(
       "def-struct",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("fields", AstHelper.tList(AstHelper.tAny)) // TODO: make it more explicit
       ),
       AstHelper.tUnit
@@ -71,7 +77,7 @@ case class ApplyParser() {
     "assign" -> AstHelper.declFun(
       "assign",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("value", AstHelper.tAny)
       ),
       AstHelper.tUnit
@@ -79,7 +85,7 @@ case class ApplyParser() {
     ":" -> AstHelper.declFun(
       ":",
       List(
-        ("name", AstHelper.tLiteral),
+        ("name", AstHelper.tIdent),
         ("value", AstHelper.tAny)
       ),
       AstHelper.tAny
@@ -88,7 +94,7 @@ case class ApplyParser() {
       "select",
       List(
         ("obj", AstHelper.tAny),
-        ("field", AstHelper.tLiteral)
+        ("field", AstHelper.tIdent)
       ),
       AstHelper.tAny
     ),
@@ -118,14 +124,26 @@ case class ApplyParser() {
     //      AstHelper.tList(AstHelper.tAny)
     //    ),
   )
+  def internalTypeCheck(n: AST, ty: AST): Unit = {
+    if (ty == AstHelper.tAny) return
+    if (ty == AstHelper.tIdent && !n.isInstanceOf[Ident]) throw TypeCheckException(n, ty)
 
-  def parse(n: AST): AST = {
+  }
+  def typeCheckAndConvert(n: AST): AST = {
     n match {
       case Apply(Ident(name), args, kwArgs) if decls.contains(name) =>
         val d: DeclFun = decls(name)
         val collected =
           collectArguments(args, kwArgs, argsToRange(d.params), argsToKeys(d.params))
-            .map(x => x._1 -> parse(x._2))
+            .map(x => x._1 -> typeCheckAndConvert(x._2))
+
+        for (p <- d.params.params) {
+          collected.get(p.name.name) match {
+            case Some(x) => internalTypeCheck(x, p.ty)
+            case None => throw new Exception("Missing argument")
+          }
+        }
+
         name match {
           case "if" =>
             Cond(
@@ -201,38 +219,46 @@ case class ApplyParser() {
         if (kwArgs.args.nonEmpty) {
           throw ParserException("Block does not support keyword arguments yet")
         }
-        Block(args.args.map(parse))
+        Block(args.args.map(typeCheckAndConvert))
       case Apply(Ident("list"), args, kwArgs) =>
         // List is special
         if (kwArgs.args.nonEmpty) {
           throw ParserException("List does not support keyword arguments yet")
         }
-        LiteralList(args.args.map(parse))
+        LiteralList(args.args.map(typeCheckAndConvert))
       case Apply(Ident("lp"), args, kwArgs) =>
         // List is special
         if (kwArgs.args.nonEmpty) {
           throw ParserException("Parameters does not support keyword arguments yet")
         }
-        Parameters(args.args.map(parse).map(_.asInstanceOf[Field]))
+        Parameters(args.args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
       case Apply(Ident("lf"), args, kwArgs) =>
         // List is special
         if (kwArgs.args.nonEmpty) {
           throw ParserException("Parameters does not support keyword arguments yet")
         }
-        Fields(args.args.map(parse).map(_.asInstanceOf[Field]))
+        Fields(args.args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
       case ApplyType(fun, args, kwArgs) =>
-        ApplyType(parse(fun), parse(args).asInstanceOf, parse(kwArgs).asInstanceOf)
+        ApplyType(
+          typeCheckAndConvert(fun),
+          typeCheckAndConvert(args).asInstanceOf,
+          typeCheckAndConvert(kwArgs).asInstanceOf
+        )
       case Ident(name) => Ident(name)
       case x if isLiteral(x, ValueContext()) => x
       case Apply(fun, args, kwArgs) =>
-        Apply(parse(fun), parse(args).asInstanceOf, parse(kwArgs).asInstanceOf)
-      case LiteralList(items) => LiteralList(items.map(parse))
-      case Field(name, ty) => Field(name, parse(ty))
-      case PosArgs(args) => PosArgs(args.map(parse))
-      case KwArgs(args) => KwArgs(args.map(kv => KeyValue(kv.name, parse(kv.value))))
-      case KeyValue(name, value) => KeyValue(name, parse(value))
-      case Parameters(args) => Parameters(args.map(parse).map(_.asInstanceOf[Field]))
-      case Fields(args) => Fields(args.map(parse).map(_.asInstanceOf[Field]))
+        Apply(
+          typeCheckAndConvert(fun),
+          typeCheckAndConvert(args).asInstanceOf,
+          typeCheckAndConvert(kwArgs).asInstanceOf
+        )
+      case LiteralList(items) => LiteralList(items.map(typeCheckAndConvert))
+      case Field(name, ty) => Field(name, typeCheckAndConvert(ty))
+      case PosArgs(args) => PosArgs(args.map(typeCheckAndConvert))
+      case KwArgs(args) => KwArgs(args.map(kv => KeyValue(kv.name, typeCheckAndConvert(kv.value))))
+      case KeyValue(name, value) => KeyValue(name, typeCheckAndConvert(value))
+      case Parameters(args) => Parameters(args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
+      case Fields(args) => Fields(args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
       case _ => throw ParserException("Unhandled type: " + n)
     }
   }
