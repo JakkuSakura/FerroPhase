@@ -3,7 +3,7 @@ package shll
 import com.typesafe.scalalogging.Logger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import shll.ast.AST
+import shll.ast.Ast
 import shll.backends.{Backend, PrettyPrinter, ShllPrettyPrinter}
 import shll.frontends.ShllLexerAndParser
 import shll.optimizers.DeadCodeEliminator
@@ -13,11 +13,11 @@ class TestEliminator {
   val pp: PrettyPrinter = ShllPrettyPrinter()
   val showProgress = true
 
-  def printAst(input: AST): Unit = {
+  def printAst(input: Ast): Unit = {
     println(pp.print(input))
   }
 
-  def optimize(node: AST): AST = {
+  def optimize(node: Ast): Ast = {
     if (showProgress)
       logger.info(s"Optimizing " + pp.print(node))
     val eliminated = DeadCodeEliminator().eliminate(node)

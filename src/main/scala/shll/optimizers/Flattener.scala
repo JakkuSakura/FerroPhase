@@ -9,10 +9,10 @@ import shll.frontends.ParamUtil.*
 import scala.collection.mutable
 
 case class Flattener() extends AstWalker {
-  def flatten(ast: AST): AST = {
+  def flatten(ast: Ast): Ast = {
     walk(ast)
   }
-  override def walkBlock(d: Block): AST = {
+  override def walkBlock(d: Block): Ast = {
     val filteredStmts = d.children
       .flatMap {
         case Block(stmts) if stmts.forall(_.isInstanceOf[Block]) =>

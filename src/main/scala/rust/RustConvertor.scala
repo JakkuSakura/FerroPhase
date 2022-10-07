@@ -3,7 +3,7 @@ package rust
 import shll.ast.*
 
 case class RustConvertor() {
-  def convert(n: RustAST): AST = {
+  def convert(n: RustAST): Ast = {
     parseRustAstToShllAST(n)
   }
   def mapLiteralType(s: String): String = {
@@ -14,7 +14,7 @@ case class RustConvertor() {
     }
   }
 
-  def parseRustAstToShllAST(n: RustAST): AST = {
+  def parseRustAstToShllAST(n: RustAST): Ast = {
     n match {
       case RustItems(attrs, items) =>
         val filtered = items.filterNot(_.isInstanceOf[RustUnknownAST])

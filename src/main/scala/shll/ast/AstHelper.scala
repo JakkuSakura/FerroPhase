@@ -3,10 +3,10 @@ package shll.ast
 import shll.frontends.ParserException
 
 case object AstHelper {
-  def defFun(name: String, args: List[(String, AST)], ret: AST, body: AST): DefFun =
+  def defFun(name: String, args: List[(String, Ast)], ret: Ast, body: Ast): DefFun =
     DefFun(Ident(name), Params(args.map(x => Param(Ident(x._1), x._2))), ret, body)
 
-  def declFun(name: String, args: List[(String, AST)], ret: AST): DeclFun =
+  def declFun(name: String, args: List[(String, Ast)], ret: Ast): DeclFun =
     DeclFun(Ident(name), Params(args.map(x => Param(Ident(x._1), x._2))), ret)
 
   def literalType(s: String): ApplyType = ApplyType(Ident(s), PosArgs(Nil), KwArgs(Nil))
@@ -18,12 +18,12 @@ case object AstHelper {
   def tIdent: ApplyType = literalType("ident")
   def tParams: ApplyType = literalType("params")
   def tFields: ApplyType = literalType("fields")
-  def tList(t: AST): ApplyType = ApplyType(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
-  def block(n: AST*): Block = Block(n.toList)
-  def forEach(i: String, iterable: AST, body: AST): ForEach = ForEach(Ident(i), iterable, body)
-  def applyFun(n: String, args: AST*): Apply = Apply(Ident(n), PosArgs(args.toList), KwArgs(Nil))
+  def tList(t: Ast): ApplyType = ApplyType(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
+  def block(n: Ast*): Block = Block(n.toList)
+  def forEach(i: String, iterable: Ast, body: Ast): ForEach = ForEach(Ident(i), iterable, body)
+  def applyFun(n: String, args: Ast*): Apply = Apply(Ident(n), PosArgs(args.toList), KwArgs(Nil))
 
-  def isLiteral(n: AST, ctx: ValueContext): Boolean = {
+  def isLiteral(n: Ast, ctx: ValueContext): Boolean = {
     n match {
       case _: LiteralInt => true
       case _: LiteralBool => true
@@ -36,7 +36,7 @@ case object AstHelper {
     }
   }
 
-  def isFinite(n: AST, ctx: ValueContext): Boolean = {
+  def isFinite(n: Ast, ctx: ValueContext): Boolean = {
     n match {
       case x: LiteralList => true
       case Ident(name) if ctx.getValue(name).exists(isFinite(_, ctx)) => true

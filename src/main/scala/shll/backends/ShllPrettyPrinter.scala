@@ -4,7 +4,7 @@ import shll.*
 import shll.ast.*
 object ShllPrettyPrinter {
   private val pp = ShllPrettyPrinter()
-  def print(ast: AST): String = pp.print(ast)
+  def print(ast: Ast): String = pp.print(ast)
 }
 
 case class ShllPrettyPrinter(
@@ -16,7 +16,7 @@ case class ShllPrettyPrinter(
   val NL: String = if (newlines) "\n" else " "
   val textTool: TextTool = TextTool(NL, IDENT)
 
-  def printImpl(a: AST): String =
+  def printImpl(a: Ast): String =
     (a match {
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)})"
@@ -82,7 +82,7 @@ case class ShllPrettyPrinter(
         s"(select ${printImpl(obj)} ${field.name})"
     }) + (if (withNumber) s"#${a.num}" else "")
 
-  def print(a: AST): String = {
+  def print(a: Ast): String = {
     val raw = printImpl(a)
     raw
   }

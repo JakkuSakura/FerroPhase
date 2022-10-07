@@ -11,15 +11,15 @@ import scala.collection.mutable
 case class DeadCodeEliminator() extends AstWalker {
   private val flow = FlowAnalysis()
 
-  def eliminate(n: AST): AST = {
+  def eliminate(n: Ast): Ast = {
     flow.analyze(n)
     walkNode(n)
   }
 
-  def checkKeepStatement(ctx: FlowAnalysisContext, x: AST): Boolean = {
+  def checkKeepStatement(ctx: FlowAnalysisContext, x: Ast): Boolean = {
     ctx.isReachable(x, LiteralUnknown())
   }
-  override def walkBlock(n: Block): AST = {
+  override def walkBlock(n: Block): Ast = {
     val ctx = flow.contextHistory(n)
     val filteredStmts = n.children
       .filter(x => checkKeepStatement(ctx, x))

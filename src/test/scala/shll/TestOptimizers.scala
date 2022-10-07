@@ -4,7 +4,7 @@ import com.typesafe.scalalogging.Logger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import rust.{RustPrettyPrinter, RustRunnerBackend}
-import shll.ast.AST
+import shll.ast.Ast
 import shll.backends.{
   Backend,
   NothingBackend,
@@ -21,10 +21,10 @@ class TestOptimizers {
 //  val backend: Backend = NothingBackend()
   val backend: Backend = RustRunnerBackend()
   val showProgress = true
-  def printAst(input: AST): Unit = {
+  def printAst(input: Ast): Unit = {
     println(pp.print(input))
   }
-  def optimize(node: AST): AST = {
+  def optimize(node: Ast): Ast = {
     if (showProgress)
       logger.info(s"Optimizing " + pp.print(node))
     val specialized = Specializer().specialize(node)

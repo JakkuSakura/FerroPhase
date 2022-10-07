@@ -1,7 +1,7 @@
 package shll.backends
 
-import shll.ast.AST
+import shll.ast.Ast
 
 trait PrettyPrinter {
-  def print(s: AST): String
+  def print(s: Ast): String
 }
