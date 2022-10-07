@@ -106,9 +106,9 @@ case class DeadCodeEliminator() {
   def eliminateDefFun(fun: DefFun, ctx: FlowAnalysisContext): DefFun = {
     DefFun(
       fun.name,
-      eliminateNode(fun.args).asInstanceOf,
+      eliminateNode(fun.params).asInstanceOf,
       eliminateNode(fun.ret),
-      fun.body.map(eliminateNode)
+      eliminateNode(fun.body)
     )
   }
 

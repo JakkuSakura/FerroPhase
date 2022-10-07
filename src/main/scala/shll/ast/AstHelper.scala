@@ -4,8 +4,19 @@ import shll.frontends.ParserException
 
 case object AstHelper {
   def defFun(name: String, args: List[(String, AST)], ret: AST, body: AST): DefFun =
-    DefFun(Ident(name), Parameters(args.map(x => Field(Ident(x._1), x._2))), ret, Some(body))
+    DefFun(Ident(name), Parameters(args.map(x => Field(Ident(x._1), x._2))), ret, body)
+
+  def declFun(name: String, args: List[(String, AST)], ret: AST): DeclFun =
+    DeclFun(Ident(name), Parameters(args.map(x => Field(Ident(x._1), x._2))), ret)
+
   def literalType(s: String): ApplyType = ApplyType(Ident(s), PosArgs(Nil), KwArgs(Nil))
+
+  def tBool: ApplyType = literalType("bool")
+  def tInt: ApplyType = literalType("int")
+  def tAny: ApplyType = literalType("any")
+  def tUnit: ApplyType = literalType("unit")
+  def tLiteral: ApplyType = literalType("literal")
+  def tList(t: AST): ApplyType = ApplyType(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
   def block(n: AST*): Block = Block(n.toList)
   def forEach(i: String, iterable: AST, body: AST): ForEach = ForEach(Ident(i), iterable, body)
   def applyFun(n: String, args: AST*): Apply = Apply(Ident(n), PosArgs(args.toList), KwArgs(Nil))
