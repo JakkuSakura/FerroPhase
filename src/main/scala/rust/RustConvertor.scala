@@ -3,7 +3,7 @@ package rust
 import shll.ast.*
 
 case class RustConvertor() {
-  def convert(n: RustAST): Ast = {
+  def convert(n: RustAst): Ast = {
     parseRustAstToShllAST(n)
   }
   def mapLiteralType(s: String): String = {
@@ -14,10 +14,10 @@ case class RustConvertor() {
     }
   }
 
-  def parseRustAstToShllAST(n: RustAST): Ast = {
+  def parseRustAstToShllAST(n: RustAst): Ast = {
     n match {
       case RustItems(attrs, items) =>
-        val filtered = items.filterNot(_.isInstanceOf[RustUnknownAST])
+        val filtered = items.filterNot(_.isInstanceOf[RustUnknownAst])
         filtered match {
           case x if x.length == 1 => parseRustAstToShllAST(x.head)
           case _ =>
@@ -36,7 +36,7 @@ case class RustConvertor() {
       case RustParam(name, ty, byValue) =>
         Param(Ident(name), AstHelper.literalType(mapLiteralType(ty)))
       case RustIdent(name) => Ident(name)
-      case RustUnknownAST(_) => LiteralUnknown()
+      case RustUnknownAst(_) => LiteralUnknown()
     }
   }
 
