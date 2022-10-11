@@ -104,6 +104,8 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${printImpl(obj)}.${field.name}"
       case Apply(Ident("+"), args, KwArgs(Nil)) =>
         s"(${printImpl(args.args(0)) + printImpl(args.args(1))})"
+      case Apply(Ident("range"), args, KwArgs(Nil)) =>
+        s"${printImpl(args.args(0))}..${printImpl(args.args(1))}"
       case Apply(fun, args, KwArgs(Nil)) =>
         s"${printImpl(fun)}(${printImpl(args)})"
       case ApplyFun(args, ret, body) =>

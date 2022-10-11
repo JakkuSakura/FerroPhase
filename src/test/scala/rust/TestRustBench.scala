@@ -65,17 +65,20 @@ class TestRustBench {
         |    (block
         |      (def-val s 0)
         |      (for f funs
-        |         (assign s (+ s (f 1)))
+        |         (for i (range 0 1000)
+        |           (assign s (+ s (f i)))
+        |         )
         |      )
         |      s
         |    )
         |  )
-        |  (call
+        |  (def-val x (call
         |   (list
         |     (fun (lp (: a [int])) [int] (+ a 0))
         |     (fun (lp (: a [int])) [int] (+ a 1))
         |   )
-        |  )
+        |  ))
+        |  (print x)
         |)
         |""".stripMargin
     )
