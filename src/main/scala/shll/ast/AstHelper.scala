@@ -11,21 +11,21 @@ case object AstHelper {
 
   def defType(name: String, args: List[String], body: Ast): DefType =
     DefType(Ident(name), Params(args.map(x => Param(Ident(x), AstHelper.tAny))), body)
-  def literalType(s: String): ApplyType = ApplyType(Ident(s), PosArgs(Nil), KwArgs(Nil))
+  def literalType(s: String): Compose = Compose(Ident(s), PosArgs(Nil), KwArgs(Nil))
 
-  def tBool: ApplyType = literalType("bool")
-  def tInt: ApplyType = literalType("int")
-  def tNumeric: ApplyType = literalType("numeric")
-  def tString: ApplyType = literalType("string")
-  def tChar: ApplyType = literalType("char")
-  def tAny: ApplyType = literalType("any")
-  def tUnit: ApplyType = literalType("unit")
-  def tIdent: ApplyType = literalType("ident")
-  def tParams: ApplyType = literalType("params")
-  def tFields: ApplyType = literalType("fields")
-  def tList(t: Ast): ApplyType = ApplyType(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
-  def tFun(params: Ast, ret: Ast): ApplyType =
-    ApplyType(Ident("fun"), PosArgs(List(params, ret)), KwArgs(Nil))
+  def tBool: Compose = literalType("bool")
+  def tInt: Compose = literalType("int")
+  def tNumeric: Compose = literalType("numeric")
+  def tString: Compose = literalType("string")
+  def tChar: Compose = literalType("char")
+  def tAny: Compose = literalType("any")
+  def tUnit: Compose = literalType("unit")
+  def tIdent: Compose = literalType("ident")
+  def tParams: Compose = literalType("params")
+  def tFields: Compose = literalType("fields")
+  def tList(t: Ast): Compose = Compose(Ident("list"), PosArgs(List(t)), KwArgs(Nil))
+  def tFun(params: Ast, ret: Ast): Compose =
+    Compose(Ident("fun"), PosArgs(List(params, ret)), KwArgs(Nil))
   def block(n: Ast*): Block = Block(n.toList)
   def forEach(i: String, iterable: Ast, body: Ast): ForEach = ForEach(Ident(i), iterable, body)
   def applyFun(n: String, args: Ast*): Apply = Apply(Ident(n), PosArgs(args.toList), KwArgs(Nil))
@@ -37,7 +37,7 @@ case object AstHelper {
       case _: LiteralDecimal => true
       case _: LiteralChar => true
       case _: LiteralString => true
-      case x: LiteralList => x.value.map(isLiteral(_, ctx)).forall(identity)
+      case x: BuildList => x.value.map(isLiteral(_, ctx)).forall(identity)
       case Ident(name) if ctx.getValue(name).exists(isLiteral(_, ctx)) => true
       case _ => false
     }
@@ -45,7 +45,7 @@ case object AstHelper {
 
   def isFinite(n: Ast, ctx: ValueContext): Boolean = {
     n match {
-      case x: LiteralList => true
+      case x: BuildList => true
       case Ident(name) if ctx.getValue(name).exists(isFinite(_, ctx)) => true
       case _ => false
     }

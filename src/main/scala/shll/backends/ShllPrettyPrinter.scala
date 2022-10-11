@@ -20,7 +20,7 @@ case class ShllPrettyPrinter(
     (a match {
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)})"
-      case ApplyType(f, args, kwArgs) =>
+      case Compose(f, args, kwArgs) =>
         s"[${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)}]"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
@@ -42,9 +42,9 @@ case class ShllPrettyPrinter(
         s"\"$value\""
       case LiteralBool(x) =>
         x.toString
-      case LiteralList(Nil) =>
+      case BuildList(Nil) =>
         s"(list)"
-      case LiteralList(value) =>
+      case BuildList(value) =>
         s"(list ${value.map(printImpl).mkString(" ")})"
       case KwArg(name, value) =>
         s"${name.name}=${printImpl(value)}"
@@ -70,11 +70,11 @@ case class ShllPrettyPrinter(
         s"(def-struct ${name.name} ${printImpl(fields)})"
       case DefType(name, params, value) =>
         s"(def-type ${name.name} ${printImpl(params)} ${printImpl(value)})"
-      case ApplyFun(args, ret, body) =>
+      case BuildFun(args, ret, body) =>
         s"(fun ${printImpl(args)} ${printImpl(ret)} ${printImpl(body)})"
       case LiteralUnknown() =>
         "???"
-      case ApplyStruct(name, values) =>
+      case BuildStruct(name, values) =>
         s"(${printImpl(name)} ${printImpl(values)})"
       case Fields(fields) =>
         "(lf " + fields.map(printImpl).mkString(" ") + ")"

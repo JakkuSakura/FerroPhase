@@ -25,13 +25,13 @@ case class RustPrettyPrinter() extends PrettyPrinter {
   def printType(a: Ast): String = {
     a match {
       case Ident(x) => primitiveTypes.getOrElse(x, x)
-      case ApplyType(fun, PosArgs(Nil), KwArgs(Nil)) =>
+      case Compose(fun, PosArgs(Nil), KwArgs(Nil)) =>
         printType(fun)
-      case ApplyType(Ident("fun"), PosArgs(List(Params(params), ty)), KwArgs(Nil)) =>
+      case Compose(Ident("fun"), PosArgs(List(Params(params), ty)), KwArgs(Nil)) =>
         "Box<dyn Fn(" + params.map(_.ty).map(printType).mkString(", ") + ") -> " + printType(
           ty
         ) + ">"
-      case ApplyType(fun, args, KwArgs(Nil)) =>
+      case Compose(fun, args, KwArgs(Nil)) =>
         printType(fun) + "<" + args.args.map(printType).mkString(", ") + ">"
 
       case Param(name, ty) => printType(name) + ": " + printType(ty)
@@ -69,7 +69,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case LiteralString(v) =>
         s"\"$v\""
       case LiteralBool(value) => value.toString
-      case LiteralList(value) =>
+      case BuildList(value) =>
         s"vec![${value.map(printImpl).mkString(", ")}]"
       case PosArgs(args) =>
         args.map(printImpl).mkString(", ")
@@ -79,7 +79,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${name.name}: ${printImpl(value)}"
       case Field(name, ty) =>
         s"pub ${name.name}: ${printImpl(ty)}"
-      case a: ApplyType =>
+      case a: Compose =>
         printType(a)
       case DefVal(name, body) =>
         s"let mut ${name.name} = ${printImpl(body)};"
@@ -96,7 +96,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${printImpl(target)} = ${printImpl(value)};"
       case DefStruct(name, fields) =>
         s"struct ${name.name} { ${fields.fields.map(printImpl).mkString(", ")} }"
-      case ApplyStruct(s, values) =>
+      case BuildStruct(s, values) =>
         s"${printImpl(s)} {" + printImpl(values) + s"}"
       case DefType(name, Params(Nil), value) =>
         s"type ${name.name} = ${printImpl(value)};"
@@ -108,7 +108,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${printImpl(args.args(0))}..${printImpl(args.args(1))}"
       case Apply(fun, args, KwArgs(Nil)) =>
         s"${printImpl(fun)}(${printImpl(args)})"
-      case ApplyFun(args, ret, body) =>
+      case BuildFun(args, ret, body) =>
         s"Box::new(|${printType(args)}| -> ${printType(ret)} " +
           (
             if (body.isInstanceOf[Block]) printImpl(body)

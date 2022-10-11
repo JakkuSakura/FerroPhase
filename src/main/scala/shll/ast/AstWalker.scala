@@ -22,18 +22,18 @@ class AstWalker() {
       case n: Block => walkBlock(n)
       case n: Apply => walkApply(n)
       case n: Ident => walkIdent(n)
-      case n: LiteralList => LiteralList(n.value.map(walkNode))
+      case n: BuildList => BuildList(n.value.map(walkNode))
       case n: Field => walkField(n)
       case n: Param => walkParam(n)
       case n: Select => walkSelect(n)
       case n: Cond => walkCond(n)
       case n: ForEach => walkForEach(n)
-      case n: ApplyType => walkTypeApply(n)
+      case n: Compose => walkTypeApply(n)
       case n: DefType => walkDefType(n)
       case n: DefVal => walkDefVal(n)
       case n: DefFun => walkDefFun(n)
       case n: Assign => walkAssign(n)
-      case n: ApplyFun => walkFunApply(n)
+      case n: BuildFun => walkFunApply(n)
       case n: Params => Params(n.params.map(walkNode(_).asInstanceOf[Param]))
       case n => n
     }
@@ -67,7 +67,7 @@ class AstWalker() {
     n
   }
 
-  def walkTypeApply(n: ApplyType): Ast = {
+  def walkTypeApply(n: Compose): Ast = {
     n
   }
 
@@ -110,11 +110,11 @@ class AstWalker() {
     ass
   }
 
-  def walkFunApply(n: ApplyFun): Ast = {
+  def walkFunApply(n: BuildFun): Ast = {
     val args = walkNode(n.params).asInstanceOf[Params]
     val ret = walkNode(n.ret)
     val body = walkNode(n.body)
-    val newApply = ApplyFun(args, ret, body)
+    val newApply = BuildFun(args, ret, body)
     newApply
   }
   def walkBlock(d: Block): Ast = {
