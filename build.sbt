@@ -31,13 +31,13 @@ nativeImageOptions ++= List(
 )
 
 libraryDependencies += "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5"
-libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.1"
+libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.3"
 
 // https://mvnrepository.com/artifact/org.apache.commons/commons-lang3
 libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.12.0"
 
 // https://mvnrepository.com/artifact/org.apache.commons/commons-text
-libraryDependencies += "org.apache.commons" % "commons-text" % "1.9"
+libraryDependencies += "org.apache.commons" % "commons-text" % "1.10.0"
 
 // https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-api
 libraryDependencies += "org.junit.jupiter" % "junit-jupiter-api" % "5.9.0" % Test
