@@ -96,7 +96,7 @@ case class TypeChecker() {
               collected("field").asInstanceOf[Ident]
             )
           case "fun" =>
-            ApplyFun(
+            BuildFun(
               collected("params").asInstanceOf[Params],
               collected("returns"),
               collected("body")
@@ -113,7 +113,7 @@ case class TypeChecker() {
         if (kwArgs.args.nonEmpty) {
           throw ParserException("List does not support keyword arguments yet")
         }
-        LiteralList(args.args.map(typeCheckAndConvert))
+        BuildList(args.args.map(typeCheckAndConvert))
       case Apply(Ident("lp"), args, kwArgs) =>
         // List is special
         if (kwArgs.args.nonEmpty) {
@@ -129,8 +129,8 @@ case class TypeChecker() {
           throw ParserException("Parameters does not support keyword arguments yet")
         }
         Fields(args.args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
-      case ApplyType(fun, args, kwArgs) =>
-        ApplyType(
+      case Compose(fun, args, kwArgs) =>
+        Compose(
           typeCheckAndConvert(fun),
           typeCheckAndConvert(args).asInstanceOf,
           typeCheckAndConvert(kwArgs).asInstanceOf
@@ -143,7 +143,7 @@ case class TypeChecker() {
           typeCheckAndConvert(args).asInstanceOf,
           typeCheckAndConvert(kwArgs).asInstanceOf
         )
-      case LiteralList(items) => LiteralList(items.map(typeCheckAndConvert))
+      case BuildList(items) => BuildList(items.map(typeCheckAndConvert))
       case Field(name, ty) => Field(name, typeCheckAndConvert(ty))
       case Param(name, ty) => Param(name, typeCheckAndConvert(ty))
       case PosArgs(args) => PosArgs(args.map(typeCheckAndConvert))

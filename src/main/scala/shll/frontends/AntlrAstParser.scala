@@ -71,8 +71,8 @@ case class AntlrAstParser() {
       .withToken(ctx.getStart)
   }
 
-  def convertApplyType(ctx: ApplyTypeContext): ApplyType = {
-    ApplyType(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
+  def convertApplyType(ctx: ApplyTypeContext): Compose = {
+    Compose(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
       .withToken(ctx.getStart)
   }
   def convertTerm(ctx: TermContext): Ast = {

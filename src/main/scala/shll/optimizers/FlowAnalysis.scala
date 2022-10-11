@@ -145,16 +145,16 @@ case class FlowAnalysis() {
       case n: LiteralDecimal =>
       case n: LiteralString =>
       case n: LiteralBool =>
-      case n: LiteralList => n.value.foreach(analyzeNode(_, ctx))
+      case n: BuildList => n.value.foreach(analyzeNode(_, ctx))
       case n: Field => analyzeField(n, ctx)
       case n: Param => analyzeParam(n, ctx)
       case n: Select => analyzeSelect(n, ctx)
       case n: Cond => analyzeCond(n, ctx)
       case n: ForEach => analyzeForEach(n, ctx)
-      case n: ApplyType => analyzeApplyType(n, ctx)
+      case n: Compose => analyzeApplyType(n, ctx)
       case n: DefType => analyzeDefType(n, ctx)
       case n: Assign => analyzeAssign(n, ctx)
-      case n: ApplyFun => analyzeApplyFun(n, ctx)
+      case n: BuildFun => analyzeApplyFun(n, ctx)
       case n: Params => n.params.foreach(analyzeNode(_, ctx))
       case n: Fields => n.fields.foreach(analyzeNode(_, ctx))
       case s: DefVal => analyzeDefVal(s, ctx)
@@ -212,7 +212,7 @@ case class FlowAnalysis() {
 
   }
 
-  def analyzeApplyType(n: ApplyType, ctx: FlowAnalysisContext): Unit = {
+  def analyzeApplyType(n: Compose, ctx: FlowAnalysisContext): Unit = {
 
     analyzeNode(n.fun, ctx)
     n.args.args.foreach(x => analyzeNode(x, ctx))
@@ -323,7 +323,7 @@ case class FlowAnalysis() {
     ctx.addDataFlow(n.value -> n)
     ctx.addDataFlow(n -> n.target)
   }
-  def analyzeApplyFun(n: ApplyFun, ctx: FlowAnalysisContext): Unit = {
+  def analyzeApplyFun(n: BuildFun, ctx: FlowAnalysisContext): Unit = {
     val ctx1 = ctx.child()
     // TODO: process arguments
     analyzeNode(n.params, ctx1)
