@@ -27,8 +27,15 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case Ident(x) => primitiveTypes.getOrElse(x, x)
       case ApplyType(fun, PosArgs(Nil), KwArgs(Nil)) =>
         printType(fun)
+      case ApplyType(Ident("fun"), PosArgs(List(Params(params), ty)), KwArgs(Nil)) =>
+        "Box<dyn Fn(" + params.map(_.ty).map(printType).mkString(", ") + ") -> " + printType(
+          ty
+        ) + ">"
       case ApplyType(fun, args, KwArgs(Nil)) =>
         printType(fun) + "<" + args.args.map(printType).mkString(", ") + ">"
+
+      case Param(name, ty) => printType(name) + ": " + printType(ty)
+      case Params(params) => params.map(printType).mkString(", ")
     }
   }
   def printImpl(a: Ast): String = {
@@ -77,20 +84,36 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case DefVal(name, body) =>
         s"let mut ${name.name} = ${printImpl(body)};"
       case DefFun(name, args, ret, body) =>
-        s"fn ${name.name}(${args.params.map(printImpl).mkString(", ")}) -> ${printImpl(ret)} { ${printImpl(body)} }"
+        s"fn ${name.name}(${printType(args)}) -> ${printType(ret)} " +
+          (
+            if (body.isInstanceOf[Block]) printImpl(body)
+            else s"{${printImpl(body)}}"
+          )
       case DeclFun(name, args, ret) =>
-        s"fn ${name.name}(${args.params.map(printImpl).mkString(", ")}) -> ${printImpl(ret)};"
+        s"fn ${name.name}(${printType(args)}) -> ${printType(ret)};"
 
       case Assign(target, value) =>
-        s"${printImpl(target)} = ${printImpl(value)}"
+        s"${printImpl(target)} = ${printImpl(value)};"
       case DefStruct(name, fields) =>
         s"struct ${name.name} { ${fields.fields.map(printImpl).mkString(", ")} }"
       case ApplyStruct(s, values) =>
         s"${printImpl(s)} {" + printImpl(values) + s"}"
       case DefType(name, Params(Nil), value) =>
-        s"type ${name.name} = ${printImpl(value)}"
+        s"type ${name.name} = ${printImpl(value)};"
       case Select(obj, field) =>
         s"${printImpl(obj)}.${field.name}"
+      case Apply(Ident("+"), args, KwArgs(Nil)) =>
+        s"(${printImpl(args.args(0)) + printImpl(args.args(1))})"
+      case Apply(fun, args, KwArgs(Nil)) =>
+        s"${printImpl(fun)}(${printImpl(args)})"
+      case ApplyFun(args, ret, body) =>
+        s"Box::new(|${printType(args)}| -> ${printType(ret)} " +
+          (
+            if (body.isInstanceOf[Block]) printImpl(body)
+            else s"{${printImpl(body)}}"
+          )
+        + ")"
+//      case s => s.toString
     }
   }
   def print(a: Ast): String = {

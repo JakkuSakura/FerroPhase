@@ -201,8 +201,7 @@ case class RustParser(
 
 }
 
-case class RustSynParser(
-) {
+case class RustSynParser() {
   def parse(n: String): RustAST = {
     val j = callRustAstCli(n, RustAstFlavor.Syn)
     parseJsonToRustAST(j.hcursor)
