@@ -3,7 +3,7 @@ package shll
 import com.typesafe.scalalogging.Logger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
-import rust.{RustPrettyPrinter, RustRunnerBackend}
+import rust.{RustPrettyPrinter, RustRunner}
 import shll.ast.Ast
 import shll.backends.{
   Backend,
@@ -19,7 +19,7 @@ class TestOptimizers {
   val logger: Logger = Logger[this.type]
   val pp: PrettyPrinter = ShllPrettyPrinter()
 //  val backend: Backend = NothingBackend()
-  val backend: Backend = RustRunnerBackend()
+  val backend: Backend = RustRunner()
   val showProgress = true
   def printAst(input: Ast): Unit = {
     println(pp.print(input))
