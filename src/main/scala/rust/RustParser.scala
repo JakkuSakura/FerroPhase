@@ -39,7 +39,7 @@ case class RustParser(
     val j = callRustAstCli(n, flavor)
     parseJsonToRustItems(j.hcursor)
   }
-  def parseJsonToRustAST(j: HCursor): RustAST = {
+  def parseJsonToRustAST(j: HCursor): RustAst = {
     val kind = j
       .downField("kind")
       .downField("variant")
@@ -64,11 +64,11 @@ case class RustParser(
         )
       case _ =>
 //        println("Failed to parse: " + j.value.noSpaces)
-        RustUnknownAST(j.value)
+        RustUnknownAst(j.value)
     }
   }
 
-  def parseJsonToRustExpr(j: HCursor): RustAST = {
+  def parseJsonToRustExpr(j: HCursor): RustAst = {
     parseJsonToRustAST(
       j.downField("kind")
         .downField("fields")
@@ -202,11 +202,11 @@ case class RustParser(
 }
 
 case class RustSynParser() {
-  def parse(n: String): RustAST = {
+  def parse(n: String): RustAst = {
     val j = callRustAstCli(n, RustAstFlavor.Syn)
     parseJsonToRustAST(j.hcursor)
   }
-  def parseJsonToRustAST(j: HCursor): RustAST = {
+  def parseJsonToRustAST(j: HCursor): RustAst = {
     val kind = j.keys.get.headOption.getOrElse(throw Exception("Failed to parse Rust kind: " + j))
     val value =
       j.downField(kind).as[HCursor].getOrElse(throw Exception("Failed to parse Rust value: " + j))
@@ -228,7 +228,7 @@ case class RustSynParser() {
         )
       case _ =>
         //        println("Failed to parse: " + j.value.noSpaces)
-        RustUnknownAST(value.value)
+        RustUnknownAst(value.value)
     }
   }
 
