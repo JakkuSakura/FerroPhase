@@ -27,11 +27,11 @@ case class RustRunner(time: Boolean = true) extends Backend {
        |""".stripMargin
 
   }
-  def compileExecutable(code0: String): String = {
+  def compileExecutable(code0: String, release: Boolean = false): String = {
     val code = Rustfmt().rustfmt(code0)
     val path = Files.createTempFile("", "")
     logger.debug("Compiling to " + path + "\n" + code)
-    RustCompiler().compileTo(code, path.toFile)
+    RustCompiler(release = release).compileTo(code, path.toFile)
     path.toAbsolutePath.toString
   }
   override def process(node: Ast): Unit = {
@@ -55,7 +55,7 @@ case class RustRunner(time: Boolean = true) extends Backend {
     if (!code.contains("fn main()")) {
       code = augmentWithMain(code)
     }
-    val path = compileExecutable(code)
+    val path = compileExecutable(code, release = true)
     val commands = List(path)
     logger.debug("Running " + commands.mkString(" "))
     val begin = System.currentTimeMillis()
