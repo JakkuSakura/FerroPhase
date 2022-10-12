@@ -6,13 +6,19 @@ import shll.backends.Backend
 import java.io.File
 import java.lang.ProcessBuilder.Redirect
 import java.nio.file.Files
-
-case class RustCompiler() {
+import scala.collection.mutable
+import scala.jdk.CollectionConverters.*
+case class RustCompiler(
+    release: Boolean = false
+) {
   def compileTo(source: String, path: File): Unit = {
-    val proc = ProcessBuilder("rustc", "-", "--crate-name", path.getName)
+    val commands = mutable.ArrayBuffer("rustc", "-", "--crate-name", path.getName)
+    if (release)
+      commands += "-O"
+    val proc = ProcessBuilder(commands.asJava)
       .directory(path.getParentFile)
-      .redirectOutput(Redirect.INHERIT)
-      .redirectError(Redirect.INHERIT)
+      .inheritIO()
+      .redirectInput(Redirect.PIPE)
       .start()
     proc.getOutputStream.write(source.getBytes)
     proc.getOutputStream.close()
@@ -25,4 +31,3 @@ case class RustCompiler() {
       throw Exception("chmod failed, status code " + code)
   }
 }
-
