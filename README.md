@@ -129,3 +129,7 @@ The language aims to experiment simple syntax, maximum runtime performance.
 Compile time is not a concern, as we maintain the same semantics between phrases, some optimization can be disabled for fast compilation, or even use interpretation mode.
 
 The ideal usage is to build a high frequency trading system and write strategies for it.
+
+
+## TODO
+- [ ] use scalameta to parse/generate scala code
