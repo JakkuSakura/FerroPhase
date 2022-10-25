@@ -151,7 +151,6 @@ case class FlowAnalysis() {
       case n: Select => analyzeSelect(n, ctx)
       case n: Cond => analyzeCond(n, ctx)
       case n: ForEach => analyzeForEach(n, ctx)
-      case n: Compose => analyzeApplyType(n, ctx)
       case n: DefType => analyzeDefType(n, ctx)
       case n: Assign => analyzeAssign(n, ctx)
       case n: BuildFun => analyzeApplyFun(n, ctx)
@@ -210,17 +209,6 @@ case class FlowAnalysis() {
 //      case _ =>
 //    }
 
-  }
-
-  def analyzeApplyType(n: Compose, ctx: FlowAnalysisContext): Unit = {
-
-    analyzeNode(n.fun, ctx)
-    n.args.args.foreach(x => analyzeNode(x, ctx))
-    n.kwArgs.args.foreach(x => analyzeNode(x.value, ctx))
-
-    ctx.addDataFlow(n.fun -> n)
-    n.args.args.foreach(x => ctx.addDataFlow(x -> n))
-    n.kwArgs.args.map(_.value).foreach(x => ctx.addDataFlow(x -> n))
   }
 
   def analyzeDefType(n: DefType, ctx: FlowAnalysisContext): Unit = {

@@ -71,10 +71,6 @@ case class AntlrAstParser() {
       .withToken(ctx.getStart)
   }
 
-  def convertApplyType(ctx: ApplyTypeContext): Compose = {
-    Compose(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
-      .withToken(ctx.getStart)
-  }
   def convertTerm(ctx: TermContext): Ast = {
 //    logger.debug(s"Converting term: ${ctx.getText}")
     ctx match {
@@ -92,8 +88,6 @@ case class AntlrAstParser() {
         convertString(ctx.STRING())
       case _ if ctx.apply() != null =>
         convertApply(ctx.apply())
-      case _ if ctx.applyType() != null =>
-        convertApplyType(ctx.applyType())
 
     }
   }

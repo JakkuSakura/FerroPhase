@@ -50,22 +50,32 @@ case class Field(name: Ident, ty: Ast) extends Ast()
 case class Fields(fields: List[Field]) extends Ast()
 case class Apply(fun: Ast, args: PosArgs, kwArgs: KwArgs) extends Ast()
 
+case class Def(ty: Ident, name: Ident, params: Params) extends Ast()
+case class Fun(params: Params, ret: Ast, body: Option[Ast], name: Option[Ident]) extends Ast()
+
+@deprecated
 case class DefFun(name: Ident, params: Params, ret: Ast, body: Ast) extends Ast()
+@deprecated
 case class DeclFun(name: Ident, params: Params, ret: Ast) extends Ast()
-// form of (fun (list (field a [int])) x)
+// form of (fun (lp (field a [int])) x)
+@deprecated
 case class BuildFun(params: Params, ret: Ast, body: Ast) extends Ast()
+case class Val(name: Ident, value: Ast) extends Ast()
+@Deprecated
 case class DefVal(name: Ident, value: Ast) extends Ast()
+case class TypeAlias(name: Ident, value: Ast) extends Ast()
+@Deprecated
 case class DefType(name: Ident, params: Params, value: Ast) extends Ast()
 case class Assign(target: Ast, value: Ast) extends Ast()
 case class Cond(cond: Ast, consequence: Ast, alternative: Ast) extends Ast()
 case class While(cond: Ast, body: Ast) extends Ast()
 case class Block(children: List[Ast]) extends Ast()
 case class ForEach(variable: Ident, iterable: Ast, body: Ast) extends Ast()
-// form of [type args]
-case class Compose(fun: Ast, args: PosArgs, kwArgs: KwArgs) extends Ast()
+
+case class Struct(fields: Fields, name: Option[Ident]) extends Ast()
+@Deprecated
 case class DefStruct(name: Ident, fields: Fields) extends Ast()
-// form of (struct key=value)
+// form of (struct_name key=value)
 case class BuildStruct(s: Ast, values: KwArgs) extends Ast()
 
 case class Select(obj: Ast, field: Ident) extends Ast()
-case class Get(obj: Ast, field: Ident) extends Ast()

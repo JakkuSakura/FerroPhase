@@ -25,13 +25,13 @@ case class RustPrettyPrinter() extends PrettyPrinter {
   def printType(a: Ast): String = {
     a match {
       case Ident(x) => primitiveTypes.getOrElse(x, x)
-      case Compose(fun, PosArgs(Nil), KwArgs(Nil)) =>
+      case Apply(fun, PosArgs(Nil), KwArgs(Nil)) =>
         printType(fun)
-      case Compose(Ident("fun"), PosArgs(List(Params(params), ty)), KwArgs(Nil)) =>
+      case Fun(PosArgs(List(Params(params), ty)), KwArgs(Nil), _, _) =>
         "Box<dyn Fn(" + params.map(_.ty).map(printType).mkString(", ") + ") -> " + printType(
           ty
         ) + ">"
-      case Compose(fun, args, KwArgs(Nil)) =>
+      case Apply(fun, args, KwArgs(Nil)) =>
         printType(fun) + "<" + args.args.map(printType).mkString(", ") + ">"
 
       case Param(name, ty) => printType(name) + ": " + printType(ty)
@@ -79,8 +79,8 @@ case class RustPrettyPrinter() extends PrettyPrinter {
         s"${name.name}: ${printImpl(value)}"
       case Field(name, ty) =>
         s"pub ${name.name}: ${printImpl(ty)}"
-      case a: Compose =>
-        printType(a)
+//      case a: Compose =>
+//        printType(a)
       case DefVal(name, body) =>
         s"let mut ${name.name} = ${printImpl(body)};"
       case DefFun(name, args, ret, body) =>
@@ -114,7 +114,7 @@ case class RustPrettyPrinter() extends PrettyPrinter {
             if (body.isInstanceOf[Block]) printImpl(body)
             else s"{${printImpl(body)}}"
           )
-        + ")"
+          + ")"
 //      case s => s.toString
     }
   }

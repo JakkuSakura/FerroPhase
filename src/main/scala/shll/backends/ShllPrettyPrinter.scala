@@ -20,8 +20,6 @@ case class ShllPrettyPrinter(
     (a match {
       case Apply(f, args, kwArgs) =>
         s"(${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)})"
-      case Compose(f, args, kwArgs) =>
-        s"[${printImpl(f)} ${printImpl(args)} ${printImpl(kwArgs)}]"
       case Cond(cond, consequence, alternative) =>
         s"(if ${printImpl(cond)} ${printImpl(consequence)} ${printImpl(alternative)})"
       case ForEach(target, iter, body) =>
