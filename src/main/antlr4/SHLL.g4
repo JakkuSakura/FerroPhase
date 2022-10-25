@@ -13,11 +13,10 @@ STRING: '"' ([^"]|'\\"')* '"';
 CHAR: '\'' ([^"]|'\\"'|'\\'.+?) '\'';
 WS : (' ' | '\t' | '\n' )+ -> skip;
 
-term: apply | applyType | BOOL | IDENT | INTEGER | DECIMAL | STRING | CHAR ;
+term: apply | BOOL | IDENT | INTEGER | DECIMAL | STRING | CHAR ;
 kwArg: IDENT '=' term;
 kwArgs: kwArg *;
 posArgs: term *;
 apply: '(' term posArgs kwArgs ')';
-applyType: '[' term posArgs kwArgs ']';
 
 program: term EOF;

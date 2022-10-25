@@ -129,12 +129,6 @@ case class TypeChecker() {
           throw ParserException("Parameters does not support keyword arguments yet")
         }
         Fields(args.args.map(typeCheckAndConvert).map(_.asInstanceOf[Field]))
-      case Compose(fun, args, kwArgs) =>
-        Compose(
-          typeCheckAndConvert(fun),
-          typeCheckAndConvert(args).asInstanceOf,
-          typeCheckAndConvert(kwArgs).asInstanceOf
-        )
       case Ident(name) => Ident(name)
       case x if isLiteral(x, ValueContext()) => x
       case Apply(fun, args, kwArgs) =>

@@ -77,18 +77,6 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterApplyType(SHLLParser.ApplyTypeContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void exitApplyType(SHLLParser.ApplyTypeContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
 	@Override public void enterProgram(SHLLParser.ProgramContext ctx) { }
 	/**
 	 * {@inheritDoc}

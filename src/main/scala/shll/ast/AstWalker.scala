@@ -28,7 +28,6 @@ class AstWalker() {
       case n: Select => walkSelect(n)
       case n: Cond => walkCond(n)
       case n: ForEach => walkForEach(n)
-      case n: Compose => walkTypeApply(n)
       case n: DefType => walkDefType(n)
       case n: DefVal => walkDefVal(n)
       case n: DefFun => walkDefFun(n)
@@ -67,9 +66,7 @@ class AstWalker() {
     n
   }
 
-  def walkTypeApply(n: Compose): Ast = {
-    n
-  }
+
 
   def walkDefType(n: DefType): Ast = {
     n
