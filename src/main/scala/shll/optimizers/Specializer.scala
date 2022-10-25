@@ -166,7 +166,7 @@ case class Specializer(
       fn(a, lhs, rhs, ctx.context)
     }
   }
-  val builtinTypes: Map[String, (Compose, SpecializeContext) => Ast] = Map(
+  val builtinTypes: Map[String, (Ast, SpecializeContext) => Ast] = Map(
     "int" -> simpleType,
     "bool" -> simpleType,
     "numeric" -> simpleType,
@@ -215,15 +215,15 @@ case class Specializer(
     }
   }
 
-  def funcType: (Compose, SpecializeContext) => Ast = { (apply, ctx) =>
+  def funcType: (Ast, SpecializeContext) => Ast = { (apply, ctx) =>
     checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("params", "return"))
     val params = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
     val returns = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
 
-    val newApply = Compose(apply.fun, PosArgs(List(params, returns)), KwArgs(Nil))
+    val newApply = Fun(apply.fun, PosArgs(List(params, returns)), KwArgs(Nil))
     newApply
   }
-  def simpleType: (Compose, SpecializeContext) => Ast = { (apply, ctx) =>
+  def simpleType: (Ast, SpecializeContext) => Ast = { (apply, ctx) =>
     apply
   }
   def specialize(n: Ast): Ast = {

@@ -1,11 +1,11 @@
 # SHLL: Simple High Level Language
 
-The language is a statically typed language, compiled LISP variant. It's intended to be used a platform for high level optimization and tranpilation.
+The language is a statically typed language, compiled LISP variant. It's intended to be used a platform for high level optimization and transpilation.
 The syntax is deliberately simple yet expressive: everything is an application, either of type or of value. 
 This way, it's easy to generate and parse, and versatile enough to maintain all high level information
 ```text
 (block
-   (def-fun foo (lp (: a [int])) [int]
+   (def fun foo (lp (: a int)) (int)
      a
    )
    (foo 1)
@@ -37,19 +37,56 @@ To sum up: make the language simple yet expressive, and produces fast low-level 
 ## Syntax
 
 ### Frontend
-The frontend is designed to be simple, then it looks like LISP:
+The frontend is designed to be simple, then it looks like LISP
 
 1. Literal values: `1`, `1.0`, `foo`, `true`, `false`, `"string"`, `'c'`
 2. Everything in value level is an application, argument can be positional or named `(func 1 2 3 foo=bar)`, where `func` is the name of applicant
 3. Basic types: `int`, `float`, `bool`, `char`, `string`, `list`, `struct`, `fun`
-4. Type (templated or not) are also an application, but with `[type [int] [int] [int] foo=[int]]`, where `type` is the name of applicant type
-5. This design distinguishes between type and value context-freely. Consider `(foo 1)` vs `[foo 1]`, `int` vs `[int]`), you can easily tell which are values/functions, which are types. 
-6. Writing an parser is easier. You even don't have to write a full interpreter, just write a simple parser
+4. Type (templated or not) are also an application
+5. Writing an parser is easy. You even don't have to write a full interpreter, just write a simple parser
 
 
 Concrete Syntax Tree is built with antlr4, then converted to Abstract Syntax Tree. 
 The simple syntax design makes CST and AST almost equivalent.
 
+### Language features
+To make the language practical, we need to add some features to it:
+- [x] Literals
+- [ ] static types
+- [ ] Def operator
+```text
+(def type name args) => (let name [type args])
+(def fun def (lp (: type ident) (: name (listof any) (: args (listof any) capture_all=true)) (unit)
+  (let name (type name=name args=args) parent_scope=true)
+)
+```
+- [ ] Sum types
+```text
+(enum
+  (: foo int)
+  (: bar int)
+)
+```
+- [ ] Product types
+```text
+[struct
+  (: foo int)
+  (: bar int)
+]
+```
+- [ ] functions
+```text
+(fun
+  (lp (: a int) (: b int))
+  int
+  body?
+)
+```
+- [ ] kinds
+```text
+(def kind (kindof list) (: value type))
+(def fun listof (lp (: value type)) (inferred) ((kindof list) value))
+```
 ## Optimization
 Then AST gets passed through multiple optimization phrases, while maintaining the same semantics.
 
@@ -63,7 +100,7 @@ Current optimization phrases:
 - Constant evaluation
 ```shll
 (block
-    (def-fun foo (lp (: a [int])) [int]
+    (def fun foo (lp (: a [int])) [int]
       a + 2
     )
     (print (foo 1) + (foo (input)))   
@@ -73,7 +110,7 @@ Current optimization phrases:
 gives
 ```shll
 (block
-    (def-fun foo (lp (: a [int])) [int]
+    (def fun foo (lp (: a [int])) [int]
         a + 2
     )
     (print 2 + (foo (input)))
