@@ -5,7 +5,7 @@ The syntax is deliberately simple yet expressive: everything is an application, 
 This way, it's easy to generate and parse, and versatile enough to maintain all high level information
 ```text
 (block
-   (def fun foo (lp (: a int)) (int)
+   (def fun foo (lp (p a int)) (int)
      a
    )
    (foo 1)
@@ -54,38 +54,84 @@ To make the language practical, we need to add some features to it:
 - [x] Literals
 - [ ] static types
 - [ ] Def operator
-```text
+```shll
 (def type name args) => (let name [type args])
-(def fun def (lp (: type ident) (: name (listof any) (: args (listof any) capture_all=true)) (unit)
+(def fun def (lp (: type ident) (: name (listof any) (: args (listof any) flatten=true)) (unit)
   (let name (type name=name args=args) parent_scope=true)
 )
 ```
 - [ ] Sum types
-```text
+```shll
 (enum
-  (: foo int)
-  (: bar int)
+  (v foo int)
+  (v bar int)
 )
 ```
 - [ ] Product types
-```text
-[struct
-  (: foo int)
-  (: bar int)
-]
+```shll
+(struct
+  (f foo int)
+  (f bar int)
+)
 ```
 - [ ] functions
-```text
+```shll
 (fun
-  (lp (: a int) (: b int))
+  (lp (p a int) (p b int))
   int
   body?
 )
 ```
 - [ ] kinds
-```text
-(def kind (kindof list) (: value type))
-(def fun listof (lp (: value type)) (inferred) ((kindof list) value))
+```shll
+(def fun listof (lp (p value type)) (inferred)
+  (struct
+    (f arr (arrayof value)) 
+    (f len int) 
+    name=list
+  )
+)
+```
+- [ ] traits and generics
+```shll
+(def trait num 
+  (def fun add (lp (p a self) (p b self)) self)
+  (def fun sub (lp (p a self) (p b self)) self)
+  (def fun mul (lp (p a self) (p b self)) self)
+  (def fun div (lp (p a self) (p b self)) self)
+  (def fun neg (lp (p a self)) self)
+)
+
+(// "templates")
+(def fun sum (lp (p t type)) (funof (lp (p l (listof t)) t
+  (fun (lp (p l (listof t) flatten=true) t
+    (block
+      (let s 0)
+      (for i l
+        (assign s (add s i))
+      )
+      s
+    )
+  )
+)
+(// "can it be more convenient with type inference?")
+((sum int) (list 1 2 3))
+(// "with just trait itself")
+(def fun sum (lp (p l (listof num) flatten=true) num
+  (block
+    (def val s num 0)
+    (for i l
+      (assign s (add s i))
+    )
+    s
+  )
+)
+(sum 1 2 3)
+(// "should it be allowed?")
+(def trait point
+  (def field x int)
+  (def field y int)
+)
 ```
 ## Optimization
 Then AST gets passed through multiple optimization phrases, while maintaining the same semantics.
@@ -100,7 +146,7 @@ Current optimization phrases:
 - Constant evaluation
 ```shll
 (block
-    (def fun foo (lp (: a [int])) [int]
+    (def fun foo (lp (: a int)) int
       a + 2
     )
     (print (foo 1) + (foo (input)))   
@@ -110,10 +156,10 @@ Current optimization phrases:
 gives
 ```shll
 (block
-    (def fun foo (lp (: a [int])) [int]
-        a + 2
-    )
-    (print 2 + (foo (input)))
+  (def fun foo (lp (: a int)) int
+    a + 2
+  )
+  (print 2 + (foo (input)))
 )
 ```
 
@@ -122,14 +168,14 @@ Unless the function is too big, inlining does not perform
 - Loop unrolling
 ```shll
 (for i (range 0 3)
-    (print i)
+  (print i)
 )
 ```
 ```shll
 (block
-    (print 0)
-    (print 1)
-    (print 2)
+  (print 0)
+  (print 1)
+  (print 2)
 )
 ```
 
