@@ -1,17 +1,20 @@
 # SHLL: Simple High Level Language
 
 The language is a statically typed language, compiled LISP variant. It's intended to be used a platform for high level optimization and transpilation.
-The syntax is deliberately simple yet expressive: everything is an application, either of type or of value. 
+The syntax is deliberately simple yet expressive: almost everything is an application, either of type or of value.
 This way, it's easy to generate and parse, and versatile enough to maintain all high level information
 ```text
-(block
-   (def fun foo (lp (p a int)) (int)
-     a
-   )
-   (foo 1)
-)
+let f: (int) -> int = (a: int) -> int => a
+f(1)
+let s = struct { a: int b: int c: int }
+let ss = bar{a=1 b=2 c=3}
+
+let e = enum { a }
+let ee = e.a
+let e2 = enum { a: struct { v: int } }
+let ee2 = e2.a { v=1 }
+
 ```
-This program defines a function `foo` that takes `a` of integer and returns `a`, then apply 1 to `foo`.
 
 The language is designed to be compatible with multiple frontend, ideally Scala 3, and multiple backend, ideally Rust and C.
 
@@ -52,86 +55,70 @@ The simple syntax design makes CST and AST almost equivalent.
 ### Language features
 To make the language practical, we need to add some features to it:
 - [x] Literals
+`1`, `1.0`, `foo`, `true`, `false`, `"string"`, `'c'`
 - [ ] static types
-- [ ] Def operator
-```shll
-(def type name args) => (let name [type args])
-(def fun def (lp (: type ident) (: name (listof any) (: args (listof any) flatten=true)) (unit)
-  (let name (type name=name args=args) parent_scope=true)
-)
-```
+`int`, `float`, `bool`, `char`, `string`, `list`, `struct`, `fun`
 - [ ] Sum types
 ```shll
-(enum
-  (v foo int)
-  (v bar int)
-)
+enumof {
+  foo
+  bar
+}
+
 ```
 - [ ] Product types
 ```shll
-(struct
-  (f foo int)
-  (f bar int)
-)
+let s = structof {
+  foo: int
+  bar: int
+}
+let bar = 1
+s { bar foo=1 }
+
+struct {
+    foo: int = 1
+    bar
+}
 ```
 - [ ] functions
 ```shll
-(fun
-  (lp (p a int) (p b int))
-  int
-  body?
-)
+(a: int b: int) -> int => body
+(int int) -> int
 ```
 - [ ] kinds
 ```shll
-(def fun listof (lp (p value type)) (inferred)
-  (struct
-    (f arr (arrayof value)) 
-    (f len int) 
-    name=list
-  )
-)
+let listof = (value: type) => kind list { value }
+let list = (args: *any) -> listof(typeof(*args)) => builtin()
+listof(int)(1 2 3)
+list(1 2 3)
+
+let boxof = (value: type) => kind box { value }
+let box = (value: any) -> boxof(typeof(value)) => struct box { value = ref(heap(value)) }
+
 ```
 - [ ] traits and generics
 ```shll
-(def trait num 
-  (def fun add (lp (p a self) (p b self)) self)
-  (def fun sub (lp (p a self) (p b self)) self)
-  (def fun mul (lp (p a self) (p b self)) self)
-  (def fun div (lp (p a self) (p b self)) self)
-  (def fun neg (lp (p a self)) self)
-)
+let additive = trait additive {
+    let zero = () -> self
+    let add = (a: self b: self) -> self
+}
+let sum = [T: additive](values: *T) => {
+    let i = T.zero()
+    for v in values {
+        i = additive(v).add(i, v)
+        // or
+        i = T.add(i, v)
+        // or
+        i = v.add(i)
+    }
+    i
+}
+sum(1 2 3)
 
-(// "templates")
-(def fun sum (lp (p t type)) (funof (lp (p l (listof t)) t
-  (fun (lp (p l (listof t) flatten=true) t
-    (block
-      (let s 0)
-      (for i l
-        (assign s (add s i))
-      )
-      s
-    )
-  )
-)
-(// "can it be more convenient with type inference?")
-((sum int) (list 1 2 3))
-(// "with just trait itself")
-(def fun sum (lp (p l (listof num) flatten=true) num
-  (block
-    (def val s num 0)
-    (for i l
-      (assign s (add s i))
-    )
-    s
-  )
-)
-(sum 1 2 3)
-(// "should it be allowed?")
-(def trait point
-  (def field x int)
-  (def field y int)
-)
+let point = trait point {
+    let x: int
+    let y: int
+}
 ```
 ## Optimization
 Then AST gets passed through multiple optimization phrases, while maintaining the same semantics.
@@ -145,38 +132,32 @@ Current optimization phrases:
 
 - Constant evaluation
 ```shll
-(block
-    (def fun foo (lp (: a int)) int
-      a + 2
-    )
-    (print (foo 1) + (foo (input)))   
-)
+let foo = (a: int) => a + 2
+let v = input[int]()
+print(add(foo(1) foo(v)))
 ```
 
 gives
 ```shll
-(block
-  (def fun foo (lp (: a int)) int
-    a + 2
-  )
-  (print 2 + (foo (input)))
-)
+let foo = (a: int) => a + 2
+let v = input[int]()
+print(add(2 foo(v)))
 ```
 
 Unless the function is too big, inlining does not perform
 
 - Loop unrolling
 ```shll
-(for i (range 0 3)
-  (print i)
-)
+for i in range(0 3) {
+    print(i)
+}
 ```
 ```shll
-(block
-  (print 0)
-  (print 1)
-  (print 2)
-)
+{
+    print(0)
+    print(1)
+    print(2)
+}
 ```
 
 

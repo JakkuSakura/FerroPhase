@@ -172,7 +172,6 @@ case class Specializer(
     "numeric" -> simpleType,
     "string" -> simpleType,
     "char" -> simpleType,
-    "list" -> simpleGenericType,
     "fun" -> funcType
   )
 
@@ -183,45 +182,18 @@ case class Specializer(
           .getType(name)
           .map(getTypeName(_, ctx))
           .getOrElse(builtinTypes.keys.filter(_ == name).head)
-      case Compose(Ident(name), args, kwArgs) => getTypeName(Ident(name), ctx)
       case _ => throw SpecializeException("Unknown type name", n)
     }
   }
   def isKnownType(n: Ast, ctx: SpecializeContext): Boolean = {
     n match {
       case Ident(name) => ctx.context.getType(name).isDefined || builtinTypes.contains(name)
-      case Compose(Ident(name), args, kwArgs) =>
-        isKnownType(Ident(name), ctx) && args.args.forall(isKnownType(_, ctx)) && kwArgs.args
-          .forall(x => isKnownType(x.value, ctx))
       case _ => false
-    }
-  }
-  def simpleGenericType: (Compose, SpecializeContext) => Ast = { (apply, ctx) =>
-    checkArguments(apply.args, apply.kwArgs, Array(0), Array("value"))
-    val value = specializeNode(getArg(apply.args, apply.kwArgs, 0, "value"), ctx)
-    val newApply = Compose(apply.fun, PosArgs(List(value)), KwArgs(Nil))
-    if (
-      isKnownType(apply.fun, ctx) && isKnownType(
-        value,
-        ctx
-      ) && ctx.cache.isDefined
-    ) {
-      val newName = ctx.getCache.allocateSpecializedIdent(getTypeName(apply.fun, ctx))
-
-      ctx.getCache.specializedTypes += newName.name -> DefType(newName, Params(Nil), newApply)
-      Compose(newName, PosArgs(Nil), KwArgs(Nil))
-    } else {
-      newApply
     }
   }
 
   def funcType: (Ast, SpecializeContext) => Ast = { (apply, ctx) =>
-    checkArguments(apply.args, apply.kwArgs, Array(0, 1), Array("params", "return"))
-    val params = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
-    val returns = specializeNode(getArg(apply.args, apply.kwArgs, 0, "params"), ctx)
-
-    val newApply = Fun(apply.fun, PosArgs(List(params, returns)), KwArgs(Nil))
-    newApply
+    ???
   }
   def simpleType: (Ast, SpecializeContext) => Ast = { (apply, ctx) =>
     apply
@@ -247,7 +219,6 @@ case class Specializer(
       case n: Select => specializeSelect(n, ctx)
       case n: Cond => specializeCond(n, ctx)
       case n: ForEach => specializeForEach(n, ctx)
-      case n: Compose => specializeTypeApply(n, ctx)
       case n: Assign => specializeAssign(n, ctx)._1
       case n: BuildFun => specializeFunApply(n, ctx)
       case n: KwArgs => KwArgs(n.args.map(x => specializeNode(x.value, ctx).asInstanceOf[KwArg]))
@@ -305,18 +276,6 @@ case class Specializer(
     }
   }
 
-  def specializeTypeApply(n: Compose, ctx: SpecializeContext): Ast = {
-    n.fun match {
-      case Ident(name) if builtinTypes.contains(name) =>
-        val ty = builtinTypes(name)
-        ty(n, ctx)
-      case Ident(name) if ctx.context.getType(name).isDefined =>
-        val ty = ctx.context.getType(name).get
-        ty
-      case _ =>
-        throw SpecializeException("Unknown type", n)
-    }
-  }
   def specializeBlock(d: Block, ctx0: SpecializeContext): Block = {
     val cache = SpecializeCache()
     var ctx = ctx0.withCache(cache)
