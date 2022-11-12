@@ -27,9 +27,9 @@ case class RustPrettyPrinter() extends PrettyPrinter {
       case Ident(x) => primitiveTypes.getOrElse(x, x)
       case Apply(fun, PosArgs(Nil), KwArgs(Nil)) =>
         printType(fun)
-      case Fun(PosArgs(List(Params(params), ty)), KwArgs(Nil), _, _) =>
-        "Box<dyn Fn(" + params.map(_.ty).map(printType).mkString(", ") + ") -> " + printType(
-          ty
+      case f: Fun =>
+        "Box<dyn Fn(" + f.params.params.map(_.ty).map(printType).mkString(", ") + ") -> " + printType(
+          f.ret
         ) + ">"
       case Apply(fun, args, KwArgs(Nil)) =>
         printType(fun) + "<" + args.args.map(printType).mkString(", ") + ">"
