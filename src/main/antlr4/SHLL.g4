@@ -20,18 +20,25 @@ LINE_COMMENT
 : '//' ~[\r\n]* -> skip
 ;
 
-literal: BOOL | IDENT | INTEGER | DECIMAL | STRING | CHAR;
+program: term * EOF;
 
 blocked: '{' term* '}' ;
 block: 'block' blocked;
-anno: ':' term ;
-default: '=' term ;
+anno: ':' term # Single
+      | ':' '*' term # List
+      | ':' '**' term # Dict
+      ;
 param: IDENT anno? ;
-kwArg: IDENT anno? default | IDENT ;
+kwArg: IDENT anno? '=' value=term # WithRename
+       | IDENT # WithoutRename
+       ;
 posArg: term ;
 arg: kwArg | posArg ;
-let: 'let' kwArg ;
-for: 'for' IDENT 'in' term blocked | 'for' blocked | 'for' term blocked ;
+let: 'let' id=IDENT anno? '=' value=term # Intialized
+    | 'let' id=IDENT # Uninitialized;
+for: 'for' IDENT 'in' term blocked # ForEach
+    | 'for' blocked # Loop
+    | 'for' term blocked # While;
 structof: 'structof' IDENT? '{' param* '}' ;
 struct: 'struct' IDENT? '{' kwArg* '}' ;
 enumof: 'enumof' IDENT? '{' param* '}' ;
@@ -39,13 +46,15 @@ enum: 'enum' IDENT? '{' kwArg* '}' ;
 traitof: 'traitof' IDENT? '{' let* '}' ;
 trait: 'trait' IDENT? '{' let* '}' ;
 funof: '(' term * ')' '->' term ;
-fun: '(' param* ')' '=>' (blocked | term);
+fatArrow: '=>' (blocked | term);
+fun: '(' param* ')' ('->' ret=term)? fatArrow;
 kindof: 'kindof' IDENT? '{' param* '}' ;
 kind: 'kind' IDENT? '{' kwArg* '}' ;
-when: 'when' term '=>' term ;
+when: 'when' cond=term body=fatArrow;
 case: 'case' '{' when* '}' ;
-generic: '[' param* ']' '=>' (blocked | term);
-
+generic: '[' param* ']' body=fatArrow;
+deref: '*' term # DerefTuple
+    | '**' term # DerefDict;
 selector: '.' IDENT;
 implicitApplier: '[' arg* ']';
 positionalApplier: '(' arg* ')';
@@ -53,8 +62,6 @@ namedApplier: '{' kwArg * '}';
 assigner: '=' term;
 
 term: (block | generic | let | for | structof | struct | enumof | enum | traitof | trait |
-            funof | fun | kindof | kind | case
-        | literal) term1;
-term1: (selector| implicitApplier | positionalApplier | namedApplier | assigner) term1 | ;
-
-program: term EOF;
+            funof | fun | kindof | kind | case | deref
+        | BOOL | IDENT | INTEGER | DECIMAL | STRING | CHAR)
+     (selector| implicitApplier | positionalApplier | namedApplier | assigner) *;
