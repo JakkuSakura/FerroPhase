@@ -17,13 +17,13 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterLiteral(SHLLParser.LiteralContext ctx) { }
+	@Override public void enterProgram(SHLLParser.ProgramContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitLiteral(SHLLParser.LiteralContext ctx) { }
+	@Override public void exitProgram(SHLLParser.ProgramContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -53,25 +53,37 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterAnno(SHLLParser.AnnoContext ctx) { }
+	@Override public void enterSingle(SHLLParser.SingleContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitAnno(SHLLParser.AnnoContext ctx) { }
+	@Override public void exitSingle(SHLLParser.SingleContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterDefault(SHLLParser.DefaultContext ctx) { }
+	@Override public void enterList(SHLLParser.ListContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitDefault(SHLLParser.DefaultContext ctx) { }
+	@Override public void exitList(SHLLParser.ListContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterDict(SHLLParser.DictContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitDict(SHLLParser.DictContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -89,13 +101,25 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterKwArg(SHLLParser.KwArgContext ctx) { }
+	@Override public void enterWithRename(SHLLParser.WithRenameContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitKwArg(SHLLParser.KwArgContext ctx) { }
+	@Override public void exitWithRename(SHLLParser.WithRenameContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterWithoutRename(SHLLParser.WithoutRenameContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitWithoutRename(SHLLParser.WithoutRenameContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -125,25 +149,61 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterLet(SHLLParser.LetContext ctx) { }
+	@Override public void enterIntialized(SHLLParser.IntializedContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitLet(SHLLParser.LetContext ctx) { }
+	@Override public void exitIntialized(SHLLParser.IntializedContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterFor(SHLLParser.ForContext ctx) { }
+	@Override public void enterUninitialized(SHLLParser.UninitializedContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitFor(SHLLParser.ForContext ctx) { }
+	@Override public void exitUninitialized(SHLLParser.UninitializedContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterForEach(SHLLParser.ForEachContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitForEach(SHLLParser.ForEachContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterLoop(SHLLParser.LoopContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitLoop(SHLLParser.LoopContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterWhile(SHLLParser.WhileContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitWhile(SHLLParser.WhileContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
@@ -233,6 +293,18 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
+	@Override public void enterFatArrow(SHLLParser.FatArrowContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitFatArrow(SHLLParser.FatArrowContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
 	@Override public void enterFun(SHLLParser.FunContext ctx) { }
 	/**
 	 * {@inheritDoc}
@@ -305,6 +377,30 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
+	@Override public void enterDerefTuple(SHLLParser.DerefTupleContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitDerefTuple(SHLLParser.DerefTupleContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterDerefDict(SHLLParser.DerefDictContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitDerefDict(SHLLParser.DerefDictContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
 	@Override public void enterSelector(SHLLParser.SelectorContext ctx) { }
 	/**
 	 * {@inheritDoc}
@@ -372,30 +468,6 @@ public class SHLLBaseListener implements SHLLListener {
 	 * <p>The default implementation does nothing.</p>
 	 */
 	@Override public void exitTerm(SHLLParser.TermContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void enterTerm1(SHLLParser.Term1Context ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void exitTerm1(SHLLParser.Term1Context ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void enterProgram(SHLLParser.ProgramContext ctx) { }
-	/**
-	 * {@inheritDoc}
-	 *
-	 * <p>The default implementation does nothing.</p>
-	 */
-	@Override public void exitProgram(SHLLParser.ProgramContext ctx) { }
 
 	/**
 	 * {@inheritDoc}
