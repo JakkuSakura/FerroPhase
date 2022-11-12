@@ -197,6 +197,30 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
+	@Override public void enterTraitof(SHLLParser.TraitofContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitTraitof(SHLLParser.TraitofContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterTrait(SHLLParser.TraitContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitTrait(SHLLParser.TraitContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
 	@Override public void enterFunof(SHLLParser.FunofContext ctx) { }
 	/**
 	 * {@inheritDoc}
@@ -293,13 +317,37 @@ public class SHLLBaseListener implements SHLLListener {
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void enterApplier(SHLLParser.ApplierContext ctx) { }
+	@Override public void enterImplicitApplier(SHLLParser.ImplicitApplierContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
 	 * <p>The default implementation does nothing.</p>
 	 */
-	@Override public void exitApplier(SHLLParser.ApplierContext ctx) { }
+	@Override public void exitImplicitApplier(SHLLParser.ImplicitApplierContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterPositionalApplier(SHLLParser.PositionalApplierContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitPositionalApplier(SHLLParser.PositionalApplierContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterNamedApplier(SHLLParser.NamedApplierContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitNamedApplier(SHLLParser.NamedApplierContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *
