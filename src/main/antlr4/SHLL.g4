@@ -36,20 +36,25 @@ structof: 'structof' IDENT? '{' param* '}' ;
 struct: 'struct' IDENT? '{' kwArg* '}' ;
 enumof: 'enumof' IDENT? '{' param* '}' ;
 enum: 'enum' IDENT? '{' kwArg* '}' ;
+traitof: 'traitof' IDENT? '{' let* '}' ;
+trait: 'trait' IDENT? '{' let* '}' ;
 funof: '(' term * ')' '->' term ;
 fun: '(' param* ')' '=>' (blocked | term);
 kindof: 'kindof' IDENT? '{' param* '}' ;
 kind: 'kind' IDENT? '{' kwArg* '}' ;
 when: 'when' term '=>' term ;
 case: 'case' '{' when* '}' ;
-generic: '[' param* ']' (blocked | term);
+generic: '[' param* ']' '=>' (blocked | term);
 
 selector: '.' IDENT;
-applier: '(' arg* ')' | '{' kwArg * '}';
+implicitApplier: '[' arg* ']';
+positionalApplier: '(' arg* ')';
+namedApplier: '{' kwArg * '}';
 assigner: '=' term;
 
-term: (block | generic | let | for | structof | struct | enumof | enum | funof | fun | kindof | kind | case
+term: (block | generic | let | for | structof | struct | enumof | enum | traitof | trait |
+            funof | fun | kindof | kind | case
         | literal) term1;
-term1: (selector| applier | assigner) term1 | ;
+term1: (selector| implicitApplier | positionalApplier | namedApplier | assigner) term1 | ;
 
 program: term EOF;
