@@ -13,10 +13,43 @@ STRING: '"' ([^"]|'\\"')* '"';
 CHAR: '\'' ([^"]|'\\"'|'\\'.+?) '\'';
 WS : (' ' | '\t' | '\n' )+ -> skip;
 
-term: apply | BOOL | IDENT | INTEGER | DECIMAL | STRING | CHAR ;
-kwArg: IDENT '=' term;
-kwArgs: kwArg *;
-posArgs: term *;
-apply: '(' term posArgs kwArgs ')';
+COMMENT
+: '/*' .*? '*/' -> skip
+;
+LINE_COMMENT
+: '//' ~[\r\n]* -> skip
+;
+
+literal: BOOL | IDENT | INTEGER | DECIMAL | STRING | CHAR;
+
+blocked: '{' term* '}' ;
+block: 'block' blocked;
+anno: ':' term ;
+default: '=' term ;
+param: IDENT anno? ;
+kwArg: IDENT anno? default | IDENT ;
+posArg: term ;
+arg: kwArg | posArg ;
+let: 'let' kwArg ;
+for: 'for' IDENT 'in' term blocked | 'for' blocked | 'for' term blocked ;
+structof: 'structof' IDENT? '{' param* '}' ;
+struct: 'struct' IDENT? '{' kwArg* '}' ;
+enumof: 'enumof' IDENT? '{' param* '}' ;
+enum: 'enum' IDENT? '{' kwArg* '}' ;
+funof: '(' term * ')' '->' term ;
+fun: '(' param* ')' '=>' (blocked | term);
+kindof: 'kindof' IDENT? '{' param* '}' ;
+kind: 'kind' IDENT? '{' kwArg* '}' ;
+when: 'when' term '=>' term ;
+case: 'case' '{' when* '}' ;
+generic: '[' param* ']' (blocked | term);
+
+selector: '.' IDENT;
+applier: '(' arg* ')' | '{' kwArg * '}';
+assigner: '=' term;
+
+term: (block | generic | let | for | structof | struct | enumof | enum | funof | fun | kindof | kind | case
+        | literal) term1;
+term1: (selector| applier | assigner) term1 | ;
 
 program: term EOF;
