@@ -6,12 +6,12 @@ This way, it's easy to generate and parse, and versatile enough to maintain all 
 ```text
 let f: (int) -> int = (a: int) -> int => a
 f(1)
-let s = struct { a: int b: int c: int }
+let s = structof { a: int b: int c: int }
 let ss = bar{a=1 b=2 c=3}
 
-let e = enum { a }
+let e = enumof { a }
 let ee = e.a
-let e2 = enum { a: struct { v: int } }
+let e2 = enumof { a: structof { v: int } }
 let ee2 = e2.a { v=1 }
 
 ```
