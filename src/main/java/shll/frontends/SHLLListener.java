@@ -158,6 +158,26 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitEnum(SHLLParser.EnumContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link SHLLParser#traitof}.
+	 * @param ctx the parse tree
+	 */
+	void enterTraitof(SHLLParser.TraitofContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SHLLParser#traitof}.
+	 * @param ctx the parse tree
+	 */
+	void exitTraitof(SHLLParser.TraitofContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SHLLParser#trait}.
+	 * @param ctx the parse tree
+	 */
+	void enterTrait(SHLLParser.TraitContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SHLLParser#trait}.
+	 * @param ctx the parse tree
+	 */
+	void exitTrait(SHLLParser.TraitContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link SHLLParser#funof}.
 	 * @param ctx the parse tree
 	 */
@@ -238,15 +258,35 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitSelector(SHLLParser.SelectorContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#applier}.
+	 * Enter a parse tree produced by {@link SHLLParser#implicitApplier}.
 	 * @param ctx the parse tree
 	 */
-	void enterApplier(SHLLParser.ApplierContext ctx);
+	void enterImplicitApplier(SHLLParser.ImplicitApplierContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link SHLLParser#applier}.
+	 * Exit a parse tree produced by {@link SHLLParser#implicitApplier}.
 	 * @param ctx the parse tree
 	 */
-	void exitApplier(SHLLParser.ApplierContext ctx);
+	void exitImplicitApplier(SHLLParser.ImplicitApplierContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SHLLParser#positionalApplier}.
+	 * @param ctx the parse tree
+	 */
+	void enterPositionalApplier(SHLLParser.PositionalApplierContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SHLLParser#positionalApplier}.
+	 * @param ctx the parse tree
+	 */
+	void exitPositionalApplier(SHLLParser.PositionalApplierContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SHLLParser#namedApplier}.
+	 * @param ctx the parse tree
+	 */
+	void enterNamedApplier(SHLLParser.NamedApplierContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SHLLParser#namedApplier}.
+	 * @param ctx the parse tree
+	 */
+	void exitNamedApplier(SHLLParser.NamedApplierContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SHLLParser#assigner}.
 	 * @param ctx the parse tree
