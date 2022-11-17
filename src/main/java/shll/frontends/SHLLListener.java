@@ -38,41 +38,41 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitBlock(SHLLParser.BlockContext ctx);
 	/**
-	 * Enter a parse tree produced by the {@code Single}
+	 * Enter a parse tree produced by the {@code SingleType}
 	 * labeled alternative in {@link SHLLParser#anno}.
 	 * @param ctx the parse tree
 	 */
-	void enterSingle(SHLLParser.SingleContext ctx);
+	void enterSingleType(SHLLParser.SingleTypeContext ctx);
 	/**
-	 * Exit a parse tree produced by the {@code Single}
+	 * Exit a parse tree produced by the {@code SingleType}
 	 * labeled alternative in {@link SHLLParser#anno}.
 	 * @param ctx the parse tree
 	 */
-	void exitSingle(SHLLParser.SingleContext ctx);
+	void exitSingleType(SHLLParser.SingleTypeContext ctx);
 	/**
-	 * Enter a parse tree produced by the {@code List}
+	 * Enter a parse tree produced by the {@code ListType}
 	 * labeled alternative in {@link SHLLParser#anno}.
 	 * @param ctx the parse tree
 	 */
-	void enterList(SHLLParser.ListContext ctx);
+	void enterListType(SHLLParser.ListTypeContext ctx);
 	/**
-	 * Exit a parse tree produced by the {@code List}
+	 * Exit a parse tree produced by the {@code ListType}
 	 * labeled alternative in {@link SHLLParser#anno}.
 	 * @param ctx the parse tree
 	 */
-	void exitList(SHLLParser.ListContext ctx);
+	void exitListType(SHLLParser.ListTypeContext ctx);
 	/**
-	 * Enter a parse tree produced by the {@code Dict}
+	 * Enter a parse tree produced by the {@code DictType}
 	 * labeled alternative in {@link SHLLParser#anno}.
 	 * @param ctx the parse tree
 	 */
-	void enterDict(SHLLParser.DictContext ctx);
+	void enterDictType(SHLLParser.DictTypeContext ctx);
 	/**
-	 * Exit a parse tree produced by the {@code Dict}
+	 * Exit a parse tree produced by the {@code DictType}
 	 * labeled alternative in {@link SHLLParser#anno}.
 	 * @param ctx the parse tree
 	 */
-	void exitDict(SHLLParser.DictContext ctx);
+	void exitDictType(SHLLParser.DictTypeContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SHLLParser#param}.
 	 * @param ctx the parse tree
@@ -188,16 +188,6 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitWhile(SHLLParser.WhileContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#structof}.
-	 * @param ctx the parse tree
-	 */
-	void enterStructof(SHLLParser.StructofContext ctx);
-	/**
-	 * Exit a parse tree produced by {@link SHLLParser#structof}.
-	 * @param ctx the parse tree
-	 */
-	void exitStructof(SHLLParser.StructofContext ctx);
-	/**
 	 * Enter a parse tree produced by {@link SHLLParser#struct}.
 	 * @param ctx the parse tree
 	 */
@@ -208,15 +198,15 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitStruct(SHLLParser.StructContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#enumof}.
+	 * Enter a parse tree produced by {@link SHLLParser#dict}.
 	 * @param ctx the parse tree
 	 */
-	void enterEnumof(SHLLParser.EnumofContext ctx);
+	void enterDict(SHLLParser.DictContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link SHLLParser#enumof}.
+	 * Exit a parse tree produced by {@link SHLLParser#dict}.
 	 * @param ctx the parse tree
 	 */
-	void exitEnumof(SHLLParser.EnumofContext ctx);
+	void exitDict(SHLLParser.DictContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SHLLParser#enum}.
 	 * @param ctx the parse tree
@@ -228,16 +218,6 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitEnum(SHLLParser.EnumContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#traitof}.
-	 * @param ctx the parse tree
-	 */
-	void enterTraitof(SHLLParser.TraitofContext ctx);
-	/**
-	 * Exit a parse tree produced by {@link SHLLParser#traitof}.
-	 * @param ctx the parse tree
-	 */
-	void exitTraitof(SHLLParser.TraitofContext ctx);
-	/**
 	 * Enter a parse tree produced by {@link SHLLParser#trait}.
 	 * @param ctx the parse tree
 	 */
@@ -248,15 +228,25 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitTrait(SHLLParser.TraitContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#funof}.
+	 * Enter a parse tree produced by {@link SHLLParser#tuple}.
 	 * @param ctx the parse tree
 	 */
-	void enterFunof(SHLLParser.FunofContext ctx);
+	void enterTuple(SHLLParser.TupleContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link SHLLParser#funof}.
+	 * Exit a parse tree produced by {@link SHLLParser#tuple}.
 	 * @param ctx the parse tree
 	 */
-	void exitFunof(SHLLParser.FunofContext ctx);
+	void exitTuple(SHLLParser.TupleContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SHLLParser#narrowArrow}.
+	 * @param ctx the parse tree
+	 */
+	void enterNarrowArrow(SHLLParser.NarrowArrowContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SHLLParser#narrowArrow}.
+	 * @param ctx the parse tree
+	 */
+	void exitNarrowArrow(SHLLParser.NarrowArrowContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SHLLParser#fatArrow}.
 	 * @param ctx the parse tree
@@ -268,25 +258,15 @@ public interface SHLLListener extends ParseTreeListener {
 	 */
 	void exitFatArrow(SHLLParser.FatArrowContext ctx);
 	/**
-	 * Enter a parse tree produced by {@link SHLLParser#fun}.
+	 * Enter a parse tree produced by {@link SHLLParser#doubleArrow}.
 	 * @param ctx the parse tree
 	 */
-	void enterFun(SHLLParser.FunContext ctx);
+	void enterDoubleArrow(SHLLParser.DoubleArrowContext ctx);
 	/**
-	 * Exit a parse tree produced by {@link SHLLParser#fun}.
+	 * Exit a parse tree produced by {@link SHLLParser#doubleArrow}.
 	 * @param ctx the parse tree
 	 */
-	void exitFun(SHLLParser.FunContext ctx);
-	/**
-	 * Enter a parse tree produced by {@link SHLLParser#kindof}.
-	 * @param ctx the parse tree
-	 */
-	void enterKindof(SHLLParser.KindofContext ctx);
-	/**
-	 * Exit a parse tree produced by {@link SHLLParser#kindof}.
-	 * @param ctx the parse tree
-	 */
-	void exitKindof(SHLLParser.KindofContext ctx);
+	void exitDoubleArrow(SHLLParser.DoubleArrowContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SHLLParser#kind}.
 	 * @param ctx the parse tree

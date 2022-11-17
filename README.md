@@ -6,12 +6,12 @@ This way, it's easy to generate and parse, and versatile enough to maintain all 
 ```text
 let f: (int) -> int = (a: int) -> int => a
 f(1)
-let s = structof { a: int b: int c: int }
+let s = struct { a: int b: int c: int }
 let ss = bar{a=1 b=2 c=3}
 
-let e = enumof { a }
+let e = enum { a }
 let ee = e.a
-let e2 = enumof { a: structof { v: int } }
+let e2 = enum { a: struct { v: int } }
 let ee2 = e2.a { v=1 }
 
 ```
@@ -68,14 +68,14 @@ enumof {
 ```
 - [ ] Product types
 ```shll
-let s = structof {
+let s = struct {
   foo: int
   bar: int
 }
 let bar = 1
 s { bar foo=1 }
 
-struct {
+dict {
     foo: int = 1
     bar
 }
@@ -197,3 +197,8 @@ The ideal usage is to build a high frequency trading system and write strategies
 
 ## TODO
 - [ ] use scalameta to parse/generate scala code
+
+## References
+
+Struct is (partly) similar to GoLang and Zig
+Similar to Zig's comptime system, but aims to do more than Zig with less and simpler code. https://kristoff.it/blog/what-is-zig-comptime/
