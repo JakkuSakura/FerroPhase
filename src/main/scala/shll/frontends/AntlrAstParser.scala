@@ -47,28 +47,9 @@ case class AntlrAstParser() {
     LiteralDecimal(
       decimal.toDoubleOption.getOrElse(
         throw ParserException(s"Invalid decimal at ${n.getSymbol}: $decimal")
-      ),
-
+      )
     ).withToken(n.getSymbol)
 
-  }
-
-  def convertPosArgs(ctx: PosArgsContext): PosArgs = {
-    PosArgs(ctx.term().asScala.map(convertTerm).toList).withToken(ctx.start)
-  }
-
-  def convertKwArg(ctx: KwArgContext): KwArg = {
-    val ident = convertIdent(ctx.IDENT())
-    val expr = convertTerm(ctx.term())
-    KwArg(ident, expr).withToken(ctx.getStart)
-  }
-
-  def convertKwArgs(ctx: KwArgsContext): KwArgs = {
-    KwArgs(ctx.kwArg().asScala.toList.map(convertKwArg)).withToken(ctx.start)
-  }
-  def convertApply(ctx: ApplyContext): Apply = {
-    Apply(convertTerm(ctx.term()), convertPosArgs(ctx.posArgs()), convertKwArgs(ctx.kwArgs()))
-      .withToken(ctx.getStart)
   }
 
   def convertTerm(ctx: TermContext): Ast = {
@@ -86,8 +67,7 @@ case class AntlrAstParser() {
         convertDecimal(ctx.DECIMAL())
       case _ if ctx.STRING() != null =>
         convertString(ctx.STRING())
-      case _ if ctx.apply() != null =>
-        convertApply(ctx.apply())
+      case _ => ???
 
     }
   }
@@ -96,6 +76,6 @@ case class AntlrAstParser() {
     val stream = CommonTokenStream(lexer)
     val parser = SHLLParser(stream)
     val term = parser.program()
-    convertTerm(term.term())
+    Block(term.term().asScala.map(convertTerm).toList)
   }
 }
