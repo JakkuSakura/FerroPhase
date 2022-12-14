@@ -1,0 +1,5 @@
+# https://doc.rust-lang.org/cargo/reference/config.html
+
+[build]
+target-dir = "target"         # path of where to place all generated artifacts
+
