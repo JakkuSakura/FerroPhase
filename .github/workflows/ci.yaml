@@ -13,25 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-#      - uses: actions-rs/toolchain@v1
-#        with:
-#          toolchain: nightly-2022-02-09
-#          components: rustfmt
-#          override: true
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly-2022-11-14
+          components: rustfmt
+          override: true
 
       - name: Cache rust build
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "src/main/rust/rust-ast -> target"
 
-      - name: Install rust-ast
-        run: cargo install --path src/main/rust/rust-ast
-      - name: Cache scala dependencies
-        uses: coursier/cache-action@v6
+      - name: Build rust program
+        run: cargo build
       - name: Run tests
-        run: sbt coverage test
-      - name: Coverage Report
-        run: sbt coverageReport
-
-      - name: Comment coverage to PR
-        uses: romeovs/lcov-reporter-action@v0.2.16
+        run: cargo test
