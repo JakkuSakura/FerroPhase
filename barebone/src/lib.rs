@@ -4,12 +4,30 @@ use std::fmt::{Debug, Formatter};
 pub trait CloneAst {
     fn clone_ast(&self) -> AstNode;
 }
+
 impl<T: Ast + Clone + 'static> CloneAst for T {
     fn clone_ast(&self) -> AstNode {
         AstNode::new(self.clone())
     }
 }
-pub trait Ast: Debug + CloneAst {}
+
+pub trait AnyAst {
+    fn as_any_ast(&self) -> &dyn Any;
+}
+
+impl<T: Ast + Any + 'static> AnyAst for T {
+    fn as_any_ast(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl dyn Ast {
+    pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
+        self.as_any_ast().downcast_ref::<T>()
+    }
+}
+
+pub trait Ast: Debug + CloneAst + AnyAst {}
 
 pub struct AstNode {
     inner: Box<dyn Ast>,
@@ -19,9 +37,11 @@ impl AstNode {
     pub fn new(a: impl Ast + 'static) -> Self {
         Self { inner: Box::new(a) }
     }
-
-    pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
-        self.inner.as_any().downcast_ref::<T>()
+}
+impl Deref for AstNode {
+    type Target = dyn Ast;
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
     }
 }
 impl Clone for AstNode {
@@ -40,7 +60,7 @@ impl<T: Ast + 'static> From<T> for AstNode {
     }
 }
 pub trait Serializer {
-    fn serialize(&self, node: &AstNode) -> String;
+    fn serialize(&self, node: &AstNode) -> Result<String>;
 }
 
 pub trait Deserializer {
@@ -58,6 +78,9 @@ pub struct Block {
     pub last_value: bool,
 }
 impl Ast for Block {}
+#[derive(Debug, Clone)]
+pub struct Unit;
+impl Ast for Unit {}
 #[derive(Debug, Clone)]
 pub struct Ident {
     pub name: String,
@@ -215,3 +238,14 @@ pub struct Select {
     pub field: Ident,
 }
 impl Ast for Select {}
+
+#[cfg(test)]
+mod tests {
+    use crate::{AstNode, Module};
+
+    #[test]
+    fn test_ast_node() {
+        let n = AstNode::new(Module { stmts: vec![] });
+        n.as_ast::<Module>().unwrap();
+    }
+}
