@@ -4,12 +4,28 @@ use barebone::{Block, Ident, *};
 use common::{Result, *};
 use proc_macro2::TokenStream;
 use quote::*;
+use std::fmt::{Debug, Formatter};
 use syn::*;
+
+struct Macro {
+    raw: syn::ExprMacro,
+}
+impl Ast for Macro {}
+
+impl Debug for Macro {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.raw.to_token_stream().fmt(f)
+    }
+}
 
 pub struct RustSerde;
 impl RustSerde {
-    fn serialize_ident(&self, i: &Ident) -> syn::Ident {
-        format_ident!("{}", i.name)
+    fn serialize_ident(&self, i: &Ident) -> TokenStream {
+        match i.name.as_str() {
+            "+" => quote!(+),
+            "*" => quote!(*),
+            a => format_ident!("{}", a).to_token_stream(),
+        }
     }
     fn serialize_block(&self, n: &Block) -> Result<TokenStream> {
         let stmts: Vec<_> = n
@@ -53,15 +69,34 @@ impl RustSerde {
     }
     fn serialize_apply(&self, node: &Apply) -> Result<TokenStream> {
         let fun = self.serialize_quote(&node.fun)?;
+        let fun_str = fun.to_string();
         let args: Vec<_> = node
             .args
             .args
             .iter()
             .map(|x| self.serialize_quote(x))
             .try_collect()?;
-        Ok(quote!(
-            (#fun)(#(#args), *)
-        ))
+        match fun_str.as_str() {
+            "+" => Ok(quote!(#(#args) + *)),
+            "-" => Ok(quote!(#(#args) - *)),
+            "/" => Ok(quote!(#(#args) / *)),
+            "*" => {
+                let mut result = vec![];
+                for (i, a) in args.into_iter().enumerate() {
+                    if i != 0 {
+                        result.push(quote!(*));
+                    }
+                    result.push(a);
+                }
+                Ok(quote!(#(#result)*))
+            }
+            x if x.contains(".") => Ok(quote!(
+                (#fun)(#(#args), *)
+            )),
+            _ => Ok(quote!(
+                #fun(#(#args), *)
+            )),
+        }
     }
     fn serialize_literal_int(&self, n: &LiteralInt) -> TokenStream {
         let n = n.value;
@@ -100,6 +135,9 @@ impl RustSerde {
         if let Some(n) = node.as_ast::<LiteralInt>() {
             return Ok(self.serialize_literal_int(n));
         }
+        if let Some(n) = node.as_ast::<Macro>() {
+            return Ok(n.raw.to_token_stream());
+        }
         bail!("Unable to serialize {:?}", node)
     }
 }
@@ -119,20 +157,53 @@ fn parse_type(t: syn::Type) -> Result<AstNode> {
         Type::Array(_) => {
             todo!()
         }
-        // Type::BareFn(_) => {}
-        // Type::Group(_) => {}
-        // Type::ImplTrait(_) => {}
-        // Type::Infer(_) => {}
-        // Type::Macro(_) => {}
-        // Type::Never(_) => {}
-        // Type::Paren(_) => {}
-        // Type::Path(_) => {}
-        // Type::Ptr(_) => {}
-        // Type::Reference(_) => {}
-        // Type::Slice(_) => {}
-        // Type::TraitObject(_) => {}
-        // Type::Tuple(_) => {}
-        // Type::Verbatim(_) => {}
+        Type::BareFn(_) => {
+            todo!()
+        }
+        Type::Group(_) => {
+            todo!()
+        }
+        Type::ImplTrait(_) => {
+            todo!()
+        }
+        Type::Infer(_) => {
+            todo!()
+        }
+        Type::Macro(_) => {
+            todo!()
+        }
+        Type::Never(_) => {
+            todo!()
+        }
+        Type::Paren(_) => {
+            todo!()
+        }
+        Type::Path(p) => {
+            let s = p.path.to_token_stream().to_string();
+            if s == "i64" {
+                Ident::new("i64").into()
+            } else {
+                todo!()
+            }
+        }
+        Type::Ptr(_) => {
+            todo!()
+        }
+        Type::Reference(_) => {
+            todo!()
+        }
+        Type::Slice(_) => {
+            todo!()
+        }
+        Type::TraitObject(_) => {
+            todo!()
+        }
+        Type::Tuple(_) => {
+            todo!()
+        }
+        Type::Verbatim(_) => {
+            todo!()
+        }
         _ => todo!(),
     };
     Ok(t)
@@ -191,7 +262,20 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::AssignOp(_) => {}
         // Expr::Async(_) => {}
         // Expr::Await(_) => {}
-        // Expr::Binary(_) => {}
+        Expr::Binary(b) => {
+            let l = parse_expr(*b.left)?;
+            let r = parse_expr(*b.right)?;
+            let op = match b.op {
+                BinOp::Add(_) => Ident::new("+"),
+                BinOp::Mul(_) => Ident::new("*"),
+                _ => bail!("Op not supported {:?}", b.op.to_token_stream()),
+            };
+            Apply {
+                fun: op.into(),
+                args: PosArgs { args: vec![l, r] },
+            }
+            .into()
+        }
         // Expr::Block(_) => {}
         // Expr::Box(_) => {}
         // Expr::Break(_) => {}
@@ -207,10 +291,10 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::Let(_) => {}
         Expr::Lit(l) => match l.lit {
             Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
-            _ => todo!(),
+            _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
         // Expr::Loop(_) => {}
-        // Expr::Macro(_) => {}
+        Expr::Macro(m) => Macro { raw: m }.into(),
         // Expr::Match(_) => {}
         // Expr::MethodCall(_) => {}
         // Expr::Paren(_) => {}
@@ -229,7 +313,7 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::Verbatim(_) => {}
         // Expr::While(_) => {}
         // Expr::Yield(_) => {}
-        x => todo!("{:?}", x.to_token_stream()),
+        x => bail!("Expr not supported: {:?}", x.to_token_stream()),
     })
 }
 fn parse_stmt(stmt: syn::Stmt) -> Result<AstNode> {
