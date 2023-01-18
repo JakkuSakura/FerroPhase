@@ -1,13 +1,24 @@
+#![allow(incomplete_features)]
+#![feature(specialization)]
 use common::*;
 use std::fmt::{Debug, Formatter};
 
 pub trait CloneAst {
-    fn clone_ast(&self) -> AstNode;
-}
-
-impl<T: Ast + Clone + 'static> CloneAst for T {
     fn clone_ast(&self) -> AstNode {
-        AstNode::new(self.clone())
+        self.try_clone_ast().expect("Could not clone this AST")
+    }
+    fn try_clone_ast(&self) -> Option<AstNode> {
+        None
+    }
+}
+impl<T: Ast + 'static> CloneAst for T {
+    default fn try_clone_ast(&self) -> Option<AstNode> {
+        None
+    }
+}
+impl<T: Ast + Clone + 'static> CloneAst for T {
+    fn try_clone_ast(&self) -> Option<AstNode> {
+        Some(AstNode::new(self.clone()))
     }
 }
 
