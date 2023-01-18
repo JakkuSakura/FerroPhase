@@ -1,26 +1,111 @@
+pub mod rustfmt;
+
 use barebone::{Block, Ident, *};
 use common::{Result, *};
+use proc_macro2::TokenStream;
 use quote::*;
 use syn::*;
 
 pub struct RustSerde;
-impl Serializer for RustSerde {
-    fn serialize(&self, node: &AstNode) -> String {
+impl RustSerde {
+    fn serialize_ident(&self, i: &Ident) -> syn::Ident {
+        format_ident!("{}", i.name)
+    }
+    fn serialize_block(&self, n: &Block) -> Result<TokenStream> {
+        let stmts: Vec<_> = n
+            .stmts
+            .iter()
+            .map(|x| self.serialize_quote(x))
+            .try_collect()?;
+        let q = if n.last_value {
+            quote!({
+                #(#stmts);*
+            })
+        } else {
+            quote!({
+                #(#stmts;)*
+            })
+        };
+        return Ok(q);
+    }
+    fn serialize_fun(&self, n: &Fun) -> Result<TokenStream> {
+        let name = format_ident!("{}", n.name.as_ref().unwrap().name);
+        let ret = self.serialize_quote(&n.ret)?;
+        let param_names: Vec<_> = n
+            .params
+            .params
+            .iter()
+            .map(|x| self.serialize_ident(&x.name))
+            .collect();
+        let param_types: Vec<_> = n
+            .params
+            .params
+            .iter()
+            .map(|x| self.serialize_quote(&x.ty))
+            .try_collect()?;
+        let stmts = self.serialize_block(n.body.as_ref().unwrap())?;
+        let q = quote!(
+            fn #name(#(#param_names: #param_types), *) -> #ret
+                #stmts
+
+        );
+        return Ok(q);
+    }
+    fn serialize_apply(&self, node: &Apply) -> Result<TokenStream> {
+        let fun = self.serialize_quote(&node.fun)?;
+        let args: Vec<_> = node
+            .args
+            .args
+            .iter()
+            .map(|x| self.serialize_quote(x))
+            .try_collect()?;
+        Ok(quote!(
+            (#fun)(#(#args), *)
+        ))
+    }
+    fn serialize_literal_int(&self, n: &LiteralInt) -> TokenStream {
+        let n = n.value;
+        quote!(
+            #n
+        )
+    }
+    fn serialize_quote(&self, node: &AstNode) -> Result<TokenStream> {
         if let Some(n) = node.as_ast::<Block>() {
-            let stmts = n.stmts.iter().map(|x| self.serialize(x)).collect_vec();
-            return if n.last_value {
-                quote!({
-                    #(#stmts);*
-                })
-                .to_string()
-            } else {
-                quote!({
-                    #(#stmts;)*
-                })
-                .to_string()
-            };
+            return self.serialize_block(n);
         }
-        todo!("Unable to serialize {:?}", node)
+        if let Some(m) = node.as_ast::<Module>() {
+            let stmts: Vec<_> = m
+                .stmts
+                .iter()
+                .map(|x| self.serialize_quote(x))
+                .try_collect()?;
+            return Ok(quote!(
+                #(#stmts)*
+            ));
+        }
+        if let Some(n) = node.as_ast::<Fun>() {
+            return self.serialize_fun(n);
+        }
+        if let Some(n) = node.as_ast::<Ident>() {
+            return Ok(self.serialize_ident(n).to_token_stream());
+        }
+
+        if let Some(_n) = node.as_ast::<Unit>() {
+            return Ok(quote!(()));
+        }
+
+        if let Some(n) = node.as_ast::<Apply>() {
+            return self.serialize_apply(n);
+        }
+        if let Some(n) = node.as_ast::<LiteralInt>() {
+            return Ok(self.serialize_literal_int(n));
+        }
+        bail!("Unable to serialize {:?}", node)
+    }
+}
+impl Serializer for RustSerde {
+    fn serialize(&self, node: &AstNode) -> Result<String> {
+        self.serialize_quote(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {
@@ -85,10 +170,7 @@ fn parse_fn(f: ItemFn) -> Result<Fun> {
                 .try_collect()?,
         },
         ret: match f.sig.output {
-            ReturnType::Default => Ident {
-                name: "()".to_string(),
-            }
-            .into(),
+            ReturnType::Default => Unit.into(),
             ReturnType::Type(_, t) => parse_type(*t)?,
         },
         body: Some(parse_block(*f.block)?),
