@@ -94,6 +94,14 @@ fn parse_fn(f: ItemFn) -> Result<Fun> {
         body: Some(parse_block(*f.block)?),
     })
 }
+fn parse_call(call: syn::ExprCall) -> Result<Apply> {
+    Ok(Apply {
+        fun: parse_expr(*call.func)?,
+        args: PosArgs {
+            args: call.args.into_iter().map(parse_expr).try_collect()?,
+        },
+    })
+}
 fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
     Ok(match expr {
         // Expr::Array(_) => {}
@@ -105,9 +113,7 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::Block(_) => {}
         // Expr::Box(_) => {}
         // Expr::Break(_) => {}
-        Expr::Call(c) => {
-            todo!()
-        }
+        Expr::Call(c) => parse_call(c)?.into(),
         // Expr::Cast(_) => {}
         // Expr::Closure(_) => {}
         // Expr::Continue(_) => {}
@@ -117,13 +123,16 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::If(_) => {}
         // Expr::Index(_) => {}
         // Expr::Let(_) => {}
-        // Expr::Lit(_) => {}
+        Expr::Lit(l) => match l.lit {
+            Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
+            _ => todo!(),
+        },
         // Expr::Loop(_) => {}
         // Expr::Macro(_) => {}
         // Expr::Match(_) => {}
         // Expr::MethodCall(_) => {}
         // Expr::Paren(_) => {}
-        // Expr::Path(_) => {}
+        Expr::Path(p) => Ident::new(p.path.segments.first().unwrap().ident.to_string()).into(),
         // Expr::Range(_) => {}
         // Expr::Reference(_) => {}
         // Expr::Repeat(_) => {}
@@ -138,7 +147,7 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::Verbatim(_) => {}
         // Expr::While(_) => {}
         // Expr::Yield(_) => {}
-        _ => todo!(),
+        x => todo!("{:?}", x.to_token_stream()),
     })
 }
 fn parse_stmt(stmt: syn::Stmt) -> Result<AstNode> {
@@ -152,18 +161,22 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<AstNode> {
         Stmt::Item(_) => {
             todo!()
         }
-        Stmt::Expr(_) => {
-            todo!()
-        }
-        Stmt::Semi(_, _) => {
-            todo!()
-        }
+        Stmt::Expr(e) => parse_expr(e)?,
+        Stmt::Semi(e, _) => parse_expr(e)?,
     })
 }
 fn parse_block(block: syn::Block) -> Result<Block> {
+    let last_value = block
+        .stmts
+        .last()
+        .map(|x| match x {
+            Stmt::Semi(..) => false,
+            _ => true,
+        })
+        .unwrap_or_default();
     Ok(Block {
         stmts: block.stmts.into_iter().map(parse_stmt).try_collect()?,
-        last_value: false,
+        last_value,
     })
 }
 fn parse_item(item: syn::Item) -> Result<AstNode> {

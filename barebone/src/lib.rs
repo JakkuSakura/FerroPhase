@@ -62,11 +62,21 @@ impl Ast for Block {}
 pub struct Ident {
     pub name: String,
 }
+impl Ident {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
 impl Ast for Ident {}
 
 #[derive(Debug, Clone)]
 pub struct LiteralInt {
     pub value: i64,
+}
+impl LiteralInt {
+    pub fn new(i: i64) -> Self {
+        Self { value: i }
+    }
 }
 impl Ast for LiteralInt {}
 #[derive(Debug, Clone)]
