@@ -1,5 +1,6 @@
-use barebone::Deserializer;
+use barebone::{Deserializer, Serializer};
 use common::*;
+use rust_lang::rustfmt::format_code;
 use rust_lang::RustSerde;
 
 fn main() -> Result<()> {
@@ -12,5 +13,9 @@ fn main() -> Result<()> {
     "#,
     )?;
     info!("Code: {:?}", code);
+    let code = RustSerde.serialize(&code)?;
+    info!("Code: {}", code);
+    let code = format_code(&code)?;
+    info!("Code: {}", code);
     Ok(())
 }
