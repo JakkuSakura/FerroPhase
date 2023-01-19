@@ -221,17 +221,13 @@ fn parse_input(i: FnArg) -> Result<Param> {
 }
 fn parse_pat(p: syn::Pat) -> Result<Ident> {
     Ok(match p {
-        Pat::Ident(name) => Ident {
-            name: name.ident.to_string(),
-        },
+        Pat::Ident(name) => Ident::new(name.ident.to_string()),
         _ => todo!(),
     })
 }
 fn parse_fn(f: ItemFn) -> Result<Fun> {
     Ok(Fun {
-        name: Some(Ident {
-            name: f.sig.ident.to_string(),
-        }),
+        name: Some(Ident::new(f.sig.ident.to_string())),
         params: Params {
             params: f
                 .sig
