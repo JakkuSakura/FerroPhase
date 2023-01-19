@@ -14,7 +14,7 @@ impl Ast for Macro {}
 
 impl Debug for Macro {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.raw.to_token_stream().fmt(f)
+        self.raw.fmt(f)
     }
 }
 
@@ -24,7 +24,7 @@ impl RustSerde {
         match i.name.as_str() {
             "+" => quote!(+),
             "*" => quote!(*),
-            a => format_ident!("{}", a).to_token_stream(),
+            a => format_ident!("{}", a).into_token_stream(),
         }
     }
     fn serialize_block(&self, n: &Block) -> Result<TokenStream> {
@@ -98,11 +98,20 @@ impl RustSerde {
             )),
         }
     }
-    fn serialize_literal_int(&self, n: &LiteralInt) -> TokenStream {
-        let n = n.value;
-        quote!(
-            #n
-        )
+    fn serialize_literal(&self, n: &Expr) -> Result<TokenStream> {
+        if let Some(n) = n.as_ast::<LiteralInt>() {
+            let n = n.value;
+            return Ok(quote!(
+                #n
+            ));
+        }
+        if let Some(n) = n.as_ast::<LiteralDecimal>() {
+            let n = n.value;
+            return Ok(quote!(
+                #n
+            ));
+        }
+        bail!("Failed to serialize literal {:?}", n)
     }
     fn serialize_func_type(&self, fun: &FuncType) -> Result<TokenStream> {
         let args: Vec<_> = fun
@@ -145,8 +154,8 @@ impl RustSerde {
         if let Some(n) = node.as_ast::<Call>() {
             return self.serialize_apply(n);
         }
-        if let Some(n) = node.as_ast::<LiteralInt>() {
-            return Ok(self.serialize_literal_int(n));
+        if node.is_literal() {
+            return self.serialize_literal(node);
         }
         if let Some(n) = node.as_ast::<Macro>() {
             return Ok(n.raw.to_token_stream());
@@ -170,9 +179,6 @@ impl Deserializer for RustSerde {
 }
 fn parse_type(t: syn::Type) -> Result<Expr> {
     let t = match t {
-        Type::Array(_) => {
-            todo!()
-        }
         Type::BareFn(f) => FuncType {
             params: f
                 .inputs
@@ -183,51 +189,15 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
             ret: parse_return_type(f.output)?,
         }
         .into(),
-        Type::Group(_) => {
-            todo!()
-        }
-        Type::ImplTrait(_) => {
-            todo!()
-        }
-        Type::Infer(_) => {
-            todo!()
-        }
-        Type::Macro(_) => {
-            todo!()
-        }
-        Type::Never(_) => {
-            todo!()
-        }
-        Type::Paren(_) => {
-            todo!()
-        }
         Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
-            if s == "i64" {
-                Ident::new("i64").into()
-            } else {
-                todo!()
+            match s.as_str() {
+                "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => Ident::new(s).into(),
+                x => Ident::new(x).into(),
+                // _ => bail!("Type not supported: {}", s),
             }
         }
-        Type::Ptr(_) => {
-            todo!()
-        }
-        Type::Reference(_) => {
-            todo!()
-        }
-        Type::Slice(_) => {
-            todo!()
-        }
-        Type::TraitObject(_) => {
-            todo!()
-        }
-        Type::Tuple(_) => {
-            todo!()
-        }
-        Type::Verbatim(_) => {
-            todo!()
-        }
-        _ => todo!(),
+        t => bail!("Type not supported {:?}", t.to_token_stream()),
     };
     Ok(t)
 }
@@ -313,6 +283,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         // Expr::Let(_) => {}
         syn::Expr::Lit(l) => match l.lit {
             Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
+            Lit::Float(i) => LiteralDecimal::new(i.base10_parse()?).into(),
             _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
         // Expr::Loop(_) => {}
@@ -378,12 +349,22 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
             };
             Ok(d.into())
         }
-        _ => todo!(),
+        Item::Use(_) => Ok(Unit.into()),
+        _ => bail!("Does not support item {:?} yet", item),
     }
 }
 fn parse_file(file: syn::File) -> Result<Expr> {
     Ok(Module {
-        stmts: file.items.into_iter().map(parse_item).try_collect()?,
+        stmts: file
+            .items
+            .into_iter()
+            .map(parse_item)
+            .filter(|x| {
+                x.as_ref()
+                    .map(|x| x.as_ast::<Unit>().is_none())
+                    .unwrap_or(true)
+            })
+            .try_collect()?,
     }
     .into())
 }

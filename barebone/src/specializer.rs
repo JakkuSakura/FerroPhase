@@ -1,5 +1,5 @@
 use crate::interpreter::InterpreterContext;
-use crate::{Block, Call, Def, Expr, FuncDecl, Ident, LiteralInt, Module, Params, PosArgs};
+use crate::{Block, Call, Def, Expr, FuncDecl, Ident, Module, Params, PosArgs};
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -21,7 +21,7 @@ impl Specializer {
         if let Some(n) = expr.as_ast::<Module>() {
             return self.specialize_module(n.clone(), ctx).map(|x| x.into());
         }
-        if let Some(_) = expr.as_ast::<LiteralInt>() {
+        if expr.is_literal() {
             return Ok(expr);
         }
         if let Some(d) = expr.as_ast::<Def>() {
