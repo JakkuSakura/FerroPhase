@@ -25,48 +25,48 @@ pub trait Ast: Debug {}
 impl<T: Ast> Ast for Arc<T> {}
 
 #[derive(Clone)]
-pub struct AstNode {
+pub struct Expr {
     inner: Rc<dyn AnyAst>,
 }
 
-impl AstNode {
+impl Expr {
     pub fn new(a: impl Ast + 'static) -> Self {
         Self { inner: Rc::new(a) }
     }
 }
-impl Deref for AstNode {
+impl Deref for Expr {
     type Target = dyn AnyAst;
     fn deref(&self) -> &Self::Target {
         &*self.inner
     }
 }
 
-impl Debug for AstNode {
+impl Debug for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
     }
 }
-impl<T: Ast + 'static> From<T> for AstNode {
+impl<T: Ast + 'static> From<T> for Expr {
     fn from(value: T) -> Self {
         Self::new(value)
     }
 }
 pub trait Serializer {
-    fn serialize(&self, node: &AstNode) -> Result<String>;
+    fn serialize(&self, node: &Expr) -> Result<String>;
 }
 
 pub trait Deserializer {
-    fn deserialize(&self, code: &str) -> Result<AstNode>;
+    fn deserialize(&self, code: &str) -> Result<Expr>;
 }
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub stmts: Vec<AstNode>,
+    pub stmts: Vec<Expr>,
 }
 impl Ast for Module {}
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub stmts: Vec<AstNode>,
+    pub stmts: Vec<Expr>,
     pub last_value: bool,
 }
 impl Ast for Block {}
@@ -118,7 +118,7 @@ impl Ast for LiteralString {}
 
 #[derive(Debug, Clone)]
 pub struct LiteralList {
-    pub value: Vec<AstNode>,
+    pub value: Vec<Expr>,
 }
 impl Ast for LiteralList {}
 
@@ -128,31 +128,31 @@ impl Ast for LiteralUnknown {}
 
 #[derive(Debug, Clone)]
 pub struct PosArgs {
-    pub args: Vec<AstNode>,
+    pub args: Vec<Expr>,
 }
 
 #[derive(Debug, Clone)]
 pub struct KwArgs {
-    pub args: Vec<(String, AstNode)>,
+    pub args: Vec<(String, Expr)>,
 }
 #[derive(Debug, Clone)]
-pub struct Apply {
-    pub fun: AstNode,
+pub struct Call {
+    pub fun: Expr,
     pub args: PosArgs,
 }
-impl Ast for Apply {}
+impl Ast for Call {}
 #[derive(Debug, Clone)]
 pub struct Def {
     pub name: Ident,
-    pub ty: Option<AstNode>,
-    pub value: AstNode,
+    pub ty: Option<Expr>,
+    pub value: Expr,
 }
 impl Ast for Def {}
 
 #[derive(Debug, Clone)]
 pub struct Param {
     pub name: Ident,
-    pub ty: AstNode,
+    pub ty: Expr,
 }
 #[derive(Debug, Clone)]
 pub struct Params {
@@ -162,21 +162,21 @@ pub struct Params {
 pub struct Fun {
     pub name: Option<Ident>,
     pub params: Params,
-    pub ret: AstNode,
+    pub ret: Expr,
     pub body: Option<Block>,
 }
 impl Ast for Fun {}
 
 #[derive(Debug, Clone)]
 pub struct Assign {
-    pub target: AstNode,
-    pub value: AstNode,
+    pub target: Expr,
+    pub value: Expr,
 }
 impl Ast for Assign {}
 
 #[derive(Debug, Clone)]
 pub struct When {
-    pub cond: AstNode,
+    pub cond: Expr,
     pub body: Block,
 }
 impl Ast for When {}
@@ -189,14 +189,14 @@ pub struct Case {
 #[derive(Debug, Clone)]
 pub struct ForEach {
     pub variable: Ident,
-    pub iterable: AstNode,
+    pub iterable: Expr,
     pub body: Block,
 }
 impl Ast for ForEach {}
 
 #[derive(Debug, Clone)]
 pub struct While {
-    pub cond: AstNode,
+    pub cond: Expr,
     pub body: Block,
 }
 impl Ast for While {}
@@ -204,7 +204,7 @@ impl Ast for While {}
 #[derive(Debug, Clone)]
 pub struct Field {
     pub name: Ident,
-    pub ty: AstNode,
+    pub ty: Expr,
 }
 
 #[derive(Debug, Clone)]
@@ -219,25 +219,25 @@ impl Ast for Struct {}
 
 #[derive(Debug, Clone)]
 pub struct BuildStruct {
-    pub name: AstNode, // either Ident or Struct
+    pub name: Expr, // either Ident or Struct
     pub field: KwArgs,
 }
 impl Ast for BuildStruct {}
 
 #[derive(Debug, Clone)]
 pub struct Select {
-    pub obj: AstNode,
+    pub obj: Expr,
     pub field: Ident,
 }
 impl Ast for Select {}
 
 #[cfg(test)]
 mod tests {
-    use crate::{AstNode, Module};
+    use crate::{Expr, Module};
 
     #[test]
     fn test_ast_node() {
-        let n = AstNode::new(Module { stmts: vec![] });
+        let n = Expr::new(Module { stmts: vec![] });
         n.as_ast::<Module>().unwrap();
     }
 }
