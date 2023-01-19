@@ -1,3 +1,4 @@
+use barebone::interpreter::{Interpreter, InterpreterContext};
 use barebone::{Deserializer, Serializer};
 use common::*;
 use rust_lang::rustfmt::format_code;
@@ -5,6 +6,7 @@ use rust_lang::RustSerde;
 
 fn main() -> Result<()> {
     setup_logs(LogLevel::Trace)?;
+
     let mut base = std::path::Path::new(file!()).to_path_buf();
     base.pop();
     base.push("../examples");
@@ -20,9 +22,12 @@ fn main() -> Result<()> {
             file_out.push(file.replace(".rs", ".gen.rs"));
             info!("{:?} => {:?}", file_in, file_out);
             let file_content = std::fs::read_to_string(file_in)?;
-            let code = RustSerde.deserialize(&file_content)?;
+            let node = RustSerde.deserialize(&file_content)?;
+            let inp = Interpreter::new();
+            let ctx = InterpreterContext::new();
+            let _result = inp.interprete(&node, &ctx)?;
             // info!("Code: {:?}", code);
-            let code = RustSerde.serialize(&code)?;
+            let code = RustSerde.serialize(&node)?;
             // info!("Code: {}", code);
             let code = format_code(&code)?;
             // info!("Code: {}", code);
