@@ -1,65 +1,46 @@
-#![allow(incomplete_features)]
-#![feature(specialization)]
+pub mod interpreter;
+
 use common::*;
 use std::fmt::{Debug, Formatter};
+use std::rc::Rc;
+use std::sync::Arc;
 
-pub trait CloneAst {
-    fn clone_ast(&self) -> AstNode {
-        self.try_clone_ast().expect("Could not clone this AST")
-    }
-    fn try_clone_ast(&self) -> Option<AstNode> {
-        None
-    }
-}
-impl<T: Ast + 'static> CloneAst for T {
-    default fn try_clone_ast(&self) -> Option<AstNode> {
-        None
-    }
-}
-impl<T: Ast + Clone + 'static> CloneAst for T {
-    fn try_clone_ast(&self) -> Option<AstNode> {
-        Some(AstNode::new(self.clone()))
-    }
-}
-
-pub trait AnyAst {
-    fn as_any_ast(&self) -> &dyn Any;
+pub trait AnyAst: Ast {
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl<T: Ast + Any + 'static> AnyAst for T {
-    fn as_any_ast(&self) -> &dyn Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
-impl dyn Ast {
+impl dyn AnyAst {
     pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
-        self.as_any_ast().downcast_ref::<T>()
+        self.as_any().downcast_ref::<T>()
     }
 }
 
-pub trait Ast: Debug + CloneAst + AnyAst {}
+pub trait Ast: Debug {}
+impl<T: Ast> Ast for Arc<T> {}
 
+#[derive(Clone)]
 pub struct AstNode {
-    inner: Box<dyn Ast>,
+    inner: Rc<dyn AnyAst>,
 }
 
 impl AstNode {
     pub fn new(a: impl Ast + 'static) -> Self {
-        Self { inner: Box::new(a) }
+        Self { inner: Rc::new(a) }
     }
 }
 impl Deref for AstNode {
-    type Target = dyn Ast;
+    type Target = dyn AnyAst;
     fn deref(&self) -> &Self::Target {
         &*self.inner
     }
 }
-impl Clone for AstNode {
-    fn clone(&self) -> Self {
-        self.inner.clone_ast()
-    }
-}
+
 impl Debug for AstNode {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
@@ -92,7 +73,7 @@ impl Ast for Block {}
 #[derive(Debug, Clone)]
 pub struct Unit;
 impl Ast for Unit {}
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Ident {
     pub name: String,
 }
