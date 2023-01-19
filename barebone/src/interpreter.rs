@@ -1,12 +1,14 @@
-use crate::{Ast, Block, Call, Expr, Fun, Ident, LiteralInt, Module, Serializer, Unit};
+use crate::{Ast, Block, Call, Def, Expr, Fun, Ident, LiteralInt, Module, Serializer, Unit};
 use common::*;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 use std::mem::replace;
 use std::rc::Rc;
+#[derive(Default)]
 pub struct InterpreterContextInner {
     parent: Option<InterpreterContext>,
     values: HashMap<Ident, Expr>,
+    is_specialized: HashMap<Ident, bool>,
     buffer: Vec<String>,
 }
 
@@ -17,24 +19,24 @@ pub struct InterpreterContext {
 impl InterpreterContext {
     pub fn new() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(InterpreterContextInner {
-                parent: None,
-                values: Default::default(),
-                buffer: vec![],
-            })),
+            inner: Rc::new(RefCell::new(InterpreterContextInner::default())),
         }
     }
     pub fn child(&self) -> InterpreterContext {
         Self {
             inner: Rc::new(RefCell::new(InterpreterContextInner {
                 parent: Some(self.clone()),
-                values: Default::default(),
-                buffer: vec![],
+                ..Default::default()
             })),
         }
     }
     pub fn insert(&self, key: Ident, value: Expr) {
         self.inner.borrow_mut().values.insert(key, value);
+    }
+
+    pub fn insert_specialized(&self, key: Ident, value: Expr) {
+        self.inner.borrow_mut().values.insert(key.clone(), value);
+        self.inner.borrow_mut().is_specialized.insert(key, true);
     }
     pub fn get(&self, key: &Ident) -> Option<Expr> {
         let inner = self.inner.borrow();
@@ -57,6 +59,15 @@ impl InterpreterContext {
     }
     pub fn take_outputs(&self) -> Vec<String> {
         replace(&mut self.inner.borrow_mut().buffer, vec![])
+    }
+    pub fn list_specialized(&self) -> Vec<Ident> {
+        self.inner
+            .borrow()
+            .is_specialized
+            .iter()
+            .filter(|x| *x.1)
+            .map(|x| x.0.clone())
+            .collect()
     }
 }
 struct BuiltinFn {
@@ -93,16 +104,21 @@ impl Interpreter {
         Self { serializer }
     }
     pub fn interprete_module(&self, node: &Module, ctx: &InterpreterContext) -> Result<Expr> {
-        let _: Vec<_> = node
-            .stmts
+        node.stmts
             .iter()
-            .filter(|x| x.as_ast::<Fun>().is_some())
-            .map(|x| self.interprete(x, ctx))
-            .try_collect()?;
+            .filter(|x| x.as_ast::<Def>().is_some())
+            .try_for_each(|x| {
+                if let Some(n) = x.as_ast::<Def>() {
+                    if let Some(n) = n.value.as_ast::<Fun>() {
+                        return self.register_decl_fun(n, ctx).map(|_| ());
+                    }
+                }
+
+                return Ok(());
+            })?;
         let result: Vec<_> = node
             .stmts
             .iter()
-            .filter(|x| x.as_ast::<Fun>().is_none())
             .map(|x| self.interprete(x, ctx))
             .try_collect::<Expr, Vec<_>, _>()?
             .into_iter()
@@ -110,12 +126,13 @@ impl Interpreter {
             .collect();
         Ok(result.into_iter().next().unwrap_or(Unit.into()))
     }
-    pub fn interprete_decl_fun(&self, node: &Fun, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn register_decl_fun(&self, node: &Fun, ctx: &InterpreterContext) -> Result<Expr> {
         ctx.insert(node.name.clone().unwrap(), node.clone().into());
         Ok(Unit.into())
     }
-    pub fn interprete_apply(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn interprete_call(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
         let fun = self.interprete(&node.fun, ctx)?;
+
         let args: Vec<_> = node
             .args
             .args
@@ -124,7 +141,6 @@ impl Interpreter {
             .try_collect()?;
         if let Some(f) = fun.as_ast::<Fun>() {
             let name = f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("<fun>");
-            debug!("Invoking {} with {:?}", name, args);
             let sub = ctx.child();
             for (i, arg) in args.iter().cloned().enumerate() {
                 let param = f
@@ -135,16 +151,18 @@ impl Interpreter {
                 // TODO: type check here
                 sub.insert(param.name.clone(), arg);
             }
+
+            debug!("Invoking {} with {:?}", name, args);
             let ret =
-                self.interprete_block(f.body.as_ref().context("Funtion body is empty")?, &sub);
+                self.interprete_block(f.body.as_ref().context("Funtion body is empty")?, &sub)?;
             debug!("Invoked {} with {:?} => {:?}", name, args, ret);
-            return ret;
+            return Ok(ret);
         }
         if let Some(f) = fun.as_ast::<BuiltinFn>() {
             debug!("Invoking {} with {:?}", f.name, args);
-            let ret = f.call(&args, ctx);
+            let ret = f.call(&args, ctx)?;
             debug!("Invoked {} with {:?} => {:?}", f.name, args, ret);
-            return ret;
+            return Ok(ret);
         }
 
         bail!("Failed to interprete {:?}", node)
@@ -176,18 +194,23 @@ impl Interpreter {
         if let Some(n) = node.as_ast() {
             return self.interprete_module(n, ctx);
         }
-        if let Some(n) = node.as_ast::<Fun>() {
-            if n.name == Some(Ident::new("main")) {
-                return self.interprete_block(
-                    n.body.as_ref().context("main() has no implementation")?,
-                    ctx,
-                );
-            } else {
-                return self.interprete_decl_fun(n, ctx);
+        if let Some(n) = node.as_ast() {
+            return self.interprete_block(n, ctx);
+        }
+        if let Some(n) = node.as_ast::<Def>() {
+            if let Some(n) = n.value.as_ast::<Fun>() {
+                if n.name == Some(Ident::new("main")) {
+                    return self.interprete_block(
+                        n.body.as_ref().context("main() has no implementation")?,
+                        ctx,
+                    );
+                } else {
+                    return self.register_decl_fun(n, ctx);
+                }
             }
         }
         if let Some(n) = node.as_ast() {
-            return self.interprete_apply(n, ctx);
+            return self.interprete_call(n, ctx);
         }
         if let Some(n) = node.as_ast::<Ident>() {
             fn operate_on_i64(name: &str, op: impl Fn(&[i64]) -> i64 + 'static) -> BuiltinFn {
@@ -222,7 +245,7 @@ impl Interpreter {
                 }
                 _ => ctx
                     .get(n)
-                    .ok_or_else(|| eyre!("could not find {:?} in context", n.name)),
+                    .with_context(|| format!("could not find {:?} in context", n.name)),
             };
         }
         if let Some(n) = node.as_ast::<LiteralInt>() {
