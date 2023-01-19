@@ -26,6 +26,9 @@ pub trait Ast: Debug {
     fn is_literal(&self) -> bool {
         false
     }
+    fn is_raw(&self) -> bool {
+        false
+    }
 }
 impl<T: Ast> Ast for Arc<T> {}
 
@@ -215,6 +218,13 @@ pub struct FuncDecl {
     pub body: Option<Block>,
 }
 impl Ast for FuncDecl {}
+#[derive(Debug, Clone)]
+pub struct Generics {
+    pub params: Params,
+    // TODOL restrains
+    pub value: Expr,
+}
+impl Ast for Generics {}
 
 #[derive(Debug, Clone)]
 pub struct Assign {
