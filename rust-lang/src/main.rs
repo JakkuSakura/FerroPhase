@@ -18,14 +18,14 @@ fn main() -> Result<()> {
     for file in dir {
         let file = file?;
         let file = file.file_name().as_os_str().to_string_lossy().to_string();
-        if !file.ends_with(".rs") || file.contains(".gen") {
+        if !file.ends_with(".rs") || file.contains("_gen.rs") {
             continue;
         }
         let mut file_in = base.clone();
         file_in.push(&file);
 
         let mut file_out = base.clone();
-        file_out.push(file.replace(".rs", ".gen.rs"));
+        file_out.push(file.replace(".rs", "_gen.rs"));
         info!("{:?} => {:?}", file_in, file_out);
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
