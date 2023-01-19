@@ -1,4 +1,7 @@
-use crate::{Ast, Block, Call, Def, Expr, FuncDecl, Ident, LiteralInt, Module, Serializer, Unit};
+use crate::{
+    Ast, Block, Call, Def, Expr, FuncDecl, Ident, LiteralDecimal, LiteralInt, Module, Serializer,
+    Unit,
+};
 use common::*;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -213,29 +216,76 @@ impl Interpreter {
             return self.interprete_call(n, ctx);
         }
         if let Some(n) = node.as_ast::<Ident>() {
-            fn operate_on_i64(name: &str, op: impl Fn(&[i64]) -> i64 + 'static) -> BuiltinFn {
+            fn operate_on_literals(
+                name: &str,
+                op_i64: impl Fn(&[i64]) -> i64 + 'static,
+                op_f64: impl Fn(&[f64]) -> f64 + 'static,
+            ) -> BuiltinFn {
                 BuiltinFn::new(name.to_string(), move |args, _ctx| {
-                    let args: Vec<_> = args
-                        .into_iter()
-                        .map(|x| {
-                            x.as_ast::<LiteralInt>()
-                                .map(|x| x.value)
-                                .context("Only LiteralInt")
-                        })
-                        .try_collect()?;
-                    Ok(LiteralInt::new(op(&args)).into())
+                    if args
+                        .first()
+                        .map(|x| x.as_ast::<LiteralInt>())
+                        .flatten()
+                        .is_some()
+                    {
+                        let args: Vec<_> = args
+                            .into_iter()
+                            .map(|x| {
+                                x.as_ast::<LiteralInt>()
+                                    .map(|x| x.value)
+                                    .context("Only LiteralInt")
+                            })
+                            .try_collect()?;
+                        return Ok(LiteralInt::new(op_i64(&args)).into());
+                    }
+                    if args
+                        .first()
+                        .map(|x| x.as_ast::<LiteralDecimal>())
+                        .flatten()
+                        .is_some()
+                    {
+                        let args: Vec<_> = args
+                            .into_iter()
+                            .map(|x| {
+                                x.as_ast::<LiteralDecimal>()
+                                    .map(|x| x.value)
+                                    .context("Only LiteralInt")
+                            })
+                            .try_collect()?;
+                        return Ok(LiteralDecimal::new(op_f64(&args)).into());
+                    }
+                    bail!("Does not support argument type {:?}", args)
                 })
             }
             return match n.name.as_str() {
-                "+" => Ok(operate_on_i64("+", |x| x.into_iter().sum()).into()),
-                "-" => Ok(operate_on_i64("-", |x| {
-                    x.into_iter()
-                        .enumerate()
-                        .map(|(i, &x)| if i > 0 { -x } else { x })
-                        .sum()
-                })
+                "+" => {
+                    Ok(
+                        operate_on_literals("+", |x| x.into_iter().sum(), |x| x.into_iter().sum())
+                            .into(),
+                    )
+                }
+                "-" => Ok(operate_on_literals(
+                    "-",
+                    |x| {
+                        x.into_iter()
+                            .enumerate()
+                            .map(|(i, &x)| if i > 0 { -x } else { x })
+                            .sum()
+                    },
+                    |x| {
+                        x.into_iter()
+                            .enumerate()
+                            .map(|(i, &x)| if i > 0 { -x } else { x })
+                            .sum()
+                    },
+                )
                 .into()),
-                "*" => Ok(operate_on_i64("*", |x| x.into_iter().fold(1, |a, b| a * b)).into()),
+                "*" => Ok(operate_on_literals(
+                    "*",
+                    |x| x.into_iter().fold(1, |a, b| a * b),
+                    |x| x.into_iter().fold(1.0, |a, b| a * b),
+                )
+                .into()),
                 "print" => {
                     let se = Rc::clone(&self.serializer);
                     Ok(BuiltinFn::new("print".to_string(), move |args, ctx| {
@@ -248,8 +298,8 @@ impl Interpreter {
                     .with_context(|| format!("could not find {:?} in context", n.name)),
             };
         }
-        if let Some(n) = node.as_ast::<LiteralInt>() {
-            return Ok(n.clone().into());
+        if node.is_literal() {
+            return Ok(node.clone());
         }
 
         bail!("Failed to interprete {:?}", node)

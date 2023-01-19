@@ -5,7 +5,7 @@ use common::*;
 use rust_lang::rustfmt::format_code;
 use rust_lang::RustSerde;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 fn main() -> Result<()> {
@@ -33,7 +33,10 @@ fn main() -> Result<()> {
         let ctx = InterpreterContext::new();
         let node = Specializer::new().specialize_expr(node, &ctx)?;
         let code = RustSerde.serialize(&node)?;
+        writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;
+        file_out.set_len(0)?;
+        file_out.seek(SeekFrom::Start(0))?;
         writeln!(&mut file_out, "{}", code)?;
 
         let inp = Interpreter::new(Rc::new(RustSerde));
