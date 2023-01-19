@@ -31,7 +31,7 @@ impl RustSerde {
         let stmts: Vec<_> = n
             .stmts
             .iter()
-            .map(|x| self.serialize_quote(x))
+            .map(|x| self.serialize_expr(x))
             .try_collect()?;
         let q = if n.last_value {
             quote!({
@@ -44,9 +44,9 @@ impl RustSerde {
         };
         return Ok(q);
     }
-    fn serialize_fun(&self, n: &Fun) -> Result<TokenStream> {
+    fn serialize_fun(&self, n: &FuncDecl) -> Result<TokenStream> {
         let name = format_ident!("{}", n.name.as_ref().unwrap().name);
-        let ret = self.serialize_quote(&n.ret)?;
+        let ret = self.serialize_expr(&n.ret)?;
         let param_names: Vec<_> = n
             .params
             .params
@@ -57,7 +57,7 @@ impl RustSerde {
             .params
             .params
             .iter()
-            .map(|x| self.serialize_quote(&x.ty))
+            .map(|x| self.serialize_expr(&x.ty))
             .try_collect()?;
         let stmts = self.serialize_block(n.body.as_ref().unwrap())?;
         let q = quote!(
@@ -68,13 +68,13 @@ impl RustSerde {
         return Ok(q);
     }
     fn serialize_apply(&self, node: &Call) -> Result<TokenStream> {
-        let fun = self.serialize_quote(&node.fun)?;
+        let fun = self.serialize_expr(&node.fun)?;
         let fun_str = fun.to_string();
         let args: Vec<_> = node
             .args
             .args
             .iter()
-            .map(|x| self.serialize_quote(x))
+            .map(|x| self.serialize_expr(x))
             .try_collect()?;
         match fun_str.as_str() {
             "+" => Ok(quote!(#(#args) + *)),
@@ -104,7 +104,18 @@ impl RustSerde {
             #n
         )
     }
-    fn serialize_quote(&self, node: &Expr) -> Result<TokenStream> {
+    fn serialize_func_type(&self, fun: &FuncType) -> Result<TokenStream> {
+        let args: Vec<_> = fun
+            .params
+            .iter()
+            .map(|x| self.serialize_expr(x))
+            .try_collect()?;
+        let ret = self.serialize_expr(&fun.ret)?;
+        Ok(quote!(
+            fn(#(#args), *) -> #ret
+        ))
+    }
+    fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
         if let Some(n) = node.as_ast::<Block>() {
             return self.serialize_block(n);
         }
@@ -112,14 +123,14 @@ impl RustSerde {
             let stmts: Vec<_> = m
                 .stmts
                 .iter()
-                .map(|x| self.serialize_quote(x))
+                .map(|x| self.serialize_expr(x))
                 .try_collect()?;
             return Ok(quote!(
                 #(#stmts)*
             ));
         }
         if let Some(n) = node.as_ast::<Def>() {
-            if let Some(n) = n.value.as_ast::<Fun>() {
+            if let Some(n) = n.value.as_ast::<FuncDecl>() {
                 return self.serialize_fun(n);
             }
         }
@@ -140,12 +151,15 @@ impl RustSerde {
         if let Some(n) = node.as_ast::<Macro>() {
             return Ok(n.raw.to_token_stream());
         }
+        if let Some(n) = node.as_ast() {
+            return self.serialize_func_type(n);
+        }
         bail!("Unable to serialize {:?}", node)
     }
 }
 impl Serializer for RustSerde {
     fn serialize(&self, node: &Expr) -> Result<String> {
-        self.serialize_quote(node).map(|x| x.to_string())
+        self.serialize_expr(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {
@@ -159,9 +173,16 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
         Type::Array(_) => {
             todo!()
         }
-        Type::BareFn(_) => {
-            todo!()
+        Type::BareFn(f) => FuncType {
+            params: f
+                .inputs
+                .into_iter()
+                .map(|x| x.ty)
+                .map(parse_type)
+                .try_collect()?,
+            ret: parse_return_type(f.output)?,
         }
+        .into(),
         Type::Group(_) => {
             todo!()
         }
@@ -227,8 +248,14 @@ fn parse_pat(p: syn::Pat) -> Result<Ident> {
         _ => todo!(),
     })
 }
-fn parse_fn(f: ItemFn) -> Result<Fun> {
-    Ok(Fun {
+fn parse_return_type(o: ReturnType) -> Result<Expr> {
+    Ok(match o {
+        ReturnType::Default => Unit.into(),
+        ReturnType::Type(_, t) => parse_type(*t)?,
+    })
+}
+fn parse_fn(f: ItemFn) -> Result<FuncDecl> {
+    Ok(FuncDecl {
         name: Some(Ident::new(f.sig.ident.to_string())),
         params: Params {
             params: f
@@ -238,10 +265,7 @@ fn parse_fn(f: ItemFn) -> Result<Fun> {
                 .map(|x| parse_input(x))
                 .try_collect()?,
         },
-        ret: match f.sig.output {
-            ReturnType::Default => Unit.into(),
-            ReturnType::Type(_, t) => parse_type(*t)?,
-        },
+        ret: parse_return_type(f.sig.output)?,
         body: Some(parse_block(*f.block)?),
     })
 }

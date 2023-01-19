@@ -167,13 +167,13 @@ pub struct Params {
     pub params: Vec<Param>,
 }
 #[derive(Debug, Clone)]
-pub struct Fun {
+pub struct FuncDecl {
     pub name: Option<Ident>,
     pub params: Params,
     pub ret: Expr,
     pub body: Option<Block>,
 }
-impl Ast for Fun {}
+impl Ast for FuncDecl {}
 
 #[derive(Debug, Clone)]
 pub struct Assign {
@@ -238,6 +238,13 @@ pub struct Select {
     pub field: Ident,
 }
 impl Ast for Select {}
+
+#[derive(Debug, Clone)]
+pub struct FuncType {
+    pub params: Vec<Expr>,
+    pub ret: Expr,
+}
+impl Ast for FuncType {}
 
 #[cfg(test)]
 mod tests {
