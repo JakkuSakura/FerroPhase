@@ -22,7 +22,11 @@ impl dyn AnyAst {
     }
 }
 
-pub trait Ast: Debug {}
+pub trait Ast: Debug {
+    fn is_literal(&self) -> bool {
+        false
+    }
+}
 impl<T: Ast> Ast for Arc<T> {}
 
 #[derive(Clone)]
@@ -80,7 +84,11 @@ pub struct Block {
 impl Ast for Block {}
 #[derive(Debug, Clone)]
 pub struct Unit;
-impl Ast for Unit {}
+impl Ast for Unit {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Ident {
     pub name: String,
@@ -101,38 +109,71 @@ impl LiteralInt {
         Self { value: i }
     }
 }
-impl Ast for LiteralInt {}
+impl Ast for LiteralInt {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 #[derive(Debug, Clone)]
 pub struct LiteralBool {
     pub value: bool,
 }
-impl Ast for LiteralBool {}
+impl Ast for LiteralBool {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LiteralDecimal {
     pub value: f64,
 }
-impl Ast for LiteralDecimal {}
+impl LiteralDecimal {
+    pub fn new(v: f64) -> Self {
+        Self { value: v }
+    }
+}
+impl Ast for LiteralDecimal {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 #[derive(Debug, Clone)]
 pub struct LiteralChar {
     pub value: char,
 }
-impl Ast for LiteralChar {}
+impl Ast for LiteralChar {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 #[derive(Debug, Clone)]
 pub struct LiteralString {
     pub value: char,
 }
-impl Ast for LiteralString {}
+impl Ast for LiteralString {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LiteralList {
     pub value: Vec<Expr>,
 }
-impl Ast for LiteralList {}
+impl Ast for LiteralList {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LiteralUnknown {}
-impl Ast for LiteralUnknown {}
+impl Ast for LiteralUnknown {
+    fn is_literal(&self) -> bool {
+        true
+    }
+}
 
 #[derive(Default, Debug, Clone)]
 pub struct PosArgs {
