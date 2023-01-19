@@ -1,4 +1,4 @@
-use crate::{Ast, Block, Call, Def, Expr, Fun, Ident, LiteralInt, Module, Serializer, Unit};
+use crate::{Ast, Block, Call, Def, Expr, FuncDecl, Ident, LiteralInt, Module, Serializer, Unit};
 use common::*;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
@@ -109,7 +109,7 @@ impl Interpreter {
             .filter(|x| x.as_ast::<Def>().is_some())
             .try_for_each(|x| {
                 if let Some(n) = x.as_ast::<Def>() {
-                    if let Some(n) = n.value.as_ast::<Fun>() {
+                    if let Some(n) = n.value.as_ast::<FuncDecl>() {
                         return self.register_decl_fun(n, ctx).map(|_| ());
                     }
                 }
@@ -126,7 +126,7 @@ impl Interpreter {
             .collect();
         Ok(result.into_iter().next().unwrap_or(Unit.into()))
     }
-    pub fn register_decl_fun(&self, node: &Fun, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn register_decl_fun(&self, node: &FuncDecl, ctx: &InterpreterContext) -> Result<Expr> {
         ctx.insert(node.name.clone().unwrap(), node.clone().into());
         Ok(Unit.into())
     }
@@ -139,7 +139,7 @@ impl Interpreter {
             .iter()
             .map(|x| self.interprete(x, ctx))
             .try_collect()?;
-        if let Some(f) = fun.as_ast::<Fun>() {
+        if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("<fun>");
             let sub = ctx.child();
             for (i, arg) in args.iter().cloned().enumerate() {
@@ -198,7 +198,7 @@ impl Interpreter {
             return self.interprete_block(n, ctx);
         }
         if let Some(n) = node.as_ast::<Def>() {
-            if let Some(n) = n.value.as_ast::<Fun>() {
+            if let Some(n) = n.value.as_ast::<FuncDecl>() {
                 if n.name == Some(Ident::new("main")) {
                     return self.interprete_block(
                         n.body.as_ref().context("main() has no implementation")?,

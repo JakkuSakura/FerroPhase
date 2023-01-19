@@ -1,5 +1,5 @@
 use crate::interpreter::InterpreterContext;
-use crate::{Block, Call, Def, Expr, Fun, Ident, LiteralInt, Module, Params, PosArgs};
+use crate::{Block, Call, Def, Expr, FuncDecl, Ident, LiteralInt, Module, Params, PosArgs};
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -51,7 +51,7 @@ impl Specializer {
             .cloned()
             .map(|x| self.specialize_expr(x, ctx))
             .try_collect()?;
-        if let Some(f) = fun.as_ast::<Fun>() {
+        if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("<fun>");
             debug!("Invoking {} with {:?}", name, args);
             let sub = ctx.child();
@@ -74,7 +74,7 @@ impl Specializer {
             ));
             ctx.root().insert_specialized(
                 new_name.clone(),
-                Fun {
+                FuncDecl {
                     name: Some(new_name.clone()),
                     params: Params::default(),
                     ret: f.ret.clone(),
@@ -110,7 +110,7 @@ impl Specializer {
                 ctx.get(&x)
                     .map(|x| {
                         Def {
-                            name: x.inner.as_ast::<Fun>().unwrap().name.clone().unwrap(),
+                            name: x.inner.as_ast::<FuncDecl>().unwrap().name.clone().unwrap(),
                             ty: None,
                             value: x,
                         }
@@ -133,12 +133,12 @@ impl Specializer {
         })
     }
     pub fn specialize_def(&self, d: Def, ctx: &InterpreterContext) -> Result<Def> {
-        if let Some(f) = d.value.as_ast::<Fun>().cloned() {
+        if let Some(f) = d.value.as_ast::<FuncDecl>().cloned() {
             if f.name == Some(Ident::new("main")) {
                 return Ok(Def {
                     name: d.name,
                     ty: None,
-                    value: Fun {
+                    value: FuncDecl {
                         name: f.name,
                         params: f.params,
                         ret: f.ret,
