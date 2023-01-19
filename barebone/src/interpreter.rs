@@ -1,6 +1,6 @@
 use crate::{
-    Ast, Block, Call, Def, Expr, FuncDecl, Ident, LiteralDecimal, LiteralInt, Module, Serializer,
-    Unit,
+    Ast, Block, Call, Def, Expr, FuncDecl, Generics, Ident, LiteralDecimal, LiteralInt, Module,
+    Serializer, Unit,
 };
 use common::*;
 use std::cell::RefCell;
@@ -201,7 +201,11 @@ impl Interpreter {
             return self.interprete_block(n, ctx);
         }
         if let Some(n) = node.as_ast::<Def>() {
-            if let Some(n) = n.value.as_ast::<FuncDecl>() {
+            let mut decl = &n.value;
+            if let Some(g) = decl.as_ast::<Generics>() {
+                decl = &g.value;
+            }
+            if let Some(n) = decl.as_ast::<FuncDecl>() {
                 if n.name == Some(Ident::new("main")) {
                     return self.interprete_block(
                         n.body.as_ref().context("main() has no implementation")?,
@@ -301,7 +305,9 @@ impl Interpreter {
         if node.is_literal() {
             return Ok(node.clone());
         }
-
+        if node.is_raw() {
+            return Ok(node.clone());
+        }
         bail!("Failed to interprete {:?}", node)
     }
 }

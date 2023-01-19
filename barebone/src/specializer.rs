@@ -1,5 +1,5 @@
 use crate::interpreter::InterpreterContext;
-use crate::{Block, Call, Def, Expr, FuncDecl, Ident, Module, Params, PosArgs};
+use crate::{Block, Call, Def, Expr, FuncDecl, Generics, Ident, Module, Params, PosArgs};
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -24,6 +24,9 @@ impl Specializer {
         if expr.is_literal() {
             return Ok(expr);
         }
+        if expr.is_raw() {
+            return Ok(expr);
+        }
         if let Some(d) = expr.as_ast::<Def>() {
             return self.specialize_def(d.clone(), ctx).map(|x| x.into());
         }
@@ -43,7 +46,10 @@ impl Specializer {
         // Ok(expr)
     }
     pub fn specialize_call(&self, node: Call, ctx: &InterpreterContext) -> Result<Expr> {
-        let fun = self.specialize_expr(node.fun.clone(), ctx)?;
+        let mut fun = self.specialize_expr(node.fun.clone(), ctx)?;
+        if let Some(g) = fun.as_ast::<Generics>() {
+            fun = g.value.clone();
+        }
         let args: Vec<_> = node
             .args
             .args
@@ -133,7 +139,14 @@ impl Specializer {
         })
     }
     pub fn specialize_def(&self, d: Def, ctx: &InterpreterContext) -> Result<Def> {
-        if let Some(f) = d.value.as_ast::<FuncDecl>().cloned() {
+        let fun;
+        if let Some(g) = d.value.as_ast::<Generics>() {
+            fun = g.value.clone();
+        } else {
+            fun = d.value.clone();
+        }
+
+        if let Some(f) = fun.as_ast::<FuncDecl>().cloned() {
             if f.name == Some(Ident::new("main")) {
                 return Ok(Def {
                     name: d.name,
@@ -147,7 +160,7 @@ impl Specializer {
                     .into(),
                 });
             } else {
-                ctx.insert(d.name.clone(), f.clone().into());
+                ctx.insert(d.name.clone(), d.value.clone());
             }
         }
         Ok(d)
