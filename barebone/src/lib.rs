@@ -1,4 +1,5 @@
 pub mod interpreter;
+pub mod specializer;
 
 use common::*;
 use std::fmt::{Debug, Formatter};
@@ -9,7 +10,7 @@ pub trait AnyAst: Ast {
     fn as_any(&self) -> &dyn Any;
 }
 
-impl<T: Ast + Any + 'static> AnyAst for T {
+impl<T: Ast + Any> AnyAst for T {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -26,12 +27,19 @@ impl<T: Ast> Ast for Arc<T> {}
 
 #[derive(Clone)]
 pub struct Expr {
+    ty: &'static str,
     inner: Rc<dyn AnyAst>,
 }
 
 impl Expr {
-    pub fn new(a: impl Ast + 'static) -> Self {
-        Self { inner: Rc::new(a) }
+    pub fn new<T: Ast + 'static>(e: T) -> Self {
+        Self {
+            ty: std::any::type_name::<T>(),
+            inner: Rc::new(e),
+        }
+    }
+    pub fn get_type(&self) -> &str {
+        self.ty
     }
 }
 impl Deref for Expr {
@@ -126,7 +134,7 @@ impl Ast for LiteralList {}
 pub struct LiteralUnknown {}
 impl Ast for LiteralUnknown {}
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct PosArgs {
     pub args: Vec<Expr>,
 }
@@ -154,7 +162,7 @@ pub struct Param {
     pub name: Ident,
     pub ty: Expr,
 }
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct Params {
     pub params: Vec<Param>,
 }

@@ -118,8 +118,10 @@ impl RustSerde {
                 #(#stmts)*
             ));
         }
-        if let Some(n) = node.as_ast::<Fun>() {
-            return self.serialize_fun(n);
+        if let Some(n) = node.as_ast::<Def>() {
+            if let Some(n) = n.value.as_ast::<Fun>() {
+                return self.serialize_fun(n);
+            }
         }
         if let Some(n) = node.as_ast::<Ident>() {
             return Ok(self.serialize_ident(n).to_token_stream());
@@ -343,7 +345,15 @@ fn parse_block(block: syn::Block) -> Result<Block> {
 }
 fn parse_item(item: syn::Item) -> Result<Expr> {
     match item {
-        Item::Fn(f) => parse_fn(f).map(|x| x.into()),
+        Item::Fn(f) => {
+            let f = parse_fn(f)?;
+            let d = Def {
+                name: f.name.clone().context("no fun name")?,
+                ty: None,
+                value: f.into(),
+            };
+            Ok(d.into())
+        }
         _ => todo!(),
     }
 }
