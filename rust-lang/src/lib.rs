@@ -1,6 +1,6 @@
 pub mod rustfmt;
 
-use barebone::{Block, Ident, *};
+use barebone::{Block, Expr, Ident, *};
 use common::{Result, *};
 use proc_macro2::TokenStream;
 use quote::*;
@@ -67,7 +67,7 @@ impl RustSerde {
         );
         return Ok(q);
     }
-    fn serialize_apply(&self, node: &Apply) -> Result<TokenStream> {
+    fn serialize_apply(&self, node: &Call) -> Result<TokenStream> {
         let fun = self.serialize_quote(&node.fun)?;
         let fun_str = fun.to_string();
         let args: Vec<_> = node
@@ -104,7 +104,7 @@ impl RustSerde {
             #n
         )
     }
-    fn serialize_quote(&self, node: &AstNode) -> Result<TokenStream> {
+    fn serialize_quote(&self, node: &Expr) -> Result<TokenStream> {
         if let Some(n) = node.as_ast::<Block>() {
             return self.serialize_block(n);
         }
@@ -129,7 +129,7 @@ impl RustSerde {
             return Ok(quote!(()));
         }
 
-        if let Some(n) = node.as_ast::<Apply>() {
+        if let Some(n) = node.as_ast::<Call>() {
             return self.serialize_apply(n);
         }
         if let Some(n) = node.as_ast::<LiteralInt>() {
@@ -142,17 +142,17 @@ impl RustSerde {
     }
 }
 impl Serializer for RustSerde {
-    fn serialize(&self, node: &AstNode) -> Result<String> {
+    fn serialize(&self, node: &Expr) -> Result<String> {
         self.serialize_quote(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {
-    fn deserialize(&self, code: &str) -> Result<AstNode> {
+    fn deserialize(&self, code: &str) -> Result<Expr> {
         let code: syn::File = parse_str(code)?;
         parse_file(code)
     }
 }
-fn parse_type(t: syn::Type) -> Result<AstNode> {
+fn parse_type(t: syn::Type) -> Result<Expr> {
     let t = match t {
         Type::Array(_) => {
             todo!()
@@ -243,22 +243,22 @@ fn parse_fn(f: ItemFn) -> Result<Fun> {
         body: Some(parse_block(*f.block)?),
     })
 }
-fn parse_call(call: syn::ExprCall) -> Result<Apply> {
-    Ok(Apply {
+fn parse_call(call: syn::ExprCall) -> Result<Call> {
+    Ok(Call {
         fun: parse_expr(*call.func)?,
         args: PosArgs {
             args: call.args.into_iter().map(parse_expr).try_collect()?,
         },
     })
 }
-fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
+fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
         // Expr::Array(_) => {}
         // Expr::Assign(_) => {}
         // Expr::AssignOp(_) => {}
         // Expr::Async(_) => {}
         // Expr::Await(_) => {}
-        Expr::Binary(b) => {
+        syn::Expr::Binary(b) => {
             let l = parse_expr(*b.left)?;
             let r = parse_expr(*b.right)?;
             let op = match b.op {
@@ -266,7 +266,7 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
                 BinOp::Mul(_) => Ident::new("*"),
                 _ => bail!("Op not supported {:?}", b.op.to_token_stream()),
             };
-            Apply {
+            Call {
                 fun: op.into(),
                 args: PosArgs { args: vec![l, r] },
             }
@@ -275,7 +275,7 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::Block(_) => {}
         // Expr::Box(_) => {}
         // Expr::Break(_) => {}
-        Expr::Call(c) => parse_call(c)?.into(),
+        syn::Expr::Call(c) => parse_call(c)?.into(),
         // Expr::Cast(_) => {}
         // Expr::Closure(_) => {}
         // Expr::Continue(_) => {}
@@ -285,16 +285,16 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         // Expr::If(_) => {}
         // Expr::Index(_) => {}
         // Expr::Let(_) => {}
-        Expr::Lit(l) => match l.lit {
+        syn::Expr::Lit(l) => match l.lit {
             Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
             _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
         // Expr::Loop(_) => {}
-        Expr::Macro(m) => Macro { raw: m }.into(),
+        syn::Expr::Macro(m) => Macro { raw: m }.into(),
         // Expr::Match(_) => {}
         // Expr::MethodCall(_) => {}
         // Expr::Paren(_) => {}
-        Expr::Path(p) => Ident::new(p.path.segments.first().unwrap().ident.to_string()).into(),
+        syn::Expr::Path(p) => Ident::new(p.path.segments.first().unwrap().ident.to_string()).into(),
         // Expr::Range(_) => {}
         // Expr::Reference(_) => {}
         // Expr::Repeat(_) => {}
@@ -312,7 +312,7 @@ fn parse_expr(expr: syn::Expr) -> Result<AstNode> {
         x => bail!("Expr not supported: {:?}", x.to_token_stream()),
     })
 }
-fn parse_stmt(stmt: syn::Stmt) -> Result<AstNode> {
+fn parse_stmt(stmt: syn::Stmt) -> Result<Expr> {
     Ok(match stmt {
         Stmt::Local(l) => Def {
             name: parse_pat(l.pat)?,
@@ -341,13 +341,13 @@ fn parse_block(block: syn::Block) -> Result<Block> {
         last_value,
     })
 }
-fn parse_item(item: syn::Item) -> Result<AstNode> {
+fn parse_item(item: syn::Item) -> Result<Expr> {
     match item {
         Item::Fn(f) => parse_fn(f).map(|x| x.into()),
         _ => todo!(),
     }
 }
-fn parse_file(file: syn::File) -> Result<AstNode> {
+fn parse_file(file: syn::File) -> Result<Expr> {
     Ok(Module {
         stmts: file.items.into_iter().map(parse_item).try_collect()?,
     }
