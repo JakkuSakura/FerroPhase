@@ -5,3 +5,4 @@ fn main() -> () {
     inc(1i64);
     inc(2i64);
 }
+// result: Unit

@@ -3,6 +3,8 @@ use barebone::{Deserializer, Serializer};
 use common::*;
 use rust_lang::rustfmt::format_code;
 use rust_lang::RustSerde;
+use std::fmt::Write;
+use std::rc::Rc;
 
 fn main() -> Result<()> {
     setup_logs(LogLevel::Trace)?;
@@ -23,11 +25,16 @@ fn main() -> Result<()> {
             info!("{:?} => {:?}", file_in, file_out);
             let file_content = std::fs::read_to_string(file_in)?;
             let node = RustSerde.deserialize(&file_content)?;
-            let inp = Interpreter::new();
+            let inp = Interpreter::new(Rc::new(RustSerde));
             let ctx = InterpreterContext::new();
-            let _result = inp.interprete(&node, &ctx)?;
+            let intp_result = inp.interprete(&node, &ctx)?;
             // info!("Code: {:?}", code);
-            let code = RustSerde.serialize(&node)?;
+            let mut code = RustSerde.serialize(&node)?;
+            writeln!(&mut code, "")?;
+            for row in ctx.take_outputs() {
+                writeln!(&mut code, "// stdout: {}", row)?;
+            }
+            writeln!(&mut code, "// result: {:?}", intp_result)?;
             // info!("Code: {}", code);
             let code = format_code(&code)?;
             // info!("Code: {}", code);
