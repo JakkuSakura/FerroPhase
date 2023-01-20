@@ -261,7 +261,7 @@ impl Interpreter {
                     bail!("Does not support argument type {:?}", args)
                 })
             }
-            return match n.name.as_str() {
+            return match n.as_str() {
                 "+" => {
                     Ok(
                         operate_on_literals("+", |x| x.into_iter().sum(), |x| x.into_iter().sum())
@@ -306,7 +306,7 @@ impl Interpreter {
             return Ok(node.clone());
         }
         if node.is_raw() {
-            return Ok(node.clone());
+            return Ok(Unit.into());
         }
         bail!("Failed to interprete {:?}", node)
     }

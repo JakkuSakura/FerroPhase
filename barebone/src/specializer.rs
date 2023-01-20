@@ -1,5 +1,8 @@
 use crate::interpreter::InterpreterContext;
-use crate::{Block, Call, Def, Expr, FuncDecl, Generics, Ident, Module, Params, PosArgs, Unit};
+use crate::{
+    Block, Call, Def, Expr, FuncDecl, Generics, Ident, LiteralDecimal, LiteralInt, Module, Params,
+    PosArgs, Types, Unit,
+};
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -34,7 +37,7 @@ impl Specializer {
             return self.specialize_call(c.clone(), ctx);
         }
         if let Some(n) = expr.as_ast::<Ident>() {
-            return match n.name.as_str() {
+            return match n.as_str() {
                 "+" | "-" | "*" => Ok(expr),
                 "print" => Ok(expr),
                 _ => ctx
@@ -44,6 +47,42 @@ impl Specializer {
         }
         bail!("Could not specialize {:?}", expr)
         // Ok(expr)
+    }
+    pub fn infer_type_call(
+        &self,
+        callee: &Expr,
+        params: &[Expr],
+        ctx: &InterpreterContext,
+    ) -> Result<Expr> {
+        let mut inner: Option<Expr> = None;
+        if let Some(ident) = callee.as_ast::<Ident>() {
+            match ident.as_str() {
+                "+" | "-" | "*" => {
+                    return self.infer_type(params.first().context("No param")?, ctx)
+                }
+                "print" => return Ok(Unit.into()),
+                _ => inner = ctx.get(ident),
+            }
+        };
+        let inner = inner.with_context(|| format!("Could not find {:?} in context", callee))?;
+        if let Some(fun) = inner.as_ast::<FuncDecl>() {
+            // TODO: make sure fun.ret is a solid type
+            return Ok(fun.ret.clone());
+        }
+
+        bail!("Could not infer type call {:?}", callee)
+    }
+    pub fn infer_type(&self, expr: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
+        if let Some(call) = expr.as_ast::<Call>() {
+            return self.infer_type_call(&call.fun, &call.args.args, ctx);
+        }
+        if let Some(_) = expr.as_ast::<LiteralInt>() {
+            return Ok(Types::i64().into());
+        }
+        if let Some(_) = expr.as_ast::<LiteralDecimal>() {
+            return Ok(Types::f64().into());
+        }
+        bail!("Could not infer type of {:?}", expr)
     }
     pub fn specialize_call(&self, node: Call, ctx: &InterpreterContext) -> Result<Expr> {
         let mut fun = self.specialize_expr(node.fun.clone(), ctx)?;
@@ -58,7 +97,7 @@ impl Specializer {
             .map(|x| self.specialize_expr(x, ctx))
             .try_collect()?;
         if let Some(f) = fun.as_ast::<FuncDecl>() {
-            let name = f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("<fun>");
+            let name = f.name.as_ref().map(|x| x.as_str()).unwrap_or("<fun>");
             debug!("Invoking {} with {:?}", name, args);
             let sub = ctx.child();
             for (i, arg) in args.iter().cloned().enumerate() {
@@ -78,12 +117,20 @@ impl Specializer {
                 name,
                 self.spec_id.fetch_add(1, Ordering::Relaxed)
             ));
+            let mut ret = f.ret.clone();
+            if ret.as_ast::<Ident>() == Some(&Ident::new("T")) {
+                ret = new_body
+                    .stmts
+                    .last()
+                    .map(|x| self.infer_type(x, ctx))
+                    .unwrap_or(Ok(Unit.into()))?;
+            }
             ctx.root().insert_specialized(
                 new_name.clone(),
                 FuncDecl {
                     name: Some(new_name.clone()),
                     params: Params::default(),
-                    ret: f.ret.clone(),
+                    ret,
                     body: Some(new_body),
                 }
                 .into(),
@@ -152,7 +199,7 @@ impl Specializer {
         }
 
         if let Some(f) = fun.as_ast::<FuncDecl>().cloned() {
-            match f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("") {
+            match f.name.as_ref().map(|x| x.as_str()).unwrap_or("") {
                 "main" => {
                     return Ok(Def {
                         name: d.name,
