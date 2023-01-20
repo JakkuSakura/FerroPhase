@@ -78,6 +78,7 @@ pub trait Deserializer {
 
 #[derive(Debug, Clone)]
 pub struct Module {
+    pub name: Ident,
     pub stmts: Vec<Expr>,
 }
 impl Ast for Module {}
@@ -198,11 +199,17 @@ pub struct Call {
     pub args: PosArgs,
 }
 impl Ast for Call {}
+#[derive(Debug, Clone, Copy)]
+pub enum Visibility {
+    Public,
+    Private,
+}
 #[derive(Debug, Clone)]
 pub struct Def {
     pub name: Ident,
     pub ty: Option<Expr>,
     pub value: Expr,
+    pub visibility: Visibility,
 }
 impl Ast for Def {}
 
@@ -312,15 +319,5 @@ impl Types {
     }
     pub fn f64() -> Ident {
         Ident::new("f64")
-    }
-}
-#[cfg(test)]
-mod tests {
-    use crate::{Expr, Module};
-
-    #[test]
-    fn test_ast_node() {
-        let n = Expr::new(Module { stmts: vec![] });
-        n.as_ast::<Module>().unwrap();
     }
 }

@@ -1,7 +1,7 @@
 use crate::interpreter::InterpreterContext;
 use crate::{
     Block, Call, Def, Expr, FuncDecl, Generics, Ident, LiteralDecimal, LiteralInt, Module, Params,
-    PosArgs, Types, Unit,
+    PosArgs, Types, Unit, Visibility,
 };
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -159,13 +159,14 @@ impl Specializer {
         let specialized: Vec<_> = ctx
             .list_specialized()
             .into_iter()
-            .map(|x| {
-                ctx.get(&x)
+            .map(|name| {
+                ctx.get(&name)
                     .map(|x| {
                         Def {
-                            name: x.inner.as_ast::<FuncDecl>().unwrap().name.clone().unwrap(),
+                            name: x.as_ast::<FuncDecl>().unwrap().name.clone().unwrap(),
                             ty: None,
                             value: x,
+                            visibility: Visibility::Public,
                         }
                         .into()
                     })
@@ -174,6 +175,7 @@ impl Specializer {
             .try_collect()?;
         stmts.extend(specialized);
         Ok(Module {
+            name: m.name,
             stmts: stmts
                 .into_iter()
                 .filter(|x| x.as_ast::<Unit>().is_none())
@@ -211,6 +213,7 @@ impl Specializer {
                             body: Some(self.specialize_block(f.body.context("empty main")?, ctx)?),
                         }
                         .into(),
+                        visibility: d.visibility,
                     }
                     .into());
                 }

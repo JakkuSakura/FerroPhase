@@ -45,6 +45,6 @@ impl Serializer for RustSerde {
 impl Deserializer for RustSerde {
     fn deserialize(&self, code: &str) -> Result<Expr> {
         let code: syn::File = parse_str(code)?;
-        crate::parser::parse_file(code)
+        self.deserialize_file(code)
     }
 }
