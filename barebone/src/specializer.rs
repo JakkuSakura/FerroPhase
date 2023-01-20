@@ -1,5 +1,5 @@
 use crate::interpreter::InterpreterContext;
-use crate::{Block, Call, Def, Expr, FuncDecl, Generics, Ident, Module, Params, PosArgs};
+use crate::{Block, Call, Def, Expr, FuncDecl, Generics, Ident, Module, Params, PosArgs, Unit};
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -126,7 +126,12 @@ impl Specializer {
             })
             .try_collect()?;
         stmts.extend(specialized);
-        Ok(Module { stmts })
+        Ok(Module {
+            stmts: stmts
+                .into_iter()
+                .filter(|x| x.as_ast::<Unit>().is_none())
+                .collect(),
+        })
     }
     pub fn specialize_block(&self, b: Block, ctx: &InterpreterContext) -> Result<Block> {
         Ok(Block {
@@ -138,7 +143,7 @@ impl Specializer {
             last_value: b.last_value,
         })
     }
-    pub fn specialize_def(&self, d: Def, ctx: &InterpreterContext) -> Result<Def> {
+    pub fn specialize_def(&self, d: Def, ctx: &InterpreterContext) -> Result<Expr> {
         let fun;
         if let Some(g) = d.value.as_ast::<Generics>() {
             fun = g.value.clone();
@@ -147,22 +152,29 @@ impl Specializer {
         }
 
         if let Some(f) = fun.as_ast::<FuncDecl>().cloned() {
-            if f.name == Some(Ident::new("main")) {
-                return Ok(Def {
-                    name: d.name,
-                    ty: None,
-                    value: FuncDecl {
-                        name: f.name,
-                        params: f.params,
-                        ret: f.ret,
-                        body: Some(self.specialize_block(f.body.context("empty main")?, ctx)?),
+            match f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("") {
+                "main" => {
+                    return Ok(Def {
+                        name: d.name,
+                        ty: None,
+                        value: FuncDecl {
+                            name: f.name,
+                            params: f.params,
+                            ret: f.ret,
+                            body: Some(self.specialize_block(f.body.context("empty main")?, ctx)?),
+                        }
+                        .into(),
                     }
-                    .into(),
-                });
-            } else {
-                ctx.insert(d.name.clone(), d.value.clone());
+                    .into());
+                }
+
+                "print" => {
+                    ctx.insert(d.name.clone(), d.value.clone());
+                    return Ok(d.into());
+                }
+                _ => ctx.insert(d.name.clone(), d.value.clone()),
             }
         }
-        Ok(d)
+        Ok(Unit.into())
     }
 }
