@@ -1,4 +1,4 @@
-use crate::{RawImplTrait, RawMacro, RawUse};
+use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
 use barebone::*;
 use common::*;
 use quote::ToTokens;
@@ -189,6 +189,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Expr> {
             name: parse_pat(l.pat)?,
             ty: None,
             value: parse_expr(*l.init.context("No value")?.1)?,
+            visibility: Visibility::Public,
         }
         .into(),
         Stmt::Item(_) => {
@@ -213,15 +214,24 @@ fn parse_block(block: syn::Block) -> Result<Block> {
         last_value,
     })
 }
-
+fn parse_vis(v: syn::Visibility) -> Visibility {
+    match v {
+        syn::Visibility::Public(_) => Visibility::Public,
+        syn::Visibility::Crate(_) => Visibility::Public,
+        syn::Visibility::Restricted(_) => Visibility::Public,
+        syn::Visibility::Inherited => Visibility::Private,
+    }
+}
 fn parse_item(item: syn::Item) -> Result<Expr> {
     match item {
-        Item::Fn(f) => {
-            let (name, f) = parse_fn(f)?;
+        Item::Fn(f0) => {
+            let visibility = parse_vis(f0.vis.clone());
+            let (name, f) = parse_fn(f0)?;
             let d = Def {
                 name,
                 ty: None,
                 value: f.into(),
+                visibility,
             };
             Ok(d.into())
         }
@@ -232,6 +242,7 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
 
 pub fn parse_file(file: syn::File) -> Result<Expr> {
     Ok(Module {
+        name: Ident::new("__file__"),
         stmts: file
             .items
             .into_iter()
@@ -244,4 +255,31 @@ pub fn parse_file(file: syn::File) -> Result<Expr> {
             .try_collect()?,
     }
     .into())
+}
+pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
+    Ok(Module {
+        name: parse_ident(file.ident),
+        stmts: file
+            .content
+            .unwrap()
+            .1
+            .into_iter()
+            .map(parse_item)
+            .filter(|x| {
+                x.as_ref()
+                    .map(|x| x.as_ast::<Unit>().is_none())
+                    .unwrap_or(true)
+            })
+            .try_collect()?,
+    }
+    .into())
+}
+
+impl RustSerde {
+    pub fn deserialize_file(&self, code: syn::File) -> Result<Expr> {
+        parse_file(code)
+    }
+    pub fn deserialize_module(&self, code: syn::ItemMod) -> Result<Expr> {
+        parse_module(code)
+    }
 }

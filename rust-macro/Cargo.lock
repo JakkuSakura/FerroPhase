@@ -1106,6 +1106,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "456c603be3e8d448b072f410900c09faf164fbce2d480456f50eea6e25f9c848"
 
 [[package]]
+name = "rust-lang"
+version = "0.1.0"
+dependencies = [
+ "barebone",
+ "common",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "syn-serde",
+]
+
+[[package]]
+name = "rust-macro"
+version = "0.1.0"
+dependencies = [
+ "barebone",
+ "common",
+ "proc-macro2",
+ "quote",
+ "rust-lang",
+ "syn",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1276,6 +1300,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "syn-serde"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b06e2f2975d098f9327f4b9f6e5542072b05918795a25b21cf319ebd0a3300b"
+dependencies = [
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "syn",
 ]
 
 [[package]]
