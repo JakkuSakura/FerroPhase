@@ -4,7 +4,7 @@ fn print(i: i64) -> () {
 fn main() -> () {
     print(inc_0());
 }
-fn inc_0() -> i64 {
+pub fn inc_0() -> i64 {
     1i64 + 1i64
 }
 

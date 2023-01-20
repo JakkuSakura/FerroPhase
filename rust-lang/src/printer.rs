@@ -30,7 +30,12 @@ impl RustSerde {
         };
         return Ok(q);
     }
-    pub fn serialize_fun(&self, n: &FuncDecl, g: Option<&Generics>) -> Result<TokenStream> {
+    pub fn serialize_func_decl(
+        &self,
+        n: &FuncDecl,
+        g: Option<&Generics>,
+        vis: Visibility,
+    ) -> Result<TokenStream> {
         let name = format_ident!("{}", n.name.as_ref().unwrap().name);
         let ret = self.serialize_expr(&n.ret)?;
         let param_names: Vec<_> = n
@@ -64,8 +69,12 @@ impl RustSerde {
         } else {
             gg = quote!();
         }
+        let vis = match vis {
+            Visibility::Public => quote!(pub),
+            Visibility::Private => quote!(),
+        };
         return Ok(quote!(
-            fn #name #gg(#(#param_names: #param_types), *) -> #ret
+            #vis fn #name #gg(#(#param_names: #param_types), *) -> #ret
                 #stmts
 
         ));
@@ -137,11 +146,21 @@ impl RustSerde {
                 .iter()
                 .map(|x| self.serialize_expr(x))
                 .try_collect()?;
-            return Ok(quote!(
-                #(#stmts)*
-            ));
+            if m.name.as_str() == "__file__" {
+                return Ok(quote!(
+                    #(#stmts)*
+                ));
+            } else {
+                let file = format_ident!("{}", m.name.as_str());
+                return Ok(quote!(
+                    pub mod #file {
+                        #(#stmts)*
+                    }
+                ));
+            }
         }
         if let Some(n) = node.as_ast::<Def>() {
+            let vis = n.visibility;
             let mut decl = &n.value;
             let mut g = None;
             if let Some(d) = decl.as_ast::<Generics>() {
@@ -149,7 +168,7 @@ impl RustSerde {
                 g = Some(d)
             }
             if let Some(n) = decl.as_ast::<FuncDecl>() {
-                return self.serialize_fun(n, g);
+                return self.serialize_func_decl(n, g, vis);
             }
         }
         if let Some(n) = node.as_ast::<Ident>() {
