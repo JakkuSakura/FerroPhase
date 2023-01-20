@@ -1,4 +1,4 @@
-use crate::{RawMacro, RawUse, RustSerde};
+use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
 use barebone::{Block, Expr, Ident, *};
 use common::Result;
 use common::*;
@@ -7,7 +7,7 @@ use quote::*;
 
 impl RustSerde {
     pub fn serialize_ident(&self, i: &Ident) -> TokenStream {
-        match i.name.as_str() {
+        match i.as_str() {
             "+" => quote!(+),
             "*" => quote!(*),
             a => format_ident!("{}", a).into_token_stream(),
@@ -170,6 +170,10 @@ impl RustSerde {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast::<RawUse>() {
+            return Ok(n.raw.to_token_stream());
+        }
+
+        if let Some(n) = node.as_ast::<RawImplTrait>() {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast() {

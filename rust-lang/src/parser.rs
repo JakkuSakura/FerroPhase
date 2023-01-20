@@ -1,4 +1,4 @@
-use crate::{RawMacro, RawUse};
+use crate::{RawImplTrait, RawMacro, RawUse};
 use barebone::*;
 use common::*;
 use quote::ToTokens;
@@ -10,15 +10,14 @@ fn parse_ident(i: syn::Ident) -> Ident {
 }
 fn parse_type(t: syn::Type) -> Result<Expr> {
     let t = match t {
-        Type::BareFn(f) => FuncType {
-            params: f
-                .inputs
+        Type::BareFn(f) => Types::func(
+            f.inputs
                 .into_iter()
                 .map(|x| x.ty)
                 .map(parse_type)
                 .try_collect()?,
-            ret: parse_return_type(f.output)?,
-        }
+            parse_return_type(f.output)?,
+        )
         .into(),
         Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
@@ -28,7 +27,8 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
                 // _ => bail!("Type not supported: {}", s),
             }
         }
-        t => bail!("Type not supported {:?}", t.to_token_stream()),
+        Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
+        t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
 }
