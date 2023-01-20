@@ -1,3 +1,5 @@
+extern crate core;
+
 pub mod interpreter;
 pub mod specializer;
 
@@ -99,6 +101,9 @@ pub struct Ident {
 impl Ident {
     pub fn new(name: impl Into<String>) -> Self {
         Self { name: name.into() }
+    }
+    pub fn as_str(&self) -> &str {
+        self.name.as_str()
     }
 }
 impl Ast for Ident {}
@@ -297,6 +302,18 @@ pub struct FuncType {
 }
 impl Ast for FuncType {}
 
+pub struct Types {}
+impl Types {
+    pub fn func(params: Vec<Expr>, ret: Expr) -> FuncType {
+        FuncType { params, ret }
+    }
+    pub fn i64() -> Ident {
+        Ident::new("i64")
+    }
+    pub fn f64() -> Ident {
+        Ident::new("f64")
+    }
+}
 #[cfg(test)]
 mod tests {
     use crate::{Expr, Module};

@@ -45,7 +45,11 @@ fn main() -> Result<()> {
         for row in ctx.take_outputs() {
             writeln!(&mut file_out, "// stdout: {}", row)?;
         }
-        writeln!(&mut file_out, "// result: {:?}", intp_result)?;
+        writeln!(
+            &mut file_out,
+            "// result: {}",
+            RustSerde.serialize(&intp_result)?
+        )?;
     }
     Ok(())
 }

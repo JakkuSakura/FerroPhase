@@ -9,4 +9,4 @@ fn inc_0() -> i64 {
 }
 
 // stdout: 2i64
-// result: Unit
+// result: ()
