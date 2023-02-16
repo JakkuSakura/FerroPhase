@@ -18,24 +18,23 @@ impl Specializer {
 
     pub fn specialize_expr(&self, expr: Expr, ctx: &InterpreterContext) -> Result<Expr> {
         debug!("Specializing {:?}", expr);
-        if let Some(n) = expr.as_ast::<Block>() {
-            return self.specialize_block(n.clone(), ctx).map(|x| x.into());
+        macro specialize($f: ident, $t: ty) {
+            if expr.is_ast::<$t>() {
+                return self.$f(expr.into_ast().unwrap(), ctx).map(|x| x.into());
+            }
         }
-        if let Some(n) = expr.as_ast::<Module>() {
-            return self.specialize_module(n.clone(), ctx).map(|x| x.into());
-        }
+        specialize!(specialize_block, Block);
+        specialize!(specialize_module, Module);
+
         if expr.is_literal() {
             return Ok(expr);
         }
         if expr.is_raw() {
             return Ok(expr);
         }
-        if let Some(d) = expr.as_ast::<Def>() {
-            return self.specialize_def(d.clone(), ctx).map(|x| x.into());
-        }
-        if let Some(c) = expr.as_ast::<Call>() {
-            return self.specialize_call(c.clone(), ctx);
-        }
+        specialize!(specialize_def, Def);
+        specialize!(specialize_call, Call);
+
         if let Some(n) = expr.as_ast::<Ident>() {
             return match n.as_str() {
                 "+" | "-" | "*" => Ok(expr),
@@ -45,9 +44,8 @@ impl Specializer {
                     .with_context(|| format!("Could not find {:?} in context", n.name)),
             };
         }
-        if let Some(c) = expr.as_ast::<Cond>() {
-            return self.specialize_cond(c.clone(), ctx);
-        }
+        specialize!(specialize_cond, Cond);
+
         bail!("Could not specialize {:?}", expr)
         // Ok(expr)
     }
