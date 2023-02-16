@@ -119,6 +119,32 @@ fn parse_call(call: syn::ExprCall) -> Result<Call> {
     })
 }
 
+fn parse_if(i: syn::ExprIf) -> Result<Cond> {
+    let mut cases = vec![CondCase {
+        cond: parse_expr(*i.cond)?,
+        body: parse_block(i.then_branch)?.into(),
+    }];
+    if let Some((_, else_body)) = i.else_branch {
+        'else_check: {
+            let body = parse_expr(*else_body)?;
+            if let Some(m) = body.as_ast::<Cond>() {
+                if m.if_style {
+                    cases.extend(m.cases.clone());
+                    break 'else_check;
+                }
+            }
+            cases.push(CondCase {
+                cond: LiteralBool { value: true }.into(),
+                body,
+            });
+        };
+    }
+
+    Ok(Cond {
+        cases,
+        if_style: true,
+    })
+}
 fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
         // Expr::Array(_) => {}
@@ -133,7 +159,13 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
                 BinOp::Add(_) => Ident::new("+"),
                 BinOp::Sub(_) => Ident::new("-"),
                 BinOp::Mul(_) => Ident::new("*"),
-                _ => bail!("Op not supported {:?}", b.op.to_token_stream()),
+                BinOp::Gt(_) => Ident::new(">"),
+                BinOp::Ge(_) => Ident::new(">="),
+                BinOp::Le(_) => Ident::new("<="),
+                BinOp::Lt(_) => Ident::new("<"),
+                BinOp::Eq(_) => Ident::new("=="),
+                BinOp::Ne(_) => Ident::new("!="),
+                _ => bail!("Op not supported {:?}", b.op),
             };
             Call {
                 fun: op.into(),
@@ -141,7 +173,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
             }
             .into()
         }
-        // Expr::Block(_) => {}
+        syn::Expr::Block(b) if b.label.is_none() => parse_block(b.block)?.into(),
         // Expr::Box(_) => {}
         // Expr::Break(_) => {}
         syn::Expr::Call(c) => parse_call(c)?.into(),
@@ -151,7 +183,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         // Expr::Field(_) => {}
         // Expr::ForLoop(_) => {}
         // Expr::Group(_) => {}
-        // Expr::If(_) => {}
+        syn::Expr::If(i) => parse_if(i)?.into(),
         // Expr::Index(_) => {}
         // Expr::Let(_) => {}
         syn::Expr::Lit(l) => match l.lit {
@@ -179,7 +211,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         // Expr::Verbatim(_) => {}
         // Expr::While(_) => {}
         // Expr::Yield(_) => {}
-        x => bail!("Expr not supported: {:?}", x.to_token_stream()),
+        x => bail!("Expr not supported: {:?}", x),
     })
 }
 
