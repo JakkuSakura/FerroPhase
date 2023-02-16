@@ -1,3 +1,4 @@
+#![feature(decl_macro)]
 extern crate core;
 
 pub mod interpreter;
@@ -11,6 +12,7 @@ use std::sync::Arc;
 pub trait AnyAst: Ast {
     fn as_any(&self) -> &dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
 impl<T: Ast + Any> AnyAst for T {
@@ -20,11 +22,30 @@ impl<T: Ast + Any> AnyAst for T {
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
+    fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
 }
 
 impl dyn AnyAst {
+    pub fn is_ast<T: Ast + 'static>(&self) -> bool {
+        self.as_any().is::<T>()
+    }
+
     pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
-        self.as_any().downcast_ref::<T>()
+        self.as_any().downcast_ref()
+    }
+    pub fn into_ast<T: Ast + 'static>(self: Box<Self>) -> Option<T> {
+        self.into_any().downcast().ok().map(|x| *x)
+    }
+    pub fn into_ast_rc<T: Ast + Clone + 'static>(self: Rc<Self>) -> Option<T> {
+        self.into_any_rc()
+            .downcast()
+            .ok()
+            .map(|x| match Rc::try_unwrap(x) {
+                Ok(x) => x,
+                Err(x) => T::clone(&x),
+            })
     }
 }
 
@@ -53,6 +74,9 @@ impl Expr {
     }
     pub fn get_type(&self) -> &str {
         self.ty
+    }
+    pub fn into_ast<T: Ast + Clone + 'static>(self) -> Option<T> {
+        self.inner.into_ast_rc()
     }
 }
 impl Deref for Expr {
