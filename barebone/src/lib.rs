@@ -10,10 +10,14 @@ use std::sync::Arc;
 
 pub trait AnyAst: Ast {
     fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
 impl<T: Ast + Any> AnyAst for T {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
         self
     }
 }
@@ -21,6 +25,16 @@ impl<T: Ast + Any> AnyAst for T {
 impl dyn AnyAst {
     pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
         self.as_any().downcast_ref::<T>()
+    }
+    pub fn into_ast<T: Ast + 'static, Ret>(
+        self: Box<dyn AnyAst>,
+        call: impl FnOnce(T) -> Ret,
+    ) -> Option<Ret> {
+        if self.as_any().downcast_ref::<T>().is_some() {
+            Some(call(*self.into_any().downcast::<T>().unwrap()))
+        } else {
+            None
+        }
     }
 }
 
