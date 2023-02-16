@@ -137,7 +137,7 @@ impl Ast for LiteralInt {
         true
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct LiteralBool {
     pub value: bool,
 }
@@ -147,7 +147,7 @@ impl Ast for LiteralBool {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialOrd, PartialEq)]
 pub struct LiteralDecimal {
     pub value: f64,
 }
@@ -260,16 +260,17 @@ pub struct Assign {
 impl Ast for Assign {}
 
 #[derive(Debug, Clone)]
-pub struct When {
+pub struct CondCase {
     pub cond: Expr,
-    pub body: Block,
+    pub body: Expr,
 }
-impl Ast for When {}
 
 #[derive(Debug, Clone)]
-pub struct Case {
-    pub cases: Vec<When>,
+pub struct Cond {
+    pub cases: Vec<CondCase>,
+    pub if_style: bool,
 }
+impl Ast for Cond {}
 
 #[derive(Debug, Clone)]
 pub struct ForEach {

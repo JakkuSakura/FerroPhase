@@ -1,7 +1,7 @@
 use crate::interpreter::InterpreterContext;
 use crate::{
-    Block, Call, Def, Expr, FuncDecl, Generics, Ident, LiteralDecimal, LiteralInt, Module, Params,
-    PosArgs, Types, Unit, Visibility,
+    Block, Call, Cond, CondCase, Def, Expr, FuncDecl, Generics, Ident, LiteralBool, LiteralDecimal,
+    LiteralInt, Module, Params, PosArgs, Types, Unit, Visibility,
 };
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -44,6 +44,9 @@ impl Specializer {
                     .get(n)
                     .with_context(|| format!("Could not find {:?} in context", n.name)),
             };
+        }
+        if let Some(c) = expr.as_ast::<Cond>() {
+            return self.specialize_cond(c.clone(), ctx);
         }
         bail!("Could not specialize {:?}", expr)
         // Ok(expr)
@@ -191,6 +194,27 @@ impl Specializer {
                 .try_collect()?,
             last_value: b.last_value,
         })
+    }
+    pub fn specialize_cond(&self, b: Cond, ctx: &InterpreterContext) -> Result<Expr> {
+        for case in &b.cases {
+            if case.cond.as_ast::<LiteralBool>().map(|x| x.value) == Some(true) {
+                return self.specialize_expr(case.body.clone(), ctx);
+            }
+        }
+        Ok(Cond {
+            cases: b
+                .cases
+                .into_iter()
+                .map(|case| {
+                    Ok::<_, Error>(CondCase {
+                        cond: self.specialize_expr(case.cond, ctx)?,
+                        body: self.specialize_expr(case.body, ctx)?,
+                    })
+                })
+                .try_collect()?,
+            if_style: b.if_style,
+        }
+        .into())
     }
     pub fn specialize_def(&self, d: Def, ctx: &InterpreterContext) -> Result<Expr> {
         let fun;
