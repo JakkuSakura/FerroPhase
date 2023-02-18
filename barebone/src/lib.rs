@@ -155,6 +155,12 @@ impl Ast for LiteralInt {
 pub struct LiteralBool {
     pub value: bool,
 }
+impl LiteralBool {
+    pub fn new(i: bool) -> Self {
+        Self { value: i }
+    }
+}
+
 impl Ast for LiteralBool {
     fn is_literal(&self) -> bool {
         true
@@ -348,5 +354,8 @@ impl Types {
     }
     pub fn f64() -> Ident {
         Ident::new("f64")
+    }
+    pub fn bool() -> Ident {
+        Ident::new("bool")
     }
 }
