@@ -37,6 +37,47 @@ impl RustSerde {
         };
         return Ok(q);
     }
+    pub fn serialize_cond(&self, cond: &Cond) -> Result<TokenStream> {
+        let mut ts = vec![];
+        if cond.if_style {
+            for (i, c) in cond.cases.iter().enumerate() {
+                let co = self.serialize_expr(&c.cond)?;
+                let ex = self.serialize_expr(&c.body)?;
+                if i == 0 {
+                    ts.push(quote!(
+                        if #co {
+                            #ex
+                        }
+                    ));
+                } else if c.cond.as_ast::<LiteralBool>().map(|x| x.value) != Some(false) {
+                    ts.push(quote!(
+                        else if #co {
+                            #ex
+                        }
+                    ));
+                } else {
+                    ts.push(quote!(
+                        else {
+                            #ex
+                        }
+                    ));
+                }
+            }
+            Ok(quote!(#(#ts)*))
+        } else {
+            for (_i, c) in cond.cases.iter().enumerate() {
+                let co = self.serialize_expr(&c.cond)?;
+                let ex = self.serialize_expr(&c.body)?;
+                ts.push(quote!(
+                    if #co => { #ex }
+                ))
+            }
+            Ok(quote!(match () {
+                () #(#ts)*
+                _ => {}
+            }))
+        }
+    }
     pub fn serialize_func_decl(
         &self,
         n: &FuncDecl,
@@ -121,6 +162,12 @@ impl RustSerde {
     }
     pub fn serialize_literal(&self, n: &Expr) -> Result<TokenStream> {
         if let Some(n) = n.as_ast::<LiteralInt>() {
+            let n = n.value;
+            return Ok(quote!(
+                #n
+            ));
+        }
+        if let Some(n) = n.as_ast::<LiteralBool>() {
             let n = n.value;
             return Ok(quote!(
                 #n
@@ -218,6 +265,11 @@ impl RustSerde {
         if let Some(n) = node.as_ast() {
             return self.serialize_select(n);
         }
+
+        if let Some(n) = node.as_ast() {
+            return self.serialize_cond(n);
+        }
+
         bail!("Unable to serialize {:?}", node)
     }
 }

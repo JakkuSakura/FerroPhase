@@ -1,18 +1,17 @@
-use crate::interpreter::InterpreterContext;
-use crate::{
-    Block, Call, Cond, CondCase, Def, Expr, FuncDecl, Generics, Ident, LiteralBool, LiteralDecimal,
-    LiteralInt, Module, Params, PosArgs, Types, Unit, Visibility,
-};
+use crate::interpreter::{Interpreter, InterpreterContext};
+use crate::*;
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct Specializer {
     spec_id: AtomicUsize,
+    serializer: Rc<dyn Serializer>,
 }
 impl Specializer {
-    pub fn new() -> Self {
+    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
+            serializer,
         }
     }
 
@@ -37,7 +36,7 @@ impl Specializer {
 
         if let Some(n) = expr.as_ast::<Ident>() {
             return match n.as_str() {
-                "+" | "-" | "*" => Ok(expr),
+                "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(expr),
                 "print" => Ok(expr),
                 _ => ctx
                     .get(n)
@@ -60,6 +59,9 @@ impl Specializer {
             match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_type(params.first().context("No param")?, ctx)
+                }
+                ">" | ">=" | "<" | "<=" | "==" | "!=" => {
+                    return Ok(Types::bool().into());
                 }
                 "print" => return Ok(Unit.into()),
                 _ => inner = ctx.get(ident),
@@ -195,8 +197,17 @@ impl Specializer {
     }
     pub fn specialize_cond(&self, b: Cond, ctx: &InterpreterContext) -> Result<Expr> {
         for case in &b.cases {
-            if case.cond.as_ast::<LiteralBool>().map(|x| x.value) == Some(true) {
-                return self.specialize_expr(case.body.clone(), ctx);
+            let interpreted =
+                Interpreter::new(self.serializer.clone()).interprete(&case.cond, ctx)?;
+            let ret = interpreted.as_ast::<LiteralBool>().map(|x| x.value);
+            match ret {
+                Some(true) => {
+                    return self.specialize_expr(case.body.clone(), ctx);
+                }
+                Some(false) => {
+                    continue;
+                }
+                None => break,
             }
         }
         Ok(Cond {

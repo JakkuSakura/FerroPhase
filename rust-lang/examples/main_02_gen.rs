@@ -6,11 +6,11 @@ fn print(i: impl Display) -> () {
 fn main() -> () {
     do_op_2();
 }
-pub fn add_0() -> i64 {
-    1i64 + 2i64
-}
 pub fn add_1() -> f64 {
-    3f64 + 4f64
+    3f64 * 4f64
+}
+pub fn add_0() -> i64 {
+    1i64 * 2i64
 }
 pub fn do_op_2() -> () {
     print(add_0());
