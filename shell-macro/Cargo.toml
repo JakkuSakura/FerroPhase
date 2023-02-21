@@ -1,10 +1,17 @@
 [package]
-name = "shell-lang"
+name = "shell-macro"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+proc-macro = true
+
 [dependencies]
+syn = "1"
+quote = "1"
+proc-macro2 = "1"
 rust-lang = { path = "../rust-lang" }
-shell-macro = { path = "../shell-macro" }
+common = { path = "../common" }
+barebone = { path = "../barebone" }

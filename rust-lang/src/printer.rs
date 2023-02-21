@@ -10,6 +10,13 @@ impl RustSerde {
         match i.as_str() {
             "+" => quote!(+),
             "*" => quote!(*),
+            ">" => quote!(>),
+            ">=" => quote!(>=),
+            "<" => quote!(<),
+            "<=" => quote!(<=),
+            "==" => quote!(==),
+            "!=" => quote!(!=),
+            "|" => quote!(|),
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
@@ -79,7 +86,7 @@ impl RustSerde {
 
         ));
     }
-    pub fn serialize_apply(&self, node: &Call) -> Result<TokenStream> {
+    pub fn serialize_call(&self, node: &Call) -> Result<TokenStream> {
         let fun = self.serialize_expr(&node.fun)?;
         let fun_str = fun.to_string();
         let args: Vec<_> = node
@@ -92,6 +99,7 @@ impl RustSerde {
             "+" => Ok(quote!(#(#args) + *)),
             "-" => Ok(quote!(#(#args) - *)),
             "/" => Ok(quote!(#(#args) / *)),
+            "|" => Ok(quote!(#(#args) | *)),
             "*" => {
                 let mut result = vec![];
                 for (i, a) in args.into_iter().enumerate() {
@@ -102,9 +110,10 @@ impl RustSerde {
                 }
                 Ok(quote!(#(#result)*))
             }
-            x if x.contains(".") => Ok(quote!(
-                (#fun)(#(#args), *)
-            )),
+            // TODO: can't tell method or member
+            // x if x.contains(".") => Ok(quote!(
+            //     (#fun)(#(#args), *)
+            // )),
             _ => Ok(quote!(
                 #fun(#(#args), *)
             )),
@@ -134,6 +143,14 @@ impl RustSerde {
         let ret = self.serialize_expr(&fun.ret)?;
         Ok(quote!(
             fn(#(#args), *) -> #ret
+        ))
+    }
+    pub fn serialize_select(&self, select: &Select) -> Result<TokenStream> {
+        let obj = self.serialize_expr(&select.obj)?;
+        let field = self.serialize_ident(&select.field);
+
+        Ok(quote!(
+            #obj.#field
         ))
     }
     pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
@@ -180,7 +197,7 @@ impl RustSerde {
         }
 
         if let Some(n) = node.as_ast::<Call>() {
-            return self.serialize_apply(n);
+            return self.serialize_call(n);
         }
         if node.is_literal() {
             return self.serialize_literal(node);
@@ -198,7 +215,9 @@ impl RustSerde {
         if let Some(n) = node.as_ast() {
             return self.serialize_func_type(n);
         }
-
+        if let Some(n) = node.as_ast() {
+            return self.serialize_select(n);
+        }
         bail!("Unable to serialize {:?}", node)
     }
 }
