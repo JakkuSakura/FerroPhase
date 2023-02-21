@@ -1,10 +1,10 @@
 pub struct SourceProcess {
     pub name: &'static str,
-    pub val: i32
+    pub val: i64
 }
 
 impl SourceProcess {
-    pub fn spawn(name: &'static str, val: i32) -> SourceProcess {
+    pub fn spawn(name: &'static str, val: i64) -> SourceProcess {
         SourceProcess {
             name,
             val,
@@ -13,7 +13,7 @@ impl SourceProcess {
 }
 
 impl Actor for SourceProcess {
-    type Stdout = i32;
+    type Stdout = i64;
     type Stdin = ();
     fn process(&self, _item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
         println!("This is {}, output is {}", self.name, self.val);
@@ -31,15 +31,21 @@ impl AddProcess {
             name,
         }
     }
+    pub fn add_inner(&self, item: i64, v: i64) -> i64 {
+        let output = item + v;
+        println!("This is {}, item is {}, output is {}", self.name, item, output);
+        output
+    }
+    pub fn add(&self, v: i64) -> impl Actor<Stdin=i64, Stdout=i64> + '_ {
+        ActorFn::new(move |i| Ok(self.add_inner(i, v)))
+    }
 }
 
 impl Actor for AddProcess {
-    type Stdout = i32;
-    type Stdin = i32;
+    type Stdin = i64;
+    type Stdout = i64;
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
-        let output = item + 1;
-        println!("This is {}, item is {}, output is {}", self.name, item, output);
-        Ok(output)
+        Ok(self.add_inner(item, 1))
     }
 }
 
@@ -57,7 +63,7 @@ impl SinkProcess {
 
 impl Actor for SinkProcess {
     type Stdout = ();
-    type Stdin = i32;
+    type Stdin = i64;
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
         println!("This is {}, result is {}", self.name, item);
 
