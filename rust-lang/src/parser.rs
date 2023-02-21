@@ -118,6 +118,17 @@ fn parse_call(call: syn::ExprCall) -> Result<Call> {
         },
     })
 }
+fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
+    Ok(Call {
+        fun: Select {
+            obj: parse_expr(*call.receiver)?,
+            field: parse_ident(call.method),
+        }.into(),
+        args: PosArgs {
+            args: call.args.into_iter().map(parse_expr).try_collect()?,
+        },
+    })
+}
 
 fn parse_if(i: syn::ExprIf) -> Result<Cond> {
     let mut cases = vec![CondCase {
@@ -165,6 +176,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
                 BinOp::Lt(_) => Ident::new("<"),
                 BinOp::Eq(_) => Ident::new("=="),
                 BinOp::Ne(_) => Ident::new("!="),
+                BinOp::BitOr(_) => Ident::new("|"),
                 _ => bail!("Op not supported {:?}", b.op),
             };
             Call {
@@ -194,7 +206,9 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         // Expr::Loop(_) => {}
         syn::Expr::Macro(m) => RawMacro { raw: m }.into(),
         // Expr::Match(_) => {}
-        // Expr::MethodCall(_) => {}
+        syn::Expr::MethodCall(c) => {
+            parse_method_call(c)?.into()
+        }
         // Expr::Paren(_) => {}
         syn::Expr::Path(p) => parse_path(p.path)?.into(),
         // Expr::Range(_) => {}
@@ -308,6 +322,9 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
 }
 
 impl RustSerde {
+    pub fn deserialize_expr(&self, code: syn::Expr) -> Result<Expr> {
+        parse_expr(code)
+    }
     pub fn deserialize_file(&self, code: syn::File) -> Result<Expr> {
         parse_file(code)
     }

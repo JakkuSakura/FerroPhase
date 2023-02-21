@@ -1,3 +1,5 @@
+pub use shell_macro::shell;
+use std::marker::PhantomData;
 #[macro_export]
 macro_rules! pipe {
     (inner $proc: tt) => {
@@ -22,10 +24,11 @@ pub enum Stderr {
 
 
 pub trait Actor {
-    type Stdout;
     type Stdin;
+    type Stdout;
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr>;
 }
+
 impl<'a, T: Actor> Actor for &'a T {
     type Stdout = T::Stdout;
     type Stdin = T::Stdin;
@@ -34,6 +37,7 @@ impl<'a, T: Actor> Actor for &'a T {
         (**self).process(item)
     }
 }
+
 
 pub trait Source: Actor<Stdin=()> {
     fn start(&self) -> Result<Self::Stdout, Stderr>;
@@ -70,5 +74,25 @@ impl<L: Actor, R: Actor<Stdin=L::Stdout>> Actor for Pipe<L, R> {
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
         let out = self.l.process(item)?;
         self.r.process(out)
+    }
+}
+pub struct ActorFn<I, O, F: Fn(I) -> Result<O, Stderr>>{
+    f: F,
+    _p: PhantomData<(I, O)>
+}
+impl<I, O, F: Fn(I) -> Result<O, Stderr>> ActorFn<I, O, F> {
+    pub fn new(f: F) -> Self {
+        Self {
+            f,
+            _p: Default::default(),
+        }
+    }
+}
+impl<I, O, F: Fn(I) -> Result<O, Stderr>> Actor for ActorFn<I, O, F> {
+    type Stdin = I;
+    type Stdout = O;
+
+    fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
+        (self.f)(item)
     }
 }
