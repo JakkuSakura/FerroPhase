@@ -1,14 +1,18 @@
 #[macro_export]
 macro_rules! pipe {
-    ($proc: tt) => {
+    (inner $proc: tt) => {
         $proc
     };
-    ($proc1: tt | $proc2: tt) => {
+    (inner $proc1: tt | $proc2: tt) => {
         crate::Pipe::new($proc1, $proc2)
     };
-    ($proc1: tt | $proc2: tt $(| $proc: tt)+) => {{
-        let p = pipe!($proc1 | $proc2);
-        pipe!(p $(| $proc)+)
+    (inner $proc1: tt | $proc2: tt $(| $proc: tt)+) => {{
+        let p = pipe!(inner $proc1 | $proc2);
+        pipe!(inner p $(| $proc)+)
+    }};
+
+    ($($proc: tt) | +) => {{
+        pipe!(inner $((&$proc)) |+)
     }};
 }
 #[derive(Debug, Clone)]
@@ -21,6 +25,14 @@ pub trait Actor {
     type Stdout;
     type Stdin;
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr>;
+}
+impl<'a, T: Actor> Actor for &'a T {
+    type Stdout = T::Stdout;
+    type Stdin = T::Stdin;
+
+    fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
+        (**self).process(item)
+    }
 }
 
 pub trait Source: Actor<Stdin=()> {

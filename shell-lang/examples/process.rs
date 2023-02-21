@@ -6,4 +6,6 @@ fn main() {
     let add = AddProcess::spawn("add");
     let dest = SinkProcess::spawn("dest");
     let _ = pipe!(src | add | dest).start();
+    let _ = pipe!(src | add | dest).start();
+
 }
