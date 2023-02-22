@@ -5,7 +5,7 @@ fn main() -> () {
     print(inc_0());
 }
 pub fn inc_0() -> i64 {
-    1i64 * 1i64
+    1i64 + 1i64
 }
 
 // stdout: 2i64
