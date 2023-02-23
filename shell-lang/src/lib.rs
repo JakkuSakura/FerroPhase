@@ -1,3 +1,5 @@
+#![feature(associated_type_defaults)]
+
 pub use shell_macro::shell;
 use std::marker::PhantomData;
 #[macro_export]
@@ -22,45 +24,42 @@ pub enum Stderr {
     Abort,
 }
 
-// TODO: make stdin a parameter
-pub trait Actor {
-    type Stdin;
+pub trait Actor<Stdin> {
     type Stdout;
-    fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr>;
+    fn process(&self, item: Stdin) -> Result<Self::Stdout, Stderr>;
 }
 
-impl<'a, T: Actor> Actor for &'a T {
+impl<'a, Stdin, T: Actor<Stdin>> Actor<Stdin> for &'a T {
     type Stdout = T::Stdout;
-    type Stdin = T::Stdin;
 
-    fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: Stdin) -> Result<Self::Stdout, Stderr> {
         (**self).process(item)
     }
 }
 
-pub trait Source: Actor<Stdin = ()> {}
+pub trait Source: Actor<()> {}
 
-impl<T: Actor<Stdin = ()>> Source for T {}
+impl<T: Actor<()>> Source for T {}
 
-pub trait Sink: Actor<Stdout = ()> {}
-
-impl<T: Actor<Stdout = ()>> Sink for T {}
-
-pub struct Pipe<L: Actor, R: Actor> {
+pub struct Pipe<Stdin, L: Actor<Stdin>, R: Actor<L::Stdout>> {
     l: L,
     r: R,
+    stdin: PhantomData<Stdin>,
 }
 
-impl<L: Actor, R: Actor<Stdin = L::Stdout>> Pipe<L, R> {
+impl<Stdin, L: Actor<Stdin>, R: Actor<L::Stdout>> Pipe<Stdin, L, R> {
     pub fn new(l: L, r: R) -> Self {
-        Self { l, r }
+        Self {
+            l,
+            r,
+            stdin: Default::default(),
+        }
     }
 }
 
-impl<L: Actor, R: Actor<Stdin = L::Stdout>> Actor for Pipe<L, R> {
+impl<L: Actor<Stdin>, R: Actor<L::Stdout>, Stdin> Actor<Stdin> for Pipe<Stdin, L, R> {
     type Stdout = R::Stdout;
-    type Stdin = L::Stdin;
-    fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: Stdin) -> Result<Self::Stdout, Stderr> {
         let out = self.l.process(item)?;
         self.r.process(out)
     }
@@ -77,11 +76,10 @@ impl<I, O, F: Fn(I) -> Result<O, Stderr>> ActorFn<I, O, F> {
         }
     }
 }
-impl<I, O, F: Fn(I) -> Result<O, Stderr>> Actor for ActorFn<I, O, F> {
-    type Stdin = I;
+impl<I, O, F: Fn(I) -> Result<O, Stderr>> Actor<I> for ActorFn<I, O, F> {
     type Stdout = O;
 
-    fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: I) -> Result<Self::Stdout, Stderr> {
         (self.f)(item)
     }
 }
