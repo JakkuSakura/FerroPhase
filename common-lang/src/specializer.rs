@@ -107,7 +107,7 @@ impl Specializer {
         if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.as_str()).unwrap_or("<fun>");
             let args_ = self.serializer.serialize(&args)?;
-            debug!("Invoking {} with {:?}", name, args_);
+            debug!("Invoking {} with {}", name, args_);
             let sub = ctx.child();
             for (i, arg) in args.args.iter().cloned().enumerate() {
                 let param = f
@@ -121,7 +121,8 @@ impl Specializer {
             let new_body =
                 self.specialize_block(f.body.clone().context("Funtion body is empty")?, &sub)?;
             let bd = self.serializer.serialize(&new_body)?;
-            debug!("Specialied {} with {:?} => {}", name, args, bd);
+            let args_ = self.serializer.serialize(&args)?;
+            debug!("Specialied {} with {} => {}", name, args_, bd);
             let new_name = Ident::new(format!(
                 "{}_{}",
                 name,
