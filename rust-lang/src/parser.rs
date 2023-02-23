@@ -1,6 +1,6 @@
 use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
-use barebone::*;
 use common::*;
+use common_lang::*;
 use quote::ToTokens;
 use syn::{
     BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Pat, ReturnType, Stmt, Type, TypeParamBound,
@@ -123,7 +123,8 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
         fun: Select {
             obj: parse_expr(*call.receiver)?,
             field: parse_ident(call.method),
-        }.into(),
+        }
+        .into(),
         args: PosArgs {
             args: call.args.into_iter().map(parse_expr).try_collect()?,
         },
@@ -206,9 +207,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         // Expr::Loop(_) => {}
         syn::Expr::Macro(m) => RawMacro { raw: m }.into(),
         // Expr::Match(_) => {}
-        syn::Expr::MethodCall(c) => {
-            parse_method_call(c)?.into()
-        }
+        syn::Expr::MethodCall(c) => parse_method_call(c)?.into(),
         // Expr::Paren(_) => {}
         syn::Expr::Path(p) => parse_path(p.path)?.into(),
         // Expr::Range(_) => {}
