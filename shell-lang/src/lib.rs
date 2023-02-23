@@ -14,7 +14,7 @@ macro_rules! pipe {
     }};
 
     ($($proc: tt) | +) => {{
-        pipe!(inner $((&$proc)) |+)
+        pipe!(inner $(($proc)) |+)
     }};
 }
 #[derive(Debug, Clone)]
