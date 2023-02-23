@@ -27,8 +27,7 @@ fn process_pipe(
                 if x0.as_ast::<Ident>().is_some() {
                     return x0.clone();
                 } else if let Some(_x) = get_pipe_call_op(x0) {
-                    let x = process_pipe(x0, decl, get_id.clone());
-                    return x.clone();
+                    unreachable!()
                 }
 
                 let id = (get_id)();
