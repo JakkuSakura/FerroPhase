@@ -1,38 +1,46 @@
-use barebone::*;
 use common::*;
+use common_lang::*;
 use proc_macro::TokenStream;
-use std::cell::RefCell;
 use quote::quote;
 use rust_lang::*;
+use std::cell::RefCell;
 
-fn process_pipe(expr: &Expr, decl: &mut Vec<proc_macro2::TokenStream>, get_id: impl Fn() -> Ident + Clone) -> Expr {
+fn process_pipe(
+    expr: &Expr,
+    decl: &mut Vec<proc_macro2::TokenStream>,
+    get_id: impl Fn() -> Ident + Clone,
+) -> Expr {
     if let Some(x) = expr.as_ast::<Call>() {
         if x.fun.as_ast::<Ident>() == Some(&Ident::new("|")) {
-            let args = x.args.args.iter().map(|x0| {
-                if x0.as_ast::<Ident>().is_some() {
-                    return x0.clone();
-                } else if let Some(x) = x0.as_ast::<Call>() {
-                    if x.fun.as_ast::<Ident>() == Some(&Ident::new("|")) {
-                        let x = process_pipe(x0, decl, get_id.clone());
-                        return x.clone();
+            let args = x
+                .args
+                .args
+                .iter()
+                .map(|x0| {
+                    if x0.as_ast::<Ident>().is_some() {
+                        return x0.clone();
+                    } else if let Some(x) = x0.as_ast::<Call>() {
+                        if x.fun.as_ast::<Ident>() == Some(&Ident::new("|")) {
+                            let x = process_pipe(x0, decl, get_id.clone());
+                            return x.clone();
+                        }
                     }
-                }
 
-                let id = (get_id)();
-                let id_ = RustSerde.serialize_ident(&id);
-                let expr = RustSerde.serialize_expr(&x0).unwrap();
-                decl.push(quote!(
-                           let #id_ = &#expr;
-                        ));
-                id.into()
-            }).collect();
+                    let id = (get_id)();
+                    let id_ = RustSerde.serialize_ident(&id);
+                    let expr = RustSerde.serialize_expr(&x0).unwrap();
+                    decl.push(quote!(
+                       let #id_ = &#expr;
+                    ));
+                    id.into()
+                })
+                .collect();
 
             return Call {
                 fun: x.fun.clone(),
-                args: PosArgs {
-                    args
-                },
-            }.into();
+                args: PosArgs { args },
+            }
+            .into();
         }
     }
     expr.clone()
