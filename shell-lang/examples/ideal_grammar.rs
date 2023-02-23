@@ -11,3 +11,5 @@ fn main() {
     shell!(src | adder.add(5) | dest);
     shell!(src | adder.add(6) | dest);
 }
+// TODO: use move semantics in shell
+// to share use &, to cross thread use &Arc
