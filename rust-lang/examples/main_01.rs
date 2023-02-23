@@ -1,5 +1,5 @@
 fn inc(i: i64) -> i64 {
-    i + 1
+    i + 1 + 2 + 3
 }
 fn double(i: i64) -> i64 {
     i * 2
