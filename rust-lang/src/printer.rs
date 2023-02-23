@@ -160,11 +160,11 @@ impl RustSerde {
         }
         let fun_str = fun.to_string();
 
-        match fun_str.as_str() {
-            "+" => Ok(quote!(#(#args) + *)),
-            "-" => Ok(quote!(#(#args) - *)),
-            "/" => Ok(quote!(#(#args) / *)),
-            "|" => Ok(quote!(#(#args) | *)),
+        let code = match fun_str.as_str() {
+            "+" => quote!(#(#args) + *),
+            "-" => quote!(#(#args) - *),
+            "/" => quote!(#(#args) / *),
+            "|" => quote!(#(#args) | *),
             "*" => {
                 let mut result = vec![];
                 for (i, a) in args.into_iter().enumerate() {
@@ -173,13 +173,17 @@ impl RustSerde {
                     }
                     result.push(a);
                 }
-                Ok(quote!(#(#result)*))
+                quote!(#(#result)*)
             }
             // TODO: can't tell method or member
-            _ => Ok(quote!(
+            _ => quote!(
                 #fun(#(#args), *)
-            )),
+            ),
+        };
+        if true {
+            return Ok(quote!((#code)));
         }
+        Ok(code)
     }
     pub fn serialize_literal(&self, n: &dyn AnyAst) -> Result<TokenStream> {
         if let Some(n) = n.as_ast::<LiteralInt>() {

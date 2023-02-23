@@ -134,16 +134,11 @@ impl Interpreter {
     pub fn interprete_call(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
         let fun = self.interprete(&node.fun, ctx)?;
 
-        let args: Vec<_> = node
-            .args
-            .args
-            .iter()
-            .map(|x| self.interprete(x, ctx))
-            .try_collect()?;
+        let args = self.interprete_args(&node.args, ctx)?;
         if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("<fun>");
             let sub = ctx.child();
-            for (i, arg) in args.iter().cloned().enumerate() {
+            for (i, arg) in args.args.iter().cloned().enumerate() {
                 let param = f
                     .params
                     .params
@@ -152,17 +147,22 @@ impl Interpreter {
                 // TODO: type check here
                 sub.insert(param.name.clone(), arg);
             }
-
-            debug!("Invoking {} with {:?}", name, args);
+            let args_ = self.serializer.serialize(&args)?;
+            debug!("Invoking {} with {}", name, args_);
             let ret =
                 self.interprete_block(f.body.as_ref().context("Funtion body is empty")?, &sub)?;
-            debug!("Invoked {} with {:?} => {:?}", name, args, ret);
+            let ret_ = self.serializer.serialize(&*ret)?;
+            debug!("Invoked {} with {} => {}", name, args_, ret_);
             return Ok(ret);
         }
         if let Some(f) = fun.as_ast::<BuiltinFn>() {
-            debug!("Invoking {} with {:?}", f.name, args);
-            let ret = f.call(&args, ctx)?;
-            debug!("Invoked {} with {:?} => {:?}", f.name, args, ret);
+            let args_ = self.serializer.serialize(&args)?;
+
+            debug!("Invoking {} with {}", f.name, args_);
+            let ret = f.call(&args.args, ctx)?;
+            let ret_ = self.serializer.serialize(&*ret)?;
+
+            debug!("Invoked {} with {} => {}", f.name, args_, ret_);
             return Ok(ret);
         }
 
@@ -355,6 +355,14 @@ impl Interpreter {
             }
         }
         bail!("Could not process {:?}", n)
+    }
+    pub fn interprete_args(&self, node: &PosArgs, ctx: &InterpreterContext) -> Result<PosArgs> {
+        let args: Vec<_> = node
+            .args
+            .iter()
+            .map(|x| self.interprete(x, ctx))
+            .try_collect()?;
+        Ok(PosArgs { args })
     }
     pub fn interprete(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
         debug!("Interpreting {}", self.serializer.serialize(&**node)?);
