@@ -20,6 +20,19 @@ impl RustSerde {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
+    pub fn serialize_def(&self, n: &Def) -> Result<TokenStream> {
+        let vis = n.visibility;
+        let mut decl = &n.value;
+        let mut g = None;
+        if let Some(d) = decl.as_ast::<Generics>() {
+            decl = &d.value;
+            g = Some(d)
+        }
+        if let Some(n) = decl.as_ast::<FuncDecl>() {
+            return self.serialize_func_decl(n, g, vis);
+        }
+        bail!("Not supported {:?}", n)
+    }
     pub fn serialize_block(&self, n: &Block) -> Result<TokenStream> {
         let stmts: Vec<_> = n
             .stmts
@@ -250,16 +263,7 @@ impl RustSerde {
             }
         }
         if let Some(n) = node.as_ast::<Def>() {
-            let vis = n.visibility;
-            let mut decl = &n.value;
-            let mut g = None;
-            if let Some(d) = decl.as_ast::<Generics>() {
-                decl = &d.value;
-                g = Some(d)
-            }
-            if let Some(n) = decl.as_ast::<FuncDecl>() {
-                return self.serialize_func_decl(n, g, vis);
-            }
+            return self.serialize_def(n);
         }
         if let Some(n) = node.as_ast::<Ident>() {
             return Ok(self.serialize_ident(n).to_token_stream());
