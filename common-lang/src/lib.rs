@@ -14,10 +14,12 @@ pub trait AnyAst: Ast {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
     fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
-    fn clone_any_rc(&self) -> Rc<dyn AnyAst>;
+    fn clone_any_rc(&self) -> Rc<dyn AnyAst>
+    where
+        Self: Clone;
 }
 
-impl<T: Ast + Clone + Any> AnyAst for T {
+impl<T: Ast> AnyAst for T {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -30,26 +32,29 @@ impl<T: Ast + Clone + Any> AnyAst for T {
     fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
-    fn clone_any_rc(&self) -> Rc<dyn AnyAst> {
+    fn clone_any_rc(&self) -> Rc<dyn AnyAst>
+    where
+        Self: Clone,
+    {
         Rc::new(self.clone())
     }
 }
 
 impl dyn AnyAst {
-    pub fn is_ast<T: Ast + 'static>(&self) -> bool {
+    pub fn is_ast<T: Ast>(&self) -> bool {
         self.as_any().is::<T>()
     }
 
-    pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
-        self.as_any().downcast_ref()
+    pub fn as_ast<T: Ast>(&self) -> Option<&T> {
+        self.as_any().downcast_ref::<T>()
     }
-    pub fn as_ast_mut<T: Ast + 'static>(&mut self) -> Option<&mut T> {
+    pub fn as_ast_mut<T: Ast>(&mut self) -> Option<&mut T> {
         self.as_any_mut().downcast_mut()
     }
-    pub fn into_ast<T: Ast + 'static>(self: Box<Self>) -> Option<T> {
+    pub fn into_ast<T: Ast>(self: Box<Self>) -> Option<T> {
         self.into_any().downcast().ok().map(|x| *x)
     }
-    pub fn into_ast_rc<T: Ast + Clone + 'static>(self: Rc<Self>) -> Option<T> {
+    pub fn into_ast_rc<T: Ast + Clone>(self: Rc<Self>) -> Option<T> {
         self.into_any_rc()
             .downcast()
             .ok()
@@ -60,7 +65,7 @@ impl dyn AnyAst {
     }
 }
 
-pub trait Ast: Debug {
+pub trait Ast: Debug + Any + 'static {
     fn is_literal(&self) -> bool {
         false
     }
@@ -68,7 +73,7 @@ pub trait Ast: Debug {
         false
     }
 }
-impl<T: Ast> Ast for Arc<T> {}
+impl<T: Ast + ?Sized> Ast for Arc<T> {}
 
 #[derive(Clone)]
 pub struct Expr {
@@ -93,7 +98,7 @@ impl Expr {
         if Rc::weak_count(&self.inner) == 0 && Rc::strong_count(&self.inner) == 1 {
             Rc::get_mut(&mut self.inner).unwrap().as_ast_mut::<T>()
         } else {
-            let inner = self.inner.clone_any_rc();
+            let inner = self.inner.as_ast::<T>()?.clone_any_rc();
             self.inner = inner;
             Rc::get_mut(&mut self.inner).unwrap().as_ast_mut::<T>()
         }
@@ -123,7 +128,7 @@ impl<T: Ast + Clone + 'static> From<T> for Expr {
     }
 }
 pub trait Serializer {
-    fn serialize(&self, node: &Expr) -> Result<String>;
+    fn serialize(&self, node: &dyn AnyAst) -> Result<String>;
 }
 
 pub trait Deserializer {
@@ -163,7 +168,7 @@ impl Ident {
 }
 impl Ast for Ident {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct LiteralInt {
     pub value: i64,
 }
@@ -248,6 +253,7 @@ impl Ast for LiteralUnknown {
 pub struct PosArgs {
     pub args: Vec<Expr>,
 }
+impl Ast for PosArgs {}
 
 #[derive(Debug, Clone)]
 pub struct KwArgs {

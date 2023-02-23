@@ -9,7 +9,7 @@ use std::rc::Rc;
 fn specialize_inner(code: Expr) -> Result<TokenStream> {
     let ctx = InterpreterContext::new();
     let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(code, &ctx)?;
-    let node = RustSerde.serialize_expr(&node)?;
+    let node = RustSerde.serialize_expr(&*node)?;
     Ok(node.into())
 }
 #[proc_macro]

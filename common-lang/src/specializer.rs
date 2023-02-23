@@ -16,7 +16,7 @@ impl Specializer {
     }
 
     pub fn specialize_expr(&self, expr: Expr, ctx: &InterpreterContext) -> Result<Expr> {
-        debug!("Specializing {:?}", expr);
+        debug!("Specializing {}", self.serializer.serialize(&*expr)?);
         macro specialize($f: ident, $t: ty) {
             if expr.is_ast::<$t>() {
                 return self.$f(expr.into_ast().unwrap(), ctx).map(|x| x.into());
@@ -85,25 +85,31 @@ impl Specializer {
         if let Some(_) = expr.as_ast::<LiteralDecimal>() {
             return Ok(Types::f64().into());
         }
-        bail!("Could not infer type of {:?}", expr)
+        bail!(
+            "Could not infer type of {}",
+            self.serializer.serialize(&**expr)?
+        )
     }
     pub fn specialize_call(&self, node: Call, ctx: &InterpreterContext) -> Result<Expr> {
         let mut fun = self.specialize_expr(node.fun.clone(), ctx)?;
         if let Some(g) = fun.as_ast::<Generics>() {
             fun = g.value.clone();
         }
-        let args: Vec<_> = node
-            .args
-            .args
-            .iter()
-            .cloned()
-            .map(|x| self.specialize_expr(x, ctx))
-            .try_collect()?;
+        let args = PosArgs {
+            args: node
+                .args
+                .args
+                .iter()
+                .cloned()
+                .map(|x| self.specialize_expr(x, ctx))
+                .try_collect()?,
+        };
         if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.as_str()).unwrap_or("<fun>");
-            debug!("Invoking {} with {:?}", name, args);
+            let args_ = self.serializer.serialize(&args)?;
+            debug!("Invoking {} with {:?}", name, args_);
             let sub = ctx.child();
-            for (i, arg) in args.iter().cloned().enumerate() {
+            for (i, arg) in args.args.iter().cloned().enumerate() {
                 let param = f
                     .params
                     .params
@@ -114,7 +120,8 @@ impl Specializer {
             }
             let new_body =
                 self.specialize_block(f.body.clone().context("Funtion body is empty")?, &sub)?;
-            debug!("Specialied {} with {:?} => {:?}", name, args, new_body);
+            let bd = self.serializer.serialize(&new_body)?;
+            debug!("Specialied {} with {:?} => {}", name, args, bd);
             let new_name = Ident::new(format!(
                 "{}_{}",
                 name,
@@ -147,7 +154,7 @@ impl Specializer {
         if let Some(id) = fun.as_ast::<Ident>() {
             return Ok(Call {
                 fun: id.clone().into(),
-                args: PosArgs { args },
+                args,
             }
             .into());
         }

@@ -1,7 +1,7 @@
 use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
 use common::Result;
 use common::*;
-use common_lang::{Block, Expr, Ident, *};
+use common_lang::{Block, Ident, *};
 use proc_macro2::TokenStream;
 use quote::*;
 
@@ -24,7 +24,7 @@ impl RustSerde {
         let stmts: Vec<_> = n
             .stmts
             .iter()
-            .map(|x| self.serialize_expr(x))
+            .map(|x| self.serialize_expr(&**x))
             .try_collect()?;
         let q = if n.last_value {
             quote!({
@@ -41,8 +41,8 @@ impl RustSerde {
         let mut ts = vec![];
         if cond.if_style {
             for (i, c) in cond.cases.iter().enumerate() {
-                let co = self.serialize_expr(&c.cond)?;
-                let ex = self.serialize_expr(&c.body)?;
+                let co = self.serialize_expr(&*c.cond)?;
+                let ex = self.serialize_expr(&*c.body)?;
                 if i == 0 {
                     ts.push(quote!(
                         if #co {
@@ -66,8 +66,8 @@ impl RustSerde {
             Ok(quote!(#(#ts)*))
         } else {
             for (_i, c) in cond.cases.iter().enumerate() {
-                let co = self.serialize_expr(&c.cond)?;
-                let ex = self.serialize_expr(&c.body)?;
+                let co = self.serialize_expr(&*c.cond)?;
+                let ex = self.serialize_expr(&*c.body)?;
                 ts.push(quote!(
                     if #co => { #ex }
                 ))
@@ -85,7 +85,7 @@ impl RustSerde {
         vis: Visibility,
     ) -> Result<TokenStream> {
         let name = format_ident!("{}", n.name.as_ref().unwrap().name);
-        let ret = self.serialize_expr(&n.ret)?;
+        let ret = self.serialize_expr(&*n.ret)?;
         let param_names: Vec<_> = n
             .params
             .params
@@ -96,7 +96,7 @@ impl RustSerde {
             .params
             .params
             .iter()
-            .map(|x| self.serialize_expr(&x.ty))
+            .map(|x| self.serialize_expr(&*x.ty))
             .try_collect()?;
         let stmts = self.serialize_block(n.body.as_ref().unwrap())?;
         let gg;
@@ -111,7 +111,7 @@ impl RustSerde {
                 .params
                 .params
                 .iter()
-                .map(|x| self.serialize_expr(&x.ty))
+                .map(|x| self.serialize_expr(&*x.ty))
                 .try_collect()?;
             gg = quote!(<#(#gt: #gb), *>)
         } else {
@@ -128,12 +128,12 @@ impl RustSerde {
         ));
     }
     pub fn serialize_call(&self, node: &Call) -> Result<TokenStream> {
-        let fun = self.serialize_expr(&node.fun)?;
+        let fun = self.serialize_expr(&*node.fun)?;
         let args: Vec<_> = node
             .args
             .args
             .iter()
-            .map(|x| self.serialize_expr(x))
+            .map(|x| self.serialize_expr(&**x))
             .try_collect()?;
         if let Some(select) = node.fun.as_ast::<Select>() {
             match select.select {
@@ -168,7 +168,7 @@ impl RustSerde {
             )),
         }
     }
-    pub fn serialize_literal(&self, n: &Expr) -> Result<TokenStream> {
+    pub fn serialize_literal(&self, n: &dyn AnyAst) -> Result<TokenStream> {
         if let Some(n) = n.as_ast::<LiteralInt>() {
             let n = n.value;
             return Ok(quote!(
@@ -193,30 +193,48 @@ impl RustSerde {
         let args: Vec<_> = fun
             .params
             .iter()
-            .map(|x| self.serialize_expr(x))
+            .map(|x| self.serialize_expr(&**x))
             .try_collect()?;
-        let ret = self.serialize_expr(&fun.ret)?;
+        let ret = self.serialize_expr(&*fun.ret)?;
         Ok(quote!(
             fn(#(#args), *) -> #ret
         ))
     }
     pub fn serialize_select(&self, select: &Select) -> Result<TokenStream> {
-        let obj = self.serialize_expr(&select.obj)?;
+        let obj = self.serialize_expr(&*select.obj)?;
         let field = self.serialize_ident(&select.field);
 
         Ok(quote!(
             #obj.#field
         ))
     }
-    pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
-        if let Some(n) = node.as_ast::<Block>() {
+    pub fn serialize_args(&self, node: &PosArgs) -> Result<TokenStream> {
+        let args: Vec<_> = node
+            .args
+            .iter()
+            .map(|x| self.serialize_expr(&**x))
+            .try_collect()?;
+        Ok(quote!((#(#args),*)))
+    }
+    pub fn serialize_generics(&self, node: &Generics) -> Result<TokenStream> {
+        let debug = format!("{:?}", node);
+        Ok(quote!(#debug))
+    }
+    pub fn serialize_expr(&self, node: &dyn AnyAst) -> Result<TokenStream> {
+        if let Some(n) = node.as_ast() {
             return self.serialize_block(n);
+        }
+        if let Some(n) = node.as_ast() {
+            return self.serialize_args(n);
+        }
+        if let Some(n) = node.as_ast() {
+            return self.serialize_generics(n);
         }
         if let Some(m) = node.as_ast::<Module>() {
             let stmts: Vec<_> = m
                 .stmts
                 .iter()
-                .map(|x| self.serialize_expr(x))
+                .map(|x| self.serialize_expr(&**x))
                 .try_collect()?;
             if m.name.as_str() == "__file__" {
                 return Ok(quote!(

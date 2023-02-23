@@ -204,7 +204,7 @@ impl Interpreter {
         args: &[Expr],
         ctx: &InterpreterContext,
     ) -> Result<Expr> {
-        let formatted: Vec<_> = args.into_iter().map(|x| se.serialize(x)).try_collect()?;
+        let formatted: Vec<_> = args.into_iter().map(|x| se.serialize(&**x)).try_collect()?;
         ctx.root().print_str(formatted.join(" "));
         Ok(Unit.into())
     }
@@ -357,7 +357,7 @@ impl Interpreter {
         bail!("Could not process {:?}", n)
     }
     pub fn interprete(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
-        debug!("Interpreting {:?}", node);
+        debug!("Interpreting {}", self.serializer.serialize(&**node)?);
         if let Some(n) = node.as_ast() {
             return self.interprete_module(n, ctx);
         }
