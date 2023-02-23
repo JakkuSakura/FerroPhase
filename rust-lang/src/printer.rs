@@ -1,7 +1,7 @@
 use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
-use barebone::{Block, Expr, Ident, *};
 use common::Result;
 use common::*;
+use common_lang::{Block, Expr, Ident, *};
 use proc_macro2::TokenStream;
 use quote::*;
 

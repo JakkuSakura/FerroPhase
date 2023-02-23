@@ -14,4 +14,4 @@ quote = "1"
 proc-macro2 = "1"
 rust-lang = { path = "../rust-lang" }
 common = { path = "../common" }
-barebone = { path = "../barebone" }
+common-lang = { path = "../common-lang" }

@@ -1,13 +1,14 @@
-use barebone::interpreter::InterpreterContext;
-use barebone::specializer::Specializer;
-use barebone::Expr;
 use common::*;
+use common_lang::interpreter::InterpreterContext;
+use common_lang::specializer::Specializer;
+use common_lang::Expr;
 use proc_macro::TokenStream;
 use rust_lang::RustSerde;
+use std::rc::Rc;
 
 fn specialize_inner(code: Expr) -> Result<TokenStream> {
     let ctx = InterpreterContext::new();
-    let node = Specializer::new().specialize_expr(code, &ctx)?;
+    let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(code, &ctx)?;
     let node = RustSerde.serialize_expr(&node)?;
     Ok(node.into())
 }

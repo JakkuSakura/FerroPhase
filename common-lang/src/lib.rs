@@ -85,6 +85,12 @@ impl Deref for Expr {
         &*self.inner
     }
 }
+// impl DerefMut for Expr {
+//     type Target = dyn AnyAst;
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         Rc::make_mut(&mut self.inner)
+//     }
+// }
 
 impl Debug for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
