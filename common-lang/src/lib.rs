@@ -11,12 +11,17 @@ use std::sync::Arc;
 
 pub trait AnyAst: Ast {
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
     fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
+    fn clone_any_rc(&self) -> Rc<dyn AnyAst>;
 }
 
-impl<T: Ast + Any> AnyAst for T {
+impl<T: Ast + Clone + Any> AnyAst for T {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
     fn into_any(self: Box<Self>) -> Box<dyn Any> {
@@ -24,6 +29,9 @@ impl<T: Ast + Any> AnyAst for T {
     }
     fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+    fn clone_any_rc(&self) -> Rc<dyn AnyAst> {
+        Rc::new(self.clone())
     }
 }
 
@@ -34,6 +42,9 @@ impl dyn AnyAst {
 
     pub fn as_ast<T: Ast + 'static>(&self) -> Option<&T> {
         self.as_any().downcast_ref()
+    }
+    pub fn as_ast_mut<T: Ast + 'static>(&mut self) -> Option<&mut T> {
+        self.as_any_mut().downcast_mut()
     }
     pub fn into_ast<T: Ast + 'static>(self: Box<Self>) -> Option<T> {
         self.into_any().downcast().ok().map(|x| *x)
@@ -66,7 +77,7 @@ pub struct Expr {
 }
 
 impl Expr {
-    pub fn new<T: Ast + 'static>(e: T) -> Self {
+    pub fn new<T: Ast + Clone + 'static>(e: T) -> Self {
         Self {
             ty: std::any::type_name::<T>(),
             inner: Rc::new(e),
@@ -77,6 +88,15 @@ impl Expr {
     }
     pub fn into_ast<T: Ast + Clone + 'static>(self) -> Option<T> {
         self.inner.into_ast_rc()
+    }
+    pub fn make_ast_mut<T: Ast + Clone + 'static>(&mut self) -> Option<&mut T> {
+        if Rc::weak_count(&self.inner) == 0 && Rc::strong_count(&self.inner) == 1 {
+            Rc::get_mut(&mut self.inner).unwrap().as_ast_mut::<T>()
+        } else {
+            let inner = self.inner.clone_any_rc();
+            self.inner = inner;
+            Rc::get_mut(&mut self.inner).unwrap().as_ast_mut::<T>()
+        }
     }
 }
 impl Deref for Expr {
@@ -97,7 +117,7 @@ impl Debug for Expr {
         self.inner.fmt(f)
     }
 }
-impl<T: Ast + 'static> From<T> for Expr {
+impl<T: Ast + Clone + 'static> From<T> for Expr {
     fn from(value: T) -> Self {
         Self::new(value)
     }
