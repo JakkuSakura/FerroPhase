@@ -2,8 +2,8 @@ pub mod parser;
 pub mod printer;
 pub mod rustfmt;
 
-use barebone::{Expr, *};
 use common::Result;
+use common_lang::{Expr, *};
 
 use std::fmt::Debug;
 use syn::*;

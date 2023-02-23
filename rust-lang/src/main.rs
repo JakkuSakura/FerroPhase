@@ -1,7 +1,7 @@
-use barebone::interpreter::{Interpreter, InterpreterContext};
-use barebone::specializer::Specializer;
-use barebone::{Deserializer, Serializer};
 use common::*;
+use common_lang::interpreter::{Interpreter, InterpreterContext};
+use common_lang::specializer::Specializer;
+use common_lang::{Deserializer, Serializer};
 use rust_lang::rustfmt::format_code;
 use rust_lang::RustSerde;
 use std::fs::File;
