@@ -355,11 +355,18 @@ pub struct BuildStruct {
     pub field: KwArgs,
 }
 impl Ast for BuildStruct {}
-
+#[derive(Debug, Clone)]
+pub enum SelectType {
+    Unknown,
+    Field,
+    Method,
+    Function,
+}
 #[derive(Debug, Clone)]
 pub struct Select {
     pub obj: Expr,
     pub field: Ident,
+    pub select: SelectType,
 }
 impl Ast for Select {}
 
