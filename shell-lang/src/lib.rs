@@ -6,7 +6,7 @@ macro_rules! pipe {
         $proc
     };
     (inner $proc1: tt | $proc2: tt) => {
-        crate::Pipe::new($proc1, $proc2)
+        $crate::Pipe::new($proc1, $proc2)
     };
     (inner $proc1: tt | $proc2: tt $(| $proc: tt)+) => {{
         let p = pipe!(inner $proc1 | $proc2);
