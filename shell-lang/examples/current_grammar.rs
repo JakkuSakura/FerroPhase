@@ -1,4 +1,5 @@
 include!("defs/mod.rs");
+use shell_lang::starter::TryStarter;
 use shell_lang::*;
 
 fn main() {
@@ -6,7 +7,6 @@ fn main() {
     let adder = AddProcess::spawn("adder");
     let dest = SinkProcess::spawn("dest");
     let add_five = adder.add(5);
-    let _ = pipe!(src | add_five | dest).start();
-    let _ = pipe!(src | adder | dest).start();
-
+    pipe!(src | add_five | dest).start();
+    pipe!(src | adder | dest).start();
 }

@@ -19,9 +19,8 @@ macro_rules! pipe {
 }
 #[derive(Debug, Clone)]
 pub enum Stderr {
-    Abort
+    Abort,
 }
-
 
 pub trait Actor {
     type Stdin;
@@ -38,37 +37,26 @@ impl<'a, T: Actor> Actor for &'a T {
     }
 }
 
+pub trait Source: Actor<Stdin = ()> {}
 
-pub trait Source: Actor<Stdin=()> {
-    fn start(&self) -> Result<Self::Stdout, Stderr>;
-}
+impl<T: Actor<Stdin = ()>> Source for T {}
 
-impl<T: Actor<Stdin=()>> Source for T {
-    fn start(&self) -> Result<Self::Stdout, Stderr> {
-        self.process(())
-    }
-}
+pub trait Sink: Actor<Stdout = ()> {}
 
-pub trait Sink: Actor<Stdout=()> {}
-
-impl<T: Actor<Stdout=()>> Sink for T {}
-
+impl<T: Actor<Stdout = ()>> Sink for T {}
 
 pub struct Pipe<L: Actor, R: Actor> {
     l: L,
     r: R,
 }
 
-impl<L: Actor, R: Actor<Stdin=L::Stdout>> Pipe<L, R> {
+impl<L: Actor, R: Actor<Stdin = L::Stdout>> Pipe<L, R> {
     pub fn new(l: L, r: R) -> Self {
-        Self {
-            l,
-            r,
-        }
+        Self { l, r }
     }
 }
 
-impl<L: Actor, R: Actor<Stdin=L::Stdout>> Actor for Pipe<L, R> {
+impl<L: Actor, R: Actor<Stdin = L::Stdout>> Actor for Pipe<L, R> {
     type Stdout = R::Stdout;
     type Stdin = L::Stdin;
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
@@ -76,9 +64,9 @@ impl<L: Actor, R: Actor<Stdin=L::Stdout>> Actor for Pipe<L, R> {
         self.r.process(out)
     }
 }
-pub struct ActorFn<I, O, F: Fn(I) -> Result<O, Stderr>>{
+pub struct ActorFn<I, O, F: Fn(I) -> Result<O, Stderr>> {
     f: F,
-    _p: PhantomData<(I, O)>
+    _p: PhantomData<(I, O)>,
 }
 impl<I, O, F: Fn(I) -> Result<O, Stderr>> ActorFn<I, O, F> {
     pub fn new(f: F) -> Self {
@@ -94,5 +82,18 @@ impl<I, O, F: Fn(I) -> Result<O, Stderr>> Actor for ActorFn<I, O, F> {
 
     fn process(&self, item: Self::Stdin) -> Result<Self::Stdout, Stderr> {
         (self.f)(item)
+    }
+}
+pub mod starter {
+    use crate::Source;
+
+    pub trait TryStarter {
+        fn start(self);
+    }
+
+    impl<T: Source> TryStarter for T {
+        fn start(self) {
+            let _ = self.process(());
+        }
     }
 }
