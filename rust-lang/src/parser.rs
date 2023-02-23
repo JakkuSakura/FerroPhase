@@ -113,21 +113,6 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
 fn parse_call(call: syn::ExprCall) -> Result<Call> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
-    if let Some(x) = fun.as_ast::<Ident>() {
-        match x.as_str() {
-            // left associative
-            "+" | "*" | "|" | "&" => {
-                if let Some(first_arg) = args.get(0).map(|x| x.as_ast::<Call>()).flatten() {
-                    if Some(x) == first_arg.fun.as_ast::<Ident>() {
-                        let mut first_arg = first_arg.clone();
-                        first_arg.args.args.extend_from_slice(&args[1..]);
-                        return Ok(first_arg);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
 
     Ok(Call {
         fun,
@@ -174,6 +159,36 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
         if_style: true,
     })
 }
+fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
+    let l = parse_expr(*b.left)?;
+    let r = parse_expr(*b.right)?;
+    let (op, flatten) = match b.op {
+        BinOp::Add(_) => (Ident::new("+"), true),
+        BinOp::Mul(_) => (Ident::new("*"), true),
+        BinOp::Sub(_) => (Ident::new("-"), false),
+        BinOp::Gt(_) => (Ident::new(">"), false),
+        BinOp::Ge(_) => (Ident::new(">="), false),
+        BinOp::Le(_) => (Ident::new("<="), false),
+        BinOp::Lt(_) => (Ident::new("<"), false),
+        BinOp::Eq(_) => (Ident::new("=="), false),
+        BinOp::Ne(_) => (Ident::new("!="), false),
+        BinOp::BitOr(_) => (Ident::new("|"), true),
+        _ => bail!("Op not supported {:?}", b.op),
+    };
+    if flatten {
+        if let Some(first_arg) = l.as_ast::<Call>() {
+            if Some(&op) == first_arg.fun.as_ast::<Ident>() {
+                let mut first_arg = first_arg.clone();
+                first_arg.args.args.push(r);
+                return Ok(first_arg);
+            }
+        }
+    }
+    Ok(Call {
+        fun: op.into(),
+        args: PosArgs { args: vec![l, r] },
+    })
+}
 fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
         // Expr::Array(_) => {}
@@ -181,28 +196,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         // Expr::AssignOp(_) => {}
         // Expr::Async(_) => {}
         // Expr::Await(_) => {}
-        syn::Expr::Binary(b) => {
-            let l = parse_expr(*b.left)?;
-            let r = parse_expr(*b.right)?;
-            let op = match b.op {
-                BinOp::Add(_) => Ident::new("+"),
-                BinOp::Sub(_) => Ident::new("-"),
-                BinOp::Mul(_) => Ident::new("*"),
-                BinOp::Gt(_) => Ident::new(">"),
-                BinOp::Ge(_) => Ident::new(">="),
-                BinOp::Le(_) => Ident::new("<="),
-                BinOp::Lt(_) => Ident::new("<"),
-                BinOp::Eq(_) => Ident::new("=="),
-                BinOp::Ne(_) => Ident::new("!="),
-                BinOp::BitOr(_) => Ident::new("|"),
-                _ => bail!("Op not supported {:?}", b.op),
-            };
-            Call {
-                fun: op.into(),
-                args: PosArgs { args: vec![l, r] },
-            }
-            .into()
-        }
+        syn::Expr::Binary(b) => parse_binary(b)?.into(),
         syn::Expr::Block(b) if b.label.is_none() => parse_block(b.block)?.into(),
         // Expr::Box(_) => {}
         // Expr::Break(_) => {}
