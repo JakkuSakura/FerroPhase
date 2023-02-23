@@ -180,9 +180,9 @@ impl RustSerde {
                 #fun(#(#args), *)
             ),
         };
-        if true {
-            return Ok(quote!((#code)));
-        }
+        // if true {
+        //     return Ok(quote!((#code)));
+        // }
         Ok(code)
     }
     pub fn serialize_literal(&self, n: &dyn AnyAst) -> Result<TokenStream> {
