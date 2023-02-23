@@ -111,11 +111,11 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
 }
 
 fn parse_call(call: syn::ExprCall) -> Result<Call> {
+    let fun = parse_expr(*call.func)?;
+    let args = call.args.into_iter().map(parse_expr).try_collect()?;
     Ok(Call {
-        fun: parse_expr(*call.func)?,
-        args: PosArgs {
-            args: call.args.into_iter().map(parse_expr).try_collect()?,
-        },
+        fun,
+        args: PosArgs { args },
     })
 }
 fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
@@ -123,6 +123,7 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
         fun: Select {
             obj: parse_expr(*call.receiver)?,
             field: parse_ident(call.method),
+            select: SelectType::Method,
         }
         .into(),
         args: PosArgs {

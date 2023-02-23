@@ -129,13 +129,24 @@ impl RustSerde {
     }
     pub fn serialize_call(&self, node: &Call) -> Result<TokenStream> {
         let fun = self.serialize_expr(&node.fun)?;
-        let fun_str = fun.to_string();
         let args: Vec<_> = node
             .args
             .args
             .iter()
             .map(|x| self.serialize_expr(x))
             .try_collect()?;
+        if let Some(select) = node.fun.as_ast::<Select>() {
+            match select.select {
+                SelectType::Field => {
+                    return Ok(quote!(
+                        (#fun)(#(#args), *)
+                    ))
+                }
+                _ => {}
+            }
+        }
+        let fun_str = fun.to_string();
+
         match fun_str.as_str() {
             "+" => Ok(quote!(#(#args) + *)),
             "-" => Ok(quote!(#(#args) - *)),
@@ -152,9 +163,6 @@ impl RustSerde {
                 Ok(quote!(#(#result)*))
             }
             // TODO: can't tell method or member
-            // x if x.contains(".") => Ok(quote!(
-            //     (#fun)(#(#args), *)
-            // )),
             _ => Ok(quote!(
                 #fun(#(#args), *)
             )),
@@ -243,7 +251,7 @@ impl RustSerde {
             return Ok(quote!(()));
         }
 
-        if let Some(n) = node.as_ast::<Call>() {
+        if let Some(n) = node.as_ast() {
             return self.serialize_call(n);
         }
         if node.is_literal() {
