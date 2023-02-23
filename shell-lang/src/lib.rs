@@ -22,6 +22,7 @@ pub enum Stderr {
     Abort,
 }
 
+// TODO: make stdin a parameter
 pub trait Actor {
     type Stdin;
     type Stdout;
