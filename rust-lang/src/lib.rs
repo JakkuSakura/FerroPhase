@@ -7,7 +7,7 @@ use common_lang::{Expr, *};
 
 use std::fmt::Debug;
 use syn::*;
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawMacro {
     raw: syn::ExprMacro,
 }
@@ -17,7 +17,7 @@ impl Ast for RawMacro {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawUse {
     raw: syn::ItemUse,
 }
@@ -27,7 +27,7 @@ impl Ast for RawUse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawImplTrait {
     raw: syn::TypeImplTrait,
 }

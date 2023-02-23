@@ -70,9 +70,10 @@ impl InterpreterContext {
             .collect()
     }
 }
+#[derive(Clone)]
 struct BuiltinFn {
     name: String,
-    f: Box<dyn Fn(&[Expr], &InterpreterContext) -> Result<Expr>>,
+    f: Rc<dyn Fn(&[Expr], &InterpreterContext) -> Result<Expr>>,
 }
 impl BuiltinFn {
     pub fn new(
@@ -81,7 +82,7 @@ impl BuiltinFn {
     ) -> Self {
         Self {
             name,
-            f: Box::new(f),
+            f: Rc::new(f),
         }
     }
     pub fn call(&self, args: &[Expr], ctx: &InterpreterContext) -> Result<Expr> {
