@@ -1,4 +1,5 @@
 include!("defs/mod.rs");
+use shell_lang::starter::TryStarter;
 use shell_lang::*;
 
 fn main() {
@@ -9,5 +10,4 @@ fn main() {
     // declarative macro can't create new idents
     shell!(src | adder.add(5) | dest);
     shell!(src | adder.add(6) | dest);
-
 }
