@@ -33,7 +33,7 @@ fn process_pipe(
 
                 let id = (get_id)();
                 let id_ = RustSerde.serialize_ident(&id);
-                let expr = RustSerde.serialize_expr(&x0).unwrap();
+                let expr = RustSerde.serialize_expr(&**x0).unwrap();
                 decl.push(quote!(
                    let #id_ = #expr;
                 ));
@@ -60,7 +60,7 @@ fn shell_inner(code: Expr) -> Result<TokenStream> {
     };
     let mut decls = vec![];
     let code = process_pipe(&code, &mut decls, get_id);
-    let node = RustSerde.serialize_expr(&code)?;
+    let node = RustSerde.serialize_expr(&*code)?;
     let node = quote!(
         #(#decls) *
         let _ = pipe!(#node).start();

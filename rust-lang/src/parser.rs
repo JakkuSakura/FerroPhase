@@ -112,7 +112,23 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
 
 fn parse_call(call: syn::ExprCall) -> Result<Call> {
     let fun = parse_expr(*call.func)?;
-    let args = call.args.into_iter().map(parse_expr).try_collect()?;
+    let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
+    if let Some(x) = fun.as_ast::<Ident>() {
+        match x.as_str() {
+            // left associative
+            "+" | "*" | "|" | "&" => {
+                if let Some(first_arg) = args.get(0).map(|x| x.as_ast::<Call>()).flatten() {
+                    if Some(x) == first_arg.fun.as_ast::<Ident>() {
+                        let mut first_arg = first_arg.clone();
+                        first_arg.args.args.extend_from_slice(&args[1..]);
+                        return Ok(first_arg);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     Ok(Call {
         fun,
         args: PosArgs { args },
