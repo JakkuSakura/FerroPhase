@@ -151,7 +151,7 @@ impl Interpreter {
             debug!("Invoking {} with {}", name, args_);
             let ret =
                 self.interprete_block(f.body.as_ref().context("Funtion body is empty")?, &sub)?;
-            let ret_ = self.serializer.serialize(&*ret)?;
+            let ret_ = self.serializer.serialize_expr(&ret)?;
             debug!("Invoked {} with {} => {}", name, args_, ret_);
             return Ok(ret);
         }
@@ -160,7 +160,7 @@ impl Interpreter {
 
             debug!("Invoking {} with {}", f.name, args_);
             let ret = f.call(&args.args, ctx)?;
-            let ret_ = self.serializer.serialize(&*ret)?;
+            let ret_ = self.serializer.serialize_expr(&ret)?;
 
             debug!("Invoked {} with {} => {}", f.name, args_, ret_);
             return Ok(ret);
@@ -204,7 +204,10 @@ impl Interpreter {
         args: &[Expr],
         ctx: &InterpreterContext,
     ) -> Result<Expr> {
-        let formatted: Vec<_> = args.into_iter().map(|x| se.serialize(&**x)).try_collect()?;
+        let formatted: Vec<_> = args
+            .into_iter()
+            .map(|x| se.serialize_expr(x))
+            .try_collect()?;
         ctx.root().print_str(formatted.join(" "));
         Ok(Unit.into())
     }
@@ -365,7 +368,7 @@ impl Interpreter {
         Ok(PosArgs { args })
     }
     pub fn interprete(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
-        debug!("Interpreting {}", self.serializer.serialize(&**node)?);
+        debug!("Interpreting {}", self.serializer.serialize_expr(node)?);
         if let Some(n) = node.as_ast() {
             return self.interprete_module(n, ctx);
         }

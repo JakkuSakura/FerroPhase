@@ -16,7 +16,7 @@ impl Specializer {
     }
 
     pub fn specialize_expr(&self, expr: Expr, ctx: &InterpreterContext) -> Result<Expr> {
-        debug!("Specializing {}", self.serializer.serialize(&*expr)?);
+        debug!("Specializing {}", self.serializer.serialize_expr(&expr)?);
         macro specialize($f: ident, $t: ty) {
             if expr.is_ast::<$t>() {
                 return self.$f(expr.into_ast().unwrap(), ctx).map(|x| x.into());
@@ -87,7 +87,7 @@ impl Specializer {
         }
         bail!(
             "Could not infer type of {}",
-            self.serializer.serialize(&**expr)?
+            self.serializer.serialize_expr(expr)?
         )
     }
     pub fn specialize_call(&self, node: Call, ctx: &InterpreterContext) -> Result<Expr> {

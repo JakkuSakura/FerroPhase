@@ -385,6 +385,12 @@ pub struct FuncType {
     pub ret: Expr,
 }
 impl Ast for FuncType {}
+#[derive(Debug, Clone)]
+pub struct Reference {
+    pub referee: Expr,
+    pub mutable: Option<bool>,
+}
+impl Ast for Reference {}
 
 pub struct Types {}
 impl Types {
