@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 rust-lang = { path = "../rust-lang" }
 shell-macro = { path = "../shell-macro" }
+common = { path = "../common" }

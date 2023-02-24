@@ -1224,6 +1224,7 @@ dependencies = [
 name = "shell-lang"
 version = "0.1.0"
 dependencies = [
+ "common",
  "rust-lang",
  "shell-macro",
 ]
