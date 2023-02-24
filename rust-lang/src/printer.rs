@@ -1,4 +1,4 @@
-use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
+use crate::{RawExpr, RawImplTrait, RawMacro, RawUse, RustSerde};
 use common::Result;
 use common::*;
 use common_lang::{Block, Ident, *};
@@ -185,6 +185,14 @@ impl RustSerde {
         // }
         Ok(code)
     }
+    pub fn serialize_ref(&self, n: &Reference) -> Result<TokenStream> {
+        let referee = self.serialize_expr(&n.referee)?;
+        if n.mutable == Some(true) {
+            Ok(quote!(&mut #referee))
+        } else {
+            Ok(quote!(&#referee))
+        }
+    }
     pub fn serialize_literal(&self, n: &dyn AnyAst) -> Result<TokenStream> {
         if let Some(n) = n.as_ast::<LiteralInt>() {
             let n = n.value;
@@ -298,6 +306,9 @@ impl RustSerde {
         if let Some(n) = node.as_ast::<RawImplTrait>() {
             return Ok(n.raw.to_token_stream());
         }
+        if let Some(n) = node.as_ast::<RawExpr>() {
+            return Ok(n.raw.to_token_stream());
+        }
         if let Some(n) = node.as_ast() {
             return self.serialize_func_type(n);
         }
@@ -309,6 +320,9 @@ impl RustSerde {
             return self.serialize_cond(n);
         }
 
+        if let Some(n) = node.as_ast() {
+            return self.serialize_ref(n);
+        }
         bail!("Unable to serialize {:?}", node)
     }
 }

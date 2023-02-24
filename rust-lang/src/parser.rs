@@ -1,4 +1,4 @@
-use crate::{RawImplTrait, RawMacro, RawUse, RustSerde};
+use crate::{RawExpr, RawImplTrait, RawMacro, RawUse, RustSerde};
 use common::*;
 use common_lang::*;
 use quote::ToTokens;
@@ -191,51 +191,24 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
 }
 fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
-        // Expr::Array(_) => {}
-        // Expr::Assign(_) => {}
-        // Expr::AssignOp(_) => {}
-        // Expr::Async(_) => {}
-        // Expr::Await(_) => {}
         syn::Expr::Binary(b) => parse_binary(b)?.into(),
         syn::Expr::Block(b) if b.label.is_none() => parse_block(b.block)?.into(),
-        // Expr::Box(_) => {}
-        // Expr::Break(_) => {}
+
         syn::Expr::Call(c) => parse_call(c)?.into(),
-        // Expr::Cast(_) => {}
-        // Expr::Closure(_) => {}
-        // Expr::Continue(_) => {}
-        // Expr::Field(_) => {}
-        // Expr::ForLoop(_) => {}
-        // Expr::Group(_) => {}
         syn::Expr::If(i) => parse_if(i)?.into(),
-        // Expr::Index(_) => {}
-        // Expr::Let(_) => {}
+
         syn::Expr::Lit(l) => match l.lit {
             Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
             Lit::Float(i) => LiteralDecimal::new(i.base10_parse()?).into(),
             _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
-        // Expr::Loop(_) => {}
         syn::Expr::Macro(m) => RawMacro { raw: m }.into(),
-        // Expr::Match(_) => {}
         syn::Expr::MethodCall(c) => parse_method_call(c)?.into(),
-        // Expr::Paren(_) => {}
         syn::Expr::Path(p) => parse_path(p.path)?.into(),
-        // Expr::Range(_) => {}
-        // Expr::Reference(_) => {}
-        // Expr::Repeat(_) => {}
-        // Expr::Return(_) => {}
-        // Expr::Struct(_) => {}
-        // Expr::Try(_) => {}
-        // Expr::TryBlock(_) => {}
-        // Expr::Tuple(_) => {}
-        // Expr::Type(_) => {}
-        // Expr::Unary(_) => {}
-        // Expr::Unsafe(_) => {}
-        // Expr::Verbatim(_) => {}
-        // Expr::While(_) => {}
-        // Expr::Yield(_) => {}
-        x => bail!("Expr not supported: {:?}", x),
+        syn::Expr::Reference(r) => parse_ref(r)?.into(),
+
+        raw => RawExpr { raw }.into(),
+        // x => bail!("Expr not supported: {:?}", x),
     })
 }
 
@@ -294,6 +267,12 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
         Item::Use(u) => Ok(RawUse { raw: u }.into()),
         _ => bail!("Does not support item {:?} yet", item),
     }
+}
+fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
+    Ok(Reference {
+        referee: parse_expr(*item.expr)?,
+        mutable: Some(item.mutability.is_some()),
+    })
 }
 
 pub fn parse_file(file: syn::File) -> Result<Expr> {

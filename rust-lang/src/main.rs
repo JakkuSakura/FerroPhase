@@ -32,7 +32,7 @@ fn main() -> Result<()> {
         let node = RustSerde.deserialize(&file_content)?;
         let ctx = InterpreterContext::new();
         let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(node, &ctx)?;
-        let code = RustSerde.serialize(&*node)?;
+        let code = RustSerde.serialize_expr(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;
         file_out.set_len(0)?;
@@ -48,7 +48,7 @@ fn main() -> Result<()> {
         writeln!(
             &mut file_out,
             "// result: {}",
-            RustSerde.serialize(&*intp_result)?
+            RustSerde.serialize_expr(&intp_result)?
         )?;
     }
     Ok(())
