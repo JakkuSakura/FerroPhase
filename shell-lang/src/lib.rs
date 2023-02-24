@@ -1,12 +1,21 @@
 #![feature(associated_type_defaults)]
 
 pub use shell_macro::pipe;
+use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
 
 #[derive(Debug, Clone)]
 pub enum Stderr {
     Abort,
 }
+
+impl Display for Stderr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self, f)
+    }
+}
+
+impl std::error::Error for Stderr {}
 
 pub trait Actor<Stdin> {
     type Stdout;
