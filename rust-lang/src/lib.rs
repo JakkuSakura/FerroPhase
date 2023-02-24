@@ -36,6 +36,16 @@ impl Ast for RawImplTrait {
         true
     }
 }
+#[derive(Debug, Clone)]
+pub struct RawExpr {
+    raw: syn::Expr,
+}
+impl Ast for RawExpr {
+    fn is_raw(&self) -> bool {
+        true
+    }
+}
+
 pub struct RustSerde;
 impl Serializer for RustSerde {
     fn serialize(&self, node: &dyn AnyAst) -> Result<String> {
