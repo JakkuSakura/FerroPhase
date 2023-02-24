@@ -8,6 +8,6 @@ fn main() {
     let dest = &SinkProcess::spawn("dest");
 
     // declarative macro can't create new idents
-    shell!(src | adder.add(5) | dest);
-    shell!(src | adder.add(6) | dest);
+    pipe!(src | adder.add(5) | dest).start();
+    pipe!(src | adder.add(6) | dest).start();
 }
