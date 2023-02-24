@@ -1,31 +1,18 @@
 #![feature(associated_type_defaults)]
 
+use common::Result;
 pub use shell_macro::pipe;
-use std::fmt::{Display, Formatter};
 use std::marker::PhantomData;
-
-#[derive(Debug, Clone)]
-pub enum Stderr {
-    Abort,
-}
-
-impl Display for Stderr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(self, f)
-    }
-}
-
-impl std::error::Error for Stderr {}
 
 pub trait Actor<Stdin> {
     type Stdout;
-    fn process(&self, item: Stdin) -> Result<Self::Stdout, Stderr>;
+    fn process(&self, item: Stdin) -> Result<Self::Stdout>;
 }
 
 impl<'a, Stdin, T: Actor<Stdin>> Actor<Stdin> for &'a T {
     type Stdout = T::Stdout;
 
-    fn process(&self, item: Stdin) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: Stdin) -> Result<Self::Stdout> {
         (**self).process(item)
     }
 }
@@ -52,16 +39,16 @@ impl<Stdin, L: Actor<Stdin>, R: Actor<L::Stdout>> Pipe<Stdin, L, R> {
 
 impl<L: Actor<Stdin>, R: Actor<L::Stdout>, Stdin> Actor<Stdin> for Pipe<Stdin, L, R> {
     type Stdout = R::Stdout;
-    fn process(&self, item: Stdin) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: Stdin) -> Result<Self::Stdout> {
         let out = self.l.process(item)?;
         self.r.process(out)
     }
 }
-pub struct ActorFn<I, O, F: Fn(I) -> Result<O, Stderr>> {
+pub struct ActorFn<I, O, F: Fn(I) -> Result<O>> {
     f: F,
     _p: PhantomData<(I, O)>,
 }
-impl<I, O, F: Fn(I) -> Result<O, Stderr>> ActorFn<I, O, F> {
+impl<I, O, F: Fn(I) -> Result<O>> ActorFn<I, O, F> {
     pub fn new(f: F) -> Self {
         Self {
             f,
@@ -69,10 +56,10 @@ impl<I, O, F: Fn(I) -> Result<O, Stderr>> ActorFn<I, O, F> {
         }
     }
 }
-impl<I, O, F: Fn(I) -> Result<O, Stderr>> Actor<I> for ActorFn<I, O, F> {
+impl<I, O, F: Fn(I) -> Result<O>> Actor<I> for ActorFn<I, O, F> {
     type Stdout = O;
 
-    fn process(&self, item: I) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: I) -> Result<Self::Stdout> {
         (self.f)(item)
     }
 }
