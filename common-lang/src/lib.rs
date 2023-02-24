@@ -128,6 +128,9 @@ impl<T: Ast + Clone + 'static> From<T> for Expr {
     }
 }
 pub trait Serializer {
+    fn serialize_expr(&self, node: &Expr) -> Result<String> {
+        self.serialize(&**node)
+    }
     fn serialize(&self, node: &dyn AnyAst) -> Result<String>;
 }
 

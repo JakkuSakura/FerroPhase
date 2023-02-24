@@ -1,24 +1,8 @@
 #![feature(associated_type_defaults)]
 
-pub use shell_macro::shell;
+pub use shell_macro::pipe;
 use std::marker::PhantomData;
-#[macro_export]
-macro_rules! pipe {
-    (inner $proc: tt) => {
-        $proc
-    };
-    (inner $proc1: tt | $proc2: tt) => {
-        $crate::Pipe::new($proc1, $proc2)
-    };
-    (inner $proc1: tt | $proc2: tt $(| $proc: tt)+) => {{
-        let p = pipe!(inner $proc1 | $proc2);
-        pipe!(inner p $(| $proc)+)
-    }};
 
-    ($($proc: tt) | +) => {{
-        pipe!(inner $(($proc)) |+)
-    }};
-}
 #[derive(Debug, Clone)]
 pub enum Stderr {
     Abort,
@@ -40,7 +24,7 @@ impl<'a, Stdin, T: Actor<Stdin>> Actor<Stdin> for &'a T {
 pub trait Source: Actor<()> {}
 
 impl<T: Actor<()>> Source for T {}
-
+#[must_use]
 pub struct Pipe<Stdin, L: Actor<Stdin>, R: Actor<L::Stdout>> {
     l: L,
     r: R,
@@ -93,6 +77,13 @@ pub mod starter {
     impl<T: Source> TryStarter for T {
         fn start(self) {
             let _ = self.process(());
+        }
+    }
+    pub struct TryStarter2 {}
+
+    impl TryStarter2 {
+        pub fn start<A: Source>(&self, a: A) {
+            let _ = a.process(());
         }
     }
 }
