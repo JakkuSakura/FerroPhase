@@ -37,7 +37,7 @@ impl RustSerde {
         let stmts: Vec<_> = n
             .stmts
             .iter()
-            .map(|x| self.serialize_ast(&**x))
+            .map(|x| self.serialize_expr(x))
             .try_collect()?;
         let q = if n.last_value {
             quote!({
@@ -54,8 +54,10 @@ impl RustSerde {
         let mut ts = vec![];
         if cond.if_style {
             for (i, c) in cond.cases.iter().enumerate() {
-                let co = self.serialize_ast(&*c.cond)?;
-                let ex = self.serialize_ast(&*c.body)?;
+                let node = &c.cond;
+                let co = self.serialize_expr(node)?;
+                let node = &c.body;
+                let ex = self.serialize_expr(node)?;
                 if i == 0 {
                     ts.push(quote!(
                         if #co {
@@ -79,8 +81,10 @@ impl RustSerde {
             Ok(quote!(#(#ts)*))
         } else {
             for (_i, c) in cond.cases.iter().enumerate() {
-                let co = self.serialize_ast(&*c.cond)?;
-                let ex = self.serialize_ast(&*c.body)?;
+                let node = &c.cond;
+                let co = self.serialize_expr(node)?;
+                let node = &c.body;
+                let ex = self.serialize_expr(node)?;
                 ts.push(quote!(
                     if #co => { #ex }
                 ))
@@ -98,7 +102,8 @@ impl RustSerde {
         vis: Visibility,
     ) -> Result<TokenStream> {
         let name = format_ident!("{}", n.name.as_ref().unwrap().name);
-        let ret = self.serialize_ast(&*n.ret)?;
+        let node = &n.ret;
+        let ret = self.serialize_expr(node)?;
         let param_names: Vec<_> = n
             .params
             .params
@@ -109,7 +114,7 @@ impl RustSerde {
             .params
             .params
             .iter()
-            .map(|x| self.serialize_ast(&*x.ty))
+            .map(|x| self.serialize_expr(&x.ty))
             .try_collect()?;
         let stmts = self.serialize_block(n.body.as_ref().unwrap())?;
         let gg;
@@ -124,7 +129,7 @@ impl RustSerde {
                 .params
                 .params
                 .iter()
-                .map(|x| self.serialize_ast(&*x.ty))
+                .map(|x| self.serialize_expr(&x.ty))
                 .try_collect()?;
             gg = quote!(<#(#gt: #gb), *>)
         } else {
@@ -141,12 +146,13 @@ impl RustSerde {
         ));
     }
     pub fn serialize_call(&self, node: &Call) -> Result<TokenStream> {
-        let fun = self.serialize_ast(&*node.fun)?;
+        let node1 = &node.fun;
+        let fun = self.serialize_expr(node1)?;
         let args: Vec<_> = node
             .args
             .args
             .iter()
-            .map(|x| self.serialize_ast(&**x))
+            .map(|x| self.serialize_expr(x))
             .try_collect()?;
         if let Some(select) = node.fun.as_ast::<Select>() {
             match select.select {
@@ -195,7 +201,7 @@ impl RustSerde {
             Ok(quote!(&#referee))
         }
     }
-    pub fn serialize_literal(&self, n: &dyn AnyAst) -> Result<TokenStream> {
+    pub fn serialize_literal(&self, n: &Expr) -> Result<TokenStream> {
         if let Some(n) = n.as_ast::<LiteralInt>() {
             let n = n.value;
             return Ok(quote!(
@@ -220,15 +226,16 @@ impl RustSerde {
         let args: Vec<_> = fun
             .params
             .iter()
-            .map(|x| self.serialize_ast(&**x))
+            .map(|x| self.serialize_expr(&x))
             .try_collect()?;
-        let ret = self.serialize_ast(&*fun.ret)?;
+        let node = &fun.ret;
+        let ret = self.serialize_expr(node)?;
         Ok(quote!(
             fn(#(#args), *) -> #ret
         ))
     }
     pub fn serialize_select(&self, select: &Select) -> Result<TokenStream> {
-        let obj = self.serialize_ast(&*select.obj)?;
+        let obj = self.serialize_expr(&select.obj)?;
         let field = self.serialize_ident(&select.field);
 
         Ok(quote!(
@@ -239,7 +246,7 @@ impl RustSerde {
         let args: Vec<_> = node
             .args
             .iter()
-            .map(|x| self.serialize_ast(&**x))
+            .map(|x| self.serialize_expr(x))
             .try_collect()?;
         Ok(quote!((#(#args),*)))
     }
@@ -249,11 +256,7 @@ impl RustSerde {
     }
     pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
-        self.serialize_ast(&**node)
-    }
 
-    pub fn serialize_ast(&self, node: &dyn AnyAst) -> Result<TokenStream> {
-        // TODO: should lifted expr here, but it takes Expr as parameter
         if let Some(n) = node.as_ast::<Uplifted>() {
             return self.serialize_expr(&n.uplifted);
         }
@@ -273,7 +276,7 @@ impl RustSerde {
             let stmts: Vec<_> = m
                 .stmts
                 .iter()
-                .map(|x| self.serialize_ast(&**x))
+                .map(|x| self.serialize_expr(x))
                 .try_collect()?;
             if m.name.as_str() == "__file__" {
                 return Ok(quote!(
