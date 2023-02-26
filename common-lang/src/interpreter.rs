@@ -148,20 +148,20 @@ impl Interpreter {
                 // TODO: type check here
                 sub.insert(param.name.clone(), arg);
             }
-            let args_ = self.serializer.serialize(&args)?;
+            let args_ = self.serializer.serialize(&args.clone().into())?;
             debug!("Invoking {} with {}", name, args_);
             let ret =
                 self.interprete_block(f.body.as_ref().context("Funtion body is empty")?, &sub)?;
-            let ret_ = self.serializer.serialize_expr(&ret)?;
+            let ret_ = self.serializer.serialize(&ret)?;
             debug!("Invoked {} with {} => {}", name, args_, ret_);
             return Ok(ret);
         }
         if let Some(f) = fun.as_ast::<BuiltinFn>() {
-            let args_ = self.serializer.serialize(&args)?;
+            let args_ = self.serializer.serialize(&args.clone().into())?;
 
             debug!("Invoking {} with {}", f.name, args_);
             let ret = f.call(&args.args, ctx)?;
-            let ret_ = self.serializer.serialize_expr(&ret)?;
+            let ret_ = self.serializer.serialize(&ret.clone().into())?;
 
             debug!("Invoked {} with {} => {}", f.name, args_, ret_);
             return Ok(ret);
@@ -205,10 +205,7 @@ impl Interpreter {
         args: &[Expr],
         ctx: &InterpreterContext,
     ) -> Result<Expr> {
-        let formatted: Vec<_> = args
-            .into_iter()
-            .map(|x| se.serialize_expr(x))
-            .try_collect()?;
+        let formatted: Vec<_> = args.into_iter().map(|x| se.serialize(x)).try_collect()?;
         ctx.root().print_str(formatted.join(" "));
         Ok(Unit.into())
     }
@@ -369,11 +366,11 @@ impl Interpreter {
         Ok(PosArgs { args })
     }
     pub fn interprete_expr(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
-        let node = &uplift_common_ast(node);
+        let node = uplift_common_ast(&node);
         if let Some(n) = node.as_ast::<Uplifted>() {
             return self.interprete_expr(&n.uplifted, ctx);
         }
-        debug!("Interpreting {}", self.serializer.serialize_expr(node)?);
+        debug!("Interpreting {}", self.serializer.serialize(&node)?);
         if let Some(n) = node.as_ast() {
             return self.interprete_module(n, ctx);
         }

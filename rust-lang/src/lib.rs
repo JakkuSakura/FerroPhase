@@ -58,8 +58,8 @@ impl Ast for RawTokenSteam {
 }
 pub struct RustSerde;
 impl Serializer for RustSerde {
-    fn serialize(&self, node: &dyn AnyAst) -> Result<String> {
-        self.serialize_ast(node).map(|x| x.to_string())
+    fn serialize(&self, node: &Expr) -> Result<String> {
+        self.serialize_expr(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {
