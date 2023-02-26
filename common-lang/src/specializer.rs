@@ -17,6 +17,10 @@ impl Specializer {
     }
 
     pub fn specialize_expr(&self, expr: Expr, ctx: &InterpreterContext) -> Result<Expr> {
+        let expr = uplift_common_ast(&expr);
+        if let Some(n) = expr.as_ast::<Uplifted>() {
+            return self.specialize_expr(n.uplifted.clone(), ctx);
+        }
         debug!("Specializing {}", self.serializer.serialize_expr(&expr)?);
         macro specialize($f: ident, $t: ty) {
             if expr.is_ast::<$t>() {
@@ -207,7 +211,7 @@ impl Specializer {
     pub fn specialize_cond(&self, b: Cond, ctx: &InterpreterContext) -> Result<Expr> {
         for case in &b.cases {
             let interpreted =
-                Interpreter::new(self.serializer.clone()).interprete(&case.cond, ctx)?;
+                Interpreter::new(self.serializer.clone()).interprete_expr(&case.cond, ctx)?;
             let ret = interpreted.as_ast::<LiteralBool>().map(|x| x.value);
             match ret {
                 Some(true) => {

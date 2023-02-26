@@ -248,10 +248,15 @@ impl RustSerde {
         Ok(quote!(#debug))
     }
     pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
+        let node = &uplift_common_ast(node);
         self.serialize_ast(&**node)
     }
 
     pub fn serialize_ast(&self, node: &dyn AnyAst) -> Result<TokenStream> {
+        // TODO: should lifted expr here, but it takes Expr as parameter
+        if let Some(n) = node.as_ast::<Uplifted>() {
+            return self.serialize_expr(&n.uplifted);
+        }
         if let Some(n) = node.as_ast() {
             return self.serialize_block(n);
         }
