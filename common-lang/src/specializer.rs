@@ -21,7 +21,7 @@ impl Specializer {
         if let Some(n) = expr.as_ast::<Uplifted>() {
             return self.specialize_expr(n.uplifted.clone(), ctx);
         }
-        debug!("Specializing {}", self.serializer.serialize_expr(&expr)?);
+        debug!("Specializing {}", self.serializer.serialize(&expr)?);
         macro specialize($f: ident, $t: ty) {
             if expr.is_ast::<$t>() {
                 return self.$f(expr.into_ast().unwrap(), ctx).map(|x| x.into());
@@ -92,7 +92,7 @@ impl Specializer {
         }
         bail!(
             "Could not infer type of {}",
-            self.serializer.serialize_expr(expr)?
+            self.serializer.serialize(expr)?
         )
     }
     pub fn specialize_call(&self, node: Call, ctx: &InterpreterContext) -> Result<Expr> {
@@ -111,7 +111,7 @@ impl Specializer {
         };
         if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.as_str()).unwrap_or("<fun>");
-            let args_ = self.serializer.serialize(&args)?;
+            let args_ = self.serializer.serialize(&args.clone().into())?;
             debug!("Invoking {} with {}", name, args_);
             let sub = ctx.child();
             for (i, arg) in args.args.iter().cloned().enumerate() {
@@ -125,8 +125,8 @@ impl Specializer {
             }
             let new_body =
                 self.specialize_block(f.body.clone().context("Funtion body is empty")?, &sub)?;
-            let bd = self.serializer.serialize(&new_body)?;
-            let args_ = self.serializer.serialize(&args)?;
+            let bd = self.serializer.serialize(&new_body.clone().into())?;
+            let args_ = self.serializer.serialize(&args.clone().into())?;
             debug!("Specialied {} with {} => {}", name, args_, bd);
             let new_name = Ident::new(format!(
                 "{}_{}",

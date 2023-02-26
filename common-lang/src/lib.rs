@@ -13,10 +13,7 @@ use common::*;
 use std::rc::Rc;
 
 pub trait Serializer {
-    fn serialize_expr(&self, node: &Expr) -> Result<String> {
-        self.serialize(&**node)
-    }
-    fn serialize(&self, node: &dyn AnyAst) -> Result<String>;
+    fn serialize(&self, node: &Expr) -> Result<String>;
 }
 
 pub trait Deserializer {
