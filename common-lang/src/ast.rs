@@ -78,7 +78,7 @@ pub struct Expr {
 }
 
 impl Expr {
-    pub fn new<T: Ast + Clone + 'static>(e: T) -> Self {
+    pub fn new<T: Ast>(e: T) -> Self {
         Self {
             ty: std::any::type_name::<T>(),
             inner: Rc::new(e),
@@ -87,7 +87,14 @@ impl Expr {
     pub fn get_type(&self) -> &str {
         self.ty
     }
-    pub fn into_ast<T: Ast + Clone + 'static>(self) -> Option<T> {
+    pub fn is_ast<T: Ast>(&self) -> bool {
+        self.inner.as_any().is::<T>()
+    }
+
+    pub fn as_ast<T: Ast>(&self) -> Option<&T> {
+        self.inner.as_any().downcast_ref::<T>()
+    }
+    pub fn into_ast<T: Ast + Clone>(self) -> Option<T> {
         self.inner.into_ast_rc()
     }
     pub fn make_ast_mut<T: Ast + Clone + 'static>(&mut self) -> Option<&mut T> {
@@ -114,7 +121,7 @@ impl Debug for Expr {
     }
 }
 
-impl<T: Ast + Clone + 'static> From<T> for Expr {
+impl<T: Ast + Clone> From<T> for Expr {
     fn from(value: T) -> Self {
         Self::new(value)
     }

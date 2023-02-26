@@ -2,7 +2,6 @@ use crate::{RawExpr, RawImplTrait, RawMacro, RawTokenSteam, RawUse, RustSerde};
 use common::Result;
 use common::*;
 use common_lang::ast::*;
-use common_lang::*;
 use proc_macro2::TokenStream;
 use quote::*;
 
