@@ -3,7 +3,8 @@ pub mod printer;
 pub mod rustfmt;
 
 use common::Result;
-use common_lang::{Expr, *};
+use common_lang::ast::{Expr, *};
+use common_lang::*;
 
 use std::fmt::Debug;
 use syn::*;
@@ -46,6 +47,15 @@ impl Ast for RawExpr {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RawTokenSteam {
+    raw: proc_macro2::TokenStream,
+}
+impl Ast for RawTokenSteam {
+    fn is_raw(&self) -> bool {
+        true
+    }
+}
 pub struct RustSerde;
 impl Serializer for RustSerde {
     fn serialize(&self, node: &dyn AnyAst) -> Result<String> {

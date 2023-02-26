@@ -1,5 +1,6 @@
 use crate::{RawExpr, RawImplTrait, RawMacro, RawUse, RustSerde};
 use common::*;
+use common_lang::ast::*;
 use common_lang::*;
 use quote::ToTokens;
 use syn::{
@@ -189,6 +190,13 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
         args: PosArgs { args: vec![l, r] },
     })
 }
+fn parse_tuple(t: syn::ExprTuple) -> Result<Call> {
+    let args = t.elems.into_iter().map(parse_expr).try_collect()?;
+    Ok(Call {
+        fun: Ident::new("tuple").into(),
+        args: PosArgs { args },
+    })
+}
 fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
         syn::Expr::Binary(b) => parse_binary(b)?.into(),
@@ -206,7 +214,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::MethodCall(c) => parse_method_call(c)?.into(),
         syn::Expr::Path(p) => parse_path(p.path)?.into(),
         syn::Expr::Reference(r) => parse_ref(r)?.into(),
-
+        syn::Expr::Tuple(t) => parse_tuple(t)?.into(),
         raw => RawExpr { raw }.into(),
         // x => bail!("Expr not supported: {:?}", x),
     })

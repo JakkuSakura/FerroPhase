@@ -1,7 +1,8 @@
-use crate::{RawExpr, RawImplTrait, RawMacro, RawUse, RustSerde};
+use crate::{RawExpr, RawImplTrait, RawMacro, RawTokenSteam, RawUse, RustSerde};
 use common::Result;
 use common::*;
-use common_lang::{Block, Ident, *};
+use common_lang::ast::*;
+use common_lang::*;
 use proc_macro2::TokenStream;
 use quote::*;
 
@@ -175,7 +176,9 @@ impl RustSerde {
                 }
                 quote!(#(#result)*)
             }
-            // TODO: can't tell method or member
+            "tuple" => quote!(
+                (#(#args), *)
+            ),
             _ => quote!(
                 #fun(#(#args), *)
             ),
@@ -245,7 +248,6 @@ impl RustSerde {
         let debug = format!("{:?}", node);
         Ok(quote!(#debug))
     }
-    // TODO: use serialize_expr as much as possible
     pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
         self.serialize_ast(&**node)
     }
@@ -307,6 +309,9 @@ impl RustSerde {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast::<RawExpr>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = node.as_ast::<RawTokenSteam>() {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast() {
