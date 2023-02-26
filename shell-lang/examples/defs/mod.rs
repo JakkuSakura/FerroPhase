@@ -1,3 +1,5 @@
+use common::*;
+
 pub struct SourceProcess {
     pub name: &'static str,
     pub val: i64,
@@ -12,7 +14,7 @@ impl SourceProcess {
 impl Actor<()> for SourceProcess {
     type Stdout = i64;
 
-    fn process(&self, _item: ()) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, _item: ()) -> Result<Self::Stdout> {
         println!("This is {}, output is {}", self.name, self.val);
         Ok(self.val)
     }
@@ -41,7 +43,7 @@ impl AddProcess {
 
 impl Actor<i64> for AddProcess {
     type Stdout = i64;
-    fn process(&self, item: i64) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: i64) -> Result<Self::Stdout> {
         Ok(self.add_inner(item, 1))
     }
 }
@@ -59,7 +61,7 @@ impl SinkProcess {
 impl Actor<i64> for SinkProcess {
     type Stdout = ();
 
-    fn process(&self, item: i64) -> Result<Self::Stdout, Stderr> {
+    fn process(&self, item: i64) -> Result<Self::Stdout> {
         println!("This is {}, result is {}", self.name, item);
 
         Ok(())

@@ -49,7 +49,7 @@ impl Ast for RawExpr {
 
 #[derive(Debug, Clone)]
 pub struct RawTokenSteam {
-    raw: proc_macro2::TokenStream,
+    pub raw: proc_macro2::TokenStream,
 }
 impl Ast for RawTokenSteam {
     fn is_raw(&self) -> bool {
