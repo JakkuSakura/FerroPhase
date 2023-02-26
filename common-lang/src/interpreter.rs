@@ -121,7 +121,7 @@ impl Interpreter {
         let result: Vec<_> = node
             .stmts
             .iter()
-            .map(|x| self.interprete(x, ctx))
+            .map(|x| self.interprete_expr(x, ctx))
             .try_collect::<Expr, Vec<_>, _>()?
             .into_iter()
             .filter(|x| x.as_ast::<Unit>().is_none())
@@ -133,7 +133,7 @@ impl Interpreter {
         Ok(Unit.into())
     }
     pub fn interprete_call(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
-        let fun = self.interprete(&node.fun, ctx)?;
+        let fun = self.interprete_expr(&node.fun, ctx)?;
 
         let args = self.interprete_args(&node.args, ctx)?;
         if let Some(f) = fun.as_ast::<FuncDecl>() {
@@ -174,7 +174,7 @@ impl Interpreter {
         let ret: Vec<_> = node
             .stmts
             .iter()
-            .map(|x| self.interprete(x, ctx))
+            .map(|x| self.interprete_expr(x, ctx))
             .try_collect()?;
         if node.last_value && !ret.is_empty() {
             Ok(ret.last().cloned().unwrap())
@@ -184,11 +184,11 @@ impl Interpreter {
     }
     pub fn interprete_cond(&self, node: &Cond, ctx: &InterpreterContext) -> Result<Expr> {
         for case in &node.cases {
-            let interpreted = self.interprete(&case.cond, ctx)?;
+            let interpreted = self.interprete_expr(&case.cond, ctx)?;
             let ret = interpreted.as_ast::<LiteralBool>().map(|x| x.value);
             match ret {
                 Some(true) => {
-                    return self.interprete(&case.body, ctx);
+                    return self.interprete_expr(&case.body, ctx);
                 }
                 Some(false) => {
                     continue;
@@ -364,11 +364,15 @@ impl Interpreter {
         let args: Vec<_> = node
             .args
             .iter()
-            .map(|x| self.interprete(x, ctx))
+            .map(|x| self.interprete_expr(x, ctx))
             .try_collect()?;
         Ok(PosArgs { args })
     }
-    pub fn interprete(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn interprete_expr(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
+        let node = &uplift_common_ast(node);
+        if let Some(n) = node.as_ast::<Uplifted>() {
+            return self.interprete_expr(&n.uplifted, ctx);
+        }
         debug!("Interpreting {}", self.serializer.serialize_expr(node)?);
         if let Some(n) = node.as_ast() {
             return self.interprete_module(n, ctx);
