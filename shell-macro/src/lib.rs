@@ -1,4 +1,5 @@
 use common::*;
+use common_lang::ast::*;
 use common_lang::*;
 use proc_macro::TokenStream;
 use quote::quote;
