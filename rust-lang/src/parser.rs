@@ -1,7 +1,6 @@
 use crate::{RawExpr, RawImplTrait, RawMacro, RawUse, RustSerde};
 use common::*;
 use common_lang::ast::*;
-use common_lang::*;
 use quote::ToTokens;
 use syn::{
     BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Pat, ReturnType, Stmt, Type, TypeParamBound,

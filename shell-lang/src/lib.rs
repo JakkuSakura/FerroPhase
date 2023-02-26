@@ -44,6 +44,32 @@ impl<L: Actor<Stdin>, R: Actor<L::Stdout>, Stdin> Actor<Stdin> for Pipe<Stdin, L
         self.r.process(out)
     }
 }
+
+#[must_use]
+pub struct Fanout<Stdin, L: Actor<Stdin>, R: Actor<Stdin>> {
+    l: L,
+    r: R,
+    stdin: PhantomData<Stdin>,
+}
+
+impl<Stdin, L: Actor<Stdin>, R: Actor<Stdin>> Fanout<Stdin, L, R> {
+    pub fn new(l: L, r: R) -> Self {
+        Self {
+            l,
+            r,
+            stdin: Default::default(),
+        }
+    }
+}
+
+impl<L: Actor<Stdin>, R: Actor<Stdin>, Stdin: Copy> Actor<Stdin> for Fanout<Stdin, L, R> {
+    type Stdout = ();
+    fn process(&self, item: Stdin) -> Result<Self::Stdout> {
+        self.l.process(item)?;
+        self.r.process(item)?;
+        Ok(())
+    }
+}
 pub struct ActorFn<I, O, F: Fn(I) -> Result<O>> {
     f: F,
     _p: PhantomData<(I, O)>,
