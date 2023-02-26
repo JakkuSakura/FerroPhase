@@ -257,6 +257,9 @@ impl RustSerde {
         if let Some(n) = node.as_ast::<Uplifted>() {
             return self.serialize_expr(&n.uplifted);
         }
+        if let Some(n) = node.as_ast::<Types>() {
+            return self.serialize_expr(&n.clone().into());
+        }
         if let Some(n) = node.as_ast() {
             return self.serialize_block(n);
         }
