@@ -126,6 +126,16 @@ impl<T: Ast + Clone> From<T> for Expr {
         Self::new(value)
     }
 }
+impl AsRef<dyn AnyAst> for Expr {
+    fn as_ref(&self) -> &dyn AnyAst {
+        &*self.inner
+    }
+}
+impl AsRef<dyn Ast> for Expr {
+    fn as_ref(&self) -> &dyn Ast {
+        &*self.inner
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -425,19 +435,56 @@ pub struct Reference {
 
 impl Ast for Reference {}
 
-pub struct Types {}
+#[derive(Debug, Clone)]
+pub struct Uplifted {
+    pub uplifted: Expr,
+    pub raw: Expr,
+}
+impl Ast for Uplifted {
+    fn is_raw(&self) -> bool {
+        self.raw.is_raw()
+    }
+    fn is_literal(&self) -> bool {
+        self.raw.is_literal()
+    }
+}
+#[derive(Debug, Clone)]
+pub enum Types {
+    Function(FuncType),
+    I64,
+    F64,
+    Bool,
+}
 
 impl Types {
     pub fn func(params: Vec<Expr>, ret: Expr) -> FuncType {
         FuncType { params, ret }
     }
-    pub fn i64() -> Ident {
-        Ident::new("i64")
+    pub fn i64() -> Types {
+        Types::I64
     }
-    pub fn f64() -> Ident {
-        Ident::new("f64")
+    pub fn f64() -> Types {
+        Types::F64
     }
-    pub fn bool() -> Ident {
-        Ident::new("bool")
+    pub fn bool() -> Types {
+        Types::Bool
     }
+}
+impl Ast for Types {}
+
+pub fn uplift_common_ast(expr: &Expr) -> Expr {
+    if let Some(expr) = expr.as_ast::<Types>() {
+        let uplifted: Expr = match expr {
+            Types::I64 => Ident::new("i64").into(),
+            Types::F64 => Ident::new("f64").into(),
+            Types::Bool => Ident::new("bool").into(),
+            Types::Function(f) => f.clone().into(),
+        };
+        return Uplifted {
+            uplifted: uplifted,
+            raw: expr.clone().into(),
+        }
+        .into();
+    }
+    expr.clone()
 }

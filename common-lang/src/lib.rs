@@ -1,4 +1,6 @@
 #![feature(decl_macro)]
+#![feature(trait_upcasting)]
+
 extern crate core;
 
 pub mod ast;
