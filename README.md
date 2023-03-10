@@ -43,6 +43,9 @@ Unless the function is too big, inlining does not perform
 
 - Loop unrolling
 
+
+- [ ] Zig's comptime, like rust macros but supports comptime inspection and is to replace templates
+- 
 ### Flow analysis
 
 Graph-based(and effects and contexts):
