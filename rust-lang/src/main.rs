@@ -31,7 +31,7 @@ fn main() -> Result<()> {
         let file_content = std::fs::read_to_string(file_in)?;
         let node = RustSerde.deserialize(&file_content)?;
         let ctx = InterpreterContext::new();
-        let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(node, &ctx)?;
+        let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(&node, &ctx)?;
         let code = RustSerde.serialize(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;
