@@ -1,5 +1,4 @@
 pub mod parser;
-pub mod preloader;
 pub mod printer;
 pub mod rustfmt;
 
@@ -18,7 +17,7 @@ impl Ast for RawMacro {
         true
     }
 }
-
+impl_panic_serde!(RawMacro);
 #[derive(Debug, Clone)]
 pub struct RawUse {
     raw: syn::ItemUse,
@@ -28,6 +27,7 @@ impl Ast for RawUse {
         true
     }
 }
+impl_panic_serde!(RawUse);
 
 #[derive(Debug, Clone)]
 pub struct RawImplTrait {
@@ -38,6 +38,8 @@ impl Ast for RawImplTrait {
         true
     }
 }
+impl_panic_serde!(RawImplTrait);
+
 #[derive(Debug, Clone)]
 pub struct RawExpr {
     raw: syn::Expr,
@@ -47,6 +49,7 @@ impl Ast for RawExpr {
         true
     }
 }
+impl_panic_serde!(RawExpr);
 
 #[derive(Debug, Clone)]
 pub struct RawTokenSteam {
@@ -57,6 +60,8 @@ impl Ast for RawTokenSteam {
         true
     }
 }
+impl_panic_serde!(RawTokenSteam);
+
 pub struct RustSerde;
 impl Serializer for RustSerde {
     fn serialize(&self, node: &Expr) -> Result<String> {

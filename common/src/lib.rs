@@ -43,7 +43,7 @@ pub use itertools::*;
 pub use kanal;
 pub use lazy_static::*;
 pub use minimal_executor::{block_fn, block_on, poll_fn, poll_on};
-pub use serde::{de::DeserializeOwned, Deserialize, Serialize};
+pub use serde::{self, de::DeserializeOwned, Deserialize, Serialize};
 pub use serde_json::{self, Value};
 pub use serde_yaml;
 pub use static_assertions::*;

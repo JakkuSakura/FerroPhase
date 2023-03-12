@@ -1,9 +1,11 @@
-use common::{impl_downcast, Downcast};
+use common::*;
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
 use std::rc::Rc;
 
-pub trait Ast: Downcast + Debug {
+pub trait Ast:
+    Downcast + Debug + serde_traitobject::Serialize + serde_traitobject::Deserialize
+{
     fn is_literal(&self) -> bool {
         false
     }
@@ -13,50 +15,61 @@ pub trait Ast: Downcast + Debug {
 }
 
 impl_downcast!(Ast);
-
-#[derive(Clone)]
+#[macro_export]
+macro_rules! impl_panic_serde {
+    ($name: path) => {
+        impl common::serde::Serialize for $name {
+            fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
+            where
+                S: common::serde::Serializer,
+            {
+                unreachable!()
+            }
+        }
+        impl<'de> common::serde::Deserialize<'de> for $name {
+            fn deserialize<D>(_deserializer: D) -> std::result::Result<Self, D::Error>
+            where
+                D: common::serde::Deserializer<'de>,
+            {
+                unreachable!()
+            }
+        }
+    };
+}
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Expr {
-    inner: Rc<dyn Ast>,
+    #[serde(with = "serde_traitobject")]
+    expr: Rc<dyn Ast>,
 }
 
 impl Expr {
-    pub fn new<T: Ast>(e: T) -> Self {
-        Self { inner: Rc::new(e) }
+    pub fn new(e: impl Ast) -> Self {
+        Self { expr: Rc::new(e) }
     }
 
     pub fn is_ast<T: Ast>(&self) -> bool {
-        self.inner.is::<T>()
+        self.expr.is::<T>()
     }
 
     pub fn as_ast<T: Ast>(&self) -> Option<&T> {
-        self.inner.downcast_ref::<T>()
-    }
-
-    pub fn make_ast_mut<T: Ast + Clone + 'static>(&mut self) -> Option<&mut T> {
-        if Rc::weak_count(&self.inner) == 0 && Rc::strong_count(&self.inner) == 1 {
-            Rc::get_mut(&mut self.inner).unwrap().downcast_mut::<T>()
-        } else {
-            let inner = Rc::new(self.inner.as_any().downcast_ref::<T>()?.clone());
-            self.inner = inner;
-            Rc::get_mut(&mut self.inner).unwrap().downcast_mut::<T>()
-        }
+        self.expr.downcast_ref::<T>()
     }
 }
 
 impl Deref for Expr {
     type Target = dyn Ast;
     fn deref(&self) -> &Self::Target {
-        &*self.inner
+        &*self.expr
     }
 }
 
 impl Debug for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.inner.fmt(f)
+        self.expr.fmt(f)
     }
 }
 
-impl<T: Ast + Clone> From<T> for Expr {
+impl<T: Ast> From<T> for Expr {
     fn from(value: T) -> Self {
         Self::new(value)
     }
@@ -64,11 +77,11 @@ impl<T: Ast + Clone> From<T> for Expr {
 
 impl AsRef<dyn Ast> for Expr {
     fn as_ref(&self) -> &dyn Ast {
-        &*self.inner
+        &*self.expr
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Module {
     pub name: Ident,
     pub stmts: Vec<Expr>,
@@ -76,7 +89,7 @@ pub struct Module {
 
 impl Ast for Module {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub stmts: Vec<Expr>,
     pub last_value: bool,
@@ -84,7 +97,7 @@ pub struct Block {
 
 impl Ast for Block {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit;
 
 impl Ast for Unit {
@@ -93,7 +106,7 @@ impl Ast for Unit {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct Ident {
     pub name: String,
 }
@@ -109,7 +122,7 @@ impl Ident {
 
 impl Ast for Ident {}
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct LiteralInt {
     pub value: i64,
 }
@@ -126,7 +139,7 @@ impl Ast for LiteralInt {
     }
 }
 
-#[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
 pub struct LiteralBool {
     pub value: bool,
 }
@@ -143,7 +156,7 @@ impl Ast for LiteralBool {
     }
 }
 
-#[derive(Debug, Clone, PartialOrd, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq)]
 pub struct LiteralDecimal {
     pub value: f64,
 }
@@ -160,7 +173,7 @@ impl Ast for LiteralDecimal {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiteralChar {
     pub value: char,
 }
@@ -171,7 +184,7 @@ impl Ast for LiteralChar {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiteralString {
     pub value: char,
 }
@@ -182,7 +195,7 @@ impl Ast for LiteralString {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiteralList {
     pub value: Vec<Expr>,
 }
@@ -193,7 +206,7 @@ impl Ast for LiteralList {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiteralUnknown {}
 
 impl Ast for LiteralUnknown {
@@ -202,19 +215,19 @@ impl Ast for LiteralUnknown {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct PosArgs {
     pub args: Vec<Expr>,
 }
 
 impl Ast for PosArgs {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KwArgs {
     pub args: Vec<(String, Expr)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Call {
     pub fun: Expr,
     pub args: PosArgs,
@@ -222,13 +235,13 @@ pub struct Call {
 
 impl Ast for Call {}
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
 pub enum Visibility {
     Public,
     Private,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Def {
     pub name: Ident,
     pub ty: Option<Expr>,
@@ -238,18 +251,18 @@ pub struct Def {
 
 impl Ast for Def {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Param {
     pub name: Ident,
     pub ty: Expr,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Params {
     pub params: Vec<Param>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuncDecl {
     pub name: Option<Ident>,
     pub params: Params,
@@ -259,7 +272,7 @@ pub struct FuncDecl {
 
 impl Ast for FuncDecl {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Generics {
     pub params: Params,
     // TODOL restrains
@@ -268,7 +281,7 @@ pub struct Generics {
 
 impl Ast for Generics {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Assign {
     pub target: Expr,
     pub value: Expr,
@@ -276,13 +289,13 @@ pub struct Assign {
 
 impl Ast for Assign {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CondCase {
     pub cond: Expr,
     pub body: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cond {
     pub cases: Vec<CondCase>,
     pub if_style: bool,
@@ -290,7 +303,7 @@ pub struct Cond {
 
 impl Ast for Cond {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForEach {
     pub variable: Ident,
     pub iterable: Expr,
@@ -299,7 +312,7 @@ pub struct ForEach {
 
 impl Ast for ForEach {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct While {
     pub cond: Expr,
     pub body: Block,
@@ -307,25 +320,25 @@ pub struct While {
 
 impl Ast for While {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Field {
     pub name: Ident,
     pub ty: Expr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fields {
     pub fields: Vec<Field>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Struct {
     pub fields: Fields,
 }
 
 impl Ast for Struct {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildStruct {
     pub name: Expr, // either Ident or Struct
     pub field: KwArgs,
@@ -333,7 +346,7 @@ pub struct BuildStruct {
 
 impl Ast for BuildStruct {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SelectType {
     Unknown,
     Field,
@@ -341,7 +354,7 @@ pub enum SelectType {
     Function,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Select {
     pub obj: Expr,
     pub field: Ident,
@@ -350,7 +363,7 @@ pub struct Select {
 
 impl Ast for Select {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuncType {
     pub params: Vec<Expr>,
     pub ret: Expr,
@@ -358,7 +371,7 @@ pub struct FuncType {
 
 impl Ast for FuncType {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
     pub referee: Expr,
     pub mutable: Option<bool>,
@@ -366,7 +379,7 @@ pub struct Reference {
 
 impl Ast for Reference {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Uplifted {
     pub uplifted: Expr,
     pub raw: Expr,
@@ -379,7 +392,7 @@ impl Ast for Uplifted {
         self.raw.is_literal()
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Types {
     Function(FuncType),
     I64,
