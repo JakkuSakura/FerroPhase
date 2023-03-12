@@ -90,6 +90,7 @@ impl BuiltinFn {
         (self.f)(args, ctx)
     }
 }
+impl_panic_serde!(BuiltinFn);
 impl Debug for BuiltinFn {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BuiltinFn")
