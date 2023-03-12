@@ -6,6 +6,7 @@ extern crate core;
 
 pub mod ast;
 pub mod interpreter;
+pub mod preloader;
 pub mod specializer;
 
 use ast::*;

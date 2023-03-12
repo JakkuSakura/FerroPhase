@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 common = { path = "../common" }
+serde = "1"
+serde_traitobject = "0.2.8"
