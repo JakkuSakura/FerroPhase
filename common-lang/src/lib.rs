@@ -1,5 +1,6 @@
 #![feature(decl_macro)]
 #![feature(trait_upcasting)]
+#![feature(trivial_bounds)]
 
 extern crate core;
 
