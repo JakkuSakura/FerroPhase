@@ -25,7 +25,7 @@ pub use chrono::{
 pub use convert_case::{Case, Casing};
 pub use dashmap::*;
 pub use derivative::{self, Derivative};
-pub use downcast::{Any as DowncastAny, *};
+pub use downcast_rs::{self, impl_downcast, Downcast};
 pub use eyre::{bail, ensure, eyre, Context as EyreContext, ContextCompat, Error, Result};
 pub use futures::{
     future::{

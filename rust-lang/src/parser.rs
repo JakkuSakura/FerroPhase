@@ -282,7 +282,7 @@ fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
     })
 }
 
-pub fn parse_file(file: syn::File) -> Result<Expr> {
+pub fn parse_file(file: syn::File) -> Result<Module> {
     Ok(Module {
         name: Ident::new("__file__"),
         stmts: file
@@ -295,8 +295,7 @@ pub fn parse_file(file: syn::File) -> Result<Expr> {
                     .unwrap_or(true)
             })
             .try_collect()?,
-    }
-    .into())
+    })
 }
 pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
     Ok(Module {
@@ -321,7 +320,7 @@ impl RustSerde {
     pub fn deserialize_expr(&self, code: syn::Expr) -> Result<Expr> {
         parse_expr(code)
     }
-    pub fn deserialize_file(&self, code: syn::File) -> Result<Expr> {
+    pub fn deserialize_file(&self, code: syn::File) -> Result<Module> {
         parse_file(code)
     }
     pub fn deserialize_module(&self, code: syn::ItemMod) -> Result<Expr> {
