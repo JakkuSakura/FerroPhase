@@ -1,66 +1,9 @@
-use std::any::Any;
+use common::{impl_downcast, Downcast};
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::Arc;
 
-pub trait AnyAst: Ast {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
-    fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
-    fn clone_any_rc(&self) -> Rc<dyn AnyAst>
-    where
-        Self: Clone;
-}
-
-impl<T: Ast> AnyAst for T {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-    fn into_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
-        self
-    }
-    fn clone_any_rc(&self) -> Rc<dyn AnyAst>
-    where
-        Self: Clone,
-    {
-        Rc::new(self.clone())
-    }
-}
-
-impl dyn AnyAst {
-    pub fn is_ast<T: Ast>(&self) -> bool {
-        self.as_any().is::<T>()
-    }
-
-    pub fn as_ast<T: Ast>(&self) -> Option<&T> {
-        self.as_any().downcast_ref::<T>()
-    }
-    pub fn as_ast_mut<T: Ast>(&mut self) -> Option<&mut T> {
-        self.as_any_mut().downcast_mut()
-    }
-    pub fn into_ast<T: Ast>(self: Box<Self>) -> Option<T> {
-        self.into_any().downcast().ok().map(|x| *x)
-    }
-    pub fn into_ast_rc<T: Ast + Clone>(self: Rc<Self>) -> Option<T> {
-        self.into_any_rc()
-            .downcast()
-            .ok()
-            .map(|x| match Rc::try_unwrap(x) {
-                Ok(x) => x,
-                Err(x) => T::clone(&x),
-            })
-    }
-}
-
-pub trait Ast: Debug + Any + 'static {
+pub trait Ast: Downcast + Debug {
     fn is_literal(&self) -> bool {
         false
     }
@@ -69,47 +12,39 @@ pub trait Ast: Debug + Any + 'static {
     }
 }
 
-impl<T: Ast + ?Sized> Ast for Arc<T> {}
+impl_downcast!(Ast);
 
 #[derive(Clone)]
 pub struct Expr {
-    ty: &'static str,
-    inner: Rc<dyn AnyAst>,
+    inner: Rc<dyn Ast>,
 }
 
 impl Expr {
     pub fn new<T: Ast>(e: T) -> Self {
-        Self {
-            ty: std::any::type_name::<T>(),
-            inner: Rc::new(e),
-        }
+        Self { inner: Rc::new(e) }
     }
-    pub fn get_type(&self) -> &str {
-        self.ty
-    }
+
     pub fn is_ast<T: Ast>(&self) -> bool {
-        self.inner.as_any().is::<T>()
+        self.inner.is::<T>()
     }
 
     pub fn as_ast<T: Ast>(&self) -> Option<&T> {
-        self.inner.as_any().downcast_ref::<T>()
+        self.inner.downcast_ref::<T>()
     }
-    pub fn into_ast<T: Ast + Clone>(self) -> Option<T> {
-        self.inner.into_ast_rc()
-    }
+
     pub fn make_ast_mut<T: Ast + Clone + 'static>(&mut self) -> Option<&mut T> {
         if Rc::weak_count(&self.inner) == 0 && Rc::strong_count(&self.inner) == 1 {
-            Rc::get_mut(&mut self.inner).unwrap().as_ast_mut::<T>()
+            Rc::get_mut(&mut self.inner).unwrap().downcast_mut::<T>()
         } else {
-            let inner = self.inner.as_ast::<T>()?.clone_any_rc();
+            let inner = Rc::new(self.inner.as_any().downcast_ref::<T>()?.clone());
             self.inner = inner;
-            Rc::get_mut(&mut self.inner).unwrap().as_ast_mut::<T>()
+            Rc::get_mut(&mut self.inner).unwrap().downcast_mut::<T>()
         }
     }
 }
 
 impl Deref for Expr {
-    type Target = dyn AnyAst;
+    type Target = dyn Ast;
     fn deref(&self) -> &Self::Target {
         &*self.inner
     }
@@ -126,11 +61,7 @@ impl<T: Ast + Clone> From<T> for Expr {
         Self::new(value)
     }
 }
-impl AsRef<dyn AnyAst> for Expr {
-    fn as_ref(&self) -> &dyn AnyAst {
-        &*self.inner
-    }
-}
+
 impl AsRef<dyn Ast> for Expr {
     fn as_ref(&self) -> &dyn Ast {
         &*self.inner

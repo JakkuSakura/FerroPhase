@@ -16,15 +16,15 @@ impl Specializer {
         }
     }
 
-    pub fn specialize_expr(&self, expr: Expr, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn specialize_expr(&self, expr: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
         let expr = uplift_common_ast(&expr);
         if let Some(n) = expr.as_ast::<Uplifted>() {
-            return self.specialize_expr(n.uplifted.clone(), ctx);
+            return self.specialize_expr(&n.uplifted, ctx);
         }
         debug!("Specializing {}", self.serializer.serialize(&expr)?);
         macro specialize($f: ident, $t: ty) {
-            if expr.is_ast::<$t>() {
-                return self.$f(expr.into_ast().unwrap(), ctx).map(|x| x.into());
+            if let Some(x) = expr.as_ast::<$t>() {
+                return self.$f(x, ctx).map(|x| x.into());
             }
         }
         specialize!(specialize_block, Block);
@@ -95,8 +95,8 @@ impl Specializer {
             self.serializer.serialize(expr)?
         )
     }
-    pub fn specialize_call(&self, node: Call, ctx: &InterpreterContext) -> Result<Expr> {
-        let mut fun = self.specialize_expr(node.fun.clone(), ctx)?;
+    pub fn specialize_call(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
+        let mut fun = self.specialize_expr(&node.fun, ctx)?;
         if let Some(g) = fun.as_ast::<Generics>() {
             fun = g.value.clone();
         }
@@ -105,7 +105,6 @@ impl Specializer {
                 .args
                 .args
                 .iter()
-                .cloned()
                 .map(|x| self.specialize_expr(x, ctx))
                 .try_collect()?,
         };
@@ -124,7 +123,7 @@ impl Specializer {
                 sub.insert(param.name.clone(), arg);
             }
             let new_body =
-                self.specialize_block(f.body.clone().context("Funtion body is empty")?, &sub)?;
+                self.specialize_block(f.body.as_ref().context("Funtion body is empty")?, &sub)?;
             let bd = self.serializer.serialize(&new_body.clone().into())?;
             let args_ = self.serializer.serialize(&args.clone().into())?;
             debug!("Specialied {} with {} => {}", name, args_, bd);
@@ -166,10 +165,10 @@ impl Specializer {
         }
         bail!("Failed to specialize {:?}", node)
     }
-    pub fn specialize_module(&self, m: Module, ctx: &InterpreterContext) -> Result<Module> {
+    pub fn specialize_module(&self, m: &Module, ctx: &InterpreterContext) -> Result<Module> {
         let mut stmts: Vec<_> = m
             .stmts
-            .into_iter()
+            .iter()
             .map(|x| self.specialize_expr(x, ctx))
             .try_collect()?;
         let specialized: Vec<_> = ctx
@@ -191,31 +190,31 @@ impl Specializer {
             .try_collect()?;
         stmts.extend(specialized);
         Ok(Module {
-            name: m.name,
+            name: m.name.clone(),
             stmts: stmts
                 .into_iter()
                 .filter(|x| x.as_ast::<Unit>().is_none())
                 .collect(),
         })
     }
-    pub fn specialize_block(&self, b: Block, ctx: &InterpreterContext) -> Result<Block> {
+    pub fn specialize_block(&self, b: &Block, ctx: &InterpreterContext) -> Result<Block> {
         Ok(Block {
             stmts: b
                 .stmts
-                .into_iter()
+                .iter()
                 .map(|x| self.specialize_expr(x, ctx))
                 .try_collect()?,
             last_value: b.last_value,
         })
     }
-    pub fn specialize_cond(&self, b: Cond, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn specialize_cond(&self, b: &Cond, ctx: &InterpreterContext) -> Result<Expr> {
         for case in &b.cases {
             let interpreted =
                 Interpreter::new(self.serializer.clone()).interprete_expr(&case.cond, ctx)?;
             let ret = interpreted.as_ast::<LiteralBool>().map(|x| x.value);
             match ret {
                 Some(true) => {
-                    return self.specialize_expr(case.body.clone(), ctx);
+                    return self.specialize_expr(&case.body, ctx);
                 }
                 Some(false) => {
                     continue;
@@ -226,11 +225,11 @@ impl Specializer {
         Ok(Cond {
             cases: b
                 .cases
-                .into_iter()
+                .iter()
                 .map(|case| {
                     Ok::<_, Error>(CondCase {
-                        cond: self.specialize_expr(case.cond, ctx)?,
-                        body: self.specialize_expr(case.body, ctx)?,
+                        cond: self.specialize_expr(&case.cond, ctx)?,
+                        body: self.specialize_expr(&case.body, ctx)?,
                     })
                 })
                 .try_collect()?,
@@ -238,7 +237,7 @@ impl Specializer {
         }
         .into())
     }
-    pub fn specialize_def(&self, d: Def, ctx: &InterpreterContext) -> Result<Expr> {
+    pub fn specialize_def(&self, d: &Def, ctx: &InterpreterContext) -> Result<Expr> {
         let fun;
         if let Some(g) = d.value.as_ast::<Generics>() {
             fun = g.value.clone();
@@ -250,13 +249,15 @@ impl Specializer {
             match f.name.as_ref().map(|x| x.as_str()).unwrap_or("") {
                 "main" => {
                     return Ok(Def {
-                        name: d.name,
+                        name: d.name.clone(),
                         ty: None,
                         value: FuncDecl {
                             name: f.name,
                             params: f.params,
                             ret: f.ret,
-                            body: Some(self.specialize_block(f.body.context("empty main")?, ctx)?),
+                            body: Some(
+                                self.specialize_block(f.body.as_ref().context("empty main")?, ctx)?,
+                            ),
                         }
                         .into(),
                         visibility: d.visibility,
@@ -266,7 +267,7 @@ impl Specializer {
 
                 "print" => {
                     ctx.insert(d.name.clone(), d.value.clone());
-                    return Ok(d.into());
+                    return Ok(d.clone().into());
                 }
                 _ => ctx.insert(d.name.clone(), d.value.clone()),
             }

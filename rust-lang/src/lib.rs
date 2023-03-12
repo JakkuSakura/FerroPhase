@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod preloader;
 pub mod printer;
 pub mod rustfmt;
 
@@ -65,6 +66,6 @@ impl Serializer for RustSerde {
 impl Deserializer for RustSerde {
     fn deserialize(&self, code: &str) -> Result<Expr> {
         let code: syn::File = parse_str(code)?;
-        self.deserialize_file(code)
+        Ok(self.deserialize_file(code)?.into())
     }
 }
