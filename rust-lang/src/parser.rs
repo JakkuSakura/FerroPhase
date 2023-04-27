@@ -2,15 +2,13 @@ use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawUse, RustSerde
 use common::*;
 use common_lang::ast::*;
 use quote::ToTokens;
-use syn::{
-    BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Pat, ReturnType, Stmt, Type, TypeParamBound,
-};
+use syn::{BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Pat, ReturnType, Stmt, TypeParamBound};
 fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
 }
 fn parse_type(t: syn::Type) -> Result<Expr> {
     let t = match t {
-        Type::BareFn(f) => Types::func(
+        syn::Type::BareFn(f) => Types::func(
             f.inputs
                 .into_iter()
                 .map(|x| x.ty)
@@ -19,7 +17,7 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
             parse_return_type(f.output)?,
         )
         .into(),
-        Type::Path(p) => {
+        syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
             match s.as_str() {
                 "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => Ident::new(s).into(),
@@ -27,8 +25,8 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
                 // _ => bail!("Type not supported: {}", s),
             }
         }
-        Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
-        Type::Tuple(t) if t.elems.is_empty() => Unit.into(),
+        syn::Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
+        syn::Type::Tuple(t) if t.elems.is_empty() => Unit.into(),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -205,7 +203,7 @@ fn parse_tuple(t: syn::ExprTuple) -> Result<Call> {
         args: PosArgs { args },
     })
 }
-fn parse_expr(expr: syn::Expr) -> Result<Expr> {
+pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
         syn::Expr::Binary(b) => parse_binary(b)?.into(),
         syn::Expr::Block(b) if b.label.is_none() => parse_block(b.block)?.into(),
@@ -233,15 +231,13 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Expr> {
         Stmt::Local(l) => Def {
             name: parse_pat(l.pat)?,
             ty: None,
-            value: parse_expr(*l.init.context("No value")?.1)?,
+            value: parse_expr(*l.init.context("No value")?.expr)?,
             visibility: Visibility::Public,
         }
         .into(),
-        Stmt::Item(_) => {
-            todo!()
-        }
-        Stmt::Expr(e) => parse_expr(e)?,
-        Stmt::Semi(e, _) => parse_expr(e)?,
+        Stmt::Item(tm) => parse_item(tm)?,
+        Stmt::Expr(e, _) => parse_expr(e)?,
+        Stmt::Macro(m) => bail!("Macro not supported: {:?}", m),
     })
 }
 
@@ -250,8 +246,8 @@ fn parse_block(block: syn::Block) -> Result<Block> {
         .stmts
         .last()
         .map(|x| match x {
-            Stmt::Semi(..) => false,
-            _ => true,
+            Stmt::Expr(_, s) => s.is_none(),
+            _ => false,
         })
         .unwrap_or_default();
     Ok(Block {
@@ -262,14 +258,13 @@ fn parse_block(block: syn::Block) -> Result<Block> {
 fn parse_vis(v: syn::Visibility) -> Visibility {
     match v {
         syn::Visibility::Public(_) => Visibility::Public,
-        syn::Visibility::Crate(_) => Visibility::Public,
         syn::Visibility::Restricted(_) => Visibility::Public,
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
 fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
     match item {
-        syn::ImplItem::Method(m) => {
+        syn::ImplItem::Fn(m) => {
             let visibility = parse_vis(m.vis.clone());
 
             // TODO: defaultness
@@ -295,6 +290,26 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
         defs: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
+fn parse_struct_field(i: usize, f: syn::Field) -> Result<Field> {
+    Ok(Field {
+        name: f
+            .ident
+            .map(parse_ident)
+            .unwrap_or(Ident::new(format!("{}", i))),
+        ty: parse_type(f.ty)?,
+    })
+}
+pub fn parse_struct(s: syn::ItemStruct) -> Result<Struct> {
+    Ok(Struct {
+        name: parse_ident(s.ident),
+        fields: s
+            .fields
+            .into_iter()
+            .enumerate()
+            .map(|(i, f)| parse_struct_field(i, f))
+            .try_collect()?,
+    })
+}
 fn parse_item(item: syn::Item) -> Result<Expr> {
     match item {
         Item::Fn(f0) => {
@@ -311,6 +326,7 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
         Item::Impl(im) => Ok(parse_impl(im)?.into()),
         Item::Use(u) => Ok(RawUse { raw: u }.into()),
         Item::Macro(m) => Ok(RawItemMacro { raw: m }.into()),
+        Item::Struct(s) => Ok(parse_struct(s)?.into()),
         _ => bail!("Does not support item {:?} yet", item),
     }
 }
