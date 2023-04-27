@@ -4,7 +4,6 @@
 #![feature(specialization)]
 #![feature(decl_macro)]
 #![feature(trait_alias)]
-#![feature(once_cell)]
 
 // these are re-exports from other crates
 pub extern crate alloc;
@@ -16,7 +15,6 @@ pub use async_trait::async_trait;
 pub use bevy_reflect::{
     self, FromReflect, GetTypeRegistration, Reflect, TypeRegistration, TypeRegistry, Typed,
 };
-pub use bstr::*;
 pub use bytes::{self, Buf, BufMut, Bytes, BytesMut};
 pub use cfg_if::cfg_if;
 pub use chrono::{
