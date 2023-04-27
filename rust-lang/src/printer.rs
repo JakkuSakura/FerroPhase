@@ -1,4 +1,4 @@
-use crate::{RawExpr, RawImplTrait, RawMacro, RawTokenSteam, RawUse, RustSerde};
+use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, RawUse, RustSerde};
 use common::Result;
 use common::*;
 use common_lang::ast::*;
@@ -254,6 +254,19 @@ impl RustSerde {
         let debug = format!("{:?}", node);
         Ok(quote!(#debug))
     }
+    pub fn serialize_impl(&self, impl_: &Impl) -> Result<TokenStream> {
+        let name = self.serialize_expr(&impl_.name)?;
+        let methods: Vec<_> = impl_
+            .defs
+            .iter()
+            .map(|x| self.serialize_def(x))
+            .try_collect()?;
+        Ok(quote!(
+            impl #name {
+                #(#methods)*
+            }
+        ))
+    }
     pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
 
@@ -308,7 +321,10 @@ impl RustSerde {
         if node.is_literal() {
             return self.serialize_literal(node);
         }
-        if let Some(n) = node.as_ast::<RawMacro>() {
+        if let Some(n) = node.as_ast::<RawExprMacro>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = node.as_ast::<RawItemMacro>() {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast::<RawUse>() {
@@ -323,6 +339,9 @@ impl RustSerde {
         }
         if let Some(n) = node.as_ast::<RawTokenSteam>() {
             return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = node.as_ast() {
+            return self.serialize_impl(n);
         }
         if let Some(n) = node.as_ast() {
             return self.serialize_func_type(n);

@@ -1,4 +1,4 @@
-use crate::{RawExpr, RawImplTrait, RawMacro, RawUse, RustSerde};
+use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawUse, RustSerde};
 use common::*;
 use common_lang::ast::*;
 use quote::ToTokens;
@@ -28,6 +28,7 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
             }
         }
         Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
+        Type::Tuple(t) if t.elems.is_empty() => Unit.into(),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -35,9 +36,16 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
 
 fn parse_input(i: FnArg) -> Result<Param> {
     Ok(match i {
-        FnArg::Receiver(_) => {
-            todo!()
-        }
+        FnArg::Receiver(rev) => Param {
+            name: Ident::new("self"),
+            ty: match (rev.reference.is_some(), rev.mutability.is_some()) {
+                (true, true) => Ident::new("&mut Self").into(),
+                (true, false) => Ident::new("&Self").into(),
+                (false, true) => Ident::new("Self").into(),
+                (false, false) => Ident::new("mut Self").into(),
+            },
+        },
+
         FnArg::Typed(t) => Param {
             name: parse_pat(*t.pat)?,
             ty: parse_type(*t.ty)?,
@@ -48,7 +56,8 @@ fn parse_input(i: FnArg) -> Result<Param> {
 fn parse_pat(p: syn::Pat) -> Result<Ident> {
     Ok(match p {
         Pat::Ident(name) => parse_ident(name.ident),
-        _ => todo!(),
+        Pat::Wild(_) => Ident::new("_"),
+        _ => bail!("Pattern not supported {:?}", p),
     })
 }
 
@@ -209,7 +218,7 @@ fn parse_expr(expr: syn::Expr) -> Result<Expr> {
             Lit::Float(i) => LiteralDecimal::new(i.base10_parse()?).into(),
             _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
-        syn::Expr::Macro(m) => RawMacro { raw: m }.into(),
+        syn::Expr::Macro(m) => RawExprMacro { raw: m }.into(),
         syn::Expr::MethodCall(c) => parse_method_call(c)?.into(),
         syn::Expr::Path(p) => parse_path(p.path)?.into(),
         syn::Expr::Reference(r) => parse_ref(r)?.into(),
@@ -258,6 +267,34 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
+fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
+    match item {
+        syn::ImplItem::Method(m) => {
+            let visibility = parse_vis(m.vis.clone());
+
+            // TODO: defaultness
+            let (name, expr) = parse_fn(ItemFn {
+                attrs: m.attrs,
+                vis: m.vis,
+                sig: m.sig,
+                block: Box::new(m.block),
+            })?;
+            Ok(Def {
+                name,
+                ty: None,
+                value: expr,
+                visibility: visibility,
+            })
+        }
+        _ => bail!("Does not support impl item {:?}", item),
+    }
+}
+fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
+    Ok(Impl {
+        name: parse_type(*im.self_ty)?,
+        defs: im.items.into_iter().map(parse_impl_item).try_collect()?,
+    })
+}
 fn parse_item(item: syn::Item) -> Result<Expr> {
     match item {
         Item::Fn(f0) => {
@@ -271,7 +308,9 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
             };
             Ok(d.into())
         }
+        Item::Impl(im) => Ok(parse_impl(im)?.into()),
         Item::Use(u) => Ok(RawUse { raw: u }.into()),
+        Item::Macro(m) => Ok(RawItemMacro { raw: m }.into()),
         _ => bail!("Does not support item {:?} yet", item),
     }
 }
