@@ -10,7 +10,7 @@ common = { path = "../common" }
 common-lang = { path = "../common-lang" }
 rust-lang = { path = "../rust-lang" }
 syn-serde = { version = "0.2", features = ["json"] }
-syn = { version = "1", features = ["full", "extra-traits"] }
+syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 clap = { version = "4.1.8", features = ["derive"] }

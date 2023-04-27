@@ -10,7 +10,7 @@ use std::fmt::Debug;
 use syn::*;
 #[derive(Debug, Clone)]
 pub struct RawExprMacro {
-    raw: syn::ExprMacro,
+    pub raw: syn::ExprMacro,
 }
 impl Ast for RawExprMacro {
     fn is_raw(&self) -> bool {
@@ -21,7 +21,7 @@ impl_panic_serde!(RawExprMacro);
 
 #[derive(Debug, Clone)]
 pub struct RawItemMacro {
-    raw: syn::ItemMacro,
+    pub raw: syn::ItemMacro,
 }
 impl Ast for RawItemMacro {
     fn is_raw(&self) -> bool {
