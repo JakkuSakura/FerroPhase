@@ -9,15 +9,26 @@ use common_lang::*;
 use std::fmt::Debug;
 use syn::*;
 #[derive(Debug, Clone)]
-pub struct RawMacro {
+pub struct RawExprMacro {
     raw: syn::ExprMacro,
 }
-impl Ast for RawMacro {
+impl Ast for RawExprMacro {
     fn is_raw(&self) -> bool {
         true
     }
 }
-impl_panic_serde!(RawMacro);
+impl_panic_serde!(RawExprMacro);
+
+#[derive(Debug, Clone)]
+pub struct RawItemMacro {
+    raw: syn::ItemMacro,
+}
+impl Ast for RawItemMacro {
+    fn is_raw(&self) -> bool {
+        true
+    }
+}
+impl_panic_serde!(RawItemMacro);
 #[derive(Debug, Clone)]
 pub struct RawUse {
     raw: syn::ItemUse,
