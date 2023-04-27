@@ -107,7 +107,7 @@ impl Interpreter {
         Self { serializer }
     }
     pub fn interprete_module(&self, node: &Module, ctx: &InterpreterContext) -> Result<Expr> {
-        node.stmts
+        node.items
             .iter()
             .filter(|x| x.as_ast::<Def>().is_some())
             .try_for_each(|x| {
@@ -120,7 +120,7 @@ impl Interpreter {
                 return Ok(());
             })?;
         let result: Vec<_> = node
-            .stmts
+            .items
             .iter()
             .map(|x| self.interprete_expr(x, ctx))
             .try_collect::<Expr, Vec<_>, _>()?

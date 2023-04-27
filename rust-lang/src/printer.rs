@@ -267,6 +267,25 @@ impl RustSerde {
             }
         ))
     }
+    pub fn serialize_module(&self, m: &Module) -> Result<TokenStream> {
+        let stmts: Vec<_> = m
+            .items
+            .iter()
+            .map(|x| self.serialize_expr(x))
+            .try_collect()?;
+        if m.name.as_str() == "__file__" {
+            return Ok(quote!(
+                #(#stmts)*
+            ));
+        } else {
+            let file = format_ident!("{}", m.name.as_str());
+            return Ok(quote!(
+                pub mod #file {
+                    #(#stmts)*
+                }
+            ));
+        }
+    }
     pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
 
@@ -286,23 +305,7 @@ impl RustSerde {
             return self.serialize_generics(n);
         }
         if let Some(m) = node.as_ast::<Module>() {
-            let stmts: Vec<_> = m
-                .stmts
-                .iter()
-                .map(|x| self.serialize_expr(x))
-                .try_collect()?;
-            if m.name.as_str() == "__file__" {
-                return Ok(quote!(
-                    #(#stmts)*
-                ));
-            } else {
-                let file = format_ident!("{}", m.name.as_str());
-                return Ok(quote!(
-                    pub mod #file {
-                        #(#stmts)*
-                    }
-                ));
-            }
+            return self.serialize_module(m);
         }
         if let Some(n) = node.as_ast::<Def>() {
             return self.serialize_def(n);

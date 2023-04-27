@@ -167,7 +167,7 @@ impl Specializer {
     }
     pub fn specialize_module(&self, m: &Module, ctx: &InterpreterContext) -> Result<Module> {
         let mut stmts: Vec<_> = m
-            .stmts
+            .items
             .iter()
             .map(|x| self.specialize_expr(x, ctx))
             .try_collect()?;
@@ -191,7 +191,7 @@ impl Specializer {
         stmts.extend(specialized);
         Ok(Module {
             name: m.name.clone(),
-            stmts: stmts
+            items: stmts
                 .into_iter()
                 .filter(|x| x.as_ast::<Unit>().is_none())
                 .collect(),

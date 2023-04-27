@@ -84,7 +84,7 @@ impl AsRef<dyn Ast> for Expr {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Module {
     pub name: Ident,
-    pub stmts: Vec<Expr>,
+    pub items: Vec<Expr>,
 }
 
 impl Ast for Module {}
