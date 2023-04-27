@@ -18,7 +18,7 @@ impl Preloader {
         self.mappings.get(ident.as_str())
     }
     pub fn preload_file(&mut self, m: &Module) -> Result<()> {
-        for b in &m.stmts {
+        for b in &m.items {
             if let Some(def) = b.as_ast::<Def>() {
                 self.mappings.insert(def.name.name.clone(), def.clone());
             }
