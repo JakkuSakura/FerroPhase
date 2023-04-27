@@ -9,7 +9,7 @@ edition = "2021"
 common-lang = { path = "../common-lang" }
 common = { path = "../common" }
 syn-serde = { version = "0.2", features = ["json"] }
-syn = { version = "1", features = ["full", "extra-traits"] }
+syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 serde = "1"

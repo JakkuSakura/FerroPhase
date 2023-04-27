@@ -328,13 +328,9 @@ pub struct Field {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Fields {
-    pub fields: Vec<Field>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Struct {
-    pub fields: Fields,
+    pub name: Ident,
+    pub fields: Vec<Field>,
 }
 
 impl Ast for Struct {}
