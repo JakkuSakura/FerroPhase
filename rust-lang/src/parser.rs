@@ -324,7 +324,7 @@ fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
 pub fn parse_file(file: syn::File) -> Result<Module> {
     Ok(Module {
         name: Ident::new("__file__"),
-        stmts: file
+        items: file
             .items
             .into_iter()
             .map(parse_item)
@@ -339,7 +339,7 @@ pub fn parse_file(file: syn::File) -> Result<Module> {
 pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
     Ok(Module {
         name: parse_ident(file.ident),
-        stmts: file
+        items: file
             .content
             .unwrap()
             .1
