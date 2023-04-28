@@ -32,9 +32,21 @@ impl Ast for RawItemMacro {
     }
 }
 impl_panic_serde!(RawItemMacro);
+
+#[derive(Debug, Clone)]
+pub struct RawType {
+    pub raw: syn::TypePath,
+}
+impl Ast for RawType {
+    fn is_raw(&self) -> bool {
+        true
+    }
+}
+impl_panic_serde!(RawType);
+
 #[derive(Debug, Clone)]
 pub struct RawUse {
-    raw: syn::ItemUse,
+    pub raw: syn::ItemUse,
 }
 impl Ast for RawUse {
     fn is_raw(&self) -> bool {
@@ -45,7 +57,7 @@ impl_panic_serde!(RawUse);
 
 #[derive(Debug, Clone)]
 pub struct RawImplTrait {
-    raw: syn::TypeImplTrait,
+    pub raw: syn::TypeImplTrait,
 }
 impl Ast for RawImplTrait {
     fn is_raw(&self) -> bool {

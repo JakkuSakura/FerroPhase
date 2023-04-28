@@ -1,4 +1,4 @@
-use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, RawUse};
+use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, RawType, RawUse};
 use common::Result;
 use common::*;
 use common_lang::ast::*;
@@ -18,6 +18,10 @@ impl RustPrinter {
             "==" => quote!(==),
             "!=" => quote!(!=),
             "|" => quote!(|),
+            "&Self" => quote!(&Self),
+            "&mut Self" => quote!(&mut Self),
+            "Self" => quote!(Self),
+            "mut Self" => quote!(mut Self),
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
@@ -315,7 +319,7 @@ impl RustPrinter {
             return self.print_def(n);
         }
         if let Some(n) = node.as_ast::<Ident>() {
-            return Ok(self.print_ident(n).to_token_stream());
+            return Ok(self.print_ident(n));
         }
 
         if let Some(_n) = node.as_ast::<Unit>() {
@@ -345,6 +349,9 @@ impl RustPrinter {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast::<RawTokenSteam>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = node.as_ast::<RawType>() {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast() {
