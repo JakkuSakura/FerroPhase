@@ -1,12 +1,13 @@
-use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, RawUse, RustSerde};
+use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, RawUse};
 use common::Result;
 use common::*;
 use common_lang::ast::*;
 use proc_macro2::TokenStream;
 use quote::*;
 
-impl RustSerde {
-    pub fn serialize_ident(&self, i: &Ident) -> TokenStream {
+pub struct RustPrinter;
+impl RustPrinter {
+    pub fn print_ident(&self, i: &Ident) -> TokenStream {
         match i.as_str() {
             "+" => quote!(+),
             "*" => quote!(*),
@@ -20,7 +21,7 @@ impl RustSerde {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
-    pub fn serialize_def(&self, n: &Def) -> Result<TokenStream> {
+    pub fn print_def(&self, n: &Def) -> Result<TokenStream> {
         let vis = n.visibility;
         let mut decl = &n.value;
         let mut g = None;
@@ -29,16 +30,31 @@ impl RustSerde {
             g = Some(d)
         }
         if let Some(n) = decl.as_ast::<FuncDecl>() {
-            return self.serialize_func_decl(n, g, vis);
+            return self.print_func_decl(n, g, vis);
         }
         bail!("Not supported {:?}", n)
     }
-    pub fn serialize_block(&self, n: &Block) -> Result<TokenStream> {
-        let stmts: Vec<_> = n
-            .stmts
+    pub fn print_field(&self, field: &Field) -> Result<TokenStream> {
+        let name = self.print_ident(&field.name);
+        let ty = self.print_expr(&field.ty)?;
+        Ok(quote!(pub #name: #ty ))
+    }
+    pub fn print_struct(&self, s: &Struct) -> Result<TokenStream> {
+        let name = self.print_ident(&s.name);
+        let fields: Vec<_> = s
+            .fields
             .iter()
-            .map(|x| self.serialize_expr(x))
+            .map(|x| self.print_field(&x))
             .try_collect()?;
+        Ok(quote!(
+            pub struct #name {
+                #(#fields), *
+            }
+        ))
+    }
+
+    pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
+        let stmts: Vec<_> = n.stmts.iter().map(|x| self.print_expr(x)).try_collect()?;
         let q = if n.last_value {
             quote!({
                 #(#stmts);*
@@ -50,14 +66,14 @@ impl RustSerde {
         };
         return Ok(q);
     }
-    pub fn serialize_cond(&self, cond: &Cond) -> Result<TokenStream> {
+    pub fn print_cond(&self, cond: &Cond) -> Result<TokenStream> {
         let mut ts = vec![];
         if cond.if_style {
             for (i, c) in cond.cases.iter().enumerate() {
                 let node = &c.cond;
-                let co = self.serialize_expr(node)?;
+                let co = self.print_expr(node)?;
                 let node = &c.body;
-                let ex = self.serialize_expr(node)?;
+                let ex = self.print_expr(node)?;
                 if i == 0 {
                     ts.push(quote!(
                         if #co {
@@ -82,9 +98,9 @@ impl RustSerde {
         } else {
             for (_i, c) in cond.cases.iter().enumerate() {
                 let node = &c.cond;
-                let co = self.serialize_expr(node)?;
+                let co = self.print_expr(node)?;
                 let node = &c.body;
-                let ex = self.serialize_expr(node)?;
+                let ex = self.print_expr(node)?;
                 ts.push(quote!(
                     if #co => { #ex }
                 ))
@@ -95,7 +111,7 @@ impl RustSerde {
             }))
         }
     }
-    pub fn serialize_func_decl(
+    pub fn print_func_decl(
         &self,
         n: &FuncDecl,
         g: Option<&Generics>,
@@ -103,33 +119,33 @@ impl RustSerde {
     ) -> Result<TokenStream> {
         let name = format_ident!("{}", n.name.as_ref().unwrap().name);
         let node = &n.ret;
-        let ret = self.serialize_expr(node)?;
+        let ret = self.print_expr(node)?;
         let param_names: Vec<_> = n
             .params
             .params
             .iter()
-            .map(|x| self.serialize_ident(&x.name))
+            .map(|x| self.print_ident(&x.name))
             .collect();
         let param_types: Vec<_> = n
             .params
             .params
             .iter()
-            .map(|x| self.serialize_expr(&x.ty))
+            .map(|x| self.print_expr(&x.ty))
             .try_collect()?;
-        let stmts = self.serialize_block(n.body.as_ref().unwrap())?;
+        let stmts = self.print_block(n.body.as_ref().unwrap())?;
         let gg;
         if let Some(g) = g {
             let gt: Vec<_> = g
                 .params
                 .params
                 .iter()
-                .map(|x| self.serialize_ident(&x.name))
+                .map(|x| self.print_ident(&x.name))
                 .collect();
             let gb: Vec<_> = g
                 .params
                 .params
                 .iter()
-                .map(|x| self.serialize_expr(&x.ty))
+                .map(|x| self.print_expr(&x.ty))
                 .try_collect()?;
             gg = quote!(<#(#gt: #gb), *>)
         } else {
@@ -145,14 +161,14 @@ impl RustSerde {
 
         ));
     }
-    pub fn serialize_call(&self, node: &Call) -> Result<TokenStream> {
+    pub fn print_call(&self, node: &Call) -> Result<TokenStream> {
         let node1 = &node.fun;
-        let fun = self.serialize_expr(node1)?;
+        let fun = self.print_expr(node1)?;
         let args: Vec<_> = node
             .args
             .args
             .iter()
-            .map(|x| self.serialize_expr(x))
+            .map(|x| self.print_expr(x))
             .try_collect()?;
         if let Some(select) = node.fun.as_ast::<Select>() {
             match select.select {
@@ -193,15 +209,15 @@ impl RustSerde {
         // }
         Ok(code)
     }
-    pub fn serialize_ref(&self, n: &Reference) -> Result<TokenStream> {
-        let referee = self.serialize_expr(&n.referee)?;
+    pub fn print_ref(&self, n: &Reference) -> Result<TokenStream> {
+        let referee = self.print_expr(&n.referee)?;
         if n.mutable == Some(true) {
             Ok(quote!(&mut #referee))
         } else {
             Ok(quote!(&#referee))
         }
     }
-    pub fn serialize_literal(&self, n: &Expr) -> Result<TokenStream> {
+    pub fn print_literal(&self, n: &Expr) -> Result<TokenStream> {
         if let Some(n) = n.as_ast::<LiteralInt>() {
             let n = n.value;
             return Ok(quote!(
@@ -222,57 +238,45 @@ impl RustSerde {
         }
         bail!("Failed to serialize literal {:?}", n)
     }
-    pub fn serialize_func_type(&self, fun: &FuncType) -> Result<TokenStream> {
+    pub fn print_func_type(&self, fun: &FuncType) -> Result<TokenStream> {
         let args: Vec<_> = fun
             .params
             .iter()
-            .map(|x| self.serialize_expr(&x))
+            .map(|x| self.print_expr(&x))
             .try_collect()?;
         let node = &fun.ret;
-        let ret = self.serialize_expr(node)?;
+        let ret = self.print_expr(node)?;
         Ok(quote!(
             fn(#(#args), *) -> #ret
         ))
     }
-    pub fn serialize_select(&self, select: &Select) -> Result<TokenStream> {
-        let obj = self.serialize_expr(&select.obj)?;
-        let field = self.serialize_ident(&select.field);
+    pub fn print_select(&self, select: &Select) -> Result<TokenStream> {
+        let obj = self.print_expr(&select.obj)?;
+        let field = self.print_ident(&select.field);
 
         Ok(quote!(
             #obj.#field
         ))
     }
-    pub fn serialize_args(&self, node: &PosArgs) -> Result<TokenStream> {
-        let args: Vec<_> = node
-            .args
-            .iter()
-            .map(|x| self.serialize_expr(x))
-            .try_collect()?;
+    pub fn print_args(&self, node: &PosArgs) -> Result<TokenStream> {
+        let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!((#(#args),*)))
     }
-    pub fn serialize_generics(&self, node: &Generics) -> Result<TokenStream> {
+    pub fn print_generics(&self, node: &Generics) -> Result<TokenStream> {
         let debug = format!("{:?}", node);
         Ok(quote!(#debug))
     }
-    pub fn serialize_impl(&self, impl_: &Impl) -> Result<TokenStream> {
-        let name = self.serialize_expr(&impl_.name)?;
-        let methods: Vec<_> = impl_
-            .defs
-            .iter()
-            .map(|x| self.serialize_def(x))
-            .try_collect()?;
+    pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
+        let name = self.print_expr(&impl_.name)?;
+        let methods: Vec<_> = impl_.defs.iter().map(|x| self.print_def(x)).try_collect()?;
         Ok(quote!(
             impl #name {
                 #(#methods)*
             }
         ))
     }
-    pub fn serialize_module(&self, m: &Module) -> Result<TokenStream> {
-        let stmts: Vec<_> = m
-            .items
-            .iter()
-            .map(|x| self.serialize_expr(x))
-            .try_collect()?;
+    pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
+        let stmts: Vec<_> = m.items.iter().map(|x| self.print_expr(x)).try_collect()?;
         if m.name.as_str() == "__file__" {
             return Ok(quote!(
                 #(#stmts)*
@@ -286,32 +290,32 @@ impl RustSerde {
             ));
         }
     }
-    pub fn serialize_expr(&self, node: &Expr) -> Result<TokenStream> {
+    pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
 
         if let Some(n) = node.as_ast::<Uplifted>() {
-            return self.serialize_expr(&n.uplifted);
+            return self.print_expr(&n.uplifted);
         }
         if let Some(n) = node.as_ast::<Types>() {
-            return self.serialize_expr(&n.clone().into());
+            return self.print_expr(&n.clone().into());
         }
         if let Some(n) = node.as_ast() {
-            return self.serialize_block(n);
+            return self.print_block(n);
         }
         if let Some(n) = node.as_ast() {
-            return self.serialize_args(n);
+            return self.print_args(n);
         }
         if let Some(n) = node.as_ast() {
-            return self.serialize_generics(n);
+            return self.print_generics(n);
         }
         if let Some(m) = node.as_ast::<Module>() {
-            return self.serialize_module(m);
+            return self.print_module(m);
         }
         if let Some(n) = node.as_ast::<Def>() {
-            return self.serialize_def(n);
+            return self.print_def(n);
         }
         if let Some(n) = node.as_ast::<Ident>() {
-            return Ok(self.serialize_ident(n).to_token_stream());
+            return Ok(self.print_ident(n).to_token_stream());
         }
 
         if let Some(_n) = node.as_ast::<Unit>() {
@@ -319,10 +323,10 @@ impl RustSerde {
         }
 
         if let Some(n) = node.as_ast() {
-            return self.serialize_call(n);
+            return self.print_call(n);
         }
         if node.is_literal() {
-            return self.serialize_literal(node);
+            return self.print_literal(node);
         }
         if let Some(n) = node.as_ast::<RawExprMacro>() {
             return Ok(n.raw.to_token_stream());
@@ -344,21 +348,24 @@ impl RustSerde {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = node.as_ast() {
-            return self.serialize_impl(n);
+            return self.print_impl(n);
         }
         if let Some(n) = node.as_ast() {
-            return self.serialize_func_type(n);
+            return self.print_func_type(n);
         }
         if let Some(n) = node.as_ast() {
-            return self.serialize_select(n);
-        }
-
-        if let Some(n) = node.as_ast() {
-            return self.serialize_cond(n);
+            return self.print_select(n);
         }
 
         if let Some(n) = node.as_ast() {
-            return self.serialize_ref(n);
+            return self.print_cond(n);
+        }
+        if let Some(n) = node.as_ast() {
+            return self.print_struct(n);
+        }
+
+        if let Some(n) = node.as_ast() {
+            return self.print_ref(n);
         }
         bail!("Unable to serialize {:?}", node)
     }
