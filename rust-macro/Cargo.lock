@@ -366,7 +366,6 @@ dependencies = [
  "static_assertions",
  "strum",
  "strum_macros",
- "syn 1.0.107",
  "tap",
  "thiserror",
  "tokio",

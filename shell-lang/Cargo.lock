@@ -366,7 +366,6 @@ dependencies = [
  "static_assertions",
  "strum",
  "strum_macros",
- "syn 1.0.107",
  "tap",
  "thiserror",
  "tokio",
@@ -1431,7 +1430,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rust-lang",
- "syn 1.0.107",
+ "syn 2.0.15",
 ]
 
 [[package]]

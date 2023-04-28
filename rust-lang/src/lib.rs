@@ -6,8 +6,11 @@ use common::Result;
 use common_lang::ast::{Expr, *};
 use common_lang::*;
 
+use crate::parser::RustParser;
+use crate::printer::RustPrinter;
 use std::fmt::Debug;
 use syn::*;
+
 #[derive(Debug, Clone)]
 pub struct RawExprMacro {
     pub raw: syn::ExprMacro,
@@ -76,12 +79,12 @@ impl_panic_serde!(RawTokenSteam);
 pub struct RustSerde;
 impl Serializer for RustSerde {
     fn serialize(&self, node: &Expr) -> Result<String> {
-        self.serialize_expr(node).map(|x| x.to_string())
+        RustPrinter.print_expr(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {
     fn deserialize(&self, code: &str) -> Result<Expr> {
         let code: syn::File = parse_str(code)?;
-        Ok(self.deserialize_file(code)?.into())
+        Ok(RustParser.parse_file(code)?.into())
     }
 }
