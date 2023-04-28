@@ -1,4 +1,4 @@
-use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawUse};
+use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawType, RawUse};
 use common::*;
 use common_lang::ast::*;
 use quote::ToTokens;
@@ -19,10 +19,15 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
+
             match s.as_str() {
                 "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => Ident::new(s).into(),
-                x => Ident::new(x).into(),
-                // _ => bail!("Type not supported: {}", s),
+                _ if p.path.segments.len() == 1 => {
+                    // let ident = parse_ident(p.path.segments.first().unwrap().ident);
+                    // ident
+                    RawType { raw: p }.into()
+                }
+                _ => bail!("Type not supported: {}", s),
             }
         }
         syn::Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
