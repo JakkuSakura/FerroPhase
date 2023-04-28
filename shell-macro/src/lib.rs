@@ -3,6 +3,8 @@ use common_lang::ast::*;
 
 use proc_macro::TokenStream;
 use quote::quote;
+use rust_lang::parser::RustParser;
+use rust_lang::printer::RustPrinter;
 use rust_lang::*;
 
 fn get_pipe_op(expr: &Expr) -> Option<&Call> {
@@ -24,9 +26,9 @@ fn process_fanout_op(expr: &Expr) -> Option<&Call> {
 fn process_fanout(expr: &Expr) -> Expr {
     if let Some(x) = process_fanout_op(expr) {
         let mut args: Vec<_> = x.args.args.iter().map(process_actor).collect();
-        let mut result = RustSerde.serialize_expr(&args.pop().unwrap()).unwrap();
+        let mut result = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
         while !args.is_empty() {
-            let left = RustSerde.serialize_expr(&args.pop().unwrap()).unwrap();
+            let left = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
             result = quote!(
                 shell_lang::Fanout::new(#left, #result)
             );
@@ -38,9 +40,9 @@ fn process_fanout(expr: &Expr) -> Expr {
 fn process_pipe(expr: &Expr) -> Expr {
     if let Some(x) = get_pipe_op(expr) {
         let mut args: Vec<_> = x.args.args.iter().map(process_actor).collect();
-        let mut result = RustSerde.serialize_expr(&args.pop().unwrap()).unwrap();
+        let mut result = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
         while !args.is_empty() {
-            let left = RustSerde.serialize_expr(&args.pop().unwrap()).unwrap();
+            let left = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
             result = quote!(
                 shell_lang::Pipe::new(#left, #result)
             );
@@ -65,7 +67,7 @@ fn shell_inner(code: Expr) -> Result<TokenStream> {
     // panic!("{:#?}", code);
 
     let code = process_pipe(&code);
-    let node = RustSerde.serialize_expr(&code)?;
+    let node = RustPrinter.print_expr(&code)?;
     // panic!("{}", node);
     Ok(node.into())
 }
@@ -73,6 +75,6 @@ fn shell_inner(code: Expr) -> Result<TokenStream> {
 #[proc_macro]
 pub fn pipe(input: TokenStream) -> TokenStream {
     let input: syn::Expr = syn::parse(input.into()).unwrap();
-    let input = RustSerde.deserialize_expr(input).unwrap();
+    let input = RustParser.parse_expr(input).unwrap();
     shell_inner(input).unwrap().into()
 }
