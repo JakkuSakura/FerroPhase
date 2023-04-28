@@ -1,4 +1,4 @@
-use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawUse, RustSerde};
+use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawUse};
 use common::*;
 use common_lang::ast::*;
 use quote::ToTokens;
@@ -370,15 +370,16 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
     }
     .into())
 }
+pub struct RustParser;
 
-impl RustSerde {
-    pub fn deserialize_expr(&self, code: syn::Expr) -> Result<Expr> {
+impl RustParser {
+    pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
         parse_expr(code)
     }
-    pub fn deserialize_file(&self, code: syn::File) -> Result<Module> {
+    pub fn parse_file(&self, code: syn::File) -> Result<Module> {
         parse_file(code)
     }
-    pub fn deserialize_module(&self, code: syn::ItemMod) -> Result<Expr> {
+    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Expr> {
         parse_module(code)
     }
 }
