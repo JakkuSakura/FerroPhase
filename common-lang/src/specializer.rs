@@ -22,11 +22,14 @@ impl Specializer {
             return self.specialize_expr(&n.uplifted, ctx);
         }
         debug!("Specializing {}", self.serializer.serialize(&expr)?);
-        macro specialize($f: ident, $t: ty) {
-            if let Some(x) = expr.as_ast::<$t>() {
-                return self.$f(x, ctx).map(|x| x.into());
-            }
+        macro_rules! specialize {
+            ($f: ident, $t: ty) => {
+                if let Some(x) = expr.as_ast::<$t>() {
+                    return self.$f(x, ctx).map(|x| x.into());
+                }
+            };
         }
+
         specialize!(specialize_block, Block);
         specialize!(specialize_module, Module);
 
@@ -175,6 +178,7 @@ impl Specializer {
         let specialized: Vec<_> = ctx
             .list_specialized()
             .into_iter()
+            .sorted()
             .map(|name| {
                 ctx.get(&name)
                     .map(|x| {

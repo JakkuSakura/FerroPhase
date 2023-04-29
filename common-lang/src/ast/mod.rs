@@ -101,7 +101,7 @@ pub struct Block {
 
 impl Ast for Block {}
 
-#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ident {
     pub name: String,
 }
