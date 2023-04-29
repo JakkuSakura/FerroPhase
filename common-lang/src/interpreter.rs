@@ -78,8 +78,8 @@ impl InterpreterContext {
     }
 }
 #[derive(Clone)]
-struct BuiltinFn {
-    name: String,
+pub struct BuiltinFn {
+    pub name: String,
     f: Rc<dyn Fn(&[Expr], &InterpreterContext) -> Result<Expr>>,
 }
 impl BuiltinFn {
@@ -193,7 +193,9 @@ impl Interpreter {
 
         bail!("Failed to interprete {:?}", node)
     }
-
+    pub fn interprete_import(&self, _node: &Import, _ctx: &InterpreterContext) -> Result<Expr> {
+        Ok(LiteralUnit.into())
+    }
     pub fn interprete_block(&self, node: &Block, ctx: &InterpreterContext) -> Result<Expr> {
         let ret: Vec<_> = node
             .stmts
@@ -453,6 +455,9 @@ impl Interpreter {
         }
         if let Some(e) = node.as_ast() {
             return Ok(self.interprete_select(e, ctx)?.into());
+        }
+        if let Some(e) = node.as_ast() {
+            return Ok(self.interprete_import(e, ctx)?.into());
         }
         if node.is_literal() {
             return Ok(node.clone());

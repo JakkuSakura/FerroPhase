@@ -2,6 +2,7 @@ use common::*;
 use common_lang::interpreter::{Interpreter, InterpreterContext};
 use common_lang::specializer::Specializer;
 use common_lang::{Deserializer, Serializer};
+use rust_lang::printer::RustPrinter;
 use rust_lang::rustfmt::format_code;
 use rust_lang::RustSerde;
 use std::fs::File;
@@ -48,7 +49,7 @@ fn main() -> Result<()> {
         writeln!(
             &mut file_out,
             "// result: {}",
-            RustSerde.serialize_expr(&intp_result)?
+            RustPrinter.print_expr(&intp_result)?
         )?;
     }
     Ok(())

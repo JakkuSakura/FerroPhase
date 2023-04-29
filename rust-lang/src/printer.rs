@@ -2,6 +2,7 @@ use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, Ra
 use common::Result;
 use common::*;
 use common_lang::ast::*;
+use common_lang::interpreter::BuiltinFn;
 use proc_macro2::TokenStream;
 use quote::*;
 
@@ -332,6 +333,10 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#name { #(#kwargs), * }))
     }
+    pub fn print_builtin_fn(&self, bt: &BuiltinFn) -> Result<TokenStream> {
+        let name = self.print_ident(&Ident::new(bt.name.clone()));
+        Ok(quote!(#name))
+    }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
 
@@ -405,7 +410,6 @@ impl RustPrinter {
         if let Some(n) = node.as_ast() {
             return self.print_select(n);
         }
-
         if let Some(n) = node.as_ast() {
             return self.print_cond(n);
         }
@@ -417,6 +421,9 @@ impl RustPrinter {
         }
         if let Some(n) = node.as_ast() {
             return self.print_ref(n);
+        }
+        if let Some(n) = node.as_ast() {
+            return self.print_builtin_fn(n);
         }
         // would not appear here unless explicit requested
         if let Some(n) = node.as_ast() {
