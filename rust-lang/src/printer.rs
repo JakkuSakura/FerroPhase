@@ -115,6 +115,12 @@ impl RustPrinter {
             }))
         }
     }
+    pub fn print_vis(&self, vis: Visibility) -> TokenStream {
+        match vis {
+            Visibility::Public => quote!(pub),
+            Visibility::Private => quote!(),
+        }
+    }
     pub fn print_func_decl(
         &self,
         n: &FuncDecl,
@@ -155,10 +161,7 @@ impl RustPrinter {
         } else {
             gg = quote!();
         }
-        let vis = match vis {
-            Visibility::Public => quote!(pub),
-            Visibility::Private => quote!(),
-        };
+        let vis = self.print_vis(vis);
         return Ok(quote!(
             #vis fn #name #gg(#(#param_names: #param_types), *) -> #ret
                 #stmts
@@ -294,6 +297,15 @@ impl RustPrinter {
             ));
         }
     }
+    pub fn print_import(&self, node: &Import) -> Result<TokenStream> {
+        let vis = self.print_vis(node.visibility);
+        let segments = node
+            .segments
+            .iter()
+            .map(|x| self.print_ident(x))
+            .collect::<Vec<_>>();
+        Ok(quote!(#vis use #(#segments):: *))
+    }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
 
@@ -373,6 +385,9 @@ impl RustPrinter {
 
         if let Some(n) = node.as_ast() {
             return self.print_ref(n);
+        }
+        if let Some(n) = node.as_ast() {
+            return self.print_import(n);
         }
         bail!("Unable to serialize {:?}", node)
     }

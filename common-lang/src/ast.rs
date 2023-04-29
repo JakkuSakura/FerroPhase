@@ -421,6 +421,13 @@ impl Types {
 }
 impl Ast for Types {}
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Import {
+    pub visibility: Visibility,
+    pub segments: Vec<Ident>,
+}
+impl Ast for Import {}
+
 pub fn uplift_common_ast(expr: &Expr) -> Expr {
     if let Some(expr) = expr.as_ast::<Types>() {
         let uplifted: Expr = match expr {

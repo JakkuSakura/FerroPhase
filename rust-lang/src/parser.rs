@@ -304,6 +304,32 @@ fn parse_struct_field(i: usize, f: syn::Field) -> Result<Field> {
         ty: parse_type(f.ty)?,
     })
 }
+fn parse_use(u: syn::ItemUse) -> Result<Expr> {
+    let mut segments = vec![];
+    let mut tree = u.tree.clone();
+    loop {
+        match tree {
+            syn::UseTree::Path(p) => {
+                segments.push(parse_ident(p.ident));
+                tree = *p.tree;
+            }
+            syn::UseTree::Name(name) => {
+                segments.push(parse_ident(name.ident));
+                break;
+            }
+            syn::UseTree::Glob(_) => {
+                segments.push(Ident::new("*"));
+                break;
+            }
+            _ => return Ok(RawUse { raw: u }.into()),
+        }
+    }
+    Ok(Import {
+        visibility: parse_vis(u.vis),
+        segments,
+    }
+    .into())
+}
 pub fn parse_struct(s: syn::ItemStruct) -> Result<Struct> {
     Ok(Struct {
         name: parse_ident(s.ident),
@@ -329,7 +355,7 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
             Ok(d.into())
         }
         Item::Impl(im) => Ok(parse_impl(im)?.into()),
-        Item::Use(u) => Ok(RawUse { raw: u }.into()),
+        Item::Use(u) => parse_use(u),
         Item::Macro(m) => Ok(RawItemMacro { raw: m }.into()),
         Item::Struct(s) => Ok(parse_struct(s)?.into()),
         _ => bail!("Does not support item {:?} yet", item),
