@@ -235,6 +235,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Expr> {
     Ok(match stmt {
         Stmt::Local(l) => Def {
             name: parse_pat(l.pat)?,
+            kind: DefKind::Variable,
             ty: None,
             value: parse_expr(*l.init.context("No value")?.expr)?,
             visibility: Visibility::Public,
@@ -270,22 +271,28 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
 fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
     match item {
         syn::ImplItem::Fn(m) => {
-            let visibility = parse_vis(m.vis.clone());
-
             // TODO: defaultness
             let (name, expr) = parse_fn(ItemFn {
                 attrs: m.attrs,
-                vis: m.vis,
+                vis: m.vis.clone(),
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
             Ok(Def {
                 name,
+                kind: DefKind::Function,
                 ty: None,
                 value: expr,
-                visibility: visibility,
+                visibility: parse_vis(m.vis),
             })
         }
+        syn::ImplItem::Type(t) => Ok(Def {
+            name: parse_ident(t.ident),
+            kind: DefKind::Type,
+            ty: None,
+            value: parse_type(t.ty)?,
+            visibility: parse_vis(t.vis),
+        }),
         _ => bail!("Does not support impl item {:?}", item),
     }
 }
@@ -348,6 +355,7 @@ fn parse_item(item: syn::Item) -> Result<Expr> {
             let (name, f) = parse_fn(f0)?;
             let d = Def {
                 name,
+                kind: DefKind::Function,
                 ty: None,
                 value: f.into(),
                 visibility,
