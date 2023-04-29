@@ -1,9 +1,3 @@
-#![feature(decl_macro)]
-#![feature(trait_upcasting)]
-#![feature(trivial_bounds)]
-
-extern crate core;
-
 pub mod ast;
 pub mod interpreter;
 pub mod preloader;
@@ -21,3 +15,5 @@ pub trait Serializer {
 pub trait Deserializer {
     fn deserialize(&self, code: &str) -> Result<Expr>;
 }
+
+// TODO: do an experiement to find out what breaks CLion inference
