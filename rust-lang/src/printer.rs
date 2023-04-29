@@ -268,10 +268,14 @@ impl RustPrinter {
     pub fn print_select(&self, select: &Select) -> Result<TokenStream> {
         let obj = self.print_expr(&select.obj)?;
         let field = self.print_ident(&select.field);
-
-        Ok(quote!(
-            #obj.#field
-        ))
+        match select.select {
+            SelectType::Const => Ok(quote!(
+                #obj::#field
+            )),
+            _ => Ok(quote!(
+                #obj.#field
+            )),
+        }
     }
     pub fn print_args(&self, node: &Vec<Expr>) -> Result<TokenStream> {
         let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;

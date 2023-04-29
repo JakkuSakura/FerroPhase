@@ -375,6 +375,7 @@ pub enum SelectType {
     Field,
     Method,
     Function,
+    Const,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
