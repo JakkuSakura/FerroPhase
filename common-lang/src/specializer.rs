@@ -179,6 +179,7 @@ impl Specializer {
                     .map(|x| {
                         Def {
                             name: x.as_ast::<FuncDecl>().unwrap().name.clone().unwrap(),
+                            kind: DefKind::Function,
                             ty: None,
                             value: x,
                             visibility: Visibility::Public,
@@ -250,6 +251,7 @@ impl Specializer {
                 "main" => {
                     return Ok(Def {
                         name: d.name.clone(),
+                        kind: DefKind::Function,
                         ty: None,
                         value: FuncDecl {
                             name: f.name,

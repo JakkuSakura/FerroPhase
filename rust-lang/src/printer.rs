@@ -304,7 +304,7 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_ident(x))
             .collect::<Vec<_>>();
-        Ok(quote!(#vis use #(#segments):: *))
+        Ok(quote!(#vis use #(#segments)::*;))
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
@@ -324,13 +324,13 @@ impl RustPrinter {
         if let Some(n) = node.as_ast() {
             return self.print_generics(n);
         }
-        if let Some(m) = node.as_ast::<Module>() {
+        if let Some(m) = node.as_ast() {
             return self.print_module(m);
         }
-        if let Some(n) = node.as_ast::<Def>() {
+        if let Some(n) = node.as_ast() {
             return self.print_def(n);
         }
-        if let Some(n) = node.as_ast::<Ident>() {
+        if let Some(n) = node.as_ast() {
             return Ok(self.print_ident(n));
         }
 
@@ -340,6 +340,10 @@ impl RustPrinter {
 
         if let Some(n) = node.as_ast() {
             return self.print_call(n);
+        }
+
+        if let Some(n) = node.as_ast() {
+            return self.print_import(n);
         }
         if node.is_literal() {
             return self.print_literal(node);
@@ -385,9 +389,6 @@ impl RustPrinter {
 
         if let Some(n) = node.as_ast() {
             return self.print_ref(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_import(n);
         }
         bail!("Unable to serialize {:?}", node)
     }
