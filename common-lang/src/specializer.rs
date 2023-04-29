@@ -68,7 +68,7 @@ impl Specializer {
                 ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                     return Ok(Types::bool().into());
                 }
-                "print" => return Ok(Unit.into()),
+                "print" => return Ok(LiteralUnit.into()),
                 _ => inner = ctx.get(ident),
             }
         };
@@ -135,7 +135,7 @@ impl Specializer {
                     .stmts
                     .last()
                     .map(|x| self.infer_type(x, ctx))
-                    .unwrap_or(Ok(Unit.into()))?;
+                    .unwrap_or(Ok(LiteralUnit.into()))?;
             }
             ctx.root().insert_specialized(
                 new_name.clone(),
@@ -191,7 +191,7 @@ impl Specializer {
             name: m.name.clone(),
             items: stmts
                 .into_iter()
-                .filter(|x| x.as_ast::<Unit>().is_none())
+                .filter(|x| x.as_ast::<LiteralUnit>().is_none())
                 .collect(),
         })
     }
@@ -271,6 +271,6 @@ impl Specializer {
                 _ => ctx.insert(d.name.clone(), d.value.clone()),
             }
         }
-        Ok(Unit.into())
+        Ok(LiteralUnit.into())
     }
 }
