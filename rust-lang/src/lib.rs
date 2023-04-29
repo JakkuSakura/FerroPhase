@@ -68,7 +68,7 @@ impl_panic_serde!(RawImplTrait);
 
 #[derive(Debug, Clone)]
 pub struct RawExpr {
-    raw: syn::Expr,
+    pub raw: syn::Expr,
 }
 impl Ast for RawExpr {
     fn is_raw(&self) -> bool {

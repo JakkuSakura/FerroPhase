@@ -119,6 +119,7 @@ impl RustPrinter {
         match vis {
             Visibility::Public => quote!(pub),
             Visibility::Private => quote!(),
+            Visibility::Inherited => quote!(),
         }
     }
     pub fn print_func_decl(
@@ -171,12 +172,7 @@ impl RustPrinter {
     pub fn print_call(&self, node: &Call) -> Result<TokenStream> {
         let node1 = &node.fun;
         let fun = self.print_expr(node1)?;
-        let args: Vec<_> = node
-            .args
-            .args
-            .iter()
-            .map(|x| self.print_expr(x))
-            .try_collect()?;
+        let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
         if let Some(select) = node.fun.as_ast::<Select>() {
             match select.select {
                 SelectType::Field => {
@@ -243,6 +239,18 @@ impl RustPrinter {
                 #n
             ));
         }
+        if let Some(n) = n.as_ast::<LiteralString>() {
+            let v = &n.value;
+            if n.owned {
+                return Ok(quote!(
+                    #v.to_string()
+                ));
+            } else {
+                return Ok(quote!(
+                    #v
+                ));
+            }
+        }
         bail!("Failed to serialize literal {:?}", n)
     }
     pub fn print_func_type(&self, fun: &FuncType) -> Result<TokenStream> {
@@ -265,8 +273,8 @@ impl RustPrinter {
             #obj.#field
         ))
     }
-    pub fn print_args(&self, node: &PosArgs) -> Result<TokenStream> {
-        let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
+    pub fn print_args(&self, node: &Vec<Expr>) -> Result<TokenStream> {
+        let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!((#(#args),*)))
     }
     pub fn print_generics(&self, node: &Generics) -> Result<TokenStream> {
@@ -305,6 +313,20 @@ impl RustPrinter {
             .map(|x| self.print_ident(x))
             .collect::<Vec<_>>();
         Ok(quote!(#vis use #(#segments)::*;))
+    }
+    pub fn print_field_value(&self, s: &FieldValue) -> Result<TokenStream> {
+        let name = self.print_ident(&s.name);
+        let value = self.print_expr(&s.value)?;
+        Ok(quote!(#name: #value))
+    }
+    pub fn print_build_struct(&self, s: &BuildStruct) -> Result<TokenStream> {
+        let name = self.print_expr(&s.name)?;
+        let kwargs: Vec<_> = s
+            .fields
+            .iter()
+            .map(|x| self.print_field_value(x))
+            .try_collect()?;
+        Ok(quote!(#name { #(#kwargs), * }))
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         let node = &uplift_common_ast(node);
@@ -386,9 +408,15 @@ impl RustPrinter {
         if let Some(n) = node.as_ast() {
             return self.print_struct(n);
         }
-
+        if let Some(n) = node.as_ast() {
+            return self.print_build_struct(n);
+        }
         if let Some(n) = node.as_ast() {
             return self.print_ref(n);
+        }
+        // would not appear here unless explicit requested
+        if let Some(n) = node.as_ast() {
+            return self.print_func_decl(n, None, Visibility::Inherited);
         }
         bail!("Unable to serialize {:?}", node)
     }

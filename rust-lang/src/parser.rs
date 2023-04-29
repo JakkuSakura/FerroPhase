@@ -2,7 +2,9 @@ use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawType, RawUse};
 use common::*;
 use common_lang::ast::*;
 use quote::ToTokens;
-use syn::{BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Pat, ReturnType, Stmt, TypeParamBound};
+use syn::{
+    BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Member, Pat, ReturnType, Stmt, TypeParamBound,
+};
 fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
 }
@@ -23,9 +25,14 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
             match s.as_str() {
                 "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => Ident::new(s).into(),
                 _ if p.path.segments.len() == 1 => {
-                    // let ident = parse_ident(p.path.segments.first().unwrap().ident);
-                    // ident
-                    RawType { raw: p }.into()
+                    let first_segment = p.path.segments.first().unwrap();
+                    match &first_segment.arguments {
+                        syn::PathArguments::None => {
+                            let ident = parse_ident(first_segment.ident.clone());
+                            ident.into()
+                        }
+                        _ => RawType { raw: p }.into(),
+                    }
                 }
                 _ => bail!("Type not supported: {}", s),
             }
@@ -126,10 +133,7 @@ fn parse_call(call: syn::ExprCall) -> Result<Call> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
-    Ok(Call {
-        fun,
-        args: PosArgs { args },
-    })
+    Ok(Call { fun, args })
 }
 fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
     Ok(Call {
@@ -139,9 +143,7 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
             select: SelectType::Method,
         }
         .into(),
-        args: PosArgs {
-            args: call.args.into_iter().map(parse_expr).try_collect()?,
-        },
+        args: call.args.into_iter().map(parse_expr).try_collect()?,
     })
 }
 
@@ -191,21 +193,43 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
         if let Some(first_arg) = l.as_ast::<Call>() {
             if Some(&op) == first_arg.fun.as_ast::<Ident>() {
                 let mut first_arg = first_arg.clone();
-                first_arg.args.args.push(r);
+                first_arg.args.push(r);
                 return Ok(first_arg);
             }
         }
     }
     Ok(Call {
         fun: op.into(),
-        args: PosArgs { args: vec![l, r] },
+        args: vec![l, r],
     })
 }
 fn parse_tuple(t: syn::ExprTuple) -> Result<Call> {
     let args = t.elems.into_iter().map(parse_expr).try_collect()?;
     Ok(Call {
         fun: Ident::new("tuple").into(),
-        args: PosArgs { args },
+        args,
+    })
+}
+fn parse_member(mem: Member) -> Result<Ident> {
+    Ok(match mem {
+        syn::Member::Named(n) => parse_ident(n),
+        syn::Member::Unnamed(_) => bail!("Does not support unnmaed field yet {:?}", mem),
+    })
+}
+fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
+    Ok(FieldValue {
+        name: parse_member(fv.member)?,
+        value: parse_expr(fv.expr)?,
+    })
+}
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<BuildStruct> {
+    Ok(BuildStruct {
+        name: parse_path(s.path)?.into(),
+        fields: s
+            .fields
+            .into_iter()
+            .map(|x| parse_field_value(x))
+            .try_collect()?,
     })
 }
 pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
@@ -219,6 +243,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Lit(l) => match l.lit {
             Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
             Lit::Float(i) => LiteralDecimal::new(i.base10_parse()?).into(),
+            Lit::Str(s) => LiteralString::new_ref(s.value()).into(),
             _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
         syn::Expr::Macro(m) => RawExprMacro { raw: m }.into(),
@@ -226,6 +251,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Path(p) => parse_path(p.path)?.into(),
         syn::Expr::Reference(r) => parse_ref(r)?.into(),
         syn::Expr::Tuple(t) => parse_tuple(t)?.into(),
+        syn::Expr::Struct(s) => parse_struct_expr(s)?.into(),
         raw => RawExpr { raw }.into(),
         // x => bail!("Expr not supported: {:?}", x),
     })

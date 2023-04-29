@@ -55,6 +55,7 @@ impl Expr {
         self.expr.downcast_ref::<T>()
     }
 }
+impl Ast for Vec<Expr> {}
 
 impl Deref for Expr {
     type Target = dyn Ast;
@@ -187,9 +188,23 @@ impl Ast for LiteralChar {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiteralString {
-    pub value: char,
+    pub value: String,
+    pub owned: bool,
 }
-
+impl LiteralString {
+    pub fn new_owned(s: impl Into<String>) -> Self {
+        Self {
+            value: s.into(),
+            owned: true,
+        }
+    }
+    pub fn new_ref(s: impl Into<String>) -> Self {
+        Self {
+            value: s.into(),
+            owned: false,
+        }
+    }
+}
 impl Ast for LiteralString {
     fn is_literal(&self) -> bool {
         true
@@ -216,22 +231,10 @@ impl Ast for LiteralUnknown {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
-pub struct PosArgs {
-    pub args: Vec<Expr>,
-}
-
-impl Ast for PosArgs {}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KwArgs {
-    pub args: Vec<(String, Expr)>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Call {
     pub fun: Expr,
-    pub args: PosArgs,
+    pub args: Vec<Expr>,
 }
 
 impl Ast for Call {}
@@ -240,9 +243,10 @@ impl Ast for Call {}
 pub enum Visibility {
     Public,
     Private,
+    Inherited,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum DefKind {
     Unknown,
     Function,
@@ -353,14 +357,19 @@ pub struct Impl {
 impl Ast for Impl {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldValue {
+    pub name: Ident,
+    pub value: Expr,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildStruct {
     pub name: Expr, // either Ident or Struct
-    pub field: KwArgs,
+    pub fields: Vec<FieldValue>,
 }
 
 impl Ast for BuildStruct {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum SelectType {
     Unknown,
     Field,

@@ -34,7 +34,13 @@ impl InterpreterContext {
     pub fn insert(&self, key: Ident, value: Expr) {
         self.inner.borrow_mut().values.insert(key, value);
     }
-
+    pub fn print_values(&self, s: impl Serializer) -> Result<()> {
+        let inner = self.inner.borrow();
+        for (k, v) in &inner.values {
+            info!("{}: {}", k.as_str(), s.serialize(v)?)
+        }
+        Ok(())
+    }
     pub fn insert_specialized(&self, key: Ident, value: Expr) {
         self.inner.borrow_mut().values.insert(key.clone(), value);
         self.inner.borrow_mut().is_specialized.insert(key, true);
@@ -100,11 +106,15 @@ impl Debug for BuiltinFn {
 }
 impl Ast for BuiltinFn {}
 pub struct Interpreter {
-    serializer: Rc<dyn Serializer>,
+    pub serializer: Rc<dyn Serializer>,
+    pub ignore_missing_items: bool,
 }
 impl Interpreter {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
-        Self { serializer }
+        Self {
+            serializer,
+            ignore_missing_items: false,
+        }
     }
     pub fn interprete_module(&self, node: &Module, ctx: &InterpreterContext) -> Result<Expr> {
         node.items
@@ -134,13 +144,17 @@ impl Interpreter {
         Ok(Unit.into())
     }
     pub fn interprete_call(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
+        info!(
+            "Will execute call {}",
+            self.serializer.serialize(&node.clone().into())?
+        );
         let fun = self.interprete_expr(&node.fun, ctx)?;
-
+        info!("Will call function {}", self.serializer.serialize(&fun)?);
         let args = self.interprete_args(&node.args, ctx)?;
         if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.name.as_str()).unwrap_or("<fun>");
             let sub = ctx.child();
-            for (i, arg) in args.args.iter().cloned().enumerate() {
+            for (i, arg) in args.iter().cloned().enumerate() {
                 let param = f
                     .params
                     .params
@@ -161,12 +175,21 @@ impl Interpreter {
             let args_ = self.serializer.serialize(&args.clone().into())?;
 
             debug!("Invoking {} with {}", f.name, args_);
-            let ret = f.call(&args.args, ctx)?;
+            let ret = f.call(&args, ctx)?;
             let ret_ = self.serializer.serialize(&ret.clone().into())?;
 
             debug!("Invoked {} with {} => {}", f.name, args_, ret_);
             return Ok(ret);
         }
+        // FIXME this is hack for rust
+        if let Some(s) = fun.as_ast::<Select>() {
+            if s.field.as_str() == "into" {
+                return Ok(s.obj.clone().into());
+            }
+        }
+        // if self.ignore_missing_items {
+        // return Ok(call)
+        // }
 
         bail!("Failed to interprete {:?}", node)
     }
@@ -335,9 +358,15 @@ impl Interpreter {
             "<=" => Ok(binary_comparison_on_literals("<=", |x, y| x <= y, |x, y| x <= y).into()),
             "==" => Ok(binary_comparison_on_literals("==", |x, y| x == y, |x, y| x == y).into()),
             "!=" => Ok(binary_comparison_on_literals("!=", |x, y| x != y, |x, y| x != y).into()),
-
             _ => ctx
                 .get(ident)
+                .or_else(|| {
+                    if self.ignore_missing_items {
+                        Some(ident.clone().into())
+                    } else {
+                        None
+                    }
+                })
                 .with_context(|| format!("could not find {:?} in context", ident.name)),
         };
     }
@@ -358,13 +387,42 @@ impl Interpreter {
         }
         bail!("Could not process {:?}", n)
     }
-    pub fn interprete_args(&self, node: &PosArgs, ctx: &InterpreterContext) -> Result<PosArgs> {
+    pub fn interprete_args(&self, node: &Vec<Expr>, ctx: &InterpreterContext) -> Result<Vec<Expr>> {
         let args: Vec<_> = node
-            .args
             .iter()
             .map(|x| self.interprete_expr(x, ctx))
             .try_collect()?;
-        Ok(PosArgs { args })
+        Ok(args)
+    }
+    pub fn interprete_build_struct(
+        &self,
+        node: &BuildStruct,
+        ctx: &InterpreterContext,
+    ) -> Result<BuildStruct> {
+        let fields: Vec<_> = node
+            .fields
+            .iter()
+            .map(|x| {
+                Ok::<_, Error>(FieldValue {
+                    name: x.name.clone(),
+                    value: self.interprete_expr(&x.value, ctx)?,
+                })
+            })
+            .try_collect()?;
+        Ok(BuildStruct {
+            name: node.name.clone(),
+            fields,
+        })
+    }
+    pub fn interprete_select(&self, s: &Select, ctx: &InterpreterContext) -> Result<Expr> {
+        let obj = self.interprete_expr(&s.obj, ctx)?;
+        // TODO: try to select values
+        Ok(Select {
+            obj,
+            field: s.field.clone(),
+            select: s.select,
+        }
+        .into())
     }
     pub fn interprete_expr(&self, node: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
         let node = uplift_common_ast(&node);
@@ -389,6 +447,12 @@ impl Interpreter {
         }
         if let Some(e) = node.as_ast() {
             return self.interprete_cond(e, ctx);
+        }
+        if let Some(e) = node.as_ast() {
+            return Ok(self.interprete_build_struct(e, ctx)?.into());
+        }
+        if let Some(e) = node.as_ast() {
+            return Ok(self.interprete_select(e, ctx)?.into());
         }
         if node.is_literal() {
             return Ok(node.clone());

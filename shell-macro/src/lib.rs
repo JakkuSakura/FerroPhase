@@ -25,7 +25,7 @@ fn process_fanout_op(expr: &Expr) -> Option<&Call> {
 }
 fn process_fanout(expr: &Expr) -> Expr {
     if let Some(x) = process_fanout_op(expr) {
-        let mut args: Vec<_> = x.args.args.iter().map(process_actor).collect();
+        let mut args: Vec<_> = x.args.iter().map(process_actor).collect();
         let mut result = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
         while !args.is_empty() {
             let left = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
@@ -39,7 +39,7 @@ fn process_fanout(expr: &Expr) -> Expr {
 }
 fn process_pipe(expr: &Expr) -> Expr {
     if let Some(x) = get_pipe_op(expr) {
-        let mut args: Vec<_> = x.args.args.iter().map(process_actor).collect();
+        let mut args: Vec<_> = x.args.iter().map(process_actor).collect();
         let mut result = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
         while !args.is_empty() {
             let left = RustPrinter.print_expr(&args.pop().unwrap()).unwrap();
