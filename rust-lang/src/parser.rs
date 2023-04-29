@@ -38,7 +38,7 @@ fn parse_type(t: syn::Type) -> Result<Expr> {
             }
         }
         syn::Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
-        syn::Type::Tuple(t) if t.elems.is_empty() => Unit.into(),
+        syn::Type::Tuple(t) if t.elems.is_empty() => Types::Unit.into(),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -73,7 +73,7 @@ fn parse_pat(p: syn::Pat) -> Result<Ident> {
 
 fn parse_return_type(o: ReturnType) -> Result<Expr> {
     Ok(match o {
-        ReturnType::Default => Unit.into(),
+        ReturnType::Default => LiteralUnit.into(),
         ReturnType::Type(_, t) => parse_type(*t)?,
     })
 }
@@ -432,7 +432,7 @@ pub fn parse_file(file: syn::File) -> Result<Module> {
             .map(parse_item)
             .filter(|x| {
                 x.as_ref()
-                    .map(|x| x.as_ast::<Unit>().is_none())
+                    .map(|x| x.as_ast::<LiteralUnit>().is_none())
                     .unwrap_or(true)
             })
             .try_collect()?,
@@ -449,7 +449,7 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
             .map(parse_item)
             .filter(|x| {
                 x.as_ref()
-                    .map(|x| x.as_ast::<Unit>().is_none())
+                    .map(|x| x.as_ast::<LiteralUnit>().is_none())
                     .unwrap_or(true)
             })
             .try_collect()?,
