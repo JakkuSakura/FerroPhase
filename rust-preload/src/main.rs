@@ -1,5 +1,3 @@
-#![feature(exit_status_error)]
-
 use clap::Parser;
 use std::mem::forget;
 use std::path::Path;
