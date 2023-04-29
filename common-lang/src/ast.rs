@@ -243,8 +243,17 @@ pub enum Visibility {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DefKind {
+    Unknown,
+    Function,
+    Type,
+    Const,
+    Variable,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Def {
     pub name: Ident,
+    pub kind: DefKind,
     pub ty: Option<Expr>,
     pub value: Expr,
     pub visibility: Visibility,
@@ -403,6 +412,7 @@ pub enum Types {
     I64,
     F64,
     Bool,
+    Type,
 }
 
 impl Types {
@@ -418,6 +428,9 @@ impl Types {
     pub fn bool() -> Types {
         Types::Bool
     }
+    pub fn ty() -> Types {
+        Types::Type
+    }
 }
 impl Ast for Types {}
 
@@ -429,18 +442,22 @@ pub struct Import {
 impl Ast for Import {}
 
 pub fn uplift_common_ast(expr: &Expr) -> Expr {
-    if let Some(expr) = expr.as_ast::<Types>() {
-        let uplifted: Expr = match expr {
-            Types::I64 => Ident::new("i64").into(),
-            Types::F64 => Ident::new("f64").into(),
-            Types::Bool => Ident::new("bool").into(),
-            Types::Function(f) => f.clone().into(),
-        };
-        return Uplifted {
-            uplifted: uplifted,
-            raw: expr.clone().into(),
+    loop {
+        if let Some(expr) = expr.as_ast::<Types>() {
+            let uplifted: Expr = match expr {
+                Types::I64 => Ident::new("i64").into(),
+                Types::F64 => Ident::new("f64").into(),
+                Types::Bool => Ident::new("bool").into(),
+                Types::Function(f) => f.clone().into(),
+                _ => break,
+            };
+            return Uplifted {
+                uplifted: uplifted,
+                raw: expr.clone().into(),
+            }
+            .into();
         }
-        .into();
+        break;
     }
     expr.clone()
 }
