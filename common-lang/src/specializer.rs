@@ -82,7 +82,7 @@ impl Specializer {
     }
     pub fn infer_type(&self, expr: &Expr, ctx: &InterpreterContext) -> Result<Expr> {
         if let Some(call) = expr.as_ast::<Call>() {
-            return self.infer_type_call(&call.fun, &call.args.args, ctx);
+            return self.infer_type_call(&call.fun, &call.args, ctx);
         }
         if let Some(_) = expr.as_ast::<LiteralInt>() {
             return Ok(Types::i64().into());
@@ -100,20 +100,17 @@ impl Specializer {
         if let Some(g) = fun.as_ast::<Generics>() {
             fun = g.value.clone();
         }
-        let args = PosArgs {
-            args: node
-                .args
-                .args
-                .iter()
-                .map(|x| self.specialize_expr(x, ctx))
-                .try_collect()?,
-        };
+        let args: Vec<_> = node
+            .args
+            .iter()
+            .map(|x| self.specialize_expr(x, ctx))
+            .try_collect()?;
         if let Some(f) = fun.as_ast::<FuncDecl>() {
             let name = f.name.as_ref().map(|x| x.as_str()).unwrap_or("<fun>");
             let args_ = self.serializer.serialize(&args.clone().into())?;
             debug!("Invoking {} with {}", name, args_);
             let sub = ctx.child();
-            for (i, arg) in args.args.iter().cloned().enumerate() {
+            for (i, arg) in args.iter().cloned().enumerate() {
                 let param = f
                     .params
                     .params
@@ -152,7 +149,7 @@ impl Specializer {
             );
             return Ok(Call {
                 fun: new_name.into(),
-                args: PosArgs::default(),
+                args: Default::default(),
             }
             .into());
         }
