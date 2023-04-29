@@ -49,9 +49,13 @@ impl Specializer {
             };
         }
         specialize!(specialize_cond, Cond);
+        specialize!(specialize_import, Import);
 
         bail!("Could not specialize {:?}", expr)
         // Ok(expr)
+    }
+    pub fn specialize_import(&self, import: &Import, _ctx: &InterpreterContext) -> Result<Import> {
+        Ok(import.clone())
     }
     pub fn infer_type_call(
         &self,
