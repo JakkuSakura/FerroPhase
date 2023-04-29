@@ -79,12 +79,29 @@ fn parse_return_type(o: ReturnType) -> Result<Expr> {
 }
 fn parse_type_param_bound(b: TypeParamBound) -> Result<Expr> {
     match b {
-        TypeParamBound::Trait(t) => parse_path(t.path).map(|x| x.into()),
+        TypeParamBound::Trait(t) => parse_path(t.path),
         _ => bail!("Does not support liftimes {:?}", b),
     }
 }
-fn parse_path(p: syn::Path) -> Result<Ident> {
-    Ok(parse_ident(p.segments.first().unwrap().ident.clone()))
+
+fn parse_path(p: syn::Path) -> Result<Expr> {
+    let first = p.segments.first().unwrap();
+    ensure!(
+        first.arguments.is_none(),
+        "Path argument not supported {:?}",
+        p
+    );
+    let mut ret: Expr = parse_ident(first.ident.clone()).into();
+    for s in p.segments.iter().skip(1) {
+        ret = Select {
+            obj: ret,
+            field: parse_ident(s.ident.clone()),
+            select: SelectType::Const,
+        }
+        .into();
+        ensure!(s.arguments.is_none(), "Path argument not supported {:?}", p);
+    }
+    Ok(ret)
 }
 fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
     let name = parse_ident(f.sig.ident);
@@ -252,8 +269,11 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Reference(r) => parse_ref(r)?.into(),
         syn::Expr::Tuple(t) => parse_tuple(t)?.into(),
         syn::Expr::Struct(s) => parse_struct_expr(s)?.into(),
-        raw => RawExpr { raw }.into(),
-        // x => bail!("Expr not supported: {:?}", x),
+
+        raw => {
+            warn!("RawExpr {:?}", raw);
+            RawExpr { raw }.into()
+        } // x => bail!("Expr not supported: {:?}", x),
     })
 }
 
@@ -274,6 +294,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Expr> {
 }
 
 fn parse_block(block: syn::Block) -> Result<Block> {
+    info!("Parsing block {:?}", block);
     let last_value = block
         .stmts
         .last()
