@@ -135,13 +135,13 @@ impl Interpreter {
             .map(|x| self.interprete_expr(x, ctx))
             .try_collect::<Expr, Vec<_>, _>()?
             .into_iter()
-            .filter(|x| x.as_ast::<Unit>().is_none())
+            .filter(|x| x.as_ast::<LiteralUnit>().is_none())
             .collect();
-        Ok(result.into_iter().next().unwrap_or(Unit.into()))
+        Ok(result.into_iter().next().unwrap_or(LiteralUnit.into()))
     }
     pub fn register_decl_fun(&self, node: &FuncDecl, ctx: &InterpreterContext) -> Result<Expr> {
         ctx.insert(node.name.clone().unwrap(), node.clone().into());
-        Ok(Unit.into())
+        Ok(LiteralUnit.into())
     }
     pub fn interprete_call(&self, node: &Call, ctx: &InterpreterContext) -> Result<Expr> {
         info!(
@@ -203,7 +203,7 @@ impl Interpreter {
         if node.last_value && !ret.is_empty() {
             Ok(ret.last().cloned().unwrap())
         } else {
-            Ok(Unit.into())
+            Ok(LiteralUnit.into())
         }
     }
     pub fn interprete_cond(&self, node: &Cond, ctx: &InterpreterContext) -> Result<Expr> {
@@ -222,7 +222,7 @@ impl Interpreter {
                 }
             }
         }
-        Ok(Unit.into())
+        Ok(LiteralUnit.into())
     }
     pub fn interprete_print(
         se: &dyn Serializer,
@@ -231,7 +231,7 @@ impl Interpreter {
     ) -> Result<Expr> {
         let formatted: Vec<_> = args.into_iter().map(|x| se.serialize(x)).try_collect()?;
         ctx.root().print_str(formatted.join(" "));
-        Ok(Unit.into())
+        Ok(LiteralUnit.into())
     }
     pub fn interprete_ident(&self, ident: &Ident, ctx: &InterpreterContext) -> Result<Expr> {
         fn operate_on_literals(
@@ -458,7 +458,7 @@ impl Interpreter {
             return Ok(node.clone());
         }
         if node.is_raw() {
-            return Ok(Unit.into());
+            return Ok(LiteralUnit.into());
         }
         bail!("Failed to interprete {:?}", node)
     }

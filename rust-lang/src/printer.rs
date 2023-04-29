@@ -360,7 +360,7 @@ impl RustPrinter {
             return Ok(self.print_ident(n));
         }
 
-        if let Some(_n) = node.as_ast::<Unit>() {
+        if let Some(_n) = node.as_ast::<LiteralUnit>() {
             return Ok(quote!(()));
         }
 

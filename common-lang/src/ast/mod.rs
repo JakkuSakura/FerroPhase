@@ -1,3 +1,6 @@
+mod literal;
+pub use literal::*;
+
 use common::*;
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
@@ -98,16 +101,6 @@ pub struct Block {
 
 impl Ast for Block {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-/// unit is both type and value
-pub struct Unit;
-
-impl Ast for Unit {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct Ident {
     pub name: String,
@@ -123,113 +116,6 @@ impl Ident {
 }
 
 impl Ast for Ident {}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
-pub struct LiteralInt {
-    pub value: i64,
-}
-
-impl LiteralInt {
-    pub fn new(i: i64) -> Self {
-        Self { value: i }
-    }
-}
-
-impl Ast for LiteralInt {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
-pub struct LiteralBool {
-    pub value: bool,
-}
-
-impl LiteralBool {
-    pub fn new(i: bool) -> Self {
-        Self { value: i }
-    }
-}
-
-impl Ast for LiteralBool {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialOrd, PartialEq)]
-pub struct LiteralDecimal {
-    pub value: f64,
-}
-
-impl LiteralDecimal {
-    pub fn new(v: f64) -> Self {
-        Self { value: v }
-    }
-}
-
-impl Ast for LiteralDecimal {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiteralChar {
-    pub value: char,
-}
-
-impl Ast for LiteralChar {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiteralString {
-    pub value: String,
-    pub owned: bool,
-}
-impl LiteralString {
-    pub fn new_owned(s: impl Into<String>) -> Self {
-        Self {
-            value: s.into(),
-            owned: true,
-        }
-    }
-    pub fn new_ref(s: impl Into<String>) -> Self {
-        Self {
-            value: s.into(),
-            owned: false,
-        }
-    }
-}
-impl Ast for LiteralString {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiteralList {
-    pub value: Vec<Expr>,
-}
-
-impl Ast for LiteralList {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LiteralUnknown {}
-
-impl Ast for LiteralUnknown {
-    fn is_literal(&self) -> bool {
-        true
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Call {
@@ -422,6 +308,7 @@ pub enum Types {
     I64,
     F64,
     Bool,
+    Unit,
     Type,
 }
 
@@ -458,6 +345,7 @@ pub fn uplift_common_ast(expr: &Expr) -> Expr {
                 Types::I64 => Ident::new("i64").into(),
                 Types::F64 => Ident::new("f64").into(),
                 Types::Bool => Ident::new("bool").into(),
+                Types::Unit => Ident::new("unit").into(),
                 Types::Function(f) => f.clone().into(),
                 _ => break,
             };
