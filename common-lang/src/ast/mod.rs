@@ -255,7 +255,7 @@ pub struct BuildStruct {
 
 impl Ast for BuildStruct {}
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum SelectType {
     Unknown,
     Field,

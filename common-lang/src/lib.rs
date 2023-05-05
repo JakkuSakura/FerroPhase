@@ -15,5 +15,3 @@ pub trait Serializer {
 pub trait Deserializer {
     fn deserialize(&self, code: &str) -> Result<Expr>;
 }
-
-// TODO: do an experiement to find out what breaks CLion inference
