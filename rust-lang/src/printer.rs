@@ -23,6 +23,7 @@ impl RustPrinter {
             "&mut Self" => quote!(&mut Self),
             "Self" => quote!(Self),
             "mut Self" => quote!(mut Self),
+            "unit" => quote!(()),
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
