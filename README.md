@@ -2,6 +2,8 @@
 
 This language explores staging in Rust, but also leave space for transpilation.
 
+Goal: Readability without compromising performance
+
 It adds high-level generics and codegen to Rust.
 
 See rust-lang/examples/main_02.rs for example.
