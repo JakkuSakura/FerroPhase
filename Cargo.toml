@@ -4,8 +4,5 @@ members = [
     "common",
     "common-lang",
     "rust-lang",
-    "rust-macro",
-    "rust-preload",
-    "shell-lang",
-    "shell-macro"
+    "rust-macro"
 ]
