@@ -175,7 +175,7 @@ impl Ast for FuncDecl {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Generics {
     pub params: Params,
-    // TODOL restrains
+    // TODO: restrains
     pub value: Expr,
 }
 
