@@ -79,6 +79,54 @@ Then AST gets transpiled into a low level language, which is either Rust for per
 The language aims to experiment simple syntax, maximum runtime performance.
 Compile time is not a concern, as we maintain the same semantics between phrases, some optimization can be disabled for fast compilation, or even use interpretation mode.
 
+### Type System
+
+Hope to bring some of typescript's type system to SHLL. It verifies and infer types at compile time, and then generate solid types in Rust.
+It should also be available as a cli tool and standalone library.
+```text
+// structural typing, solid type
+type Foo = struct {
+    a: i32,
+    b: i32,
+}
+// named typing
+struct Foo {
+    a: i32,
+    b: i32,
+}
+// impl trait
+impl Read
+// addition of traits
+impl Read + impl Write
+impl Read + Write
+// generic
+Vec<T>
+// subtraction of traits
+impl Read + impl Write - impl Write
+// union type
+type RW = impl Write | impl Write
+// intersection type
+type RW = impl Read + impl Write
+type RW = impl Read & impl Write
+// list compression
+type Foo2 = struct {
+    key, value for i in Foo.types()
+}
+// type function
+type fn NestedVec(ty: Type, n: usize) -> Type {
+    if n == 0 {
+        ty
+    } else {
+        Vec<NestedVec(ty, n-1)>
+    }
+}
+
+// typeof
+type Foo = typeof(1)
+// literal types
+type Foo = 1
+
+```
 
 ## References
 
