@@ -1,62 +1,75 @@
 use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawType, RawUse};
 use common::*;
-use common_lang::ast::*;
+use common_lang::tree::FieldValueExpr;
+use common_lang::tree::*;
+use common_lang::value::{
+    BoolValue, DecimalValue, IntValue, NamedStructType, PrimitiveType, StringValue, Value,
+};
 use quote::ToTokens;
 use syn::{
     BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Member, Pat, ReturnType, Stmt, TypeParamBound,
 };
+
 fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
 }
-fn parse_type(t: syn::Type) -> Result<Expr> {
+fn parse_type(t: syn::Type) -> Result<TypeExpr> {
     let t = match t {
-        syn::Type::BareFn(f) => Types::func(
-            f.inputs
+        syn::Type::BareFn(f) => TypeExpr::FuncType(FuncTypeExpr {
+            params: f
+                .inputs
                 .into_iter()
                 .map(|x| x.ty)
                 .map(parse_type)
                 .try_collect()?,
-            parse_return_type(f.output)?,
-        )
+            ret: parse_return_type(f.output)?.into(),
+        })
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
 
             match s.as_str() {
-                "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => Ident::new(s).into(),
+                "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => TypeExpr::Ident(Ident::new(s)),
                 _ if p.path.segments.len() == 1 => {
                     let first_segment = p.path.segments.first().unwrap();
                     match &first_segment.arguments {
                         syn::PathArguments::None => {
                             let ident = parse_ident(first_segment.ident.clone());
-                            ident.into()
+                            TypeExpr::Ident(ident)
                         }
-                        _ => RawType { raw: p }.into(),
+                        // _ => TypeExpr::AnyTypeExpr(RawType { raw: p }.into()),
+                        _ => bail!("Does not support path arguments {:?}", p),
                     }
                 }
                 _ => bail!("Type not supported: {}", s),
             }
         }
-        syn::Type::ImplTrait(im) => RawImplTrait { raw: im }.into(),
-        syn::Type::Tuple(t) if t.elems.is_empty() => Types::Unit.into(),
+        // syn::Type::ImplTrait(im) => TypeExpr::AnyTypeExpr(RawImplTrait { raw: im }.into()),
+        syn::Type::ImplTrait(im) => bail!("Does not support impl trait {:?}", im),
+        syn::Type::Tuple(t) if t.elems.is_empty() => {
+            TypeExpr::Primitive(PrimitiveType::Unit).into()
+        }
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
 }
 
-fn parse_input(i: FnArg) -> Result<Param> {
+fn parse_input(i: FnArg) -> Result<ParamExpr> {
     Ok(match i {
-        FnArg::Receiver(rev) => Param {
+        FnArg::Receiver(rev) => ParamExpr {
             name: Ident::new("self"),
-            ty: match (rev.reference.is_some(), rev.mutability.is_some()) {
-                (true, true) => Ident::new("&mut Self").into(),
-                (true, false) => Ident::new("&Self").into(),
-                (false, true) => Ident::new("Self").into(),
-                (false, false) => Ident::new("mut Self").into(),
+            ty: {
+                let ident = match (rev.reference.is_some(), rev.mutability.is_some()) {
+                    (true, true) => Ident::new("&mut Self").into(),
+                    (true, false) => Ident::new("&Self").into(),
+                    (false, true) => Ident::new("Self").into(),
+                    (false, false) => Ident::new("mut Self").into(),
+                };
+                TypeExpr::Ident(ident)
             },
         },
 
-        FnArg::Typed(t) => Param {
+        FnArg::Typed(t) => ParamExpr {
             name: parse_pat(*t.pat)?,
             ty: parse_type(*t.ty)?,
         },
@@ -71,52 +84,44 @@ fn parse_pat(p: syn::Pat) -> Result<Ident> {
     })
 }
 
-fn parse_return_type(o: ReturnType) -> Result<Expr> {
+fn parse_return_type(o: ReturnType) -> Result<TypeExpr> {
     Ok(match o {
-        ReturnType::Default => LiteralUnit.into(),
+        ReturnType::Default => TypeExpr::Primitive(PrimitiveType::Unit),
         ReturnType::Type(_, t) => parse_type(*t)?,
     })
 }
-fn parse_type_param_bound(b: TypeParamBound) -> Result<Expr> {
+fn parse_type_param_bound(b: TypeParamBound) -> Result<Path> {
     match b {
         TypeParamBound::Trait(t) => parse_path(t.path),
         _ => bail!("Does not support liftimes {:?}", b),
     }
 }
 
-fn parse_path(p: syn::Path) -> Result<Expr> {
-    let first = p.segments.first().unwrap();
-    ensure!(
-        first.arguments.is_none(),
-        "Path argument not supported {:?}",
-        p
-    );
-    let mut ret: Expr = parse_ident(first.ident.clone()).into();
-    for s in p.segments.iter().skip(1) {
-        ret = Select {
-            obj: ret,
-            field: parse_ident(s.ident.clone()),
-            select: SelectType::Const,
-        }
-        .into();
-        ensure!(s.arguments.is_none(), "Path argument not supported {:?}", p);
-    }
-    Ok(ret)
+fn parse_path(p: syn::Path) -> Result<Path> {
+    Ok(Path {
+        segments: p
+            .segments
+            .into_iter()
+            .map(|x| {
+                let ident = parse_ident(x.ident);
+                ensure!(x.arguments.is_none(), "Does not support path arguments");
+                Ok(ident)
+            })
+            .try_collect()?,
+    })
 }
-fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
+fn parse_fn(f: ItemFn) -> Result<(Ident, Item)> {
     let name = parse_ident(f.sig.ident);
     let ff = FuncDecl {
-        name: Some(name.clone()),
-        params: Params {
-            params: f
-                .sig
-                .inputs
-                .into_iter()
-                .map(|x| parse_input(x))
-                .try_collect()?,
-        },
-        ret: parse_return_type(f.sig.output)?,
-        body: Some(parse_block(*f.block)?),
+        name: name.clone(),
+        params: f
+            .sig
+            .inputs
+            .into_iter()
+            .map(|x| parse_input(x))
+            .try_collect()?,
+        ret: parse_return_type(f.sig.output)?.into(),
+        body: parse_block(*f.block)?,
     };
     if f.sig.generics.params.is_empty() {
         Ok((name, ff.into()))
@@ -127,10 +132,10 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
             .params
             .into_iter()
             .map(|x| match x {
-                GenericParam::Type(t) => Ok(Param {
+                GenericParam::Type(t) => Ok(ParamExpr {
                     name: parse_ident(t.ident),
                     // TODO: support multiple type bounds
-                    ty: parse_type_param_bound(t.bounds.first().cloned().unwrap())?,
+                    ty: TypeExpr::Path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
                 }),
                 _ => bail!("Does not generic param {:?}", x),
             })
@@ -138,7 +143,7 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
         Ok((
             name,
             Generics {
-                params: Params { params },
+                params,
                 value: ff.into(),
             }
             .into(),
@@ -146,16 +151,19 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Expr)> {
     }
 }
 
-fn parse_call(call: syn::ExprCall) -> Result<Call> {
+fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
-    Ok(Call { fun, args })
+    Ok(Invoke {
+        fun: fun.into(),
+        args,
+    })
 }
-fn parse_method_call(call: syn::ExprMethodCall) -> Result<Call> {
-    Ok(Call {
+fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
+    Ok(Invoke {
         fun: Select {
-            obj: parse_expr(*call.receiver)?,
+            obj: parse_expr(*call.receiver)?.into(),
             field: parse_ident(call.method),
             select: SelectType::Method,
         }
@@ -179,7 +187,7 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
                 }
             }
             cases.push(CondCase {
-                cond: LiteralBool { value: true }.into(),
+                cond: Expr::Value(Value::Bool(BoolValue::new(true))),
                 body,
             });
         };
@@ -190,7 +198,7 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
         if_style: true,
     })
 }
-fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
+fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     let l = parse_expr(*b.left)?;
     let r = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
@@ -207,7 +215,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
         _ => bail!("Op not supported {:?}", b.op),
     };
     if flatten {
-        if let Some(first_arg) = l.as_ast::<Call>() {
+        if let Some(first_arg) = l.as_ast::<Invoke>() {
             if Some(&op) == first_arg.fun.as_ast::<Ident>() {
                 let mut first_arg = first_arg.clone();
                 first_arg.args.push(r);
@@ -215,14 +223,14 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Call> {
             }
         }
     }
-    Ok(Call {
+    Ok(Invoke {
         fun: op.into(),
         args: vec![l, r],
     })
 }
-fn parse_tuple(t: syn::ExprTuple) -> Result<Call> {
+fn parse_tuple(t: syn::ExprTuple) -> Result<Invoke> {
     let args = t.elems.into_iter().map(parse_expr).try_collect()?;
-    Ok(Call {
+    Ok(Invoke {
         fun: Ident::new("tuple").into(),
         args,
     })
@@ -233,15 +241,15 @@ fn parse_member(mem: Member) -> Result<Ident> {
         syn::Member::Unnamed(_) => bail!("Does not support unnmaed field yet {:?}", mem),
     })
 }
-fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
-    Ok(FieldValue {
+fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValueExpr> {
+    Ok(FieldValueExpr {
         name: parse_member(fv.member)?,
         value: parse_expr(fv.expr)?,
     })
 }
-pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<BuildStruct> {
-    Ok(BuildStruct {
-        name: parse_path(s.path)?.into(),
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<BuildStructExpr> {
+    Ok(BuildStructExpr {
+        name: TypeExpr::Path(parse_path(s.path)?),
         fields: s
             .fields
             .into_iter()
@@ -258,14 +266,14 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::If(i) => parse_if(i)?.into(),
 
         syn::Expr::Lit(l) => match l.lit {
-            Lit::Int(i) => LiteralInt::new(i.base10_parse()?).into(),
-            Lit::Float(i) => LiteralDecimal::new(i.base10_parse()?).into(),
-            Lit::Str(s) => LiteralString::new_ref(s.value()).into(),
+            Lit::Int(i) => IntValue::new(i.base10_parse()?).into(),
+            Lit::Float(i) => DecimalValue::new(i.base10_parse()?).into(),
+            Lit::Str(s) => StringValue::new_ref(s.value()).into(),
             _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
         },
         syn::Expr::Macro(m) => RawExprMacro { raw: m }.into(),
         syn::Expr::MethodCall(c) => parse_method_call(c)?.into(),
-        syn::Expr::Path(p) => parse_path(p.path)?.into(),
+        syn::Expr::Path(p) => Expr::Path(parse_path(p.path)?),
         syn::Expr::Reference(r) => parse_ref(r)?.into(),
         syn::Expr::Tuple(t) => parse_tuple(t)?.into(),
         syn::Expr::Struct(s) => parse_struct_expr(s)?.into(),
@@ -277,13 +285,13 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     })
 }
 
-fn parse_stmt(stmt: syn::Stmt) -> Result<Expr> {
+fn parse_stmt(stmt: syn::Stmt) -> Result<Tree> {
     Ok(match stmt {
         Stmt::Local(l) => Def {
             name: parse_pat(l.pat)?,
             kind: DefKind::Variable,
             ty: None,
-            value: parse_expr(*l.init.context("No value")?.expr)?,
+            value: DefValue::Variable(parse_expr(*l.init.context("No value")?.expr)?),
             visibility: Visibility::Public,
         }
         .into(),
@@ -329,7 +337,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
                 name,
                 kind: DefKind::Function,
                 ty: None,
-                value: expr,
+                value: DefValue::Function(expr),
                 visibility: parse_vis(m.vis),
             })
         }
@@ -337,7 +345,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
             name: parse_ident(t.ident),
             kind: DefKind::Type,
             ty: None,
-            value: parse_type(t.ty)?,
+            value: DefValue::Type(parse_type(t.ty)?),
             visibility: parse_vis(t.vis),
         }),
         _ => bail!("Does not support impl item {:?}", item),
@@ -349,8 +357,8 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
         defs: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
-fn parse_struct_field(i: usize, f: syn::Field) -> Result<Field> {
-    Ok(Field {
+fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeExpr> {
+    Ok(FieldTypeExpr {
         name: f
             .ident
             .map(parse_ident)
@@ -358,7 +366,7 @@ fn parse_struct_field(i: usize, f: syn::Field) -> Result<Field> {
         ty: parse_type(f.ty)?,
     })
 }
-fn parse_use(u: syn::ItemUse) -> Result<Expr> {
+fn parse_use(u: syn::ItemUse) -> Result<Tree> {
     let mut segments = vec![];
     let mut tree = u.tree.clone();
     loop {
@@ -384,8 +392,8 @@ fn parse_use(u: syn::ItemUse) -> Result<Expr> {
     }
     .into())
 }
-pub fn parse_struct(s: syn::ItemStruct) -> Result<Struct> {
-    Ok(Struct {
+pub fn parse_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
+    Ok(NamedStructType {
         name: parse_ident(s.ident),
         fields: s
             .fields
@@ -395,7 +403,7 @@ pub fn parse_struct(s: syn::ItemStruct) -> Result<Struct> {
             .try_collect()?,
     })
 }
-fn parse_item(item: syn::Item) -> Result<Expr> {
+fn parse_item(item: syn::Item) -> Result<Tree> {
     match item {
         Item::Fn(f0) => {
             let visibility = parse_vis(f0.vis.clone());
@@ -426,19 +434,10 @@ fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
 pub fn parse_file(file: syn::File) -> Result<Module> {
     Ok(Module {
         name: Ident::new("__file__"),
-        items: file
-            .items
-            .into_iter()
-            .map(parse_item)
-            .filter(|x| {
-                x.as_ref()
-                    .map(|x| x.as_ast::<LiteralUnit>().is_none())
-                    .unwrap_or(true)
-            })
-            .try_collect()?,
+        items: file.items.into_iter().map(parse_item).try_collect()?,
     })
 }
-pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
+pub fn parse_module(file: syn::ItemMod) -> Result<Tree> {
     Ok(Module {
         name: parse_ident(file.ident),
         items: file
@@ -447,11 +446,6 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
             .1
             .into_iter()
             .map(parse_item)
-            .filter(|x| {
-                x.as_ref()
-                    .map(|x| x.as_ast::<LiteralUnit>().is_none())
-                    .unwrap_or(true)
-            })
             .try_collect()?,
     }
     .into())
@@ -459,13 +453,51 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Expr> {
 pub struct RustParser;
 
 impl RustParser {
-    pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
+    pub fn parse_expr(&self, code: syn::Expr) -> Result<Tree> {
         parse_expr(code)
     }
     pub fn parse_file(&self, code: syn::File) -> Result<Module> {
         parse_file(code)
     }
-    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Expr> {
+    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Tree> {
         parse_module(code)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RustSerde;
+    use common_lang::tree::FuncDecl;
+    use common_lang::Serializer;
+    use quote::format_ident;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_parse_fn() {
+        let code: syn::ItemFn = parse_quote!(
+            fn foo(a: i32) -> i32 {
+                a + 1
+            }
+        );
+        let (name, expr) = super::parse_fn(code).unwrap();
+        assert_eq!(name, super::parse_ident(format_ident!("foo")));
+
+        assert_eq!(
+            RustSerde
+                .serialize_tree(
+                    &expr
+                        .as_ast::<FuncDecl>()
+                        .unwrap()
+                        .body
+                        .clone()
+                        .unwrap()
+                        .stmts[0]
+                )
+                .unwrap(),
+            RustSerde
+                .serialize_tree(&super::parse_expr(parse_quote!(a + 1)).unwrap())
+                .unwrap()
+        );
     }
 }
