@@ -3,100 +3,94 @@ pub mod printer;
 pub mod rustfmt;
 
 use common::Result;
-use common_lang::ast::{Expr, *};
+use common_lang::tree::{Tree, *};
 use common_lang::*;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use syn::*;
+use syn::parse_str;
 
 #[derive(Debug, Clone)]
 pub struct RawExprMacro {
     pub raw: syn::ExprMacro,
 }
-impl Ast for RawExprMacro {
-    fn is_raw(&self) -> bool {
-        true
-    }
-}
-impl_panic_serde!(RawExprMacro);
 
 #[derive(Debug, Clone)]
 pub struct RawItemMacro {
     pub raw: syn::ItemMacro,
 }
-impl Ast for RawItemMacro {
-    fn is_raw(&self) -> bool {
-        true
-    }
-}
-impl_panic_serde!(RawItemMacro);
 
 #[derive(Debug, Clone)]
 pub struct RawType {
     pub raw: syn::TypePath,
 }
-impl Ast for RawType {
-    fn is_raw(&self) -> bool {
-        true
+
+impl Serialize for RawType {
+    fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        unreachable!()
     }
 }
-impl_panic_serde!(RawType);
-
+impl<'de> Deserialize<'de> for RawType {
+    fn deserialize<D>(_deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        unreachable!()
+    }
+}
 #[derive(Debug, Clone)]
 pub struct RawUse {
     pub raw: syn::ItemUse,
 }
-impl Ast for RawUse {
-    fn is_raw(&self) -> bool {
-        true
-    }
-}
-impl_panic_serde!(RawUse);
 
 #[derive(Debug, Clone)]
 pub struct RawImplTrait {
     pub raw: syn::TypeImplTrait,
 }
-impl Ast for RawImplTrait {
-    fn is_raw(&self) -> bool {
-        true
-    }
-}
-impl_panic_serde!(RawImplTrait);
 
 #[derive(Debug, Clone)]
 pub struct RawExpr {
     pub raw: syn::Expr,
 }
-impl Ast for RawExpr {
-    fn is_raw(&self) -> bool {
-        true
-    }
-}
-impl_panic_serde!(RawExpr);
 
 #[derive(Debug, Clone)]
 pub struct RawTokenSteam {
     pub raw: proc_macro2::TokenStream,
 }
-impl Ast for RawTokenSteam {
-    fn is_raw(&self) -> bool {
-        true
-    }
-}
-impl_panic_serde!(RawTokenSteam);
 
 pub struct RustSerde;
 impl Serializer for RustSerde {
-    fn serialize(&self, node: &Expr) -> Result<String> {
+    fn serialize_tree(&self, node: &Tree) -> Result<String> {
+        RustPrinter.print_tree(node).map(|x| x.to_string())
+    }
+
+    fn serialize_expr(&self, node: &Expr) -> Result<String> {
         RustPrinter.print_expr(node).map(|x| x.to_string())
+    }
+
+    fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
+        RustPrinter.print_invoke(node).map(|x| x.to_string())
+    }
+
+    fn serialize_item(&self, node: &Item) -> Result<String> {
+        RustPrinter.print_item(node).map(|x| x.to_string())
+    }
+
+    fn serialize_block(&self, node: &Block) -> Result<String> {
+        RustPrinter.print_block(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {
-    fn deserialize(&self, code: &str) -> Result<Expr> {
+    fn deserialize(&self, code: &str) -> Result<Tree> {
         let code: syn::File = parse_str(code)?;
-        Ok(RustParser.parse_file(code)?.into())
+        RustParser
+            .parse_file(code)
+            .map(Item::Module)
+            .map(Tree::Item)
     }
 }

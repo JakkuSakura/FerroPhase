@@ -1,6 +1,6 @@
 use common::*;
 use common_lang::ast::Expr;
-use common_lang::interpreter::InterpreterContext;
+use common_lang::interpreter::ExecutionContext;
 use common_lang::specializer::Specializer;
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
@@ -9,7 +9,7 @@ use rust_lang::RustSerde;
 use std::rc::Rc;
 
 fn specialize_inner(code: Expr) -> Result<TokenStream> {
-    let ctx = InterpreterContext::new();
+    let ctx = ExecutionContext::new();
     let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(&code, &ctx)?;
     let node = RustPrinter.print_expr(&node)?;
     Ok(node.into())

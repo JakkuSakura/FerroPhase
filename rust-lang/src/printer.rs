@@ -1,8 +1,10 @@
-use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawTokenSteam, RawType, RawUse};
 use common::Result;
 use common::*;
-use common_lang::ast::*;
-use common_lang::interpreter::BuiltinFn;
+
+use common_lang::builtins::BuiltinFn;
+use common_lang::tree::FieldValueExpr;
+use common_lang::tree::*;
+use common_lang::value::*;
 use proc_macro2::TokenStream;
 use quote::*;
 
@@ -30,22 +32,28 @@ impl RustPrinter {
     pub fn print_def(&self, n: &Def) -> Result<TokenStream> {
         let vis = n.visibility;
         let mut decl = &n.value;
-        let mut g = None;
-        if let Some(d) = decl.as_ast::<Generics>() {
-            decl = &d.value;
-            g = Some(d)
+        let g = None;
+        // if let Some(d) = decl.as_ast::<Generics>() {
+        //     decl = &d.value;
+        //     g = Some(d)
+        // }
+        match decl {
+            DefValue::Function(n) => {
+                return self.print_func_decl(n, g, vis);
+            }
+            DefValue::Type(_) => {}
+            DefValue::Const(_) => {}
+            DefValue::Variable(_) => {}
         }
-        if let Some(n) = decl.as_ast::<FuncDecl>() {
-            return self.print_func_decl(n, g, vis);
-        }
+
         bail!("Not supported {:?}", n)
     }
-    pub fn print_field(&self, field: &Field) -> Result<TokenStream> {
+    pub fn print_field(&self, field: &FieldTypeExpr) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
         let ty = self.print_expr(&field.ty)?;
         Ok(quote!(pub #name: #ty ))
     }
-    pub fn print_struct(&self, s: &Struct) -> Result<TokenStream> {
+    pub fn print_struct_type(&self, s: &NamedStructTypeExpr) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let fields: Vec<_> = s
             .fields
@@ -60,7 +68,7 @@ impl RustPrinter {
     }
 
     pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
-        let stmts: Vec<_> = n.stmts.iter().map(|x| self.print_expr(x)).try_collect()?;
+        let stmts: Vec<_> = n.stmts.iter().map(|x| self.print_item(x)).try_collect()?;
         let q = if n.last_value {
             quote!({
                 #(#stmts);*
@@ -86,7 +94,7 @@ impl RustPrinter {
                             #ex
                         }
                     ));
-                } else if c.cond.as_ast::<LiteralBool>().map(|x| x.value) != Some(false) {
+                } else if i < cond.cases.len() - 1 {
                     ts.push(quote!(
                         else if #co {
                             #ex
@@ -131,8 +139,8 @@ impl RustPrinter {
         vis: Visibility,
     ) -> Result<TokenStream> {
         let name = format_ident!("{}", n.name.as_ref().unwrap().name);
-        let node = &n.ret;
-        let ret = self.print_expr(node)?;
+        let ret_type = &n.ret;
+        let ret = self.print_type_expr(ret_type)?;
         let param_names: Vec<_> = n
             .params
             .params
@@ -171,7 +179,7 @@ impl RustPrinter {
 
         ));
     }
-    pub fn print_call(&self, node: &Call) -> Result<TokenStream> {
+    pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
         let node1 = &node.fun;
         let fun = self.print_expr(node1)?;
         let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
@@ -222,40 +230,8 @@ impl RustPrinter {
             Ok(quote!(&#referee))
         }
     }
-    pub fn print_literal(&self, n: &Expr) -> Result<TokenStream> {
-        if let Some(n) = n.as_ast::<LiteralInt>() {
-            let n = n.value;
-            return Ok(quote!(
-                #n
-            ));
-        }
-        if let Some(n) = n.as_ast::<LiteralBool>() {
-            let n = n.value;
-            return Ok(quote!(
-                #n
-            ));
-        }
-        if let Some(n) = n.as_ast::<LiteralDecimal>() {
-            let n = n.value;
-            return Ok(quote!(
-                #n
-            ));
-        }
-        if let Some(n) = n.as_ast::<LiteralString>() {
-            let v = &n.value;
-            if n.owned {
-                return Ok(quote!(
-                    #v.to_string()
-                ));
-            } else {
-                return Ok(quote!(
-                    #v
-                ));
-            }
-        }
-        bail!("Failed to serialize literal {:?}", n)
-    }
-    pub fn print_func_type(&self, fun: &FuncType) -> Result<TokenStream> {
+
+    pub fn print_func_type(&self, fun: &FuncTypeExpr) -> Result<TokenStream> {
         let args: Vec<_> = fun
             .params
             .iter()
@@ -288,7 +264,7 @@ impl RustPrinter {
         Ok(quote!(#debug))
     }
     pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
-        let name = self.print_expr(&impl_.name)?;
+        let name = self.print_ident(&impl_.name)?;
         let methods: Vec<_> = impl_.defs.iter().map(|x| self.print_def(x)).try_collect()?;
         Ok(quote!(
             impl #name {
@@ -297,7 +273,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
-        let stmts: Vec<_> = m.items.iter().map(|x| self.print_expr(x)).try_collect()?;
+        let stmts: Vec<_> = m.items.iter().map(|x| self.print_item(x)).try_collect()?;
         if m.name.as_str() == "__file__" {
             return Ok(quote!(
                 #(#stmts)*
@@ -320,13 +296,13 @@ impl RustPrinter {
             .collect::<Vec<_>>();
         Ok(quote!(#vis use #(#segments)::*;))
     }
-    pub fn print_field_value(&self, s: &FieldValue) -> Result<TokenStream> {
+    pub fn print_field_value(&self, s: &FieldValueExpr) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let value = self.print_expr(&s.value)?;
         Ok(quote!(#name: #value))
     }
-    pub fn print_build_struct(&self, s: &BuildStruct) -> Result<TokenStream> {
-        let name = self.print_expr(&s.name)?;
+    pub fn print_build_struct(&self, s: &BuildStructExpr) -> Result<TokenStream> {
+        let name = self.print_type_expr(&s.name)?;
         let kwargs: Vec<_> = s
             .fields
             .iter()
@@ -338,98 +314,94 @@ impl RustPrinter {
         let name = self.print_ident(&Ident::new(bt.name.clone()));
         Ok(quote!(#name))
     }
-    pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
-        let node = &uplift_common_ast(node);
+    pub fn print_int(&self, n: &IntValue) -> Result<TokenStream> {
+        let n = n.value;
+        Ok(quote!(#n))
+    }
+    pub fn print_bool(&self, n: &BoolValue) -> Result<TokenStream> {
+        let n = n.value;
+        Ok(quote!(#n))
+    }
+    pub fn print_decimal(&self, n: &DecimalValue) -> Result<TokenStream> {
+        let n = n.value;
+        Ok(quote!(#n))
+    }
+    pub fn print_char(&self, n: &CharValue) -> Result<TokenStream> {
+        let n = n.value;
+        Ok(quote!(#n))
+    }
+    pub fn print_string(&self, n: &StringValue) -> Result<TokenStream> {
+        let v = &n.value;
+        return if n.owned {
+            Ok(quote!(
+                #v.to_string()
+            ))
+        } else {
+            Ok(quote!(
+                #v
+            ))
+        };
+    }
+    pub fn print_list(&self, n: &Vec<Expr>) -> Result<TokenStream> {
+        let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
+        Ok(quote!(vec![#(#n),*]))
+    }
+    pub fn print_unit(&self, _n: &UnitValue) -> Result<TokenStream> {
+        Ok(quote!(()))
+    }
+    pub fn print_type(&self, t: TypeValue) -> Result<TokenStream> {
+        match t {
+            TypeValue::FuncType(f) => self.print_func_type(&f),
+            TypeValue::UnnamedStruct(s) => self.print_struct_type(&s),
+            _ => bail!("Not supported {:?}", t),
+        }
+    }
 
-        if let Some(n) = node.as_ast::<Uplifted>() {
-            return self.print_expr(&n.uplifted);
+    pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
+        match v {
+            Value::Function(f) => self.print_func_type(&f.ty),
+            Value::Int(i) => self.print_int(i),
+            Value::Bool(b) => self.print_bool(b),
+            Value::Decimal(d) => self.print_decimal(d),
+            Value::Char(c) => self.print_char(c),
+            Value::String(s) => self.print_string(s),
+            Value::List(l) => self.print_list(l),
+            Value::Unit(u) => self.print_unit(u),
+            Value::Type(t) => self.print_type(t.clone()),
+            Value::Struct(s) => self.print_build_struct(s),
         }
-        if let Some(n) = node.as_ast::<Types>() {
-            return self.print_expr(&n.clone().into());
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_block(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_args(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_generics(n);
-        }
-        if let Some(m) = node.as_ast() {
-            return self.print_module(m);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_def(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return Ok(self.print_ident(n));
-        }
-
-        if let Some(_n) = node.as_ast::<LiteralUnit>() {
-            return Ok(quote!(()));
-        }
-
-        if let Some(n) = node.as_ast() {
-            return self.print_call(n);
-        }
-
-        if let Some(n) = node.as_ast() {
-            return self.print_import(n);
-        }
-        if node.is_literal() {
-            return self.print_literal(node);
-        }
-        if let Some(n) = node.as_ast::<RawExprMacro>() {
-            return Ok(n.raw.to_token_stream());
-        }
-        if let Some(n) = node.as_ast::<RawItemMacro>() {
-            return Ok(n.raw.to_token_stream());
-        }
-        if let Some(n) = node.as_ast::<RawUse>() {
-            return Ok(n.raw.to_token_stream());
-        }
-
-        if let Some(n) = node.as_ast::<RawImplTrait>() {
-            return Ok(n.raw.to_token_stream());
-        }
-        if let Some(n) = node.as_ast::<RawExpr>() {
-            return Ok(n.raw.to_token_stream());
-        }
-        if let Some(n) = node.as_ast::<RawTokenSteam>() {
-            return Ok(n.raw.to_token_stream());
-        }
-        if let Some(n) = node.as_ast::<RawType>() {
-            return Ok(n.raw.to_token_stream());
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_impl(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_func_type(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_select(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_cond(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_struct(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_build_struct(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_ref(n);
-        }
-        if let Some(n) = node.as_ast() {
-            return self.print_builtin_fn(n);
-        }
-        // would not appear here unless explicit requested
-        if let Some(n) = node.as_ast() {
-            return self.print_func_decl(n, None, Visibility::Inherited);
+    }
+    pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
+        match node {
+            TypeExpr::Primitive(p) => Ok(self.print_ident(&p.name)),
+            _ => {}
         }
         bail!("Unable to serialize {:?}", node)
+    }
+    pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
+        match node {
+            Expr::Ident(n) => Ok(self.print_ident(n)),
+            Expr::Path(n) => Ok(self.print_ident(&n.segments.last().unwrap().ident)),
+            Expr::Value(n) => self.print_value(n),
+            Expr::Block(_) => {}
+            Expr::Cond(_) => {}
+            Expr::Invoke(_) => {}
+            Expr::BuiltinFn(_) => {}
+            Expr::Select(_) => {}
+            Expr::AnyExpr(_) => {}
+        }
+        bail!("Unable to serialize {:?}", node)
+    }
+    pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
+        match item {
+            Item::Def(n) => self.print_def(n),
+            Item::Module(n) => self.print_module(n),
+            Item::Import(n) => self.print_import(n),
+        }
+    }
+    pub fn print_tree(&self, node: &Tree) -> Result<TokenStream> {
+        match node {
+            Tree::Item(n) => self.print_item(n),
+        }
     }
 }
