@@ -8,7 +8,6 @@ use common_lang::*;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
-use common_lang::ops::InvokeExpr;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use syn::parse_str;
