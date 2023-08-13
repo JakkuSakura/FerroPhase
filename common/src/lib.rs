@@ -4,7 +4,6 @@ extern crate core;
 
 pub use convert_case::{Case, Casing};
 pub use derivative::{self, Derivative};
-pub use downcast_rs::{self, impl_downcast, Downcast};
 pub use eyre::{bail, ensure, eyre, Context as EyreContext, ContextCompat, Error, Result};
 pub use itertools::*;
 pub use lazy_static::*;

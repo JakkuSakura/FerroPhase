@@ -48,7 +48,7 @@ impl Specializer {
     pub fn specialize_import(&self, import: &Import, _ctx: &ExecutionContext) -> Result<Import> {
         Ok(import.clone())
     }
-    pub fn specialize_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn specialize_invoke(&self, node: &InvokeExpr, ctx: &ExecutionContext) -> Result<Expr> {
         let fun = self.specialize_expr(&node.fun, ctx)?;
         let name = self.serializer.serialize_expr(&fun)?;
         let args: Vec<_> = node
@@ -95,7 +95,7 @@ impl Specializer {
                         body: new_body,
                     },
                 );
-                return Ok(Expr::Invoke(Invoke {
+                return Ok(Expr::Invoke(InvokeExpr {
                     fun: Expr::Ident(new_name).into(),
                     args: Default::default(),
                 }));

@@ -8,6 +8,7 @@ use common_lang::*;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
+use common_lang::ops::InvokeExpr;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use syn::parse_str;
@@ -73,7 +74,7 @@ impl Serializer for RustSerde {
         RustPrinter.print_expr(node).map(|x| x.to_string())
     }
 
-    fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
+    fn serialize_invoke(&self, node: &InvokeExpr) -> Result<String> {
         RustPrinter.print_invoke(node).map(|x| x.to_string())
     }
 

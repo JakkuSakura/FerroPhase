@@ -26,12 +26,6 @@ impl Ident {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Invoke {
-    pub fun: Box<Expr>,
-    pub args: Vec<Expr>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Assign {
     pub target: Expr,
     pub value: Expr,
