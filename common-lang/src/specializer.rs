@@ -92,7 +92,7 @@ impl Specializer {
                         name: new_name.clone(),
                         params: Default::default(),
                         generics_params: vec![],
-                        ret,
+                        ret: TypeExpr::Value(ret),
                         body: new_body,
                     },
                 );
@@ -119,7 +119,7 @@ impl Specializer {
             .map(|name| {
                 ctx.get_func_decl(&name)
                     .map(|def| {
-                        Def {
+                        Define {
                             name: def.name.clone(),
                             kind: DefKind::Function,
                             ty: None, // TODO: infer type
@@ -186,12 +186,12 @@ impl Specializer {
             if_style: b.if_style,
         }))
     }
-    pub fn specialize_def(&self, d: &Def, ctx: &ExecutionContext) -> Result<Def> {
+    pub fn specialize_def(&self, d: &Define, ctx: &ExecutionContext) -> Result<Define> {
         let fun = d.value.clone();
         match fun {
             DefValue::Function(f) => match f.name.as_str() {
                 "main" => {
-                    return Ok(Def {
+                    return Ok(Define {
                         name: d.name.clone(),
                         kind: DefKind::Function,
                         ty: None,

@@ -1,4 +1,4 @@
-use crate::tree::{Ident, RequireTraits};
+use crate::tree::{Ident, RequireTraits, TypeExpr};
 use common::*;
 
 /// TypeValue is a solid type value
@@ -7,8 +7,11 @@ pub enum TypeValue {
     Primitive(PrimitiveType),
     NamedStruct(NamedStructType),
     UnnamedStruct(UnnamedStructType),
-    FuncType(FuncTypeValue),
+    Function(FunctionType),
     RequireTraits(RequireTraits),
+    Tuple(TupleType),
+    Vec(VecType),
+    Expr(Box<TypeExpr>),
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {
@@ -17,8 +20,14 @@ impl TypeValue {
     pub fn bool() -> TypeValue {
         TypeValue::Primitive(PrimitiveType::Bool)
     }
+    pub fn expr(e: TypeExpr) -> Self {
+        match e {
+            TypeExpr::Value(v) => v,
+            _ => TypeValue::Expr(Box::new(e)),
+        }
+    }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub enum PrimitiveType {
     I64,
     F64,
@@ -45,8 +54,13 @@ impl PrimitiveType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VecType {
     pub ty: Box<TypeValue>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TupleType {
+    pub types: Vec<TypeValue>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldTypeValue {
@@ -65,7 +79,7 @@ pub struct UnnamedStructType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FuncTypeValue {
+pub struct FunctionType {
     pub params: Vec<TypeValue>,
     pub ret: Box<TypeValue>,
 }

@@ -1,10 +1,11 @@
 use crate::context::ExecutionContext;
 use crate::ops::*;
-use crate::tree::FieldValueExpr;
 use crate::tree::*;
+use crate::type_system::TypeSystem;
 use crate::value::*;
 use crate::*;
 use common::*;
+
 use std::rc::Rc;
 
 pub struct Interpreter {
@@ -150,8 +151,8 @@ impl Interpreter {
             "<=" => Ok(Expr::BuiltinFn(builtin_lte())),
             "<" => Ok(Expr::BuiltinFn(builtin_lt())),
             "print" => Ok(Expr::BuiltinFn(builtin_print(self.serializer.clone()))),
-            "true" => Ok(Expr::Value(Value::Bool(BoolValue::new(true)))),
-            "false" => Ok(Expr::Value(Value::Bool(BoolValue::new(false)))),
+            "true" => Ok(Expr::value(Value::bool(true))),
+            "false" => Ok(Expr::value(Value::bool(false))),
             _ => ctx
                 .get_expr(ident)
                 .or_else(|| {
@@ -164,7 +165,7 @@ impl Interpreter {
                 .with_context(|| format!("could not find {:?} in context", ident.name)),
         };
     }
-    pub fn interpret_def(&self, n: &Def, ctx: &ExecutionContext) -> Result<()> {
+    pub fn interpret_def(&self, n: &Define, ctx: &ExecutionContext) -> Result<()> {
         let decl = &n.value;
         match decl {
             DefValue::Function(n) => {
@@ -188,22 +189,22 @@ impl Interpreter {
             .try_collect()?;
         Ok(args)
     }
-    pub fn interpret_build_struct(
+    pub fn interpret_struct_value(
         &self,
-        node: &StructExpr,
+        node: &StructValue,
         ctx: &ExecutionContext,
-    ) -> Result<StructExpr> {
+    ) -> Result<StructValue> {
         let fields: Vec<_> = node
             .fields
             .iter()
             .map(|x| {
-                Ok::<_, Error>(FieldValueExpr {
+                Ok::<_, Error>(FieldValue {
                     name: x.name.clone(),
-                    value: self.interpret_expr(&x.value, ctx)?,
+                    value: self.interpret_value(&x.value, ctx)?,
                 })
             })
             .try_collect()?;
-        Ok(StructExpr {
+        Ok(StructValue {
             name: node.name.clone(),
             fields,
         })
@@ -217,15 +218,64 @@ impl Interpreter {
             select: s.select,
         }))
     }
+    pub fn interpret_tuple(&self, node: &TupleValue, ctx: &ExecutionContext) -> Result<TupleValue> {
+        let values: Vec<_> = node
+            .values
+            .iter()
+            .map(|x| self.interpret_value(x, ctx))
+            .try_collect()?;
+        Ok(TupleValue {
+            values: values.into_iter().map(|x| x.into()).collect(),
+        })
+    }
+    pub fn interpret_type(&self, node: &TypeValue, ctx: &ExecutionContext) -> Result<TypeValue> {
+        let ty = TypeSystem::new(self.serializer.clone());
+        ty.evaluate_type_value(node, ctx)
+    }
+    pub fn interpret_function_value(
+        &self,
+        node: &FunctionValue,
+        ctx: &ExecutionContext,
+    ) -> Result<FunctionValue> {
+        let params: Vec<_> = node
+            .params
+            .iter()
+            .map(|x| {
+                Ok::<_, Error>(FunctionValueParam {
+                    name: x.name.clone(),
+                    ty: self.interpret_type(&x.ty, ctx)?,
+                })
+            })
+            .try_collect()?;
 
+        Ok(FunctionValue {
+            params,
+            ret: self.interpret_type(&node.ret, ctx)?,
+            body: node.body.clone(),
+        })
+    }
+    pub fn interpret_value(&self, node: &Value, ctx: &ExecutionContext) -> Result<Value> {
+        match node {
+            Value::Int(_) => Ok(node.clone()),
+            Value::Bool(_) => Ok(node.clone()),
+            Value::Decimal(_) => Ok(node.clone()),
+            Value::Char(_) => Ok(node.clone()),
+            Value::String(_) => Ok(node.clone()),
+            Value::List(_) => Ok(node.clone()),
+            Value::Unit(_) => Ok(node.clone()),
+            Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
+            Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
+            Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
+            Value::Tuple(n) => self.interpret_tuple(n, ctx).map(Value::Tuple),
+            Value::Expr(n) => self.interpret_expr(n, ctx).map(Box::new).map(Value::Expr),
+        }
+    }
     pub fn interpret_expr(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Expr> {
         debug!("Interpreting {}", self.serializer.serialize_expr(&node)?);
         match node {
             Expr::Ident(n) => return self.interpret_ident(n, ctx),
             Expr::Path(_) => {}
-            Expr::Value(_) => {
-                return Ok(node.clone());
-            }
+            Expr::Value(n) => return Ok(Expr::value(self.interpret_value(n, ctx)?.into())),
             Expr::Block(n) => {
                 return self
                     .interpret_block(n, ctx)
