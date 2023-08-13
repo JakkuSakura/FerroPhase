@@ -1,6 +1,6 @@
 use crate::context::ExecutionContext;
 use crate::tree::Expr;
-use crate::value::{BoolValue, DecimalValue, IntValue, Value};
+use crate::value::*;
 use crate::Serializer;
 use common::*;
 use std::fmt::{Debug, Formatter};
@@ -64,12 +64,10 @@ pub fn operate_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(Expr::Value(Value::Int(IntValue::new(op_i64(&args_i64)))));
+            return Ok(Expr::value(Value::int(op_i64(&args_i64))));
         }
         if !args_f64.is_empty() {
-            return Ok(Expr::Value(Value::Decimal(DecimalValue::new(op_f64(
-                &args_f64,
-            )))));
+            return Ok(Expr::value(Value::decimal(op_f64(&args_f64))));
         }
         bail!("Does not support argument type {:?}", args)
     })
@@ -96,16 +94,10 @@ pub fn binary_comparison_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(Expr::Value(Value::Bool(BoolValue::new(op_i64(
-                args_i64[0],
-                args_i64[1],
-            )))));
+            return Ok(Expr::value(Value::bool(op_i64(args_i64[0], args_i64[1]))));
         }
         if !args_f64.is_empty() {
-            return Ok(Expr::Value(Value::Bool(BoolValue::new(op_f64(
-                args_f64[0],
-                args_f64[1],
-            )))));
+            return Ok(Expr::value(Value::bool(op_f64(args_f64[0], args_f64[1]))));
         }
 
         bail!("Does not support argument type {:?}", args)

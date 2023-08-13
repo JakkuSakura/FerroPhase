@@ -10,6 +10,9 @@ pub struct TypeSystem {
 }
 
 impl TypeSystem {
+    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
+        Self { serializer }
+    }
     pub fn type_check_value(&self, lit: &Value, ty: &TypeValue) -> Result<()> {
         match lit {
             Value::Int(_) => {
@@ -97,8 +100,8 @@ impl TypeSystem {
     pub fn evaluate_type_value_op(&self, op: &TypeOp, ctx: &ExecutionContext) -> Result<TypeValue> {
         match op {
             TypeOp::Add(a) => {
-                let lhs = self.evaluate_type_value(&a.lhs, ctx)?;
-                let rhs = self.evaluate_type_value(&a.rhs, ctx)?;
+                let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
+                let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
                     (TypeValue::RequireTraits(mut l), TypeValue::RequireTraits(r)) => {
                         l.traits.extend(r.traits);
@@ -109,8 +112,8 @@ impl TypeSystem {
                 bail!("Could not evaluate type value op {:?}", op)
             }
             TypeOp::Sub(a) => {
-                let lhs = self.evaluate_type_value(&a.lhs, ctx)?;
-                let rhs = self.evaluate_type_value(&a.rhs, ctx)?;
+                let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
+                let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
                     (TypeValue::RequireTraits(mut l), TypeValue::RequireTraits(r)) => {
                         for r in r.traits {
@@ -124,15 +127,15 @@ impl TypeSystem {
             }
         }
     }
-    pub fn evaluate_type_value(&self, ty: &TypeExpr, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ExecutionContext) -> Result<TypeValue> {
         match ty {
-            TypeExpr::Primitive(p) => Ok(TypeValue::Primitive(p.clone())),
-            TypeExpr::NamedStruct(n) => {
+            TypeValue::Expr(expr) => self.evaluate_type_expr(expr, ctx),
+            TypeValue::NamedStruct(n) => {
                 let fields = n
                     .fields
                     .iter()
                     .map(|x| {
-                        let value = self.evaluate_type_value(&x.ty, ctx)?;
+                        let value = self.evaluate_type_value(&x.value, ctx)?;
                         Ok::<_, Error>(FieldTypeValue {
                             name: x.name.clone(),
                             value,
@@ -144,12 +147,12 @@ impl TypeSystem {
                     fields,
                 }))
             }
-            TypeExpr::UnnamedStruct(n) => {
+            TypeValue::UnnamedStruct(n) => {
                 let fields = n
                     .fields
                     .iter()
                     .map(|x| {
-                        let value = self.evaluate_type_value(&x.ty, ctx)?;
+                        let value = self.evaluate_type_value(&x.value, ctx)?;
                         Ok::<_, Error>(FieldTypeValue {
                             name: x.name.clone(),
                             value,
@@ -158,18 +161,24 @@ impl TypeSystem {
                     .try_collect()?;
                 Ok(TypeValue::UnnamedStruct(UnnamedStructType { fields }))
             }
-            TypeExpr::FuncType(f) => {
+            TypeValue::Function(f) => {
                 let params = f
                     .params
                     .iter()
                     .map(|x| self.evaluate_type_value(x, ctx))
                     .try_collect()?;
                 let ret = self.evaluate_type_value(&f.ret, ctx)?;
-                Ok(TypeValue::FuncType(FuncTypeValue {
+                Ok(TypeValue::Function(FunctionType {
                     params,
                     ret: Box::new(ret),
                 }))
             }
+            _ => Ok(ty.clone()),
+        }
+    }
+    pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ExecutionContext) -> Result<TypeValue> {
+        match ty {
+            TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
             TypeExpr::Ident(i) => {
                 let ty = ctx
                     .get_type(i)
@@ -180,13 +189,14 @@ impl TypeSystem {
             _ => bail!("Could not evaluate type value {:?}", ty),
         }
     }
+
     pub fn type_check_expr(
         &self,
         expr: &Expr,
         ty: &TypeExpr,
         ctx: &ExecutionContext,
     ) -> Result<()> {
-        let tv = self.evaluate_type_value(ty, ctx)?;
+        let tv = self.evaluate_type_expr(ty, ctx)?;
         self.type_check_expr_against_value(expr, &tv, ctx)
     }
 
@@ -209,7 +219,7 @@ impl TypeSystem {
 
         let callee = self.infer_type_expr(callee, ctx)?;
         match callee {
-            TypeValue::FuncType(f) => return Ok(*f.ret),
+            TypeValue::Function(f) => return Ok(*f.ret),
             _ => {}
         }
 
@@ -218,13 +228,13 @@ impl TypeSystem {
     pub fn infer_type_ident(&self, ident: &Ident, ctx: &ExecutionContext) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
-                return Ok(TypeValue::FuncType(FuncTypeValue {
+                return Ok(TypeValue::Function(FunctionType {
                     params: vec![],
                     ret: Box::new(TypeValue::bool()),
                 }));
             }
             "print" => {
-                return Ok(TypeValue::FuncType(FuncTypeValue {
+                return Ok(TypeValue::Function(FunctionType {
                     params: vec![],
                     ret: Box::new(TypeValue::unit()),
                 }))

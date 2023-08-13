@@ -15,25 +15,20 @@ pub enum Expr {
     BuiltinFn(BuiltinFn),
     Select(Select),
     Reference(Reference),
-    Struct(StructExpr),
     Any(AnyBox),
 }
 impl Expr {
     pub fn unit() -> Expr {
         Expr::Value(Value::Unit(UnitValue))
     }
+    pub fn value(v: Value) -> Expr {
+        match v {
+            Value::Unit(_) => Expr::unit(),
+            _ => Expr::Value(v),
+        }
+    }
+    pub fn any<T: 'static>(any: T) -> Self {
+        Self::Any(AnyBox::new(any))
+    }
 }
 pub type InvokeExpr = Invoke<Expr>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StructExpr {
-    pub name: TypeExpr, // either Ident or Struct
-    pub fields: Vec<FieldValueExpr>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionExpr {
-    pub params: Vec<ParamExpr>,
-    pub ret: TypeExpr,
-    pub body: Block,
-}
