@@ -1,8 +1,7 @@
 use common::Result;
 use common::*;
 
-use common_lang::builtins::BuiltinFn;
-use common_lang::ops::InvokeExpr;
+use common_lang::ops::BuiltinFn;
 use common_lang::tree::FieldValueExpr;
 use common_lang::tree::*;
 use common_lang::value::*;
@@ -51,7 +50,7 @@ impl RustPrinter {
     }
     pub fn print_field(&self, field: &FieldTypeExpr) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
-        let ty = self.print_expr(&field.ty)?;
+        let ty = self.print_type_expr(&field.ty)?;
         Ok(quote!(pub #name: #ty ))
     }
     pub fn print_struct_type(&self, s: &NamedStructTypeExpr) -> Result<TokenStream> {
@@ -139,35 +138,27 @@ impl RustPrinter {
         g: Option<&Generics>,
         vis: Visibility,
     ) -> Result<TokenStream> {
-        let name = format_ident!("{}", n.name.as_ref().unwrap().name);
+        let name = format_ident!("{}", n.name.as_str());
         let ret_type = &n.ret;
         let ret = self.print_type_expr(ret_type)?;
-        let param_names: Vec<_> = n
-            .params
-            .params
-            .iter()
-            .map(|x| self.print_ident(&x.name))
-            .collect();
+        let param_names: Vec<_> = n.params.iter().map(|x| self.print_ident(&x.name)).collect();
         let param_types: Vec<_> = n
             .params
-            .params
             .iter()
-            .map(|x| self.print_expr(&x.ty))
+            .map(|x| self.print_type_expr(&x.ty))
             .try_collect()?;
-        let stmts = self.print_block(n.body.as_ref().unwrap())?;
+        let stmts = self.print_block(&n.body)?;
         let gg;
-        if let Some(g) = g {
-            let gt: Vec<_> = g
-                .params
-                .params
+        if !n.generics_params.is_empty() {
+            let gt: Vec<_> = n
+                .generics_params
                 .iter()
                 .map(|x| self.print_ident(&x.name))
                 .collect();
-            let gb: Vec<_> = g
-                .params
-                .params
+            let gb: Vec<_> = n
+                .generics_params
                 .iter()
-                .map(|x| self.print_expr(&x.ty))
+                .map(|x| self.print_type_expr(&x.ty))
                 .try_collect()?;
             gg = quote!(<#(#gt: #gb), *>)
         } else {
@@ -181,19 +172,20 @@ impl RustPrinter {
         ));
     }
     pub fn print_invoke(&self, node: &InvokeExpr) -> Result<TokenStream> {
-        let node1 = &node.fun;
-        let fun = self.print_expr(node1)?;
+        let fun = self.print_expr(&node.fun)?;
         let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
-        if let Some(select) = node.fun.as_ast::<Select>() {
-            match select.select {
+        match &*node.fun {
+            Expr::Select(select) => match select.select {
                 SelectType::Field => {
                     return Ok(quote!(
                         (#fun)(#(#args), *)
                     ))
                 }
                 _ => {}
-            }
+            },
+            _ => {}
         }
+
         let fun_str = fun.to_string();
 
         let code = match fun_str.as_str() {
@@ -236,10 +228,10 @@ impl RustPrinter {
         let args: Vec<_> = fun
             .params
             .iter()
-            .map(|x| self.print_expr(&x))
+            .map(|x| self.print_type_expr(x))
             .try_collect()?;
         let node = &fun.ret;
-        let ret = self.print_expr(node)?;
+        let ret = self.print_type_expr(node)?;
         Ok(quote!(
             fn(#(#args), *) -> #ret
         ))
@@ -265,7 +257,7 @@ impl RustPrinter {
         Ok(quote!(#debug))
     }
     pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
-        let name = self.print_ident(&impl_.name)?;
+        let name = self.print_ident(&impl_.name);
         let methods: Vec<_> = impl_.defs.iter().map(|x| self.print_def(x)).try_collect()?;
         Ok(quote!(
             impl #name {
@@ -302,7 +294,7 @@ impl RustPrinter {
         let value = self.print_expr(&s.value)?;
         Ok(quote!(#name: #value))
     }
-    pub fn print_build_struct(&self, s: &BuildStructExpr) -> Result<TokenStream> {
+    pub fn print_build_struct(&self, s: &StructExpr) -> Result<TokenStream> {
         let name = self.print_type_expr(&s.name)?;
         let kwargs: Vec<_> = s
             .fields
@@ -350,7 +342,7 @@ impl RustPrinter {
     pub fn print_unit(&self, _n: &UnitValue) -> Result<TokenStream> {
         Ok(quote!(()))
     }
-    pub fn print_type(&self, t: TypeValue) -> Result<TokenStream> {
+    pub fn print_type(&self, t: &TypeValue) -> Result<TokenStream> {
         match t {
             TypeValue::FuncType(f) => self.print_func_type(&f),
             TypeValue::UnnamedStruct(s) => self.print_struct_type(&s),
@@ -360,7 +352,7 @@ impl RustPrinter {
 
     pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
         match v {
-            Value::Function(f) => self.print_func_type(&f.ty),
+            Value::Function(f) => self.print_func_type(&f),
             Value::Int(i) => self.print_int(i),
             Value::Bool(b) => self.print_bool(b),
             Value::Decimal(d) => self.print_decimal(d),
@@ -370,6 +362,7 @@ impl RustPrinter {
             Value::Unit(u) => self.print_unit(u),
             Value::Type(t) => self.print_type(t.clone()),
             Value::Struct(s) => self.print_build_struct(s),
+            _ => bail!("Not supported {:?}", v),
         }
     }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
@@ -389,7 +382,7 @@ impl RustPrinter {
             Expr::Invoke(_) => {}
             Expr::BuiltinFn(_) => {}
             Expr::Select(_) => {}
-            Expr::AnyExpr(_) => {}
+            Expr::Any(_) => {}
         }
         bail!("Unable to serialize {:?}", node)
     }
