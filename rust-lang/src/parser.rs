@@ -1,26 +1,25 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawUse};
 use common::*;
-
-use common_lang::tree::FieldValueExpr;
 use common_lang::tree::*;
 use common_lang::value::*;
 use quote::ToTokens;
-use syn::{BinOp, FnArg, GenericParam, ItemFn, Lit, Member, Pat, ReturnType, TypeParamBound};
+use syn::{BinOp, FnArg, GenericParam, Lit, Pat, ReturnType, TypeParamBound};
 
 fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
 }
 fn parse_type(t: syn::Type) -> Result<TypeExpr> {
     let t = match t {
-        syn::Type::BareFn(f) => TypeExpr::FuncType(FuncTypeExpr {
+        syn::Type::BareFn(f) => TypeExpr::value(TypeValue::Function(FunctionType {
             params: f
                 .inputs
                 .into_iter()
                 .map(|x| x.ty)
                 .map(parse_type)
+                .map(|x| x.map(Box::new).map(TypeValue::Expr))
                 .try_collect()?,
-            ret: parse_return_type(f.output)?.into(),
-        })
+            ret: TypeValue::expr(parse_return_type(f.output)?.into()).into(),
+        }))
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
@@ -43,17 +42,15 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
         }
         // syn::Type::ImplTrait(im) => TypeExpr::AnyTypeExpr(RawImplTrait { raw: im }.into()),
         syn::Type::ImplTrait(im) => bail!("Does not support impl trait {:?}", im),
-        syn::Type::Tuple(t) if t.elems.is_empty() => {
-            TypeExpr::Primitive(PrimitiveType::Unit).into()
-        }
+        syn::Type::Tuple(t) if t.elems.is_empty() => TypeExpr::unit().into(),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
 }
 
-fn parse_input(i: FnArg) -> Result<ParamExpr> {
+fn parse_input(i: FnArg) -> Result<FuncDeclParam> {
     Ok(match i {
-        FnArg::Receiver(rev) => ParamExpr {
+        FnArg::Receiver(rev) => FuncDeclParam {
             name: Ident::new("self"),
             ty: {
                 let ident = match (rev.reference.is_some(), rev.mutability.is_some()) {
@@ -66,7 +63,7 @@ fn parse_input(i: FnArg) -> Result<ParamExpr> {
             },
         },
 
-        FnArg::Typed(t) => ParamExpr {
+        FnArg::Typed(t) => FuncDeclParam {
             name: parse_pat(*t.pat)?,
             ty: parse_type(*t.ty)?,
         },
@@ -83,7 +80,7 @@ fn parse_pat(p: syn::Pat) -> Result<Ident> {
 
 fn parse_return_type(o: ReturnType) -> Result<TypeExpr> {
     Ok(match o {
-        ReturnType::Default => TypeExpr::Primitive(PrimitiveType::Unit),
+        ReturnType::Default => TypeExpr::unit(),
         ReturnType::Type(_, t) => parse_type(*t)?,
     })
 }
@@ -107,7 +104,7 @@ fn parse_path(p: syn::Path) -> Result<Path> {
             .try_collect()?,
     })
 }
-fn parse_fn(f: ItemFn) -> Result<FuncDecl> {
+fn parse_fn(f: syn::ItemFn) -> Result<FuncDecl> {
     let name = parse_ident(f.sig.ident);
     let generics_params = f
         .sig
@@ -115,7 +112,7 @@ fn parse_fn(f: ItemFn) -> Result<FuncDecl> {
         .params
         .into_iter()
         .map(|x| match x {
-            GenericParam::Type(t) => Ok(ParamExpr {
+            GenericParam::Type(t) => Ok(FuncDeclParam {
                 name: parse_ident(t.ident),
                 // TODO: support multiple type bounds
                 ty: TypeExpr::Path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
@@ -177,7 +174,7 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
             }
 
             cases.push(CondCase {
-                cond: Expr::Value(Value::Bool(BoolValue::new(true))),
+                cond: Expr::value(Value::bool(true)),
                 body,
             });
         };
@@ -230,20 +227,20 @@ fn parse_tuple(t: syn::ExprTuple) -> Result<TupleValue> {
         .try_collect()?;
     Ok(TupleValue { values })
 }
-fn parse_member(mem: Member) -> Result<Ident> {
+fn parse_member(mem: syn::Member) -> Result<Ident> {
     Ok(match mem {
         syn::Member::Named(n) => parse_ident(n),
         syn::Member::Unnamed(_) => bail!("Does not support unnmaed field yet {:?}", mem),
     })
 }
-fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValueExpr> {
-    Ok(FieldValueExpr {
+fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
+    Ok(FieldValue {
         name: parse_member(fv.member)?,
-        value: parse_expr(fv.expr)?,
+        value: Value::Expr(parse_expr(fv.expr)?.into()),
     })
 }
-pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
-    Ok(StructExpr {
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructValue> {
+    Ok(StructValue {
         name: TypeExpr::Path(parse_path(s.path)?),
         fields: s
             .fields
@@ -269,13 +266,13 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?),
         syn::Expr::If(i) => Expr::Cond(parse_if(i)?),
 
-        syn::Expr::Lit(l) => Expr::Value(parse_literal(l.lit)?),
-        syn::Expr::Macro(m) => Expr::Any(AnyBox::new(RawExprMacro { raw: m })),
+        syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
+        syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?),
         syn::Expr::Path(p) => Expr::Path(parse_path(p.path)?),
         syn::Expr::Reference(r) => Expr::Reference(parse_ref(r)?),
-        syn::Expr::Tuple(t) => Expr::Value(Value::Tuple(parse_tuple(t)?)),
-        syn::Expr::Struct(s) => Expr::Struct(parse_struct_expr(s)?),
+        syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
+        syn::Expr::Struct(s) => Expr::value(Value::Struct(parse_struct_expr(s)?)),
 
         raw => {
             warn!("RawExpr {:?}", raw);
@@ -286,7 +283,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
 
 fn parse_stmt(stmt: syn::Stmt) -> Result<Item> {
     Ok(match stmt {
-        syn::Stmt::Local(l) => Item::Def(Def {
+        syn::Stmt::Local(l) => Item::Def(Define {
             name: parse_pat(l.pat)?,
             kind: DefKind::Variable,
             ty: None,
@@ -321,17 +318,17 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
+fn parse_impl_item(item: syn::ImplItem) -> Result<Define> {
     match item {
         syn::ImplItem::Fn(m) => {
             // TODO: defaultness
-            let expr = parse_fn(ItemFn {
+            let expr = parse_fn(syn::ItemFn {
                 attrs: m.attrs,
                 vis: m.vis.clone(),
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
-            Ok(Def {
+            Ok(Define {
                 name: expr.name.clone(),
                 kind: DefKind::Function,
                 ty: None,
@@ -339,7 +336,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
                 visibility: parse_vis(m.vis),
             })
         }
-        syn::ImplItem::Type(t) => Ok(Def {
+        syn::ImplItem::Type(t) => Ok(Define {
             name: parse_ident(t.ident),
             kind: DefKind::Type,
             ty: None,
@@ -351,20 +348,21 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
 }
 fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
     Ok(Impl {
-        name: match parse_type(*im.self_ty)? {
+        name: match parse_type(*im.self_ty.clone())? {
             TypeExpr::Ident(i) => i,
             _ => bail!("Does not support impl for {:?}", im.self_ty),
         },
         defs: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
-fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeExpr> {
-    Ok(FieldTypeExpr {
+fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
+    Ok(FieldTypeValue {
         name: f
             .ident
             .map(parse_ident)
             .unwrap_or(Ident::new(format!("{}", i))),
-        ty: parse_type(f.ty)?,
+
+        value: TypeValue::Expr(parse_type(f.ty)?.into()),
     })
 }
 fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
@@ -392,8 +390,8 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
         segments,
     })
 }
-pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructTypeExpr> {
-    Ok(NamedStructTypeExpr {
+pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
+    Ok(NamedStructType {
         name: parse_ident(s.ident),
         fields: s
             .fields
@@ -408,7 +406,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
         syn::Item::Fn(f0) => {
             let visibility = parse_vis(f0.vis.clone());
             let f = parse_fn(f0)?;
-            let d = Def {
+            let d = Define {
                 name: f.name.clone(),
                 kind: DefKind::Function,
                 ty: None,
@@ -422,16 +420,16 @@ fn parse_item(item: syn::Item) -> Result<Item> {
             Ok(i) => Item::Import(i),
             Err(r) => Item::Any(AnyBox::new(r)),
         }),
-        syn::Item::Macro(m) => Ok(Item::Any(AnyBox::new(RawItemMacro { raw: m }))),
+        syn::Item::Macro(m) => Ok(Item::any(RawItemMacro { raw: m })),
         syn::Item::Struct(s) => {
             let visibility = parse_vis(s.vis.clone());
 
             let struct_type = parse_item_struct(s)?;
-            Ok(Item::Def(Def {
+            Ok(Item::Def(Define {
                 name: struct_type.name.clone(),
                 kind: DefKind::Type,
                 ty: None,
-                value: DefValue::Type(TypeExpr::NamedStruct(struct_type)),
+                value: DefValue::Type(TypeExpr::value(TypeValue::NamedStruct(struct_type))),
                 visibility,
             }))
         }

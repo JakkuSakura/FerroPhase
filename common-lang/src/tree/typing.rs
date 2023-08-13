@@ -7,20 +7,20 @@ use crate::value::*;
 pub enum TypeExpr {
     Ident(Ident),
     Path(Path),
-    NamedStruct(NamedStructTypeExpr),
-    UnnamedStruct(UnnamedStructTypeExpr),
-    Primitive(PrimitiveType),
-    ConcreteType(TypeValue),
-    FuncType(FuncTypeExpr),
     Op(TypeOp),
-    Invoke(InvokeTypeExpr),
-    RequireTrait(RequireTrait),
-    RequireTraits(RequireTraits),
+    Invoke(InvokeExpr),
+    Value(TypeValue),
 }
 
 impl TypeExpr {
     pub fn unit() -> TypeExpr {
-        TypeExpr::Primitive(PrimitiveType::Unit)
+        TypeExpr::value(TypeValue::Primitive(PrimitiveType::Unit))
+    }
+    pub fn value(v: TypeValue) -> TypeExpr {
+        match v {
+            TypeValue::Expr(expr) => *expr,
+            _ => TypeExpr::Value(v),
+        }
     }
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -37,32 +37,4 @@ pub struct RequireTraits {
 pub enum TypeOp {
     Add(AddOp<TypeExpr>),
     Sub(SubOp<TypeExpr>),
-}
-pub type InvokeTypeExpr = Invoke<TypeExpr>;
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FuncTypeExpr {
-    pub params: Vec<TypeExpr>,
-    pub ret: Box<TypeExpr>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Generics {
-    pub params: Vec<ParamExpr>,
-    // TODO: restrains
-    pub value: Tree,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FieldTypeExpr {
-    pub name: Ident,
-    pub ty: TypeExpr,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NamedStructTypeExpr {
-    pub name: Ident,
-    pub fields: Vec<FieldTypeExpr>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UnnamedStructTypeExpr {
-    pub fields: Vec<FieldTypeExpr>,
 }

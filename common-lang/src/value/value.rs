@@ -12,10 +12,27 @@ pub enum Value {
     List(ListValue),
     Unit(UnitValue),
     Type(TypeValue),
-    Struct(StructExpr),
-    Function(FunctionExpr),
+    Struct(StructValue),
+    Function(FunctionValue),
     Tuple(TupleValue),
     Expr(Box<Expr>),
+}
+impl Value {
+    pub fn bool(b: bool) -> Value {
+        Value::Bool(BoolValue::new(b))
+    }
+    pub fn decimal(d: f64) -> Value {
+        Value::Decimal(DecimalValue::new(d))
+    }
+    pub fn int(i: i64) -> Value {
+        Value::Int(IntValue::new(i))
+    }
+    pub fn expr(e: Expr) -> Self {
+        match e {
+            Expr::Value(v) => v,
+            _ => Value::Expr(Box::new(e)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
@@ -79,7 +96,7 @@ impl StringValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListValue {
-    pub value: Vec<Value>,
+    pub values: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,8 +113,13 @@ pub struct StructValue {
     pub fields: Vec<FieldValue>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionValueParam {
+    pub name: Ident,
+    pub ty: TypeValue,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionValue {
-    pub params: Vec<ParamExpr>,
+    pub params: Vec<FunctionValueParam>,
     pub ret: TypeValue,
     pub body: Block,
 }
