@@ -5,13 +5,18 @@ use common::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Item {
     Module(Module),
-    Def(Def),
+    Def(Define),
     Import(Import),
     Expr(Expr),
     Impl(Impl),
     Any(AnyBox),
 }
 
+impl Item {
+    pub fn any<T: 'static>(any: T) -> Self {
+        Self::Any(AnyBox::new(any))
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Module {
     pub name: Ident,
@@ -49,7 +54,7 @@ pub enum DefValue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Def {
+pub struct Define {
     pub name: Ident,
     pub kind: DefKind,
     pub ty: Option<TypeExpr>,
@@ -58,7 +63,7 @@ pub struct Def {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParamExpr {
+pub struct FuncDeclParam {
     pub name: Ident,
     pub ty: TypeExpr,
 }
@@ -66,8 +71,8 @@ pub struct ParamExpr {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuncDecl {
     pub name: Ident,
-    pub params: Vec<ParamExpr>,
-    pub generics_params: Vec<ParamExpr>,
+    pub params: Vec<FuncDeclParam>,
+    pub generics_params: Vec<FuncDeclParam>,
     pub ret: TypeExpr,
     pub body: Block,
 }
@@ -76,10 +81,4 @@ pub struct FuncDecl {
 pub struct Import {
     pub visibility: Visibility,
     pub segments: Vec<Ident>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FieldValueExpr {
-    pub name: Ident,
-    pub value: Expr,
 }

@@ -101,7 +101,7 @@ pub struct While {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Impl {
     pub name: Ident,
-    pub defs: Vec<Def>,
+    pub defs: Vec<Define>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]

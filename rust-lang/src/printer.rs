@@ -2,7 +2,6 @@ use common::Result;
 use common::*;
 
 use common_lang::ops::BuiltinFn;
-use common_lang::tree::FieldValueExpr;
 use common_lang::tree::*;
 use common_lang::value::*;
 use proc_macro2::TokenStream;
@@ -29,17 +28,13 @@ impl RustPrinter {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
-    pub fn print_def(&self, n: &Def) -> Result<TokenStream> {
+    pub fn print_def(&self, n: &Define) -> Result<TokenStream> {
         let vis = n.visibility;
-        let mut decl = &n.value;
-        let g = None;
-        // if let Some(d) = decl.as_ast::<Generics>() {
-        //     decl = &d.value;
-        //     g = Some(d)
-        // }
+        let decl = &n.value;
+
         match decl {
             DefValue::Function(n) => {
-                return self.print_func_decl(n, g, vis);
+                return self.print_func_decl(n, vis);
             }
             DefValue::Type(_) => {}
             DefValue::Const(_) => {}
@@ -48,12 +43,12 @@ impl RustPrinter {
 
         bail!("Not supported {:?}", n)
     }
-    pub fn print_field(&self, field: &FieldTypeExpr) -> Result<TokenStream> {
+    pub fn print_field(&self, field: &FieldTypeValue) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
-        let ty = self.print_type_expr(&field.ty)?;
+        let ty = self.print_type_value(&field.value)?;
         Ok(quote!(pub #name: #ty ))
     }
-    pub fn print_struct_type(&self, s: &NamedStructTypeExpr) -> Result<TokenStream> {
+    pub fn print_struct_type(&self, s: &NamedStructType) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let fields: Vec<_> = s
             .fields
@@ -132,30 +127,29 @@ impl RustPrinter {
             Visibility::Inherited => quote!(),
         }
     }
-    pub fn print_func_decl(
-        &self,
-        n: &FuncDecl,
-        g: Option<&Generics>,
-        vis: Visibility,
-    ) -> Result<TokenStream> {
-        let name = format_ident!("{}", n.name.as_str());
-        let ret_type = &n.ret;
+    pub fn print_func_decl(&self, func: &FuncDecl, vis: Visibility) -> Result<TokenStream> {
+        let name = format_ident!("{}", func.name.as_str());
+        let ret_type = &func.ret;
         let ret = self.print_type_expr(ret_type)?;
-        let param_names: Vec<_> = n.params.iter().map(|x| self.print_ident(&x.name)).collect();
-        let param_types: Vec<_> = n
+        let param_names: Vec<_> = func
+            .params
+            .iter()
+            .map(|x| self.print_ident(&x.name))
+            .collect();
+        let param_types: Vec<_> = func
             .params
             .iter()
             .map(|x| self.print_type_expr(&x.ty))
             .try_collect()?;
-        let stmts = self.print_block(&n.body)?;
+        let stmts = self.print_block(&func.body)?;
         let gg;
-        if !n.generics_params.is_empty() {
-            let gt: Vec<_> = n
+        if !func.generics_params.is_empty() {
+            let gt: Vec<_> = func
                 .generics_params
                 .iter()
                 .map(|x| self.print_ident(&x.name))
                 .collect();
-            let gb: Vec<_> = n
+            let gb: Vec<_> = func
                 .generics_params
                 .iter()
                 .map(|x| self.print_type_expr(&x.ty))
@@ -224,14 +218,31 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_func_type(&self, fun: &FuncTypeExpr) -> Result<TokenStream> {
+    pub fn print_func_type_param(&self, param: &FunctionValueParam) -> Result<TokenStream> {
+        let name = self.print_ident(&param.name);
+        let ty = self.print_type_value(&param.ty)?;
+        Ok(quote!(#name: #ty))
+    }
+    pub fn print_func_value(&self, fun: &FunctionValue) -> Result<TokenStream> {
         let args: Vec<_> = fun
             .params
             .iter()
-            .map(|x| self.print_type_expr(x))
+            .map(|x| self.print_func_type_param(x))
             .try_collect()?;
         let node = &fun.ret;
-        let ret = self.print_type_expr(node)?;
+        let ret = self.print_type_value(node)?;
+        Ok(quote!(
+            fn(#(#args), *) -> #ret
+        ))
+    }
+    pub fn print_func_type(&self, fun: &FunctionType) -> Result<TokenStream> {
+        let args: Vec<_> = fun
+            .params
+            .iter()
+            .map(|x| self.print_type_value(x))
+            .try_collect()?;
+        let node = &fun.ret;
+        let ret = self.print_type_value(node)?;
         Ok(quote!(
             fn(#(#args), *) -> #ret
         ))
@@ -252,10 +263,7 @@ impl RustPrinter {
         let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!((#(#args),*)))
     }
-    pub fn print_generics(&self, node: &Generics) -> Result<TokenStream> {
-        let debug = format!("{:?}", node);
-        Ok(quote!(#debug))
-    }
+
     pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
         let name = self.print_ident(&impl_.name);
         let methods: Vec<_> = impl_.defs.iter().map(|x| self.print_def(x)).try_collect()?;
@@ -289,12 +297,12 @@ impl RustPrinter {
             .collect::<Vec<_>>();
         Ok(quote!(#vis use #(#segments)::*;))
     }
-    pub fn print_field_value(&self, s: &FieldValueExpr) -> Result<TokenStream> {
+    pub fn print_field_value(&self, s: &FieldValue) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
-        let value = self.print_expr(&s.value)?;
+        let value = self.print_value(&s.value)?;
         Ok(quote!(#name: #value))
     }
-    pub fn print_build_struct(&self, s: &StructExpr) -> Result<TokenStream> {
+    pub fn print_struct_value(&self, s: &StructValue) -> Result<TokenStream> {
         let name = self.print_type_expr(&s.name)?;
         let kwargs: Vec<_> = s
             .fields
@@ -335,8 +343,12 @@ impl RustPrinter {
             ))
         };
     }
-    pub fn print_list(&self, n: &Vec<Expr>) -> Result<TokenStream> {
+    pub fn print_list_expr(&self, n: &[Expr]) -> Result<TokenStream> {
         let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
+        Ok(quote!(vec![#(#n),*]))
+    }
+    pub fn print_list_value(&self, n: &ListValue) -> Result<TokenStream> {
+        let n: Vec<_> = n.values.iter().map(|x| self.print_value(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }
     pub fn print_unit(&self, _n: &UnitValue) -> Result<TokenStream> {
@@ -344,53 +356,75 @@ impl RustPrinter {
     }
     pub fn print_type(&self, t: &TypeValue) -> Result<TokenStream> {
         match t {
-            TypeValue::FuncType(f) => self.print_func_type(&f),
-            TypeValue::UnnamedStruct(s) => self.print_struct_type(&s),
+            TypeValue::Function(f) => self.print_func_type(f),
+            TypeValue::NamedStruct(s) => self.print_struct_type(s),
             _ => bail!("Not supported {:?}", t),
         }
     }
 
     pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
         match v {
-            Value::Function(f) => self.print_func_type(&f),
+            Value::Function(f) => self.print_func_value(f),
             Value::Int(i) => self.print_int(i),
             Value::Bool(b) => self.print_bool(b),
             Value::Decimal(d) => self.print_decimal(d),
             Value::Char(c) => self.print_char(c),
             Value::String(s) => self.print_string(s),
-            Value::List(l) => self.print_list(l),
+            Value::List(l) => self.print_list_value(l),
             Value::Unit(u) => self.print_unit(u),
-            Value::Type(t) => self.print_type(t.clone()),
-            Value::Struct(s) => self.print_build_struct(s),
+            Value::Type(t) => self.print_type(t),
+            Value::Struct(s) => self.print_struct_value(s),
             _ => bail!("Not supported {:?}", v),
         }
     }
+    pub fn print_primitive_type(&self, ty: PrimitiveType) -> Result<TokenStream> {
+        match ty {
+            PrimitiveType::I64 => Ok(quote!(i64)),
+            PrimitiveType::F64 => Ok(quote!(f64)),
+            PrimitiveType::Bool => Ok(quote!(bool)),
+            PrimitiveType::String => Ok(quote!(String)),
+            PrimitiveType::Char => Ok(quote!(char)),
+            PrimitiveType::Unit => Ok(quote!(())),
+            PrimitiveType::List => Ok(quote!(Vec)),
+            PrimitiveType::Type => Ok(quote!(Type)),
+        }
+    }
+    pub fn print_type_value(&self, v: &TypeValue) -> Result<TokenStream> {
+        match v {
+            TypeValue::Function(f) => self.print_func_type(f),
+            TypeValue::Primitive(p) => self.print_primitive_type(*p),
+            TypeValue::NamedStruct(s) => self.print_struct_type(&s),
+            _ => bail!("Not supported {:?}", v),
+        }
+    }
+
+    pub fn print_path(&self, path: &Path) -> TokenStream {
+        let segments: Vec<_> = path.segments.iter().map(|x| self.print_ident(x)).collect();
+        quote!(#(#segments)::*)
+    }
+
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
         match node {
-            TypeExpr::Primitive(p) => Ok(self.print_ident(&p.name)),
-            _ => {}
+            TypeExpr::Ident(n) => Ok(self.print_ident(n)),
+            TypeExpr::Path(n) => Ok(self.print_path(n)),
+            TypeExpr::Value(n) => self.print_type_value(n),
+            _ => bail!("Unable to serialize {:?}", node),
         }
-        bail!("Unable to serialize {:?}", node)
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
             Expr::Ident(n) => Ok(self.print_ident(n)),
-            Expr::Path(n) => Ok(self.print_ident(&n.segments.last().unwrap().ident)),
+            Expr::Path(n) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
-            Expr::Block(_) => {}
-            Expr::Cond(_) => {}
-            Expr::Invoke(_) => {}
-            Expr::BuiltinFn(_) => {}
-            Expr::Select(_) => {}
-            Expr::Any(_) => {}
+            _ => bail!("Unable to serialize {:?}", node),
         }
-        bail!("Unable to serialize {:?}", node)
     }
     pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
         match item {
             Item::Def(n) => self.print_def(n),
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
+            _ => bail!("Unable to serialize {:?}", item),
         }
     }
     pub fn print_tree(&self, node: &Tree) -> Result<TokenStream> {
