@@ -1,5 +1,5 @@
-use crate::builtins::*;
 use crate::context::ExecutionContext;
+use crate::ops::*;
 use crate::tree::FieldValueExpr;
 use crate::tree::*;
 use crate::value::*;
@@ -42,7 +42,7 @@ impl Interpreter {
         ctx.insert_func_decl(node.name.clone(), node.clone());
         Ok(())
     }
-    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn interpret_invoke(&self, node: &InvokeExpr, ctx: &ExecutionContext) -> Result<Expr> {
         info!(
             "Will execute call {}",
             self.serializer.serialize_invoke(&node)?
