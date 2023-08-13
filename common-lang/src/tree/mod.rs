@@ -1,5 +1,6 @@
 use common::*;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 mod expr;
 mod item;
@@ -8,9 +9,50 @@ mod typing;
 
 pub use expr::*;
 pub use item::*;
-
 pub use typing::*;
 
+/// Tree is any syntax tree element
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Tree {
+    Item(Item),
+}
+
+#[derive(Clone)]
+pub struct AnyBox {
+    pub name: String,
+    pub value: Rc<dyn Any>,
+}
+impl AnyBox {
+    pub fn new<T: Any>(t: T) -> Self {
+        Self {
+            name: type_name::<T>().to_string(),
+            value: Rc::new(t),
+        }
+    }
+
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        self.value.downcast_ref()
+    }
+}
+impl Debug for AnyBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.name.fmt(f)
+    }
+}
+impl Serialize for AnyBox {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.name.serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for AnyBox {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Ok(Self {
+            name,
+            value: Rc::new(()),
+        })
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ident {
     pub name: String,
@@ -80,28 +122,11 @@ pub struct Select {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference {
-    pub referee: Expr,
+    pub referee: Box<Expr>,
     pub mutable: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Uplifted {
-    pub uplifted: Tree,
-    pub raw: Tree,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Path {
     pub segments: Vec<Ident>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuildStructExpr {
-    pub name: TypeExpr, // either Ident or Struct
-    pub fields: Vec<FieldValueExpr>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BuildFunctionExpr {
-    pub params: Vec<ParamExpr>,
-    pub ret: TypeExpr,
-    pub body: Block,
 }

@@ -12,8 +12,10 @@ pub enum Value {
     List(ListValue),
     Unit(UnitValue),
     Type(TypeValue),
-    Struct(BuildStructExpr),
-    Function(BuildFunctionExpr),
+    Struct(StructExpr),
+    Function(FunctionExpr),
+    Tuple(TupleValue),
+    Expr(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq)]
@@ -77,7 +79,7 @@ impl StringValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListValue {
-    pub value: Vec<Expr>,
+    pub value: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +88,7 @@ pub struct UnitValue;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldValue {
     pub name: Ident,
-    pub value: Expr,
+    pub value: Value,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StructValue {
@@ -96,6 +98,10 @@ pub struct StructValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionValue {
     pub params: Vec<ParamExpr>,
-    pub ret: Tree,
+    pub ret: TypeValue,
     pub body: Block,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TupleValue {
+    pub values: Vec<Value>,
 }

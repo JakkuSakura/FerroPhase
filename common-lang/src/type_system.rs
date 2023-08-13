@@ -70,6 +70,8 @@ impl TypeSystem {
             }
             Value::Struct(_) => {}
             Value::Function(_) => {}
+            Value::Tuple(_) => {}
+            Value::Expr(_) => {}
         }
         Ok(())
     }
@@ -80,14 +82,15 @@ impl TypeSystem {
         ctx: &ExecutionContext,
     ) -> Result<()> {
         match expr {
-            Expr::Ident(_) => {}
+            Expr::Ident(n) => {
+                let expr = ctx
+                    .get_expr(n)
+                    .with_context(|| format!("Could not find {:?} in context", n))?;
+                return self.type_check_expr_against_value(&expr, type_value, ctx);
+            }
             Expr::Path(_) => {}
-            Expr::Value(v) => self.type_check_value(v, type_value)?,
-            Expr::Block(_) => {}
-            Expr::Cond(_) => {}
-            Expr::Invoke(_) => {}
-            Expr::BuiltinFn(_) => {}
-            Expr::Select(_) => {}
+            Expr::Value(v) => return self.type_check_value(v, type_value),
+            _ => {}
         }
         Ok(())
     }

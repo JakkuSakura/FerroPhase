@@ -89,21 +89,7 @@ impl Interpreter {
                     return Ok(*s.obj);
                 }
             }
-            Expr::Ident(_) => {}
-            Expr::Path(_) => {}
-            Expr::Block(_) => {}
-            Expr::Cond(_) => {}
-            Expr::Invoke(_) => {}
-
-            Expr::Value(Value::Int(_)) => {}
-            Expr::Value(Value::Bool(_)) => {}
-            Expr::Value(Value::Decimal(_)) => {}
-            Expr::Value(Value::Char(_)) => {}
-            Expr::Value(Value::String(_)) => {}
-            Expr::Value(Value::List(_)) => {}
-            Expr::Value(Value::Unit(_)) => {}
-            Expr::Value(Value::Type(_)) => {}
-            Expr::Value(Value::Struct(_)) => {}
+            _ => {}
         }
 
         bail!("Failed to interpret {:?}", node)
@@ -204,9 +190,9 @@ impl Interpreter {
     }
     pub fn interpret_build_struct(
         &self,
-        node: &BuildStructExpr,
+        node: &StructExpr,
         ctx: &ExecutionContext,
-    ) -> Result<BuildStructExpr> {
+    ) -> Result<StructExpr> {
         let fields: Vec<_> = node
             .fields
             .iter()
@@ -217,7 +203,7 @@ impl Interpreter {
                 })
             })
             .try_collect()?;
-        Ok(BuildStructExpr {
+        Ok(StructExpr {
             name: node.name.clone(),
             fields,
         })
@@ -251,8 +237,7 @@ impl Interpreter {
             Expr::Invoke(invoke) => {
                 return self.interpret_invoke(invoke, ctx);
             }
-            Expr::BuiltinFn(_) => {}
-            Expr::Select(_) => {}
+            _ => {}
         }
 
         bail!("Failed to interpret {:?}", node)
@@ -263,6 +248,7 @@ impl Interpreter {
             Item::Module(n) => self.interpret_module(n, ctx),
             Item::Def(n) => self.interpret_def(n, ctx).map(|_| Expr::unit()),
             Item::Import(n) => self.interpret_import(n, ctx).map(|_| Expr::unit()),
+            _ => bail!("Failed to interpret {:?}", node),
         }
     }
 }
