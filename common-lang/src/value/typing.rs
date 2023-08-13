@@ -1,4 +1,4 @@
-use crate::tree::Ident;
+use crate::tree::{Ident, RequireTraits};
 use common::*;
 
 /// TypeValue is a solid type value
@@ -8,6 +8,7 @@ pub enum TypeValue {
     NamedStruct(NamedStructType),
     UnnamedStruct(UnnamedStructType),
     FuncType(FuncTypeValue),
+    RequireTraits(RequireTraits),
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {

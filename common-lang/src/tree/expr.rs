@@ -1,4 +1,4 @@
-use crate::builtins::BuiltinFn;
+use crate::ops::{BuiltinFn, Invoke};
 use crate::tree::*;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ pub enum Expr {
     Value(Value),
     Block(Block),
     Cond(Cond),
-    Invoke(Invoke),
+    Invoke(InvokeExpr),
     BuiltinFn(BuiltinFn),
     Select(Select),
 }
@@ -20,3 +20,4 @@ impl Expr {
         Expr::Value(Value::Unit(UnitValue))
     }
 }
+pub type InvokeExpr = Invoke<Expr>;
