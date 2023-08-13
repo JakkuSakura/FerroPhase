@@ -1,15 +1,11 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawUse};
 use common::*;
-use common_lang::ops::InvokeExpr;
+
 use common_lang::tree::FieldValueExpr;
 use common_lang::tree::*;
-use common_lang::value::{
-    BoolValue, DecimalValue, IntValue, NamedStructType, PrimitiveType, StringValue, Value,
-};
+use common_lang::value::*;
 use quote::ToTokens;
-use syn::{
-    BinOp, FnArg, GenericParam, Item, ItemFn, Lit, Member, Pat, ReturnType, Stmt, TypeParamBound,
-};
+use syn::{BinOp, FnArg, GenericParam, ItemFn, Lit, Member, Pat, ReturnType, TypeParamBound};
 
 fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -111,9 +107,23 @@ fn parse_path(p: syn::Path) -> Result<Path> {
             .try_collect()?,
     })
 }
-fn parse_fn(f: ItemFn) -> Result<(Ident, Item)> {
+fn parse_fn(f: ItemFn) -> Result<FuncDecl> {
     let name = parse_ident(f.sig.ident);
-    let ff = FuncDecl {
+    let generics_params = f
+        .sig
+        .generics
+        .params
+        .into_iter()
+        .map(|x| match x {
+            GenericParam::Type(t) => Ok(ParamExpr {
+                name: parse_ident(t.ident),
+                // TODO: support multiple type bounds
+                ty: TypeExpr::Path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
+            }),
+            _ => bail!("Does not generic param {:?}", x),
+        })
+        .try_collect()?;
+    Ok(FuncDecl {
         name: name.clone(),
         params: f
             .sig
@@ -121,35 +131,10 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Item)> {
             .into_iter()
             .map(|x| parse_input(x))
             .try_collect()?,
+        generics_params,
         ret: parse_return_type(f.sig.output)?.into(),
         body: parse_block(*f.block)?,
-    };
-    if f.sig.generics.params.is_empty() {
-        Ok((name, ff.into()))
-    } else {
-        let params = f
-            .sig
-            .generics
-            .params
-            .into_iter()
-            .map(|x| match x {
-                GenericParam::Type(t) => Ok(ParamExpr {
-                    name: parse_ident(t.ident),
-                    // TODO: support multiple type bounds
-                    ty: TypeExpr::Path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
-                }),
-                _ => bail!("Does not generic param {:?}", x),
-            })
-            .try_collect()?;
-        Ok((
-            name,
-            Generics {
-                params,
-                value: ff.into(),
-            }
-            .into(),
-        ))
-    }
+    })
 }
 
 fn parse_call(call: syn::ExprCall) -> Result<InvokeExpr> {
@@ -163,11 +148,11 @@ fn parse_call(call: syn::ExprCall) -> Result<InvokeExpr> {
 }
 fn parse_method_call(call: syn::ExprMethodCall) -> Result<InvokeExpr> {
     Ok(InvokeExpr {
-        fun: Select {
+        fun: Expr::Select(Select {
             obj: parse_expr(*call.receiver)?.into(),
             field: parse_ident(call.method),
             select: SelectType::Method,
-        }
+        })
         .into(),
         args: call.args.into_iter().map(parse_expr).try_collect()?,
     })
@@ -176,17 +161,21 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<InvokeExpr> {
 fn parse_if(i: syn::ExprIf) -> Result<Cond> {
     let mut cases = vec![CondCase {
         cond: parse_expr(*i.cond)?,
-        body: parse_block(i.then_branch)?.into(),
+        body: Expr::Block(parse_block(i.then_branch)?).into(),
     }];
     if let Some((_, else_body)) = i.else_branch {
         'else_check: {
             let body = parse_expr(*else_body)?;
-            if let Some(m) = body.as_ast::<Cond>() {
-                if m.if_style {
-                    cases.extend(m.cases.clone());
-                    break 'else_check;
+            match &body {
+                Expr::Cond(m) => {
+                    if m.if_style {
+                        cases.extend(m.cases.clone());
+                        break 'else_check;
+                    }
                 }
+                _ => {}
             }
+
             cases.push(CondCase {
                 cond: Expr::Value(Value::Bool(BoolValue::new(true))),
                 body,
@@ -200,8 +189,8 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
     })
 }
 fn parse_binary(b: syn::ExprBinary) -> Result<InvokeExpr> {
-    let l = parse_expr(*b.left)?;
-    let r = parse_expr(*b.right)?;
+    let mut lhs = parse_expr(*b.left)?;
+    let rhs = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
         BinOp::Add(_) => (Ident::new("+"), true),
         BinOp::Mul(_) => (Ident::new("*"), true),
@@ -216,25 +205,30 @@ fn parse_binary(b: syn::ExprBinary) -> Result<InvokeExpr> {
         _ => bail!("Op not supported {:?}", b.op),
     };
     if flatten {
-        if let Some(first_arg) = l.as_ast::<InvokeExpr>() {
-            if Some(&op) == first_arg.fun.as_ast::<Ident>() {
-                let mut first_arg = first_arg.clone();
-                first_arg.args.push(r);
-                return Ok(first_arg);
-            }
+        match &mut lhs {
+            Expr::Invoke(first_arg) => match &*first_arg.fun {
+                Expr::Ident(i) if i == &op => {
+                    first_arg.args.push(rhs);
+                    return Ok(first_arg.clone());
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
     Ok(InvokeExpr {
-        fun: op.into(),
-        args: vec![l, r],
+        fun: Expr::Ident(op).into(),
+        args: vec![lhs, rhs],
     })
 }
-fn parse_tuple(t: syn::ExprTuple) -> Result<InvokeExpr> {
-    let args = t.elems.into_iter().map(parse_expr).try_collect()?;
-    Ok(InvokeExpr {
-        fun: Ident::new("tuple").into(),
-        args,
-    })
+fn parse_tuple(t: syn::ExprTuple) -> Result<TupleValue> {
+    let values = t
+        .elems
+        .into_iter()
+        .map(parse_expr)
+        .map(|x| x.map(Box::new).map(Value::Expr))
+        .try_collect()?;
+    Ok(TupleValue { values })
 }
 fn parse_member(mem: Member) -> Result<Ident> {
     Ok(match mem {
@@ -248,8 +242,8 @@ fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValueExpr> {
         value: parse_expr(fv.expr)?,
     })
 }
-pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<BuildStructExpr> {
-    Ok(BuildStructExpr {
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
+    Ok(StructExpr {
         name: TypeExpr::Path(parse_path(s.path)?),
         fields: s
             .fields
@@ -258,47 +252,50 @@ pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<BuildStructExpr> {
             .try_collect()?,
     })
 }
+pub fn parse_literal(lit: syn::Lit) -> Result<Value> {
+    Ok(match lit {
+        Lit::Int(i) => Value::Int(IntValue::new(i.base10_parse()?)),
+        Lit::Float(i) => Value::Decimal(DecimalValue::new(i.base10_parse()?)),
+        Lit::Str(s) => Value::String(StringValue::new_ref(s.value())),
+        Lit::Bool(b) => Value::Bool(BoolValue::new(b.value)),
+        _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
+    })
+}
 pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
-        syn::Expr::Binary(b) => parse_binary(b)?.into(),
-        syn::Expr::Block(b) if b.label.is_none() => parse_block(b.block)?.into(),
+        syn::Expr::Binary(b) => Expr::Invoke(parse_binary(b)?),
+        syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
 
-        syn::Expr::Call(c) => parse_call(c)?.into(),
-        syn::Expr::If(i) => parse_if(i)?.into(),
+        syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?),
+        syn::Expr::If(i) => Expr::Cond(parse_if(i)?),
 
-        syn::Expr::Lit(l) => match l.lit {
-            Lit::Int(i) => IntValue::new(i.base10_parse()?).into(),
-            Lit::Float(i) => DecimalValue::new(i.base10_parse()?).into(),
-            Lit::Str(s) => StringValue::new_ref(s.value()).into(),
-            _ => bail!("Lit not supported: {:?}", l.lit.to_token_stream()),
-        },
-        syn::Expr::Macro(m) => RawExprMacro { raw: m }.into(),
-        syn::Expr::MethodCall(c) => parse_method_call(c)?.into(),
+        syn::Expr::Lit(l) => Expr::Value(parse_literal(l.lit)?),
+        syn::Expr::Macro(m) => Expr::Any(AnyBox::new(RawExprMacro { raw: m })),
+        syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?),
         syn::Expr::Path(p) => Expr::Path(parse_path(p.path)?),
-        syn::Expr::Reference(r) => parse_ref(r)?.into(),
-        syn::Expr::Tuple(t) => parse_tuple(t)?.into(),
-        syn::Expr::Struct(s) => parse_struct_expr(s)?.into(),
+        syn::Expr::Reference(r) => Expr::Reference(parse_ref(r)?),
+        syn::Expr::Tuple(t) => Expr::Value(Value::Tuple(parse_tuple(t)?)),
+        syn::Expr::Struct(s) => Expr::Struct(parse_struct_expr(s)?),
 
         raw => {
             warn!("RawExpr {:?}", raw);
-            RawExpr { raw }.into()
+            Expr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     })
 }
 
-fn parse_stmt(stmt: syn::Stmt) -> Result<Tree> {
+fn parse_stmt(stmt: syn::Stmt) -> Result<Item> {
     Ok(match stmt {
-        Stmt::Local(l) => Def {
+        syn::Stmt::Local(l) => Item::Def(Def {
             name: parse_pat(l.pat)?,
             kind: DefKind::Variable,
             ty: None,
             value: DefValue::Variable(parse_expr(*l.init.context("No value")?.expr)?),
             visibility: Visibility::Public,
-        }
-        .into(),
-        Stmt::Item(tm) => parse_item(tm)?,
-        Stmt::Expr(e, _) => parse_expr(e)?,
-        Stmt::Macro(m) => bail!("Macro not supported: {:?}", m),
+        }),
+        syn::Stmt::Item(tm) => parse_item(tm)?,
+        syn::Stmt::Expr(e, _) => Item::Expr(parse_expr(e)?),
+        syn::Stmt::Macro(m) => bail!("Macro not supported: {:?}", m),
     })
 }
 
@@ -308,7 +305,7 @@ fn parse_block(block: syn::Block) -> Result<Block> {
         .stmts
         .last()
         .map(|x| match x {
-            Stmt::Expr(_, s) => s.is_none(),
+            syn::Stmt::Expr(_, s) => s.is_none(),
             _ => false,
         })
         .unwrap_or_default();
@@ -328,14 +325,14 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
     match item {
         syn::ImplItem::Fn(m) => {
             // TODO: defaultness
-            let (name, expr) = parse_fn(ItemFn {
+            let expr = parse_fn(ItemFn {
                 attrs: m.attrs,
                 vis: m.vis.clone(),
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
             Ok(Def {
-                name,
+                name: expr.name.clone(),
                 kind: DefKind::Function,
                 ty: None,
                 value: DefValue::Function(expr),
@@ -354,7 +351,10 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Def> {
 }
 fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
     Ok(Impl {
-        name: parse_type(*im.self_ty)?,
+        name: match parse_type(*im.self_ty)? {
+            TypeExpr::Ident(i) => i,
+            _ => bail!("Does not support impl for {:?}", im.self_ty),
+        },
         defs: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
@@ -367,7 +367,7 @@ fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeExpr> {
         ty: parse_type(f.ty)?,
     })
 }
-fn parse_use(u: syn::ItemUse) -> Result<Tree> {
+fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
     let mut segments = vec![];
     let mut tree = u.tree.clone();
     loop {
@@ -384,17 +384,16 @@ fn parse_use(u: syn::ItemUse) -> Result<Tree> {
                 segments.push(Ident::new("*"));
                 break;
             }
-            _ => return Ok(RawUse { raw: u }.into()),
+            _ => return Err(RawUse { raw: u }.into()),
         }
     }
     Ok(Import {
         visibility: parse_vis(u.vis),
         segments,
-    }
-    .into())
+    })
 }
-pub fn parse_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
-    Ok(NamedStructType {
+pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructTypeExpr> {
+    Ok(NamedStructTypeExpr {
         name: parse_ident(s.ident),
         fields: s
             .fields
@@ -404,30 +403,44 @@ pub fn parse_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
             .try_collect()?,
     })
 }
-fn parse_item(item: syn::Item) -> Result<Tree> {
+fn parse_item(item: syn::Item) -> Result<Item> {
     match item {
-        Item::Fn(f0) => {
+        syn::Item::Fn(f0) => {
             let visibility = parse_vis(f0.vis.clone());
-            let (name, f) = parse_fn(f0)?;
+            let f = parse_fn(f0)?;
             let d = Def {
-                name,
+                name: f.name.clone(),
                 kind: DefKind::Function,
                 ty: None,
-                value: f.into(),
+                value: DefValue::Function(f),
                 visibility,
             };
-            Ok(d.into())
+            Ok(Item::Def(d))
         }
-        Item::Impl(im) => Ok(parse_impl(im)?.into()),
-        Item::Use(u) => parse_use(u),
-        Item::Macro(m) => Ok(RawItemMacro { raw: m }.into()),
-        Item::Struct(s) => Ok(parse_struct(s)?.into()),
+        syn::Item::Impl(im) => Ok(Item::Impl(parse_impl(im)?)),
+        syn::Item::Use(u) => Ok(match parse_use(u) {
+            Ok(i) => Item::Import(i),
+            Err(r) => Item::Any(AnyBox::new(r)),
+        }),
+        syn::Item::Macro(m) => Ok(Item::Any(AnyBox::new(RawItemMacro { raw: m }))),
+        syn::Item::Struct(s) => {
+            let visibility = parse_vis(s.vis.clone());
+
+            let struct_type = parse_item_struct(s)?;
+            Ok(Item::Def(Def {
+                name: struct_type.name.clone(),
+                kind: DefKind::Type,
+                ty: None,
+                value: DefValue::Type(TypeExpr::NamedStruct(struct_type)),
+                visibility,
+            }))
+        }
         _ => bail!("Does not support item {:?} yet", item),
     }
 }
 fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
     Ok(Reference {
-        referee: parse_expr(*item.expr)?,
+        referee: parse_expr(*item.expr)?.into(),
         mutable: Some(item.mutability.is_some()),
     })
 }
@@ -438,7 +451,7 @@ pub fn parse_file(file: syn::File) -> Result<Module> {
         items: file.items.into_iter().map(parse_item).try_collect()?,
     })
 }
-pub fn parse_module(file: syn::ItemMod) -> Result<Tree> {
+pub fn parse_module(file: syn::ItemMod) -> Result<Module> {
     Ok(Module {
         name: parse_ident(file.ident),
         items: file
@@ -448,19 +461,18 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Tree> {
             .into_iter()
             .map(parse_item)
             .try_collect()?,
-    }
-    .into())
+    })
 }
 pub struct RustParser;
 
 impl RustParser {
-    pub fn parse_expr(&self, code: syn::Expr) -> Result<Tree> {
+    pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
         parse_expr(code)
     }
     pub fn parse_file(&self, code: syn::File) -> Result<Module> {
         parse_file(code)
     }
-    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Tree> {
+    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
     }
 }
@@ -497,7 +509,7 @@ mod tests {
                 )
                 .unwrap(),
             RustSerde
-                .serialize_tree(&super::parse_expr(parse_quote!(a + 1)).unwrap())
+                .serialize_expr(&parse_expr(parse_quote!(a + 1)).unwrap())
                 .unwrap()
         );
     }

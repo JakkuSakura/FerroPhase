@@ -7,12 +7,9 @@ pub enum Item {
     Module(Module),
     Def(Def),
     Import(Import),
-}
-
-/// Tree is any syntax tree element
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Tree {
-    Item(Item),
+    Expr(Expr),
+    Impl(Impl),
+    Any(AnyBox),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +67,7 @@ pub struct ParamExpr {
 pub struct FuncDecl {
     pub name: Ident,
     pub params: Vec<ParamExpr>,
+    pub generics_params: Vec<ParamExpr>,
     pub ret: TypeExpr,
     pub body: Block,
 }

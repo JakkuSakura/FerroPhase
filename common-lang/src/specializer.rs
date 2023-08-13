@@ -91,6 +91,7 @@ impl Specializer {
                     FuncDecl {
                         name: new_name.clone(),
                         params: Default::default(),
+                        generics_params: vec![],
                         ret,
                         body: new_body,
                     },
@@ -141,6 +142,9 @@ impl Specializer {
             Item::Import(x) => self.specialize_import(x, ctx).map(Item::Import),
             Item::Def(x) => self.specialize_def(x, ctx).map(Item::Def),
             Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module),
+            Item::Any(x) => Ok(Item::Any(x.clone())),
+            Item::Expr(x) => self.specialize_expr(x, ctx).map(Item::Expr),
+            Item::Impl(x) => Ok(Item::Impl(x.clone())),
         }
     }
     pub fn specialize_block(&self, b: &Block, ctx: &ExecutionContext) -> Result<Block> {
@@ -194,6 +198,7 @@ impl Specializer {
                         value: DefValue::Function(FuncDecl {
                             name: f.name,
                             params: f.params,
+                            generics_params: vec![],
                             ret: f.ret,
                             body: self.specialize_block(&f.body, ctx)?,
                         }),
