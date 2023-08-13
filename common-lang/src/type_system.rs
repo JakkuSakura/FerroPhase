@@ -91,6 +91,36 @@ impl TypeSystem {
         }
         Ok(())
     }
+    pub fn evaluate_type_value_op(&self, op: &TypeOp, ctx: &ExecutionContext) -> Result<TypeValue> {
+        match op {
+            TypeOp::Add(a) => {
+                let lhs = self.evaluate_type_value(&a.lhs, ctx)?;
+                let rhs = self.evaluate_type_value(&a.rhs, ctx)?;
+                match (lhs, rhs) {
+                    (TypeValue::RequireTraits(mut l), TypeValue::RequireTraits(r)) => {
+                        l.traits.extend(r.traits);
+                        return Ok(TypeValue::RequireTraits(l));
+                    }
+                    _ => {}
+                }
+                bail!("Could not evaluate type value op {:?}", op)
+            }
+            TypeOp::Sub(a) => {
+                let lhs = self.evaluate_type_value(&a.lhs, ctx)?;
+                let rhs = self.evaluate_type_value(&a.rhs, ctx)?;
+                match (lhs, rhs) {
+                    (TypeValue::RequireTraits(mut l), TypeValue::RequireTraits(r)) => {
+                        for r in r.traits {
+                            l.traits.retain(|x| x.name != r.name);
+                        }
+                        return Ok(TypeValue::RequireTraits(l));
+                    }
+                    _ => {}
+                }
+                bail!("Could not evaluate type value op {:?}", op)
+            }
+        }
+    }
     pub fn evaluate_type_value(&self, ty: &TypeExpr, ctx: &ExecutionContext) -> Result<TypeValue> {
         match ty {
             TypeExpr::Primitive(p) => Ok(TypeValue::Primitive(p.clone())),
@@ -143,7 +173,7 @@ impl TypeSystem {
                     .with_context(|| format!("Could not find type {:?}", i))?;
                 Ok(ty)
             }
-
+            TypeExpr::Op(o) => self.evaluate_type_value_op(o, ctx),
             _ => bail!("Could not evaluate type value {:?}", ty),
         }
     }

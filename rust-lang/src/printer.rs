@@ -2,6 +2,7 @@ use common::Result;
 use common::*;
 
 use common_lang::builtins::BuiltinFn;
+use common_lang::ops::InvokeExpr;
 use common_lang::tree::FieldValueExpr;
 use common_lang::tree::*;
 use common_lang::value::*;
@@ -179,7 +180,7 @@ impl RustPrinter {
 
         ));
     }
-    pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
+    pub fn print_invoke(&self, node: &InvokeExpr) -> Result<TokenStream> {
         let node1 = &node.fun;
         let fun = self.print_expr(node1)?;
         let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;

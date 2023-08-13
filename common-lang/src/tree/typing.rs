@@ -1,6 +1,6 @@
+use crate::ops::*;
 use crate::tree::*;
 use crate::value::*;
-use std::rc::Rc;
 
 /// TypeExpr is an expression that returns a type
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -12,6 +12,10 @@ pub enum TypeExpr {
     Primitive(PrimitiveType),
     ConcreteType(TypeValue),
     FuncType(FuncTypeExpr),
+    Op(TypeOp),
+    Invoke(InvokeTypeExpr),
+    RequireTrait(RequireTrait),
+    RequireTraits(RequireTraits),
 }
 
 impl TypeExpr {
@@ -19,6 +23,22 @@ impl TypeExpr {
         TypeExpr::Primitive(PrimitiveType::Unit)
     }
 }
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RequireTrait {
+    pub name: Ident,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct RequireTraits {
+    pub traits: Vec<RequireTrait>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub enum TypeOp {
+    Add(AddOp<TypeExpr>),
+    Sub(SubOp<TypeExpr>),
+}
+pub type InvokeTypeExpr = Invoke<TypeExpr>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FuncTypeExpr {
     pub params: Vec<TypeExpr>,

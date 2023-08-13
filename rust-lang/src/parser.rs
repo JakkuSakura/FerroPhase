@@ -1,5 +1,6 @@
-use crate::{RawExpr, RawExprMacro, RawImplTrait, RawItemMacro, RawType, RawUse};
+use crate::{RawExpr, RawExprMacro, RawItemMacro, RawUse};
 use common::*;
+use common_lang::ops::InvokeExpr;
 use common_lang::tree::FieldValueExpr;
 use common_lang::tree::*;
 use common_lang::value::{
@@ -151,17 +152,17 @@ fn parse_fn(f: ItemFn) -> Result<(Ident, Item)> {
     }
 }
 
-fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
+fn parse_call(call: syn::ExprCall) -> Result<InvokeExpr> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
-    Ok(Invoke {
+    Ok(InvokeExpr {
         fun: fun.into(),
         args,
     })
 }
-fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
-    Ok(Invoke {
+fn parse_method_call(call: syn::ExprMethodCall) -> Result<InvokeExpr> {
+    Ok(InvokeExpr {
         fun: Select {
             obj: parse_expr(*call.receiver)?.into(),
             field: parse_ident(call.method),
@@ -198,7 +199,7 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
         if_style: true,
     })
 }
-fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
+fn parse_binary(b: syn::ExprBinary) -> Result<InvokeExpr> {
     let l = parse_expr(*b.left)?;
     let r = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
@@ -215,7 +216,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         _ => bail!("Op not supported {:?}", b.op),
     };
     if flatten {
-        if let Some(first_arg) = l.as_ast::<Invoke>() {
+        if let Some(first_arg) = l.as_ast::<InvokeExpr>() {
             if Some(&op) == first_arg.fun.as_ast::<Ident>() {
                 let mut first_arg = first_arg.clone();
                 first_arg.args.push(r);
@@ -223,14 +224,14 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
             }
         }
     }
-    Ok(Invoke {
+    Ok(InvokeExpr {
         fun: op.into(),
         args: vec![l, r],
     })
 }
-fn parse_tuple(t: syn::ExprTuple) -> Result<Invoke> {
+fn parse_tuple(t: syn::ExprTuple) -> Result<InvokeExpr> {
     let args = t.elems.into_iter().map(parse_expr).try_collect()?;
-    Ok(Invoke {
+    Ok(InvokeExpr {
         fun: Ident::new("tuple").into(),
         args,
     })
