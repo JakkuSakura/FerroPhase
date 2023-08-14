@@ -1,6 +1,7 @@
 use crate::tree::*;
 use crate::value::TypeValue;
 use common::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Value {
@@ -16,6 +17,7 @@ pub enum Value {
     Function(FunctionValue),
     Tuple(TupleValue),
     Expr(Box<Expr>),
+    Any(AnyBox),
 }
 impl Value {
     pub fn bool(b: bool) -> Value {
@@ -27,11 +29,17 @@ impl Value {
     pub fn int(i: i64) -> Value {
         Value::Int(IntValue::new(i))
     }
+    pub fn unit() -> Value {
+        Value::Unit(UnitValue)
+    }
     pub fn expr(e: Expr) -> Self {
         match e {
             Expr::Value(v) => v,
             _ => Value::Expr(Box::new(e)),
         }
+    }
+    pub fn any<T: Debug + 'static>(any: T) -> Self {
+        Self::Any(AnyBox::new(any))
     }
 }
 
@@ -123,7 +131,7 @@ pub struct FunctionValue {
     pub params: Vec<FunctionParam>,
     pub generics_params: Vec<FunctionParam>,
     pub ret: TypeValue,
-    pub body: Block,
+    pub body: Box<Expr>,
 }
 impl FunctionValue {
     pub fn is_runtime_only(&self) -> bool {

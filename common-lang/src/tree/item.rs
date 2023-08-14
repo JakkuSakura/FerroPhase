@@ -8,12 +8,23 @@ pub enum Item {
     Module(Module),
     Def(Define),
     Import(Import),
+    Stmt(Expr),
     Expr(Expr),
     Impl(Impl),
     Any(AnyBox),
 }
 
 impl Item {
+    pub fn try_make_stmt(&mut self) {
+        if let Item::Expr(expr) = self {
+            *self = Item::Stmt(expr.clone());
+        }
+    }
+    pub fn try_make_expr(&mut self) {
+        if let Item::Stmt(expr) = self {
+            *self = Item::Expr(expr.clone());
+        }
+    }
     pub fn any<T: Debug + 'static>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
@@ -27,7 +38,6 @@ pub struct Module {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub stmts: Vec<Item>,
-    pub last_value: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]

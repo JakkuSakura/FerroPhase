@@ -13,13 +13,14 @@ pub enum TypeValue {
     Tuple(TupleType),
     Vec(VecType),
     Any(AnyType),
+    Unit(UnitType),
     Nothing(NothingType),
     Type(TypeType),
     Expr(Box<TypeExpr>),
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {
-        TypeValue::Primitive(PrimitiveType::Unit)
+        TypeValue::Unit(UnitType)
     }
     pub fn bool() -> TypeValue {
         TypeValue::Primitive(PrimitiveType::Bool)
@@ -55,7 +56,6 @@ pub enum PrimitiveType {
     Int(IntType),
     Decimal(DecimalType),
     Bool,
-    Unit,
     Char,
     String,
     List,
@@ -128,6 +128,8 @@ impl ImplTraits {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnyType;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnitType;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NothingType;
 #[derive(Debug, Clone, Serialize, Deserialize)]
