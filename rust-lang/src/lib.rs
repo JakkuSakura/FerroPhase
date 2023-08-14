@@ -63,6 +63,10 @@ pub struct RawExpr {
 pub struct RawTokenSteam {
     pub raw: proc_macro2::TokenStream,
 }
+#[macro_export]
+macro_rules! t {
+    ($t: tt) => {};
+}
 
 pub struct RustSerde;
 impl Serializer for RustSerde {
