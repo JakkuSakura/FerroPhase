@@ -66,7 +66,7 @@ impl TypeSystem {
             }
             Value::Type(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::Type)),
+                    matches!(ty, TypeValue::Type(_)),
                     "Expected type, got {:?}",
                     lit
                 )
@@ -170,6 +170,7 @@ impl TypeSystem {
                 let ret = self.evaluate_type_value(&f.ret, ctx)?;
                 Ok(TypeValue::Function(FunctionType {
                     params,
+                    generics_params: f.generics_params.clone(),
                     ret: Box::new(ret),
                 }))
             }
@@ -229,13 +230,21 @@ impl TypeSystem {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(TypeValue::Function(FunctionType {
-                    params: vec![],
+                    generics_params: vec![FunctionParam {
+                        name: Ident::new("T"),
+                        ty: TypeValue::Any(AnyType),
+                    }],
+                    params: vec![
+                        TypeValue::expr(TypeExpr::Ident("T".into())),
+                        TypeValue::expr(TypeExpr::Ident("T".into())),
+                    ],
                     ret: Box::new(TypeValue::bool()),
                 }));
             }
             "print" => {
                 return Ok(TypeValue::Function(FunctionType {
                     params: vec![],
+                    generics_params: vec![],
                     ret: Box::new(TypeValue::unit()),
                 }))
             }
@@ -265,7 +274,7 @@ impl TypeSystem {
                 Value::Unit(_) => return Ok(TypeValue::Primitive(PrimitiveType::Unit)),
                 Value::Bool(_) => return Ok(TypeValue::Primitive(PrimitiveType::Bool)),
                 Value::String(_) => return Ok(TypeValue::Primitive(PrimitiveType::String)),
-                Value::Type(_) => return Ok(TypeValue::Primitive(PrimitiveType::Type)),
+                Value::Type(_) => return Ok(TypeValue::Type(TypeType)),
                 Value::Char(_) => return Ok(TypeValue::Primitive(PrimitiveType::Char)),
                 Value::List(_) => return Ok(TypeValue::Primitive(PrimitiveType::List)),
                 _ => {}
@@ -277,5 +286,22 @@ impl TypeSystem {
             "Could not infer type of {}",
             self.serializer.serialize_expr(expr)?
         )
+    }
+
+    pub fn infer_type_function(
+        &self,
+        func: &FunctionValue,
+        _ctx: &ExecutionContext,
+    ) -> Result<FunctionType> {
+        let mut params = vec![];
+        for p in &func.params {
+            params.push(p.ty.clone());
+        }
+        let ret = func.ret.clone();
+        Ok(FunctionType {
+            params,
+            generics_params: func.generics_params.clone(),
+            ret: Box::new(ret),
+        })
     }
 }

@@ -2,7 +2,7 @@ use common::Result;
 use common::*;
 
 use crate::{RawExpr, RawExprMacro};
-use common_lang::ops::BuiltinFn;
+use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use common_lang::tree::*;
 use common_lang::value::*;
 use proc_macro2::TokenStream;
@@ -29,20 +29,20 @@ impl RustPrinter {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
-    pub fn print_def(&self, n: &Define) -> Result<TokenStream> {
-        let vis = n.visibility;
-        let decl = &n.value;
+    pub fn print_def(&self, def: &Define) -> Result<TokenStream> {
+        let vis = def.visibility;
+        let decl = &def.value;
 
         match decl {
             DefValue::Function(n) => {
-                return self.print_func_decl(n, vis);
+                return self.print_func_decl(&def.name, n, vis);
             }
             DefValue::Type(_) => {}
             DefValue::Const(_) => {}
             DefValue::Variable(_) => {}
         }
 
-        bail!("Not supported {:?}", n)
+        bail!("Not supported {:?}", def)
     }
     pub fn print_field(&self, field: &FieldTypeValue) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
@@ -62,16 +62,57 @@ impl RustPrinter {
             }
         ))
     }
+    pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
+        match op {
+            BinOpKind::Add => quote!(+),
+            BinOpKind::Sub => quote!(-),
+            BinOpKind::Mul => quote!(*),
+            BinOpKind::Div => quote!(/),
+            BinOpKind::Mod => quote!(%),
+            BinOpKind::Gt => quote!(>),
+            BinOpKind::Lt => quote!(<),
+            BinOpKind::Ge => quote!(>=),
+            BinOpKind::Le => quote!(<=),
+            BinOpKind::Eq => quote!(==),
+            BinOpKind::Ne => quote!(!=),
+            BinOpKind::LogicalOr => quote!(||),
+            BinOpKind::LogicalAnd => quote!(&&),
+            BinOpKind::BitOr => quote!(|),
+            BinOpKind::BitAnd => quote!(&),
+            BinOpKind::BitXor => quote!(^),
+            BinOpKind::Any(ident) => self.print_ident(ident),
+        }
+    }
     pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
-        let fun = self.print_expr(&invoke.fun)?;
-        let args: Vec<_> = invoke
-            .args
-            .iter()
-            .map(|x| self.print_expr(x))
-            .try_collect()?;
-        Ok(quote!(
-            #fun(#(#args), *)
-        ))
+        match &*invoke.fun {
+            Expr::BinOpKind(op) => {
+                let op = self.print_bin_op_kind(op);
+                let args: Vec<_> = invoke
+                    .args
+                    .iter()
+                    .map(|x| self.print_expr(x))
+                    .try_collect()?;
+                let mut stream = quote!();
+                for (i, a) in args.into_iter().enumerate() {
+                    if i != 0 {
+                        stream = quote!(#stream #op);
+                    }
+                    stream = quote!(#stream #a);
+                }
+                return Ok(stream);
+            }
+            _ => {
+                let fun = self.print_expr(&invoke.fun)?;
+                let args: Vec<_> = invoke
+                    .args
+                    .iter()
+                    .map(|x| self.print_expr(x))
+                    .try_collect()?;
+                Ok(quote!(
+                    #fun(#(#args), *)
+                ))
+            }
+        }
     }
     pub fn print_invoke_type(&self, invoke: &Invoke) -> Result<TokenStream> {
         let fun = self.print_expr(&invoke.fun)?;
@@ -149,10 +190,15 @@ impl RustPrinter {
             Visibility::Inherited => quote!(),
         }
     }
-    pub fn print_func_decl(&self, func: &FuncDecl, vis: Visibility) -> Result<TokenStream> {
-        let name = format_ident!("{}", func.name.as_str());
+    pub fn print_func_decl(
+        &self,
+        name: &Ident,
+        func: &FunctionValue,
+        vis: Visibility,
+    ) -> Result<TokenStream> {
+        let name = self.print_ident(&name);
         let ret_type = &func.ret;
-        let ret = self.print_type_expr(ret_type)?;
+        let ret = self.print_type_value(ret_type)?;
         let param_names: Vec<_> = func
             .params
             .iter()
@@ -161,7 +207,7 @@ impl RustPrinter {
         let param_types: Vec<_> = func
             .params
             .iter()
-            .map(|x| self.print_type_expr(&x.ty))
+            .map(|x| self.print_type_value(&x.ty))
             .try_collect()?;
         let stmts = self.print_block(&func.body)?;
         let gg;
@@ -174,7 +220,7 @@ impl RustPrinter {
             let gb: Vec<_> = func
                 .generics_params
                 .iter()
-                .map(|x| self.print_type_expr(&x.ty))
+                .map(|x| self.print_type_value(&x.ty))
                 .try_collect()?;
             gg = quote!(<#(#gt: #gb), *>)
         } else {
@@ -240,7 +286,7 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_func_type_param(&self, param: &FunctionValueParam) -> Result<TokenStream> {
+    pub fn print_func_type_param(&self, param: &FunctionParam) -> Result<TokenStream> {
         let name = self.print_ident(&param.name);
         let ty = self.print_type_value(&param.ty)?;
         Ok(quote!(#name: #ty))
@@ -298,16 +344,16 @@ impl RustPrinter {
     pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
         let stmts: Vec<_> = m.items.iter().map(|x| self.print_item(x)).try_collect()?;
         if m.name.as_str() == "__file__" {
-            return Ok(quote!(
+            Ok(quote!(
                 #(#stmts)*
-            ));
+            ))
         } else {
             let file = format_ident!("{}", m.name.as_str());
-            return Ok(quote!(
+            Ok(quote!(
                 pub mod #file {
                     #(#stmts)*
                 }
-            ));
+            ))
         }
     }
     pub fn print_import(&self, node: &Import) -> Result<TokenStream> {
@@ -335,8 +381,10 @@ impl RustPrinter {
         Ok(quote!(#name { #(#kwargs), * }))
     }
     pub fn print_builtin_fn(&self, bt: &BuiltinFn) -> Result<TokenStream> {
-        let name = self.print_ident(&Ident::new(bt.name.clone()));
-        Ok(quote!(#name))
+        match bt.name {
+            BuiltinFnName::BinOpKind(ref op) => Ok(self.print_bin_op_kind(op)),
+            BuiltinFnName::Name(ref name) => Ok(self.print_ident(name)),
+        }
     }
     pub fn print_int(&self, n: &IntValue) -> Result<TokenStream> {
         let n = n.value;
@@ -417,7 +465,6 @@ impl RustPrinter {
             PrimitiveType::Char => Ok(quote!(char)),
             PrimitiveType::Unit => Ok(quote!(())),
             PrimitiveType::List => Ok(quote!(Vec)),
-            PrimitiveType::Type => Ok(quote!(Type)),
             _ => bail!("Not supported {:?}", ty),
         }
     }
@@ -454,6 +501,10 @@ impl RustPrinter {
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
+    pub fn print_stmt(&self, node: &Expr) -> Result<TokenStream> {
+        let expr = self.print_expr(node)?;
+        Ok(quote!(#expr;))
+    }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
             Expr::Ident(n) => Ok(self.print_ident(n)),
@@ -467,8 +518,16 @@ impl RustPrinter {
                 if let Some(n) = n.downcast_ref::<RawExpr>() {
                     return Ok(n.raw.to_token_stream());
                 }
+                if let Some(f) = n.downcast_ref::<BuiltinFn>() {
+                    return self.print_builtin_fn(f);
+                }
+
                 bail!("Unable to serialize {:?}", node)
             }
+            Expr::BinOpKind(n) => Ok(self.print_bin_op_kind(n)),
+            Expr::Cond(n) => self.print_cond(n),
+            Expr::Block(n) => self.print_block(n),
+            Expr::Stmt(n) => self.print_stmt(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }

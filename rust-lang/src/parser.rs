@@ -1,9 +1,10 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawUse};
 use common::*;
+use common_lang::ops::BinOpKind;
 use common_lang::tree::*;
 use common_lang::value::*;
 use quote::ToTokens;
-use syn::{BinOp, FnArg, GenericParam, Lit, Pat, ReturnType, TypeParamBound};
+use syn::{FnArg, GenericParam, Lit, Pat, ReturnType, TypeParamBound};
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -32,6 +33,7 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
                 .map(parse_type)
                 .map(|x| x.map(Box::new).map(TypeValue::Expr))
                 .try_collect()?,
+            generics_params: vec![],
             ret: TypeValue::expr(parse_return_type(f.output)?.into()).into(),
         }))
         .into(),
@@ -75,24 +77,21 @@ fn parse_impl_trait(im: syn::TypeImplTrait) -> Vec<ImplTrait> {
         })
         .collect()
 }
-fn parse_input(i: FnArg) -> Result<FuncDeclParam> {
+fn parse_input(i: FnArg) -> Result<FunctionParam> {
     Ok(match i {
-        FnArg::Receiver(rev) => FuncDeclParam {
+        FnArg::Receiver(rev) => FunctionParam {
             name: Ident::new("self"),
             ty: {
-                let ident = match (rev.reference.is_some(), rev.mutability.is_some()) {
-                    (true, true) => Ident::new("&mut Self").into(),
-                    (true, false) => Ident::new("&Self").into(),
-                    (false, true) => Ident::new("Self").into(),
-                    (false, false) => Ident::new("mut Self").into(),
-                };
-                TypeExpr::Ident(ident)
+                TypeValue::expr(TypeExpr::SelfType(SelfType {
+                    reference: rev.reference.is_some(),
+                    mutability: rev.mutability.is_some(),
+                }))
             },
         },
 
-        FnArg::Typed(t) => FuncDeclParam {
+        FnArg::Typed(t) => FunctionParam {
             name: parse_pat(*t.pat)?,
-            ty: parse_type(*t.ty)?,
+            ty: TypeValue::expr(parse_type(*t.ty)?),
         },
     })
 }
@@ -118,7 +117,7 @@ fn parse_type_param_bound(b: TypeParamBound) -> Result<Path> {
     }
 }
 
-fn parse_fn(f: syn::ItemFn) -> Result<FuncDecl> {
+fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
     let name = parse_ident(f.sig.ident);
     let generics_params = f
         .sig
@@ -126,16 +125,18 @@ fn parse_fn(f: syn::ItemFn) -> Result<FuncDecl> {
         .params
         .into_iter()
         .map(|x| match x {
-            GenericParam::Type(t) => Ok(FuncDeclParam {
+            GenericParam::Type(t) => Ok(FunctionParam {
                 name: parse_ident(t.ident),
                 // TODO: support multiple type bounds
-                ty: TypeExpr::Path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
+                ty: TypeValue::expr(TypeExpr::Path(parse_type_param_bound(
+                    t.bounds.first().cloned().unwrap(),
+                )?)),
             }),
             _ => bail!("Does not generic param {:?}", x),
         })
         .try_collect()?;
-    Ok(FuncDecl {
-        name: name.clone(),
+    Ok(FunctionValue {
+        name: Some(name.clone()),
         params: f
             .sig
             .inputs
@@ -143,7 +144,7 @@ fn parse_fn(f: syn::ItemFn) -> Result<FuncDecl> {
             .map(|x| parse_input(x))
             .try_collect()?,
         generics_params,
-        ret: parse_return_type(f.sig.output)?.into(),
+        ret: TypeValue::expr(parse_return_type(f.sig.output)?),
         body: parse_block(*f.block)?,
     })
 }
@@ -172,7 +173,7 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
 fn parse_if(i: syn::ExprIf) -> Result<Cond> {
     let mut cases = vec![CondCase {
         cond: parse_expr(*i.cond)?,
-        body: Expr::Block(parse_block(i.then_branch)?).into(),
+        body: Expr::block(parse_block(i.then_branch)?).into(),
     }];
     if let Some((_, else_body)) = i.else_branch {
         'else_check: {
@@ -203,22 +204,26 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     let mut lhs = parse_expr(*b.left)?;
     let rhs = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
-        BinOp::Add(_) => (Ident::new("+"), true),
-        BinOp::Mul(_) => (Ident::new("*"), true),
-        BinOp::Sub(_) => (Ident::new("-"), false),
-        BinOp::Gt(_) => (Ident::new(">"), false),
-        BinOp::Ge(_) => (Ident::new(">="), false),
-        BinOp::Le(_) => (Ident::new("<="), false),
-        BinOp::Lt(_) => (Ident::new("<"), false),
-        BinOp::Eq(_) => (Ident::new("=="), false),
-        BinOp::Ne(_) => (Ident::new("!="), false),
-        BinOp::BitOr(_) => (Ident::new("|"), true),
+        syn::BinOp::Add(_) => (BinOpKind::Add, true),
+        syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
+        syn::BinOp::Sub(_) => (BinOpKind::Sub, false),
+        syn::BinOp::Gt(_) => (BinOpKind::Gt, false),
+        syn::BinOp::Ge(_) => (BinOpKind::Ge, false),
+        syn::BinOp::Le(_) => (BinOpKind::Le, false),
+        syn::BinOp::Lt(_) => (BinOpKind::Lt, false),
+        syn::BinOp::Eq(_) => (BinOpKind::Eq, false),
+        syn::BinOp::Ne(_) => (BinOpKind::Ne, false),
+        syn::BinOp::BitOr(_) => (BinOpKind::BitOr, true),
+        syn::BinOp::BitAnd(_) => (BinOpKind::BitAnd, true),
+        syn::BinOp::BitXor(_) => (BinOpKind::BitXor, true),
+        syn::BinOp::Or(_) => (BinOpKind::LogicalOr, true),
+        syn::BinOp::And(_) => (BinOpKind::LogicalAnd, true),
         _ => bail!("Op not supported {:?}", b.op),
     };
     if flatten {
         match &mut lhs {
             Expr::Invoke(first_arg) => match &*first_arg.fun {
-                Expr::Ident(i) if i == &op => {
+                Expr::BinOpKind(i) if i == &op => {
                     first_arg.args.push(rhs);
                     return Ok(first_arg.clone());
                 }
@@ -228,7 +233,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         }
     }
     Ok(Invoke {
-        fun: Expr::Ident(op).into(),
+        fun: Expr::BinOpKind(op).into(),
         args: vec![lhs, rhs],
     })
 }
@@ -311,7 +316,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Item> {
 }
 
 fn parse_block(block: syn::Block) -> Result<Block> {
-    info!("Parsing block {:?}", block);
+    // info!("Parsing block {:?}", block);
     let last_value = block
         .stmts
         .last()
@@ -343,7 +348,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Define> {
                 block: Box::new(m.block),
             })?;
             Ok(Define {
-                name: expr.name.clone(),
+                name: expr.name.clone().unwrap(),
                 kind: DefKind::Function,
                 ty: None,
                 value: DefValue::Function(expr),
@@ -421,7 +426,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
             let visibility = parse_vis(f0.vis.clone());
             let f = parse_fn(f0)?;
             let d = Define {
-                name: f.name.clone(),
+                name: f.name.clone().unwrap(),
                 kind: DefKind::Function,
                 ty: None,
                 value: DefValue::Function(f),
@@ -493,7 +498,6 @@ impl RustParser {
 mod tests {
     use super::*;
     use crate::RustSerde;
-    use common_lang::tree::FuncDecl;
     use common_lang::Serializer;
     use quote::format_ident;
     use syn::parse_quote;
@@ -512,7 +516,7 @@ mod tests {
             RustSerde
                 .serialize_tree(
                     &expr
-                        .as_ast::<FuncDecl>()
+                        .as_ast::<FunctionValue>()
                         .unwrap()
                         .body
                         .clone()

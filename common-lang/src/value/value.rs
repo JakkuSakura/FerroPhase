@@ -113,15 +113,22 @@ pub struct StructValue {
     pub fields: Vec<FieldValue>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionValueParam {
+pub struct FunctionParam {
     pub name: Ident,
     pub ty: TypeValue,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionValue {
-    pub params: Vec<FunctionValueParam>,
+    pub name: Option<Ident>,
+    pub params: Vec<FunctionParam>,
+    pub generics_params: Vec<FunctionParam>,
     pub ret: TypeValue,
     pub body: Block,
+}
+impl FunctionValue {
+    pub fn is_runtime_only(&self) -> bool {
+        self.generics_params.is_empty()
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TupleValue {
