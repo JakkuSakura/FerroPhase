@@ -37,12 +37,35 @@ impl RustPrinter {
             DefValue::Function(n) => {
                 return self.print_func_decl(&def.name, n, vis);
             }
-            DefValue::Type(_) => {}
-            DefValue::Const(_) => {}
-            DefValue::Variable(_) => {}
+            DefValue::Type(n) => {
+                let name = self.print_ident(&def.name);
+                let ty = self.print_type_expr(n)?;
+                return Ok(quote!(
+                    type #name = #ty;
+                ));
+            }
+            DefValue::Const(n) => {
+                let name = self.print_ident(&def.name);
+                let ty = self.print_type_value(&def.ty.as_ref().context("No type")?.clone())?;
+                let value = self.print_expr(n)?;
+                return Ok(quote!(
+                    const #name: #ty = #value;
+                ));
+            }
+            DefValue::Variable(n) => {
+                let name = self.print_ident(&def.name);
+                let ty = if let Some(ty) = &def.ty {
+                    let ty = self.print_type_value(ty)?;
+                    quote!(: #ty)
+                } else {
+                    quote!()
+                };
+                let value = self.print_expr(n)?;
+                return Ok(quote!(
+                    let #name #ty = #value;
+                ));
+            }
         }
-
-        bail!("Not supported {:?}", def)
     }
     pub fn print_field(&self, field: &FieldTypeValue) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
@@ -56,11 +79,21 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_field(&x))
             .try_collect()?;
-        Ok(quote!(
-            pub struct #name {
+        Ok(quote!(t! { struct #name {
+            #(#fields), *
+        }}))
+    }
+    pub fn print_unnamed_struct_type(&self, s: &UnnamedStructType) -> Result<TokenStream> {
+        let fields: Vec<_> = s
+            .fields
+            .iter()
+            .map(|x| self.print_field(&x))
+            .try_collect()?;
+        Ok(quote!(t! {
+            struct {
                 #(#fields), *
             }
-        ))
+        }))
     }
     pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
         match op {
@@ -506,12 +539,12 @@ impl RustPrinter {
             TypeValue::Function(f) => self.print_func_type(f),
             TypeValue::Primitive(p) => self.print_primitive_type(*p),
             TypeValue::NamedStruct(s) => self.print_struct_type(s),
+            TypeValue::UnnamedStruct(s) => self.print_unnamed_struct_type(s),
             TypeValue::Expr(e) => self.print_type_expr(e),
             TypeValue::ImplTraits(t) => self.print_impl_traits(t),
             TypeValue::Unit(_) => Ok(quote!(())),
             TypeValue::Any(_) => Ok(quote!(Box<dyn Any>)),
             TypeValue::Nothing(_) => Ok(quote!(!)),
-
             _ => bail!("Not supported {:?}", v),
         }
     }
@@ -527,6 +560,16 @@ impl RustPrinter {
             TypeExpr::Path(n) => Ok(self.print_path(n)),
             TypeExpr::Value(n) => self.print_type_value(n),
             TypeExpr::Invoke(n) => self.print_invoke_type(n),
+            TypeExpr::BinOp(TypeBinOp::Add(add)) => {
+                let left = self.print_type_expr(&add.lhs)?;
+                let right = self.print_type_expr(&add.rhs)?;
+                Ok(quote!(#left + #right))
+            }
+            TypeExpr::BinOp(TypeBinOp::Sub(sub)) => {
+                let left = self.print_type_expr(&sub.lhs)?;
+                let right = self.print_type_expr(&sub.rhs)?;
+                Ok(quote!(#left - #right))
+            }
             _ => bail!("Unable to serialize {:?}", node),
         }
     }

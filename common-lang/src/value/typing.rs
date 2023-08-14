@@ -1,4 +1,4 @@
-use crate::tree::{Ident, TypeExpr};
+use crate::tree::{Ident, Path, TypeExpr};
 use crate::value::FunctionParam;
 use common::*;
 
@@ -30,6 +30,12 @@ impl TypeValue {
             TypeExpr::Value(v) => v,
             _ => TypeValue::Expr(Box::new(e)),
         }
+    }
+    pub fn path(path: Path) -> TypeValue {
+        TypeValue::expr(TypeExpr::path(path))
+    }
+    pub fn ident(ident: Ident) -> TypeValue {
+        TypeValue::expr(TypeExpr::Ident(ident))
     }
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
