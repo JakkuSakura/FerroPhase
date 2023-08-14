@@ -1,4 +1,4 @@
-use crate::ops::BuiltinFn;
+use crate::ops::{BinOp, BinOpKind};
 use crate::tree::*;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
@@ -10,11 +10,13 @@ pub enum Expr {
     Path(Path),
     Value(Value),
     Block(Block),
+    Stmt(Box<Expr>),
     Cond(Cond),
     Invoke(Invoke),
-    BuiltinFn(BuiltinFn),
     Select(Select),
     Reference(Reference),
+    BinOp(BinOp<Expr>),
+    BinOpKind(BinOpKind),
     Any(AnyBox),
 }
 impl Expr {
@@ -26,6 +28,19 @@ impl Expr {
             Value::Unit(_) => Expr::unit(),
             _ => Expr::Value(v),
         }
+    }
+    pub fn block(block: Block) -> Expr {
+        if block.stmts.len() == 1 {
+            let last = block.stmts.last().unwrap();
+            if let Item::Expr(expr) = last {
+                return if block.last_value {
+                    expr.clone()
+                } else {
+                    Expr::Stmt(expr.clone().into())
+                };
+            }
+        }
+        Expr::Block(block)
     }
     pub fn any<T: Debug + 'static>(any: T) -> Self {
         Self::Any(AnyBox::new(any))

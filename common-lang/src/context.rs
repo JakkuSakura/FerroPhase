@@ -1,5 +1,5 @@
 use crate::tree::*;
-use crate::value::TypeValue;
+use crate::value::{FunctionValue, TypeValue, Value};
 use crate::Serializer;
 use common::*;
 use std::cell::RefCell;
@@ -11,7 +11,7 @@ use std::rc::Rc;
 pub struct InterpreterContextInner {
     parent: Option<ExecutionContext>,
     trees: HashMap<Path, Tree>,
-    func_decls: HashMap<Path, FuncDecl>,
+    func_decls: HashMap<Path, FunctionValue>,
     exprs: HashMap<Path, Expr>,
     types: HashMap<Path, TypeValue>,
     is_specialized: HashMap<Path, bool>,
@@ -43,8 +43,10 @@ impl ExecutionContext {
     pub fn insert_type(&self, key: Path, value: TypeValue) {
         self.inner.borrow_mut().types.insert(key, value);
     }
-    pub fn insert_func_decl(&self, key: Path, value: FuncDecl) {
-        self.inner.borrow_mut().func_decls.insert(key, value);
+    pub fn insert_func_decl(&self, key: impl Into<Path>, value: FunctionValue) {
+        let key = key.into();
+        self.insert_expr(key.clone(), Expr::value(Value::Function(value.clone())));
+        self.inner.borrow_mut().func_decls.insert(key.into(), value);
     }
     pub fn insert_expr(&self, key: Path, value: Expr) {
         self.inner.borrow_mut().exprs.insert(key, value.into());
@@ -56,14 +58,14 @@ impl ExecutionContext {
         }
         Ok(())
     }
-    pub fn insert_specialized(&self, key: Path, value: FuncDecl) {
+    pub fn insert_specialized(&self, key: Path, value: FunctionValue) {
         self.inner
             .borrow_mut()
             .func_decls
             .insert(key.clone(), value);
         self.inner.borrow_mut().is_specialized.insert(key, true);
     }
-    pub fn get_func_decl(&self, key: impl Into<Path>) -> Option<FuncDecl> {
+    pub fn get_func_decl(&self, key: impl Into<Path>) -> Option<FunctionValue> {
         let inner = self.inner.borrow();
         let key = key.into();
         inner

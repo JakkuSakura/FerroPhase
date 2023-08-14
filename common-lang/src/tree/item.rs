@@ -1,4 +1,5 @@
 use crate::tree::*;
+use crate::value::{FunctionValue, TypeValue};
 use common::{Deserialize, Serialize};
 
 /// Item is an syntax tree node that "declares" a thing without returning a value
@@ -47,7 +48,7 @@ pub enum DefKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DefValue {
-    Function(FuncDecl),
+    Function(FunctionValue),
     Type(TypeExpr),
     Const(Expr),
     Variable(Expr),
@@ -57,24 +58,9 @@ pub enum DefValue {
 pub struct Define {
     pub name: Ident,
     pub kind: DefKind,
-    pub ty: Option<TypeExpr>,
+    pub ty: Option<TypeValue>,
     pub value: DefValue,
     pub visibility: Visibility,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FuncDeclParam {
-    pub name: Ident,
-    pub ty: TypeExpr,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FuncDecl {
-    pub name: Ident,
-    pub params: Vec<FuncDeclParam>,
-    pub generics_params: Vec<FuncDeclParam>,
-    pub ret: TypeExpr,
-    pub body: Block,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

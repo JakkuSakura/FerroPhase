@@ -71,6 +71,11 @@ impl Ident {
         self.name.as_str()
     }
 }
+impl<T: Into<String>> From<T> for Ident {
+    fn from(value: T) -> Self {
+        Self::new(value)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Path {
@@ -107,5 +112,10 @@ impl<'a> From<&'a Ident> for Path {
         Self {
             segments: vec![ident.clone()],
         }
+    }
+}
+impl<'a> From<&'a Path> for Path {
+    fn from(path: &Path) -> Self {
+        path.clone()
     }
 }
