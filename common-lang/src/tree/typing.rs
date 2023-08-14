@@ -9,6 +9,7 @@ pub enum TypeExpr {
     Path(Path),
     Op(TypeOp),
     Invoke(Invoke),
+    SelfType(SelfType),
     Value(TypeValue),
 }
 
@@ -23,28 +24,15 @@ impl TypeExpr {
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ImplTrait {
-    pub name: Ident,
-}
-impl ImplTrait {
-    pub fn new(name: Ident) -> Self {
-        Self { name }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ImplTraits {
-    pub traits: Vec<ImplTrait>,
-}
-impl ImplTraits {
-    pub fn new(traits: Vec<ImplTrait>) -> Self {
-        Self { traits }
-    }
-}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum TypeOp {
     Add(AddOp<TypeExpr>),
     Sub(SubOp<TypeExpr>),
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct SelfType {
+    pub reference: bool,
+    pub mutability: bool,
 }

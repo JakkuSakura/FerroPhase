@@ -1,4 +1,5 @@
-use crate::tree::{Ident, ImplTraits, TypeExpr};
+use crate::tree::{Ident, TypeExpr};
+use crate::value::FunctionParam;
 use common::*;
 
 /// TypeValue is a solid type value
@@ -11,6 +12,9 @@ pub enum TypeValue {
     ImplTraits(ImplTraits),
     Tuple(TupleType),
     Vec(VecType),
+    Any(AnyType),
+    Nothing(NothingType),
+    Type(TypeType),
     Expr(Box<TypeExpr>),
 }
 impl TypeValue {
@@ -54,7 +58,6 @@ pub enum PrimitiveType {
     Unit,
     Char,
     String,
-    Type,
     List,
 }
 
@@ -67,9 +70,6 @@ impl PrimitiveType {
     }
     pub fn bool() -> PrimitiveType {
         PrimitiveType::Bool
-    }
-    pub fn ty() -> PrimitiveType {
-        PrimitiveType::Type
     }
 }
 
@@ -100,5 +100,35 @@ pub struct UnnamedStructType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionType {
     pub params: Vec<TypeValue>,
+    pub generics_params: Vec<FunctionParam>,
     pub ret: Box<TypeValue>,
 }
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ImplTrait {
+    pub name: Ident,
+}
+
+impl ImplTrait {
+    pub fn new(name: Ident) -> Self {
+        Self { name }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct ImplTraits {
+    pub traits: Vec<ImplTrait>,
+}
+
+impl ImplTraits {
+    pub fn new(traits: Vec<ImplTrait>) -> Self {
+        Self { traits }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnyType;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NothingType;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeType;

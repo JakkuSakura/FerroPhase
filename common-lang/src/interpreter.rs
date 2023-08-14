@@ -20,18 +20,17 @@ impl Interpreter {
         }
     }
     pub fn interpret_module(&self, node: &Module, ctx: &ExecutionContext) -> Result<Expr> {
-        node.items.iter().try_for_each(|x| {
-            match x {
-                Item::Def(x) => match &x.value {
-                    DefValue::Function(n) => {
-                        return self.register_decl_fun(&n, ctx).map(|_| ());
-                    }
-                    _ => {}
-                },
+        node.items.iter().for_each(|x| match x {
+            Item::Def(x) => match &x.value {
+                DefValue::Function(n) => {
+                    debug!("Inserting function {} into context", x.name);
+
+                    ctx.insert_func_decl(&x.name, n.clone());
+                }
                 _ => {}
-            }
-            return Ok(());
-        })?;
+            },
+            _ => {}
+        });
         let result: Vec<_> = node
             .items
             .iter()
@@ -39,17 +38,13 @@ impl Interpreter {
             .try_collect()?;
         Ok(result.into_iter().next().unwrap_or(Expr::unit()))
     }
-    pub fn register_decl_fun(&self, node: &FuncDecl, ctx: &ExecutionContext) -> Result<()> {
-        ctx.insert_func_decl(node.name.clone().into(), node.clone());
-        Ok(())
-    }
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Expr> {
-        info!(
+        debug!(
             "Will execute call {}",
             self.serializer.serialize_invoke(&node)?
         );
         let fun = self.interpret_expr(&node.fun, ctx)?;
-        info!(
+        debug!(
             "Will call function {}",
             self.serializer.serialize_expr(&fun)?
         );
@@ -74,26 +69,29 @@ impl Interpreter {
                 debug!("Invoked {} with {} => {}", name, args_, ret_);
                 return Ok(ret);
             }
-            Expr::BuiltinFn(f) => {
-                let args_ = self.serializer.serialize_exprs(&args)?;
 
-                debug!("Invoking {} with {}", f.name, args_);
-                let ret = f.call(&args, ctx)?;
-                let ret_ = self.serializer.serialize_expr(&ret)?;
-
-                debug!("Invoked {} with {} => {}", f.name, args_, ret_);
-                return Ok(ret);
-            }
             Expr::Select(s) => {
                 // FIXME this is hack for rust
                 if s.field.as_str() == "into" {
                     return Ok(*s.obj);
                 }
+                bail!("Failed to interpret {:?}", node);
             }
-            _ => {}
-        }
+            Expr::Any(any) => {
+                if let Some(f) = any.downcast_ref::<BuiltinFn>() {
+                    let args_ = self.serializer.serialize_exprs(&args)?;
 
-        bail!("Failed to interpret {:?}", node)
+                    debug!("Invoking {} with {}", f.name, args_);
+                    let ret = f.call(&args, ctx)?;
+                    let ret_ = self.serializer.serialize_expr(&ret)?;
+
+                    debug!("Invoked {} with {} => {}", f.name, args_, ret_);
+                    return Ok(ret);
+                }
+                bail!("Failed to interpret {:?}", node);
+            }
+            _ => bail!("Failed to interpret {:?}", node),
+        }
     }
     pub fn interpret_import(&self, _node: &Import, _ctx: &ExecutionContext) -> Result<()> {
         Ok(())
@@ -142,15 +140,15 @@ impl Interpreter {
     }
     pub fn interpret_ident(&self, ident: &Ident, ctx: &ExecutionContext) -> Result<Expr> {
         return match ident.as_str() {
-            "+" => Ok(Expr::BuiltinFn(builtin_add())),
-            "-" => Ok(Expr::BuiltinFn(builtin_sub())),
-            "*" => Ok(Expr::BuiltinFn(builtin_mul())),
-            ">" => Ok(Expr::BuiltinFn(builtin_gt())),
-            ">=" => Ok(Expr::BuiltinFn(builtin_gte())),
-            "==" => Ok(Expr::BuiltinFn(builtin_eq())),
-            "<=" => Ok(Expr::BuiltinFn(builtin_lte())),
-            "<" => Ok(Expr::BuiltinFn(builtin_lt())),
-            "print" => Ok(Expr::BuiltinFn(builtin_print(self.serializer.clone()))),
+            "+" => Ok(Expr::any(builtin_add())),
+            "-" => Ok(Expr::any(builtin_sub())),
+            "*" => Ok(Expr::any(builtin_mul())),
+            ">" => Ok(Expr::any(builtin_gt())),
+            ">=" => Ok(Expr::any(builtin_ge())),
+            "==" => Ok(Expr::any(builtin_eq())),
+            "<=" => Ok(Expr::any(builtin_le())),
+            "<" => Ok(Expr::any(builtin_lt())),
+            "print" => Ok(Expr::any(builtin_print(self.serializer.clone()))),
             "true" => Ok(Expr::value(Value::bool(true))),
             "false" => Ok(Expr::value(Value::bool(false))),
             _ => ctx
@@ -165,14 +163,37 @@ impl Interpreter {
                 .with_context(|| format!("could not find {:?} in context", ident.name)),
         };
     }
-    pub fn interpret_def(&self, n: &Define, ctx: &ExecutionContext) -> Result<()> {
-        let decl = &n.value;
-        match decl {
+    pub fn interpret_bin_op_kind(&self, op: BinOpKind, _ctx: &ExecutionContext) -> Result<Expr> {
+        match op {
+            BinOpKind::Add => Ok(Expr::any(builtin_add())),
+            BinOpKind::Sub => Ok(Expr::any(builtin_sub())),
+            BinOpKind::Mul => Ok(Expr::any(builtin_mul())),
+            // BinOpKind::Div => Ok(Expr::any(builtin_div())),
+            // BinOpKind::Mod => Ok(Expr::any(builtin_mod())),
+            BinOpKind::Gt => Ok(Expr::any(builtin_gt())),
+            BinOpKind::Lt => Ok(Expr::any(builtin_lt())),
+            BinOpKind::Ge => Ok(Expr::any(builtin_ge())),
+            BinOpKind::Le => Ok(Expr::any(builtin_le())),
+            BinOpKind::Eq => Ok(Expr::any(builtin_eq())),
+            BinOpKind::Ne => Ok(Expr::any(builtin_ne())),
+            // BinOpKind::LogicalOr => {}
+            // BinOpKind::LogicalAnd => {}
+            // BinOpKind::BitOr => {}
+            // BinOpKind::BitAnd => {}
+            // BinOpKind::BitXor => {}
+            // BinOpKind::Any(_) => {}
+            _ => bail!("Could not process {:?}", op),
+        }
+    }
+    pub fn interpret_def(&self, def: &Define, ctx: &ExecutionContext) -> Result<()> {
+        match &def.value {
             DefValue::Function(n) => {
-                return if n.name == Ident::new("main") {
+                return if def.name == Ident::new("main") {
                     self.interpret_block(&n.body, ctx).map(|_| ())
                 } else {
-                    self.register_decl_fun(n, ctx)
+                    let name = &def.name;
+                    ctx.insert_func_decl(name, n.clone());
+                    Ok(())
                 };
             }
             DefValue::Type(_) => {}
@@ -180,7 +201,7 @@ impl Interpreter {
             DefValue::Variable(_) => {}
         }
 
-        bail!("Could not process {:?}", n)
+        bail!("Could not process {:?}", def)
     }
     pub fn interpret_args(&self, node: &[Expr], ctx: &ExecutionContext) -> Result<Vec<Expr>> {
         let args: Vec<_> = node
@@ -241,7 +262,7 @@ impl Interpreter {
             .params
             .iter()
             .map(|x| {
-                Ok::<_, Error>(FunctionValueParam {
+                Ok::<_, Error>(FunctionParam {
                     name: x.name.clone(),
                     ty: self.interpret_type(&x.ty, ctx)?,
                 })
@@ -249,7 +270,9 @@ impl Interpreter {
             .try_collect()?;
 
         Ok(FunctionValue {
+            name: node.name.clone(),
             params,
+            generics_params: node.generics_params.clone(),
             ret: self.interpret_type(&node.ret, ctx)?,
             body: node.body.clone(),
         })
@@ -270,11 +293,15 @@ impl Interpreter {
             Value::Expr(n) => self.interpret_expr(n, ctx).map(Box::new).map(Value::Expr),
         }
     }
-    pub fn interpret_expr(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Expr> {
         debug!("Interpreting {}", self.serializer.serialize_expr(&node)?);
         match node {
             Expr::Ident(n) => return self.interpret_ident(n, ctx),
-            Expr::Path(_) => {}
+            Expr::Path(n) => {
+                return ctx
+                    .get_expr(n)
+                    .with_context(|| format!("could not find {:?} in context", n))
+            }
             Expr::Value(n) => return Ok(Expr::value(self.interpret_value(n, ctx)?.into())),
             Expr::Block(n) => {
                 return self
@@ -287,10 +314,26 @@ impl Interpreter {
             Expr::Invoke(invoke) => {
                 return self.interpret_invoke(invoke, ctx);
             }
+            Expr::Any(_) => {
+                return Ok(node.clone());
+            }
+            Expr::BinOpKind(bin_op) => {
+                return self.interpret_bin_op_kind(bin_op.clone(), ctx);
+            }
             _ => {}
         }
 
         bail!("Failed to interpret {:?}", node)
+    }
+    pub fn interpret_expr(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Expr> {
+        debug!("Interpreting {}", self.serializer.serialize_expr(&node)?);
+        let result = self.interpret_expr_inner(node, ctx);
+        debug!(
+            "Interpreted {} => {:?}",
+            self.serializer.serialize_expr(&node)?,
+            result
+        );
+        result
     }
     pub fn interpret_item(&self, node: &Item, ctx: &ExecutionContext) -> Result<Expr> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
@@ -298,6 +341,8 @@ impl Interpreter {
             Item::Module(n) => self.interpret_module(n, ctx),
             Item::Def(n) => self.interpret_def(n, ctx).map(|_| Expr::unit()),
             Item::Import(n) => self.interpret_import(n, ctx).map(|_| Expr::unit()),
+            Item::Expr(n) => self.interpret_expr(n, ctx),
+            Item::Any(n) => Ok(Expr::any(n.clone())),
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
