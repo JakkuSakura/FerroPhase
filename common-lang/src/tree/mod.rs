@@ -19,13 +19,13 @@ pub enum Tree {
 
 #[derive(Clone)]
 pub struct AnyBox {
-    pub debug: String,
+    pub debug: Rc<str>,
     pub value: Rc<dyn Any>,
 }
 impl AnyBox {
     pub fn new<T: Any + Debug>(t: T) -> Self {
         Self {
-            debug: format!("{:?}", t),
+            debug: Rc::from(format!("{:?}", t)),
             value: Rc::new(t),
         }
     }
@@ -48,7 +48,7 @@ impl<'de> Deserialize<'de> for AnyBox {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
         Ok(Self {
-            debug: name,
+            debug: name.into(),
             value: Rc::new(()),
         })
     }

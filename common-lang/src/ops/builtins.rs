@@ -1,6 +1,6 @@
 use crate::context::ExecutionContext;
 use crate::ops::BinOpKind;
-use crate::tree::{Expr, Ident};
+use crate::tree::Ident;
 use crate::value::*;
 use crate::Serializer;
 use common::*;
@@ -31,12 +31,12 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    f: Rc<dyn Fn(&[Expr], &ExecutionContext) -> Result<Expr>>,
+    f: Rc<dyn Fn(&[Value], &ExecutionContext) -> Result<Value>>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[Expr], &ExecutionContext) -> Result<Expr> + 'static,
+        f: impl Fn(&[Value], &ExecutionContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
@@ -45,14 +45,14 @@ impl BuiltinFn {
     }
     pub fn new_with_ident(
         name: Ident,
-        f: impl Fn(&[Expr], &ExecutionContext) -> Result<Expr> + 'static,
+        f: impl Fn(&[Value], &ExecutionContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
             f: Rc::new(f),
         }
     }
-    pub fn call(&self, args: &[Expr], ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn call(&self, args: &[Value], ctx: &ExecutionContext) -> Result<Value> {
         (self.f)(args, ctx)
     }
 }
@@ -89,8 +89,8 @@ pub fn operate_on_literals(
         let mut args_f64 = vec![];
         for arg in args {
             match arg {
-                Expr::Value(Value::Int(x)) => args_i64.push(x.value),
-                Expr::Value(Value::Decimal(x)) => args_f64.push(x.value),
+                Value::Int(x) => args_i64.push(x.value),
+                Value::Decimal(x) => args_f64.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
@@ -98,10 +98,10 @@ pub fn operate_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(Expr::value(Value::int(op_i64(&args_i64))));
+            return Ok(Value::int(op_i64(&args_i64)));
         }
         if !args_f64.is_empty() {
-            return Ok(Expr::value(Value::decimal(op_f64(&args_f64))));
+            return Ok(Value::decimal(op_f64(&args_f64)));
         }
         bail!("Does not support argument type {:?}", args)
     })
@@ -119,8 +119,8 @@ pub fn binary_comparison_on_literals(
         let mut args_f64 = vec![];
         for arg in args {
             match arg {
-                Expr::Value(Value::Int(x)) => args_i64.push(x.value),
-                Expr::Value(Value::Decimal(x)) => args_f64.push(x.value),
+                Value::Int(x) => args_i64.push(x.value),
+                Value::Decimal(x) => args_f64.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
@@ -128,10 +128,10 @@ pub fn binary_comparison_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(Expr::value(Value::bool(op_i64(args_i64[0], args_i64[1]))));
+            return Ok(Value::bool(op_i64(args_i64[0], args_i64[1])));
         }
         if !args_f64.is_empty() {
-            return Ok(Expr::value(Value::bool(op_f64(args_f64[0], args_f64[1]))));
+            return Ok(Value::bool(op_f64(args_f64[0], args_f64[1])));
         }
 
         bail!("Does not support argument type {:?}", args)
@@ -194,9 +194,9 @@ pub fn builtin_print(se: Rc<dyn Serializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("print".into(), move |args, ctx| {
         let formatted: Vec<_> = args
             .into_iter()
-            .map(|x| se.serialize_expr(x))
+            .map(|x| se.serialize_value(x))
             .try_collect()?;
         ctx.root().print_str(formatted.join(" "));
-        Ok(Expr::unit())
+        Ok(Value::unit())
     })
 }
