@@ -125,19 +125,25 @@ impl RustPrinter {
             #fun::<#(#args), *>
         ))
     }
-    pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
-        let stmts: Vec<_> = n.stmts.iter().map(|x| self.print_item(x)).try_collect()?;
-        let q = if n.last_value {
-            quote!({
-                #(#stmts);*
-            })
-        } else {
-            quote!({
-                #(#stmts;)*
-            })
-        };
-        return Ok(q);
+    pub fn print_stmts(&self, stmts: &[Expr]) -> Result<TokenStream> {
+        let stmts: Vec<_> = stmts.iter().map(|x| self.print_stmt(x)).try_collect()?;
+        Ok(quote!(#(#stmts);*))
     }
+    pub fn print_items_chunk(&self, items: &[Item]) -> Result<TokenStream> {
+        let mut stmts = vec![];
+        for item in items {
+            let item = self.print_item(item)?;
+            stmts.push(item);
+        }
+        Ok(quote!(#(#stmts) *))
+    }
+    pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
+        let chunk = self.print_items_chunk(&n.stmts)?;
+        Ok(quote!({
+            #chunk
+        }))
+    }
+
     pub fn print_cond(&self, cond: &Cond) -> Result<TokenStream> {
         let mut ts = vec![];
         if cond.if_style {
@@ -145,7 +151,7 @@ impl RustPrinter {
                 let node = &c.cond;
                 let co = self.print_expr(node)?;
                 let node = &c.body;
-                let ex = self.print_expr(node)?;
+                let ex = self.print_expr_optimized(node)?;
                 if i == 0 {
                     ts.push(quote!(
                         if #co {
@@ -172,7 +178,7 @@ impl RustPrinter {
                 let node = &c.cond;
                 let co = self.print_expr(node)?;
                 let node = &c.body;
-                let ex = self.print_expr(node)?;
+                let ex = self.print_expr_optimized(node)?;
                 ts.push(quote!(
                     if #co => { #ex }
                 ))
@@ -198,7 +204,7 @@ impl RustPrinter {
     ) -> Result<TokenStream> {
         let name = self.print_ident(&name);
         let ret_type = &func.ret;
-        let ret = self.print_type_value(ret_type)?;
+        let ret = self.print_return_type(ret_type)?;
         let param_names: Vec<_> = func
             .params
             .iter()
@@ -209,7 +215,7 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_type_value(&x.ty))
             .try_collect()?;
-        let stmts = self.print_block(&func.body)?;
+        let stmts = self.print_expr_optimized(&func.body)?;
         let gg;
         if !func.generics_params.is_empty() {
             let gt: Vec<_> = func
@@ -228,9 +234,9 @@ impl RustPrinter {
         }
         let vis = self.print_vis(vis);
         return Ok(quote!(
-            #vis fn #name #gg(#(#param_names: #param_types), *) -> #ret
+            #vis fn #name #gg(#(#param_names: #param_types), *) #ret {
                 #stmts
-
+            }
         ));
     }
     pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
@@ -291,6 +297,13 @@ impl RustPrinter {
         let ty = self.print_type_value(&param.ty)?;
         Ok(quote!(#name: #ty))
     }
+    pub fn print_return_type(&self, node: &TypeValue) -> Result<TokenStream> {
+        if matches!(node, TypeValue::Unit(_)) {
+            return Ok(quote!());
+        }
+        let ty = self.print_type_value(&node)?;
+        Ok(quote!(-> #ty))
+    }
     pub fn print_func_value(&self, fun: &FunctionValue) -> Result<TokenStream> {
         let args: Vec<_> = fun
             .params
@@ -298,9 +311,9 @@ impl RustPrinter {
             .map(|x| self.print_func_type_param(x))
             .try_collect()?;
         let node = &fun.ret;
-        let ret = self.print_type_value(node)?;
+        let ret = self.print_return_type(node)?;
         Ok(quote!(
-            fn(#(#args), *) -> #ret
+            fn(#(#args), *) #ret
         ))
     }
     pub fn print_func_type(&self, fun: &FunctionType) -> Result<TokenStream> {
@@ -310,9 +323,9 @@ impl RustPrinter {
             .map(|x| self.print_type_value(x))
             .try_collect()?;
         let node = &fun.ret;
-        let ret = self.print_type_value(node)?;
+        let ret = self.print_return_type(node)?;
         Ok(quote!(
-            fn(#(#args), *) -> #ret
+            fn(#(#args), *) #ret
         ))
     }
     pub fn print_select(&self, select: &Select) -> Result<TokenStream> {
@@ -432,6 +445,18 @@ impl RustPrinter {
             _ => bail!("Not supported {:?}", t),
         }
     }
+    pub fn print_any(&self, n: &AnyBox) -> Result<TokenStream> {
+        if let Some(n) = n.downcast_ref::<RawExprMacro>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = n.downcast_ref::<RawExpr>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(f) = n.downcast_ref::<BuiltinFn>() {
+            return self.print_builtin_fn(f);
+        }
+        bail!("Not supported {:?}", n)
+    }
 
     pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
         match v {
@@ -445,6 +470,7 @@ impl RustPrinter {
             Value::Unit(u) => self.print_unit(u),
             Value::Type(t) => self.print_type(t),
             Value::Struct(s) => self.print_struct_value(s),
+            Value::Any(n) => self.print_any(n),
             _ => bail!("Not supported {:?}", v),
         }
     }
@@ -463,7 +489,6 @@ impl RustPrinter {
             PrimitiveType::Bool => Ok(quote!(bool)),
             PrimitiveType::String => Ok(quote!(String)),
             PrimitiveType::Char => Ok(quote!(char)),
-            PrimitiveType::Unit => Ok(quote!(())),
             PrimitiveType::List => Ok(quote!(Vec)),
             _ => bail!("Not supported {:?}", ty),
         }
@@ -483,6 +508,10 @@ impl RustPrinter {
             TypeValue::NamedStruct(s) => self.print_struct_type(s),
             TypeValue::Expr(e) => self.print_type_expr(e),
             TypeValue::ImplTraits(t) => self.print_impl_traits(t),
+            TypeValue::Unit(_) => Ok(quote!(())),
+            TypeValue::Any(_) => Ok(quote!(Box<dyn Any>)),
+            TypeValue::Nothing(_) => Ok(quote!(!)),
+
             _ => bail!("Not supported {:?}", v),
         }
     }
@@ -505,29 +534,24 @@ impl RustPrinter {
         let expr = self.print_expr(node)?;
         Ok(quote!(#expr;))
     }
+    pub fn print_expr_optimized(&self, node: &Expr) -> Result<TokenStream> {
+        match node {
+            Expr::Cond(n) => self.print_cond(n),
+            Expr::Block(n) => self.print_items_chunk(&n.stmts),
+            Expr::Value(Value::Unit(_)) => Ok(quote!()),
+            _ => self.print_expr(node),
+        }
+    }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
             Expr::Ident(n) => Ok(self.print_ident(n)),
             Expr::Path(n) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
-            Expr::Any(n) => {
-                if let Some(n) = n.downcast_ref::<RawExprMacro>() {
-                    return Ok(n.raw.to_token_stream());
-                }
-                if let Some(n) = n.downcast_ref::<RawExpr>() {
-                    return Ok(n.raw.to_token_stream());
-                }
-                if let Some(f) = n.downcast_ref::<BuiltinFn>() {
-                    return self.print_builtin_fn(f);
-                }
-
-                bail!("Unable to serialize {:?}", node)
-            }
+            Expr::Any(n) => self.print_any(n),
             Expr::BinOpKind(n) => Ok(self.print_bin_op_kind(n)),
             Expr::Cond(n) => self.print_cond(n),
             Expr::Block(n) => self.print_block(n),
-            Expr::Stmt(n) => self.print_stmt(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -537,6 +561,7 @@ impl RustPrinter {
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
             Item::Expr(n) => self.print_expr(n),
+            Item::Stmt(n) => self.print_stmt(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }

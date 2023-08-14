@@ -1,7 +1,7 @@
 use common::*;
-use common_lang::ast::Expr;
 use common_lang::interpreter::ExecutionContext;
 use common_lang::specializer::Specializer;
+use common_lang::tree::Expr;
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;

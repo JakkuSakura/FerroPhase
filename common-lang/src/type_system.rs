@@ -59,7 +59,7 @@ impl TypeSystem {
             }
             Value::Unit(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::Unit)),
+                    matches!(ty, TypeValue::Unit(_)),
                     "Expected unit, got {:?}",
                     lit
                 )
@@ -75,6 +75,7 @@ impl TypeSystem {
             Value::Function(_) => {}
             Value::Tuple(_) => {}
             Value::Expr(_) => {}
+            Value::Any(_) => {}
         }
         Ok(())
     }
@@ -210,7 +211,7 @@ impl TypeSystem {
         match callee {
             Expr::Ident(ident) => match ident.as_str() {
                 "+" | "-" | "*" => {
-                    return self.infer_type_expr(params.first().context("No param")?, ctx)
+                    return self.infer_expr(params.first().context("No param")?, ctx)
                 }
                 "print" => return Ok(TypeValue::unit()),
                 _ => {}
@@ -218,7 +219,7 @@ impl TypeSystem {
             _ => {}
         }
 
-        let callee = self.infer_type_expr(callee, ctx)?;
+        let callee = self.infer_expr(callee, ctx)?;
         match callee {
             TypeValue::Function(f) => return Ok(*f.ret),
             _ => {}
@@ -226,7 +227,7 @@ impl TypeSystem {
 
         bail!("Could not infer type call {:?}", callee)
     }
-    pub fn infer_type_ident(&self, ident: &Ident, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn infer_ident(&self, ident: &Ident, ctx: &ExecutionContext) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(TypeValue::Function(FunctionType {
@@ -253,9 +254,9 @@ impl TypeSystem {
         let expr = ctx
             .get_expr(ident)
             .with_context(|| format!("Could not find {:?} in context", ident))?;
-        self.infer_type_expr(&expr, ctx)
+        self.infer_expr(&expr, ctx)
     }
-    pub fn infer_type_expr(&self, expr: &Expr, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn infer_expr(&self, expr: &Expr, ctx: &ExecutionContext) -> Result<TypeValue> {
         match expr {
             Expr::Ident(n) => {
                 let ty = ctx
@@ -271,7 +272,7 @@ impl TypeSystem {
                         DecimalType::F64,
                     )))
                 }
-                Value::Unit(_) => return Ok(TypeValue::Primitive(PrimitiveType::Unit)),
+                Value::Unit(_) => return Ok(TypeValue::unit()),
                 Value::Bool(_) => return Ok(TypeValue::Primitive(PrimitiveType::Bool)),
                 Value::String(_) => return Ok(TypeValue::Primitive(PrimitiveType::String)),
                 Value::Type(_) => return Ok(TypeValue::Type(TypeType)),
@@ -288,7 +289,7 @@ impl TypeSystem {
         )
     }
 
-    pub fn infer_type_function(
+    pub fn infer_function(
         &self,
         func: &FunctionValue,
         _ctx: &ExecutionContext,

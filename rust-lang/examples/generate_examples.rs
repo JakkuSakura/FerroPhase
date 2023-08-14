@@ -14,27 +14,29 @@ use std::rc::Rc;
 fn main() -> Result<()> {
     setup_logs(LogLevel::Trace)?;
 
-    let mut base = std::path::Path::new(file!()).to_path_buf();
-    base.pop();
-    base.push("../examples");
-    let dir = std::fs::read_dir(&base)?;
-    for file in dir {
-        let file = file?;
-        let file = file.file_name().as_os_str().to_string_lossy().to_string();
-        if !file.ends_with(".rs") || file.contains("_gen.rs") {
+    let base = std::path::Path::new("examples");
+    let mut dirs: Vec<_> = std::fs::read_dir(&base)?
+        .into_iter()
+        .map(|x| Ok::<_, Error>(x?.path()))
+        .try_collect()?;
+    dirs.sort();
+
+    for file_in in dirs {
+        let file_str = file_in.file_name().unwrap().to_string_lossy().to_string();
+        if !file_str.contains("main_") || file_str.contains("_gen.rs") {
             continue;
         }
-        let mut file_in = base.clone();
-        file_in.push(&file);
 
-        let mut file_out = base.clone();
-        file_out.push(file.replace(".rs", "_gen.rs"));
-        info!("{:?} => {:?}", file_in, file_out);
+        let file_out = file_in.with_file_name(file_str.replace(".rs", "_gen.rs"));
+
+        info!("{} => {}", file_in.display(), file_out.display());
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
         let node = RustSerde.deserialize(&file_content)?;
         let ctx = ExecutionContext::new();
-        let node = Specializer::new(Rc::new(RustSerde)).specialize_tree(&node, &ctx)?;
+        let node = Specializer::new(Rc::new(RustSerde))
+            .specialize_tree(&node, &ctx)?
+            .context("Failed to specialize tree")?;
         let code = RustSerde.serialize_tree(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;
@@ -51,7 +53,7 @@ fn main() -> Result<()> {
         writeln!(
             &mut file_out,
             "// result: {}",
-            RustPrinter.print_expr(&intp_result)?
+            RustPrinter.print_value(&intp_result)?
         )?;
     }
     Ok(())

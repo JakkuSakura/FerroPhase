@@ -10,6 +10,7 @@ use tree::*;
 
 use crate::tree::Tree;
 
+use crate::value::Value;
 use std::rc::Rc;
 
 pub trait Serializer {
@@ -29,6 +30,17 @@ pub trait Serializer {
     fn serialize_item(&self, node: &Item) -> Result<String>;
     fn serialize_block(&self, node: &Block) -> Result<String>;
     fn serialize_module(&self, node: &Module) -> Result<String>;
+    fn serialize_value(&self, node: &Value) -> Result<String>;
+    fn serialize_values(&self, nodes: &[Value]) -> Result<String> {
+        let mut s = String::new();
+        for (i, node) in nodes.iter().enumerate() {
+            if i > 0 {
+                s.push_str(", ");
+            }
+            s.push_str(&self.serialize_value(node)?);
+        }
+        Ok(s)
+    }
 }
 
 pub trait Deserializer {
