@@ -1,4 +1,4 @@
-use crate::ops::{BuiltinFn, Invoke};
+use crate::ops::BuiltinFn;
 use crate::tree::*;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ pub enum Expr {
     Value(Value),
     Block(Block),
     Cond(Cond),
-    Invoke(InvokeExpr),
+    Invoke(Invoke),
     BuiltinFn(BuiltinFn),
     Select(Select),
     Reference(Reference),
@@ -27,8 +27,34 @@ impl Expr {
             _ => Expr::Value(v),
         }
     }
-    pub fn any<T: 'static>(any: T) -> Self {
+    pub fn any<T: Debug + 'static>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }
-pub type InvokeExpr = Invoke<Expr>;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invoke {
+    pub fun: Box<Expr>,
+    pub args: Vec<Expr>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+pub enum SelectType {
+    Unknown,
+    Field,
+    Method,
+    Function,
+    Const,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Select {
+    pub obj: Box<Expr>,
+    pub field: Ident,
+    pub select: SelectType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reference {
+    pub referee: Box<Expr>,
+    pub mutable: Option<bool>,
+}

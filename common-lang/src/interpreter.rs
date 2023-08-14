@@ -40,10 +40,10 @@ impl Interpreter {
         Ok(result.into_iter().next().unwrap_or(Expr::unit()))
     }
     pub fn register_decl_fun(&self, node: &FuncDecl, ctx: &ExecutionContext) -> Result<()> {
-        ctx.insert_func_decl(node.name.clone(), node.clone());
+        ctx.insert_func_decl(node.name.clone().into(), node.clone());
         Ok(())
     }
-    pub fn interpret_invoke(&self, node: &InvokeExpr, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Expr> {
         info!(
             "Will execute call {}",
             self.serializer.serialize_invoke(&node)?
@@ -65,7 +65,7 @@ impl Interpreter {
                         .with_context(|| format!("Couldn't find {} parameter of {:?}", i, f))?;
                     // TODO: type check here
 
-                    sub.insert_expr(param.name.clone(), arg);
+                    sub.insert_expr(param.name.clone().into(), arg);
                 }
                 let args_ = self.serializer.serialize_exprs(&args)?;
                 debug!("Invoking {} with {}", name, args_);
@@ -299,6 +299,11 @@ impl Interpreter {
             Item::Def(n) => self.interpret_def(n, ctx).map(|_| Expr::unit()),
             Item::Import(n) => self.interpret_import(n, ctx).map(|_| Expr::unit()),
             _ => bail!("Failed to interpret {:?}", node),
+        }
+    }
+    pub fn interpret_tree(&self, node: &Tree, ctx: &ExecutionContext) -> Result<Expr> {
+        match node {
+            Tree::Item(item) => self.interpret_item(item, ctx),
         }
     }
 }

@@ -8,7 +8,7 @@ pub enum TypeExpr {
     Ident(Ident),
     Path(Path),
     Op(TypeOp),
-    Invoke(InvokeExpr),
+    Invoke(Invoke),
     Value(TypeValue),
 }
 
@@ -24,13 +24,23 @@ impl TypeExpr {
     }
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct RequireTrait {
+pub struct ImplTrait {
     pub name: Ident,
+}
+impl ImplTrait {
+    pub fn new(name: Ident) -> Self {
+        Self { name }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct RequireTraits {
-    pub traits: Vec<RequireTrait>,
+pub struct ImplTraits {
+    pub traits: Vec<ImplTrait>,
+}
+impl ImplTraits {
+    pub fn new(traits: Vec<ImplTrait>) -> Self {
+        Self { traits }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

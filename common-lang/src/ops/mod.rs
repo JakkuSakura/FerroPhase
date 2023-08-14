@@ -30,9 +30,3 @@ pub struct ModOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Invoke<T> {
-    pub fun: Box<T>,
-    pub args: Vec<T>,
-}
