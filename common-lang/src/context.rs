@@ -1,4 +1,4 @@
-use crate::tree::{Expr, FuncDecl, Ident, Tree};
+use crate::tree::*;
 use crate::value::TypeValue;
 use crate::Serializer;
 use common::*;
@@ -10,11 +10,11 @@ use std::rc::Rc;
 #[derive(Default)]
 pub struct InterpreterContextInner {
     parent: Option<ExecutionContext>,
-    trees: HashMap<Ident, Tree>,
-    func_decls: HashMap<Ident, FuncDecl>,
-    exprs: HashMap<Ident, Expr>,
-    types: HashMap<Ident, TypeValue>,
-    is_specialized: HashMap<Ident, bool>,
+    trees: HashMap<Path, Tree>,
+    func_decls: HashMap<Path, FuncDecl>,
+    exprs: HashMap<Path, Expr>,
+    types: HashMap<Path, TypeValue>,
+    is_specialized: HashMap<Path, bool>,
     buffer: Vec<String>,
 }
 
@@ -37,61 +37,68 @@ impl ExecutionContext {
             })),
         }
     }
-    pub fn insert_tree(&self, key: Ident, value: Tree) {
+    pub fn insert_tree(&self, key: Path, value: Tree) {
         self.inner.borrow_mut().trees.insert(key, value);
     }
-    pub fn insert_type(&self, key: Ident, value: TypeValue) {
+    pub fn insert_type(&self, key: Path, value: TypeValue) {
         self.inner.borrow_mut().types.insert(key, value);
     }
-    pub fn insert_func_decl(&self, key: Ident, value: FuncDecl) {
+    pub fn insert_func_decl(&self, key: Path, value: FuncDecl) {
         self.inner.borrow_mut().func_decls.insert(key, value);
     }
-    pub fn insert_expr(&self, key: Ident, value: Expr) {
+    pub fn insert_expr(&self, key: Path, value: Expr) {
         self.inner.borrow_mut().exprs.insert(key, value.into());
     }
     pub fn print_values(&self, s: impl Serializer) -> Result<()> {
         let inner = self.inner.borrow();
         for (k, v) in &inner.trees {
-            info!("{}: {}", k.as_str(), s.serialize_tree(v)?)
+            info!("{}: {}", k, s.serialize_tree(v)?)
         }
         Ok(())
     }
-    pub fn insert_specialized(&self, key: Ident, value: FuncDecl) {
+    pub fn insert_specialized(&self, key: Path, value: FuncDecl) {
         self.inner
             .borrow_mut()
             .func_decls
             .insert(key.clone(), value);
         self.inner.borrow_mut().is_specialized.insert(key, true);
     }
-    pub fn get_func_decl(&self, key: &Ident) -> Option<FuncDecl> {
+    pub fn get_func_decl(&self, key: impl Into<Path>) -> Option<FuncDecl> {
         let inner = self.inner.borrow();
+        let key = key.into();
         inner
             .func_decls
-            .get(key)
+            .get(&key)
             .cloned()
             .or_else(|| inner.parent.as_ref()?.get_func_decl(key))
     }
-    pub fn get_tree(&self, key: &Ident) -> Option<Tree> {
+    pub fn get_tree(&self, key: impl Into<Path>) -> Option<Tree> {
         let inner = self.inner.borrow();
+        let key = key.into();
+
         inner
             .trees
-            .get(key)
+            .get(&key)
             .cloned()
             .or_else(|| inner.parent.as_ref()?.get_tree(key))
     }
-    pub fn get_expr(&self, key: &Ident) -> Option<Expr> {
+    pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
         let inner = self.inner.borrow();
+        let key = key.into();
+
         inner
             .exprs
-            .get(key)
+            .get(&key)
             .cloned()
             .or_else(|| inner.parent.as_ref()?.get_expr(key))
     }
-    pub fn get_type(&self, key: &Ident) -> Option<TypeValue> {
+    pub fn get_type(&self, key: impl Into<Path>) -> Option<TypeValue> {
         let inner = self.inner.borrow();
+        let key = key.into();
+
         inner
             .types
-            .get(key)
+            .get(&key)
             .cloned()
             .or_else(|| inner.parent.as_ref()?.get_type(key))
     }
@@ -109,7 +116,7 @@ impl ExecutionContext {
     pub fn take_outputs(&self) -> Vec<String> {
         replace(&mut self.inner.borrow_mut().buffer, vec![])
     }
-    pub fn list_specialized(&self) -> Vec<Ident> {
+    pub fn list_specialized(&self) -> Vec<Path> {
         self.inner
             .borrow()
             .is_specialized

@@ -1,5 +1,7 @@
 use common::*;
-use common_lang::interpreter::{ExecutionContext, Interpreter};
+
+use common_lang::context::ExecutionContext;
+use common_lang::interpreter::Interpreter;
 use common_lang::specializer::Specializer;
 use common_lang::{Deserializer, Serializer};
 use rust_lang::printer::RustPrinter;
@@ -32,7 +34,7 @@ fn main() -> Result<()> {
         let file_content = std::fs::read_to_string(file_in)?;
         let node = RustSerde.deserialize(&file_content)?;
         let ctx = ExecutionContext::new();
-        let node = Specializer::new(Rc::new(RustSerde)).specialize_expr(&node, &ctx)?;
+        let node = Specializer::new(Rc::new(RustSerde)).specialize_tree(&node, &ctx)?;
         let code = RustSerde.serialize_tree(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;

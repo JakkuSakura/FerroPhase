@@ -73,7 +73,7 @@ impl Serializer for RustSerde {
         RustPrinter.print_expr(node).map(|x| x.to_string())
     }
 
-    fn serialize_invoke(&self, node: &InvokeExpr) -> Result<String> {
+    fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
         RustPrinter.print_invoke(node).map(|x| x.to_string())
     }
 
@@ -83,6 +83,10 @@ impl Serializer for RustSerde {
 
     fn serialize_block(&self, node: &Block) -> Result<String> {
         RustPrinter.print_block(node).map(|x| x.to_string())
+    }
+
+    fn serialize_module(&self, node: &Module) -> Result<String> {
+        RustPrinter.print_module(node).map(|x| x.to_string())
     }
 }
 impl Deserializer for RustSerde {

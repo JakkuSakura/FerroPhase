@@ -1,6 +1,7 @@
 use common::Result;
 use common::*;
 
+use crate::{RawExpr, RawExprMacro};
 use common_lang::ops::BuiltinFn;
 use common_lang::tree::*;
 use common_lang::value::*;
@@ -61,7 +62,28 @@ impl RustPrinter {
             }
         ))
     }
-
+    pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
+        let fun = self.print_expr(&invoke.fun)?;
+        let args: Vec<_> = invoke
+            .args
+            .iter()
+            .map(|x| self.print_expr(x))
+            .try_collect()?;
+        Ok(quote!(
+            #fun(#(#args), *)
+        ))
+    }
+    pub fn print_invoke_type(&self, invoke: &Invoke) -> Result<TokenStream> {
+        let fun = self.print_expr(&invoke.fun)?;
+        let args: Vec<_> = invoke
+            .args
+            .iter()
+            .map(|x| self.print_expr(x))
+            .try_collect()?;
+        Ok(quote!(
+            #fun::<#(#args), *>
+        ))
+    }
     pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
         let stmts: Vec<_> = n.stmts.iter().map(|x| self.print_item(x)).try_collect()?;
         let q = if n.last_value {
@@ -165,7 +187,7 @@ impl RustPrinter {
 
         ));
     }
-    pub fn print_invoke(&self, node: &InvokeExpr) -> Result<TokenStream> {
+    pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
         let fun = self.print_expr(&node.fun)?;
         let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
         match &*node.fun {
@@ -291,6 +313,7 @@ impl RustPrinter {
     pub fn print_import(&self, node: &Import) -> Result<TokenStream> {
         let vis = self.print_vis(node.visibility);
         let segments = node
+            .path
             .segments
             .iter()
             .map(|x| self.print_ident(x))
@@ -379,21 +402,40 @@ impl RustPrinter {
     }
     pub fn print_primitive_type(&self, ty: PrimitiveType) -> Result<TokenStream> {
         match ty {
-            PrimitiveType::I64 => Ok(quote!(i64)),
-            PrimitiveType::F64 => Ok(quote!(f64)),
+            PrimitiveType::Int(IntType::I64) => Ok(quote!(i64)),
+            PrimitiveType::Int(IntType::U64) => Ok(quote!(u64)),
+            PrimitiveType::Int(IntType::I32) => Ok(quote!(i32)),
+            PrimitiveType::Int(IntType::U32) => Ok(quote!(u32)),
+            PrimitiveType::Int(IntType::I16) => Ok(quote!(i16)),
+            PrimitiveType::Int(IntType::U16) => Ok(quote!(u16)),
+            PrimitiveType::Int(IntType::I8) => Ok(quote!(i8)),
+            PrimitiveType::Int(IntType::U8) => Ok(quote!(u8)),
+            PrimitiveType::Decimal(DecimalType::F64) => Ok(quote!(f64)),
+            PrimitiveType::Decimal(DecimalType::F32) => Ok(quote!(f32)),
             PrimitiveType::Bool => Ok(quote!(bool)),
             PrimitiveType::String => Ok(quote!(String)),
             PrimitiveType::Char => Ok(quote!(char)),
             PrimitiveType::Unit => Ok(quote!(())),
             PrimitiveType::List => Ok(quote!(Vec)),
             PrimitiveType::Type => Ok(quote!(Type)),
+            _ => bail!("Not supported {:?}", ty),
         }
+    }
+    pub fn print_impl_traits(&self, traits: &ImplTraits) -> Result<TokenStream> {
+        let traits: Vec<_> = traits
+            .traits
+            .iter()
+            .map(|x| self.print_ident(&x.name))
+            .collect();
+        Ok(quote!(impl #(#traits)+ *))
     }
     pub fn print_type_value(&self, v: &TypeValue) -> Result<TokenStream> {
         match v {
             TypeValue::Function(f) => self.print_func_type(f),
             TypeValue::Primitive(p) => self.print_primitive_type(*p),
-            TypeValue::NamedStruct(s) => self.print_struct_type(&s),
+            TypeValue::NamedStruct(s) => self.print_struct_type(s),
+            TypeValue::Expr(e) => self.print_type_expr(e),
+            TypeValue::ImplTraits(t) => self.print_impl_traits(t),
             _ => bail!("Not supported {:?}", v),
         }
     }
@@ -408,6 +450,7 @@ impl RustPrinter {
             TypeExpr::Ident(n) => Ok(self.print_ident(n)),
             TypeExpr::Path(n) => Ok(self.print_path(n)),
             TypeExpr::Value(n) => self.print_type_value(n),
+            TypeExpr::Invoke(n) => self.print_invoke_type(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -416,6 +459,16 @@ impl RustPrinter {
             Expr::Ident(n) => Ok(self.print_ident(n)),
             Expr::Path(n) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
+            Expr::Invoke(n) => self.print_invoke_expr(n),
+            Expr::Any(n) => {
+                if let Some(n) = n.downcast_ref::<RawExprMacro>() {
+                    return Ok(n.raw.to_token_stream());
+                }
+                if let Some(n) = n.downcast_ref::<RawExpr>() {
+                    return Ok(n.raw.to_token_stream());
+                }
+                bail!("Unable to serialize {:?}", node)
+            }
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -424,6 +477,7 @@ impl RustPrinter {
             Item::Def(n) => self.print_def(n),
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
+            Item::Expr(n) => self.print_expr(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }

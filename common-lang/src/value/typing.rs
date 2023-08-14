@@ -1,4 +1,4 @@
-use crate::tree::{Ident, RequireTraits, TypeExpr};
+use crate::tree::{Ident, ImplTraits, TypeExpr};
 use common::*;
 
 /// TypeValue is a solid type value
@@ -8,7 +8,7 @@ pub enum TypeValue {
     NamedStruct(NamedStructType),
     UnnamedStruct(UnnamedStructType),
     Function(FunctionType),
-    RequireTraits(RequireTraits),
+    ImplTraits(ImplTraits),
     Tuple(TupleType),
     Vec(VecType),
     Expr(Box<TypeExpr>),
@@ -28,9 +28,28 @@ impl TypeValue {
     }
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-pub enum PrimitiveType {
+pub enum IntType {
     I64,
+    U64,
+    I32,
+    U32,
+    I16,
+    U16,
+    I8,
+    U8,
+    BigInt,
+}
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum DecimalType {
     F64,
+    F32,
+    BigDecimal,
+    Decimal { precision: u32, scale: u32 },
+}
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub enum PrimitiveType {
+    Int(IntType),
+    Decimal(DecimalType),
     Bool,
     Unit,
     Char,
@@ -41,10 +60,10 @@ pub enum PrimitiveType {
 
 impl PrimitiveType {
     pub fn i64() -> PrimitiveType {
-        PrimitiveType::I64
+        PrimitiveType::Int(IntType::I64)
     }
     pub fn f64() -> PrimitiveType {
-        PrimitiveType::F64
+        PrimitiveType::Decimal(DecimalType::F64)
     }
     pub fn bool() -> PrimitiveType {
         PrimitiveType::Bool

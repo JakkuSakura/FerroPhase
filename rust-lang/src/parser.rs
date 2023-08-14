@@ -5,9 +5,23 @@ use common_lang::value::*;
 use quote::ToTokens;
 use syn::{BinOp, FnArg, GenericParam, Lit, Pat, ReturnType, TypeParamBound};
 
-fn parse_ident(i: syn::Ident) -> Ident {
+pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
 }
+pub fn parse_path(p: syn::Path) -> Result<Path> {
+    Ok(Path {
+        segments: p
+            .segments
+            .into_iter()
+            .map(|x| {
+                let ident = parse_ident(x.ident);
+                ensure!(x.arguments.is_none(), "Does not support path arguments");
+                Ok(ident)
+            })
+            .try_collect()?,
+    })
+}
+
 fn parse_type(t: syn::Type) -> Result<TypeExpr> {
     let t = match t {
         syn::Type::BareFn(f) => TypeExpr::value(TypeValue::Function(FunctionType {
@@ -25,29 +39,42 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
             let s = p.path.to_token_stream().to_string();
 
             match s.as_str() {
-                "i64" | "i32" | "u64" | "u32" | "f64" | "f32" => TypeExpr::Ident(Ident::new(s)),
-                _ if p.path.segments.len() == 1 => {
-                    let first_segment = p.path.segments.first().unwrap();
-                    match &first_segment.arguments {
-                        syn::PathArguments::None => {
-                            let ident = parse_ident(first_segment.ident.clone());
-                            TypeExpr::Ident(ident)
-                        }
-                        // _ => TypeExpr::AnyTypeExpr(RawType { raw: p }.into()),
-                        _ => bail!("Does not support path arguments {:?}", p),
-                    }
-                }
-                _ => bail!("Type not supported: {}", s),
+                "i64" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I64))),
+                "i32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I32))),
+                "i16" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I16))),
+                "i8" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I8))),
+                "u64" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U64))),
+                "u32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U32))),
+                "u16" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U16))),
+                "u8" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U8))),
+                "f64" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Decimal(
+                    DecimalType::F64,
+                ))),
+                "f32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Decimal(
+                    DecimalType::F32,
+                ))),
+                _ => TypeExpr::Path(parse_path(p.path)?),
             }
         }
-        // syn::Type::ImplTrait(im) => TypeExpr::AnyTypeExpr(RawImplTrait { raw: im }.into()),
-        syn::Type::ImplTrait(im) => bail!("Does not support impl trait {:?}", im),
+        syn::Type::ImplTrait(im) => {
+            TypeExpr::value(TypeValue::ImplTraits(ImplTraits::new(parse_impl_trait(im))))
+        }
         syn::Type::Tuple(t) if t.elems.is_empty() => TypeExpr::unit().into(),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
 }
-
+fn parse_impl_trait(im: syn::TypeImplTrait) -> Vec<ImplTrait> {
+    im.bounds
+        .into_iter()
+        .map(|x| match x {
+            TypeParamBound::Trait(t) => ImplTrait {
+                name: parse_ident(t.path.segments.first().unwrap().ident.clone()),
+            },
+            _ => panic!("Does not support type bound {:?}", x),
+        })
+        .collect()
+}
 fn parse_input(i: FnArg) -> Result<FuncDeclParam> {
     Ok(match i {
         FnArg::Receiver(rev) => FuncDeclParam {
@@ -91,19 +118,6 @@ fn parse_type_param_bound(b: TypeParamBound) -> Result<Path> {
     }
 }
 
-fn parse_path(p: syn::Path) -> Result<Path> {
-    Ok(Path {
-        segments: p
-            .segments
-            .into_iter()
-            .map(|x| {
-                let ident = parse_ident(x.ident);
-                ensure!(x.arguments.is_none(), "Does not support path arguments");
-                Ok(ident)
-            })
-            .try_collect()?,
-    })
-}
 fn parse_fn(f: syn::ItemFn) -> Result<FuncDecl> {
     let name = parse_ident(f.sig.ident);
     let generics_params = f
@@ -134,17 +148,17 @@ fn parse_fn(f: syn::ItemFn) -> Result<FuncDecl> {
     })
 }
 
-fn parse_call(call: syn::ExprCall) -> Result<InvokeExpr> {
+fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
-    Ok(InvokeExpr {
+    Ok(Invoke {
         fun: fun.into(),
         args,
     })
 }
-fn parse_method_call(call: syn::ExprMethodCall) -> Result<InvokeExpr> {
-    Ok(InvokeExpr {
+fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
+    Ok(Invoke {
         fun: Expr::Select(Select {
             obj: parse_expr(*call.receiver)?.into(),
             field: parse_ident(call.method),
@@ -185,7 +199,7 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
         if_style: true,
     })
 }
-fn parse_binary(b: syn::ExprBinary) -> Result<InvokeExpr> {
+fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     let mut lhs = parse_expr(*b.left)?;
     let rhs = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
@@ -213,7 +227,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<InvokeExpr> {
             _ => {}
         }
     }
-    Ok(InvokeExpr {
+    Ok(Invoke {
         fun: Expr::Ident(op).into(),
         args: vec![lhs, rhs],
     })
@@ -387,7 +401,7 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
     }
     Ok(Import {
         visibility: parse_vis(u.vis),
-        segments,
+        path: Path::new(segments),
     })
 }
 pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
