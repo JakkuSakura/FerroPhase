@@ -25,9 +25,10 @@ pub trait Serializer {
         }
         Ok(s)
     }
-    fn serialize_invoke(&self, node: &InvokeExpr) -> Result<String>;
+    fn serialize_invoke(&self, node: &Invoke) -> Result<String>;
     fn serialize_item(&self, node: &Item) -> Result<String>;
     fn serialize_block(&self, node: &Block) -> Result<String>;
+    fn serialize_module(&self, node: &Module) -> Result<String>;
 }
 
 pub trait Deserializer {
