@@ -1,10 +1,13 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawUse};
 use common::*;
-use common_lang::ops::BinOpKind;
+use common_lang::ops::{AddOp, BinOpKind, SubOp};
 use common_lang::tree::*;
 use common_lang::value::*;
 use quote::ToTokens;
-use syn::{FnArg, GenericParam, Lit, Pat, ReturnType, TypeParamBound};
+use syn::parse::ParseStream;
+use syn::{
+    parse_quote, FieldsNamed, FnArg, GenericParam, Lit, Pat, ReturnType, Token, TypeParamBound,
+};
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -62,6 +65,8 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
             TypeExpr::value(TypeValue::ImplTraits(ImplTraits::new(parse_impl_trait(im))))
         }
         syn::Type::Tuple(t) if t.elems.is_empty() => TypeExpr::unit().into(),
+
+        syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => parse_custom_type_expr(m)?,
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -242,7 +247,7 @@ fn parse_tuple(t: syn::ExprTuple) -> Result<TupleValue> {
         .elems
         .into_iter()
         .map(parse_expr)
-        .map(|x| x.map(Box::new).map(Value::Expr))
+        .map(|x| x.map(Value::expr))
         .try_collect()?;
     Ok(TupleValue { values })
 }
@@ -255,7 +260,7 @@ fn parse_member(mem: syn::Member) -> Result<Ident> {
 fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
     Ok(FieldValue {
         name: parse_member(fv.member)?,
-        value: Value::Expr(parse_expr(fv.expr)?.into()),
+        value: Value::expr(parse_expr(fv.expr)?.into()),
     })
 }
 pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructValue> {
@@ -423,6 +428,116 @@ pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
             .try_collect()?,
     })
 }
+struct UnnamedStructTypeParser(UnnamedStructType);
+impl syn::parse::Parse for UnnamedStructTypeParser {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        input.parse::<Token![struct]>()?;
+
+        let fields: FieldsNamed = input.parse()?;
+
+        Ok(UnnamedStructTypeParser(UnnamedStructType {
+            fields: fields
+                .named
+                .into_iter()
+                .enumerate()
+                .map(|(i, f)| parse_struct_field(i, f))
+                .try_collect()
+                .map_err(|err| input.error(err))?,
+        }))
+    }
+}
+enum TypeValueParser {
+    UnnamedStruct(UnnamedStructType),
+    NamedStruct(NamedStructType),
+    Path(Path),
+    // Ident(Ident),
+}
+impl Into<TypeValue> for TypeValueParser {
+    fn into(self) -> TypeValue {
+        match self {
+            // TypeExprParser::Add(o) => TypeExpr::Op(TypeOp::Add(AddOp {
+            //     lhs: o.lhs.into(),
+            //     rhs: o.rhs.into(),
+            // })),
+            // TypeExprParser::Sub(o) => TypeExpr::Op(TypeOp::Sub(SubOp {
+            //     lhs: o.lhs.into(),
+            //     rhs: o.rhs.into(),
+            // })),
+            TypeValueParser::UnnamedStruct(s) => TypeValue::UnnamedStruct(s),
+            TypeValueParser::NamedStruct(s) => TypeValue::NamedStruct(s),
+            TypeValueParser::Path(p) => TypeValue::path(p),
+            // TypeValueParser::Ident(i) => TypeValue::ident(i),
+        }
+    }
+}
+impl syn::parse::Parse for TypeValueParser {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![struct]) {
+            if input.peek2(syn::Ident) {
+                let s: syn::ItemStruct = input.parse()?;
+                Ok(TypeValueParser::NamedStruct(
+                    parse_item_struct(s).map_err(|err| input.error(err))?,
+                ))
+            } else {
+                Ok(TypeValueParser::UnnamedStruct(
+                    input.parse::<UnnamedStructTypeParser>()?.0,
+                ))
+            }
+        } else {
+            let path = input.parse::<syn::Path>()?;
+            Ok(TypeValueParser::Path(
+                parse_path(path).map_err(|err| input.error(err))?,
+            ))
+        }
+    }
+}
+
+enum TypeExprParser {
+    Add(AddOp<TypeExpr>),
+    Sub(SubOp<TypeExpr>),
+    Value(TypeValue),
+}
+impl syn::parse::Parse for TypeExprParser {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut lhs = TypeExprParser::Value(input.parse::<TypeValueParser>()?.into());
+        loop {
+            if input.is_empty() {
+                break;
+            }
+            if input.peek(Token![+]) {
+                input.parse::<Token![+]>()?;
+                let rhs = input.parse::<TypeValueParser>()?.into();
+                lhs = TypeExprParser::Add(AddOp {
+                    lhs: Box::new(lhs.into()),
+                    rhs: TypeExpr::value(rhs).into(),
+                });
+            } else if input.peek(Token![-]) {
+                input.parse::<Token![-]>()?;
+                let rhs = input.parse::<TypeValueParser>()?.into();
+                lhs = TypeExprParser::Sub(SubOp {
+                    lhs: Box::new(lhs.into()),
+                    rhs: TypeExpr::value(rhs).into(),
+                });
+            } else {
+                return Err(input.error("Expected + or -"));
+            }
+        }
+        Ok(lhs)
+    }
+}
+impl Into<TypeExpr> for TypeExprParser {
+    fn into(self) -> TypeExpr {
+        match self {
+            TypeExprParser::Add(o) => TypeExpr::BinOp(TypeBinOp::Add(o)),
+            TypeExprParser::Sub(o) => TypeExpr::BinOp(TypeBinOp::Sub(o)),
+            TypeExprParser::Value(v) => TypeExpr::value(v),
+        }
+    }
+}
+fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<TypeExpr> {
+    let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
+    Ok(t.into())
+}
 fn parse_item(item: syn::Item) -> Result<Item> {
     match item {
         syn::Item::Fn(f0) => {
@@ -452,6 +567,16 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 kind: DefKind::Type,
                 ty: None,
                 value: DefValue::Type(TypeExpr::value(TypeValue::NamedStruct(struct_type))),
+                visibility,
+            }))
+        }
+        syn::Item::Type(t) => {
+            let visibility = parse_vis(t.vis.clone());
+            Ok(Item::Def(Define {
+                name: parse_ident(t.ident),
+                kind: DefKind::Type,
+                ty: None,
+                value: DefValue::Type(parse_type(*t.ty)?),
                 visibility,
             }))
         }
