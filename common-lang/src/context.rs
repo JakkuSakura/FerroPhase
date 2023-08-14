@@ -12,7 +12,7 @@ pub struct InterpreterContextInner {
     parent: Option<ExecutionContext>,
     trees: HashMap<Path, Tree>,
     func_decls: HashMap<Path, FunctionValue>,
-    exprs: HashMap<Path, Expr>,
+    values: HashMap<Path, Value>,
     types: HashMap<Path, TypeValue>,
     is_specialized: HashMap<Path, bool>,
     buffer: Vec<String>,
@@ -49,8 +49,15 @@ impl ExecutionContext {
         self.inner.borrow_mut().func_decls.insert(key.into(), value);
     }
     pub fn insert_expr(&self, key: Path, value: Expr) {
-        self.inner.borrow_mut().exprs.insert(key, value.into());
+        self.inner
+            .borrow_mut()
+            .values
+            .insert(key, Value::expr(value));
     }
+    pub fn insert_value(&self, key: Path, value: Value) {
+        self.inner.borrow_mut().values.insert(key, value);
+    }
+
     pub fn print_values(&self, s: impl Serializer) -> Result<()> {
         let inner = self.inner.borrow();
         for (k, v) in &inner.trees {
@@ -84,15 +91,18 @@ impl ExecutionContext {
             .cloned()
             .or_else(|| inner.parent.as_ref()?.get_tree(key))
     }
-    pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
+    pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
         let inner = self.inner.borrow();
         let key = key.into();
 
         inner
-            .exprs
+            .values
             .get(&key)
             .cloned()
-            .or_else(|| inner.parent.as_ref()?.get_expr(key))
+            .or_else(|| inner.parent.as_ref()?.get_value(key))
+    }
+    pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
+        self.get_value(key).map(Expr::value)
     }
     pub fn get_type(&self, key: impl Into<Path>) -> Option<TypeValue> {
         let inner = self.inner.borrow();

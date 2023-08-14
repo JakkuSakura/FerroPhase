@@ -55,7 +55,7 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
                 "f32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Decimal(
                     DecimalType::F32,
                 ))),
-                _ => TypeExpr::Path(parse_path(p.path)?),
+                _ => TypeExpr::path(parse_path(p.path)?),
             }
         }
         syn::Type::ImplTrait(im) => {
@@ -128,7 +128,7 @@ fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
             GenericParam::Type(t) => Ok(FunctionParam {
                 name: parse_ident(t.ident),
                 // TODO: support multiple type bounds
-                ty: TypeValue::expr(TypeExpr::Path(parse_type_param_bound(
+                ty: TypeValue::expr(TypeExpr::path(parse_type_param_bound(
                     t.bounds.first().cloned().unwrap(),
                 )?)),
             }),
@@ -145,7 +145,7 @@ fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
             .try_collect()?,
         generics_params,
         ret: TypeValue::expr(parse_return_type(f.sig.output)?),
-        body: parse_block(*f.block)?,
+        body: Expr::block(parse_block(*f.block)?).into(),
     })
 }
 
@@ -260,7 +260,7 @@ fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
 }
 pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructValue> {
     Ok(StructValue {
-        name: TypeExpr::Path(parse_path(s.path)?),
+        name: TypeExpr::path(parse_path(s.path)?),
         fields: s
             .fields
             .into_iter()
@@ -288,7 +288,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?),
-        syn::Expr::Path(p) => Expr::Path(parse_path(p.path)?),
+        syn::Expr::Path(p) => Expr::path(parse_path(p.path)?),
         syn::Expr::Reference(r) => Expr::Reference(parse_ref(r)?),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
         syn::Expr::Struct(s) => Expr::value(Value::Struct(parse_struct_expr(s)?)),
@@ -310,7 +310,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Item> {
             visibility: Visibility::Public,
         }),
         syn::Stmt::Item(tm) => parse_item(tm)?,
-        syn::Stmt::Expr(e, _) => Item::Expr(parse_expr(e)?),
+        syn::Stmt::Expr(e, _) => Item::Stmt(parse_expr(e)?),
         syn::Stmt::Macro(m) => bail!("Macro not supported: {:?}", m),
     })
 }
@@ -325,10 +325,13 @@ fn parse_block(block: syn::Block) -> Result<Block> {
             _ => false,
         })
         .unwrap_or_default();
-    Ok(Block {
-        stmts: block.stmts.into_iter().map(parse_stmt).try_collect()?,
-        last_value,
-    })
+    let mut stmts: Vec<_> = block.stmts.into_iter().map(parse_stmt).try_collect()?;
+    if last_value {
+        if let Some(last) = stmts.last_mut() {
+            last.try_make_expr()
+        }
+    }
+    Ok(Block { stmts })
 }
 fn parse_vis(v: syn::Visibility) -> Visibility {
     match v {

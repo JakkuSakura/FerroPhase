@@ -10,7 +10,6 @@ pub enum Expr {
     Path(Path),
     Value(Value),
     Block(Block),
-    Stmt(Box<Expr>),
     Cond(Cond),
     Invoke(Invoke),
     Select(Select),
@@ -29,16 +28,21 @@ impl Expr {
             _ => Expr::Value(v),
         }
     }
+    pub fn path(path: Path) -> Expr {
+        if path.segments.len() == 1 {
+            return Expr::Ident(path.segments[0].clone());
+        }
+        Expr::Path(path)
+    }
     pub fn block(block: Block) -> Expr {
         if block.stmts.len() == 1 {
             let last = block.stmts.last().unwrap();
             if let Item::Expr(expr) = last {
-                return if block.last_value {
-                    expr.clone()
-                } else {
-                    Expr::Stmt(expr.clone().into())
-                };
+                return expr.clone();
             }
+        }
+        if block.stmts.is_empty() {
+            return Expr::unit();
         }
         Expr::Block(block)
     }

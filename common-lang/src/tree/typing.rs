@@ -14,8 +14,15 @@ pub enum TypeExpr {
 }
 
 impl TypeExpr {
+    pub fn path(path: Path) -> TypeExpr {
+        if path.segments.len() == 1 {
+            TypeExpr::Ident(path.segments[0].clone())
+        } else {
+            TypeExpr::Path(path)
+        }
+    }
     pub fn unit() -> TypeExpr {
-        TypeExpr::value(TypeValue::Primitive(PrimitiveType::Unit))
+        TypeExpr::value(TypeValue::unit())
     }
     pub fn value(v: TypeValue) -> TypeExpr {
         match v {
