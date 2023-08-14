@@ -17,7 +17,7 @@ impl TypeSystem {
         match lit {
             Value::Int(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::I64)),
+                    matches!(ty, TypeValue::Primitive(PrimitiveType::Int(_))),
                     "Expected i64, got {:?}",
                     lit
                 )
@@ -31,7 +31,7 @@ impl TypeSystem {
             }
             Value::Decimal(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::F64)),
+                    matches!(ty, TypeValue::Primitive(PrimitiveType::Decimal(_))),
                     "Expected f64, got {:?}",
                     lit
                 )
@@ -103,9 +103,9 @@ impl TypeSystem {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
                 let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
-                    (TypeValue::RequireTraits(mut l), TypeValue::RequireTraits(r)) => {
+                    (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
                         l.traits.extend(r.traits);
-                        return Ok(TypeValue::RequireTraits(l));
+                        return Ok(TypeValue::ImplTraits(l));
                     }
                     _ => {}
                 }
@@ -115,11 +115,11 @@ impl TypeSystem {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
                 let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
-                    (TypeValue::RequireTraits(mut l), TypeValue::RequireTraits(r)) => {
+                    (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
                         for r in r.traits {
                             l.traits.retain(|x| x.name != r.name);
                         }
-                        return Ok(TypeValue::RequireTraits(l));
+                        return Ok(TypeValue::ImplTraits(l));
                     }
                     _ => {}
                 }
@@ -256,8 +256,12 @@ impl TypeSystem {
             }
             Expr::Path(_) => {}
             Expr::Value(l) => match l {
-                Value::Int(_) => return Ok(TypeValue::Primitive(PrimitiveType::I64)),
-                Value::Decimal(_) => return Ok(TypeValue::Primitive(PrimitiveType::F64)),
+                Value::Int(_) => return Ok(TypeValue::Primitive(PrimitiveType::Int(IntType::I64))),
+                Value::Decimal(_) => {
+                    return Ok(TypeValue::Primitive(PrimitiveType::Decimal(
+                        DecimalType::F64,
+                    )))
+                }
                 Value::Unit(_) => return Ok(TypeValue::Primitive(PrimitiveType::Unit)),
                 Value::Bool(_) => return Ok(TypeValue::Primitive(PrimitiveType::Bool)),
                 Value::String(_) => return Ok(TypeValue::Primitive(PrimitiveType::String)),

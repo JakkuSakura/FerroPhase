@@ -33,11 +33,22 @@ impl Specializer {
             Expr::Ident(n) => match n.as_str() {
                 "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(expr.clone()),
                 "print" => Ok(expr.clone()),
-                _ => ctx
-                    .get_expr(n)
-                    .with_context(|| format!("Could not find {:?} in context", n.name)),
+                _ => {
+                    let value = ctx
+                        .get_expr(n)
+                        .with_context(|| format!("Could not find {:?} in context", n));
+                    debug!("Look up {:?} {:?}", n, value);
+                    value
+                }
             },
-            Expr::Path(_) => Ok(expr.clone()),
+            Expr::Path(n) => {
+                let value = ctx
+                    .get_expr(n.clone())
+                    .with_context(|| format!("Could not find {:?} in context", n));
+                debug!("Look up {:?} {:?}", n, value);
+                // TODO: get function declaration
+                value
+            }
             Expr::Value(_) => Ok(expr.clone()),
             Expr::Block(x) => self.specialize_block(x, ctx).map(Expr::Block),
             Expr::Cond(x) => self.specialize_cond(x, ctx),
@@ -48,7 +59,7 @@ impl Specializer {
     pub fn specialize_import(&self, import: &Import, _ctx: &ExecutionContext) -> Result<Import> {
         Ok(import.clone())
     }
-    pub fn specialize_invoke(&self, node: &InvokeExpr, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn specialize_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Expr> {
         let fun = self.specialize_expr(&node.fun, ctx)?;
         let name = self.serializer.serialize_expr(&fun)?;
         let args: Vec<_> = node
@@ -67,12 +78,12 @@ impl Specializer {
                         .get(i)
                         .with_context(|| format!("Couldn't find {} parameter of {:?}", i, f))?;
                     // TODO: type check here
-                    sub.insert_expr(param.name.clone(), arg);
+                    sub.insert_expr(param.name.clone().into(), arg);
                 }
                 let new_body = self.specialize_block(&f.body, &sub)?;
                 let bd = self.serializer.serialize_block(&new_body)?;
                 let args_ = self.serializer.serialize_exprs(&args)?;
-                debug!("Specialied {} with {} => {}", name, args_, bd);
+                debug!("Specialized {} with {} => {}", name, args_, bd);
                 let new_name = Ident::new(format!(
                     "{}_{}",
                     name,
@@ -87,7 +98,7 @@ impl Specializer {
                 //         .unwrap_or(Ok(UnitValue.into()))?;
                 // }
                 ctx.root().insert_specialized(
-                    new_name.clone(),
+                    new_name.clone().into(),
                     FuncDecl {
                         name: new_name.clone(),
                         params: Default::default(),
@@ -96,7 +107,7 @@ impl Specializer {
                         body: new_body,
                     },
                 );
-                return Ok(Expr::Invoke(InvokeExpr {
+                return Ok(Expr::Invoke(Invoke {
                     fun: Expr::Ident(new_name).into(),
                     args: Default::default(),
                 }));
@@ -104,9 +115,14 @@ impl Specializer {
             _ => {}
         }
 
-        bail!("Failed to specialize {:?}", node)
+        bail!("Failed to specialize {:?} {:?}", node, fun)
     }
     pub fn specialize_module(&self, m: &Module, ctx: &ExecutionContext) -> Result<Module> {
+        debug!(
+            "Specializing module {}",
+            self.serializer.serialize_module(m)?
+        );
+
         let mut items: Vec<_> = m
             .items
             .iter()
@@ -117,7 +133,7 @@ impl Specializer {
             .into_iter()
             .sorted()
             .map(|name| {
-                ctx.get_func_decl(&name)
+                ctx.get_func_decl(name)
                     .map(|def| {
                         Define {
                             name: def.name.clone(),
@@ -205,9 +221,17 @@ impl Specializer {
                         visibility: d.visibility,
                     });
                 }
-                _ => return Ok(d.clone()),
+                _ => {
+                    ctx.insert_func_decl(d.name.clone().into(), f.clone());
+                    return Ok(d.clone());
+                }
             },
             _ => return Ok(d.clone()),
+        }
+    }
+    pub fn specialize_tree(&self, node: &Tree, ctx: &ExecutionContext) -> Result<Tree> {
+        match node {
+            Tree::Item(item) => self.specialize_item(item, ctx).map(Tree::Item),
         }
     }
 }

@@ -13,7 +13,7 @@ pub enum Item {
 }
 
 impl Item {
-    pub fn any<T: 'static>(any: T) -> Self {
+    pub fn any<T: Debug + 'static>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }
@@ -80,5 +80,42 @@ pub struct FuncDecl {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Import {
     pub visibility: Visibility,
-    pub segments: Vec<Ident>,
+    pub path: Path,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Assign {
+    pub target: Expr,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CondCase {
+    pub cond: Expr,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cond {
+    pub cases: Vec<CondCase>,
+    pub if_style: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForEach {
+    pub variable: Ident,
+    pub iterable: Tree,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct While {
+    pub cond: Tree,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Impl {
+    pub name: Ident,
+    pub defs: Vec<Define>,
 }
