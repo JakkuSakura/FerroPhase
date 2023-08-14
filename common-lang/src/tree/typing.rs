@@ -7,7 +7,7 @@ use crate::value::*;
 pub enum TypeExpr {
     Ident(Ident),
     Path(Path),
-    Op(TypeOp),
+    BinOp(TypeBinOp),
     Invoke(Invoke),
     SelfType(SelfType),
     Value(TypeValue),
@@ -33,7 +33,7 @@ impl TypeExpr {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub enum TypeOp {
+pub enum TypeBinOp {
     Add(AddOp<TypeExpr>),
     Sub(SubOp<TypeExpr>),
 }

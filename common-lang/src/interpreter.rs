@@ -81,7 +81,7 @@ impl Interpreter {
                     Expr::Select(s) => {
                         // FIXME this is hack for rust
                         if s.field.as_str() == "into" {
-                            return Ok(Value::Expr(s.obj.clone()));
+                            return Ok(Value::expr(*s.obj.clone()));
                         }
                     }
                     _ => {}

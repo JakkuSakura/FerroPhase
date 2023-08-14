@@ -98,9 +98,13 @@ impl TypeSystem {
         }
         Ok(())
     }
-    pub fn evaluate_type_value_op(&self, op: &TypeOp, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn evaluate_type_value_op(
+        &self,
+        op: &TypeBinOp,
+        ctx: &ExecutionContext,
+    ) -> Result<TypeValue> {
         match op {
-            TypeOp::Add(a) => {
+            TypeBinOp::Add(a) => {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
                 let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
@@ -112,7 +116,7 @@ impl TypeSystem {
                 }
                 bail!("Could not evaluate type value op {:?}", op)
             }
-            TypeOp::Sub(a) => {
+            TypeBinOp::Sub(a) => {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
                 let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
@@ -187,7 +191,7 @@ impl TypeSystem {
                     .with_context(|| format!("Could not find type {:?}", i))?;
                 Ok(ty)
             }
-            TypeExpr::Op(o) => self.evaluate_type_value_op(o, ctx),
+            TypeExpr::BinOp(o) => self.evaluate_type_value_op(o, ctx),
             _ => bail!("Could not evaluate type value {:?}", ty),
         }
     }
