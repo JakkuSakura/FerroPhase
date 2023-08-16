@@ -12,6 +12,8 @@ pub enum Value {
     String(StringValue),
     List(ListValue),
     Unit(UnitValue),
+    Null(NullValue),
+    Undefined(UndefinedValue),
     Type(TypeValue),
     Struct(StructValue),
     Function(FunctionValue),
@@ -31,6 +33,9 @@ impl Value {
     }
     pub fn unit() -> Value {
         Value::Unit(UnitValue)
+    }
+    pub fn null() -> Value {
+        Value::Null(NullValue)
     }
     pub fn expr(e: Expr) -> Self {
         match e {
@@ -109,6 +114,10 @@ pub struct ListValue {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnitValue;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NullValue;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndefinedValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldValue {

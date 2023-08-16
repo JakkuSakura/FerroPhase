@@ -29,7 +29,7 @@ impl RustPrinter {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
-    pub fn print_def(&self, def: &Define) -> Result<TokenStream> {
+    pub fn print_define(&self, def: &Define) -> Result<TokenStream> {
         let vis = def.visibility;
         let decl = &def.value;
 
@@ -41,7 +41,7 @@ impl RustPrinter {
                 let name = self.print_ident(&def.name);
                 let ty = self.print_type_expr(n)?;
                 return Ok(quote!(
-                    type #name = #ty;
+                    type #name = t!{ #ty };
                 ));
             }
             DefValue::Const(n) => {
@@ -66,9 +66,9 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_field(&x))
             .try_collect()?;
-        Ok(quote!(t! { struct #name {
+        Ok(quote!(struct #name {
             #(#fields), *
-        }}))
+        }))
     }
     pub fn print_unnamed_struct_type(&self, s: &UnnamedStructType) -> Result<TokenStream> {
         let fields: Vec<_> = s
@@ -76,11 +76,11 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_field(&x))
             .try_collect()?;
-        Ok(quote!(t! {
+        Ok(quote!(
             struct {
                 #(#fields), *
             }
-        }))
+        ))
     }
     pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
         match op {
@@ -395,7 +395,11 @@ impl RustPrinter {
 
     pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
         let name = self.print_ident(&impl_.name);
-        let methods: Vec<_> = impl_.defs.iter().map(|x| self.print_def(x)).try_collect()?;
+        let methods: Vec<_> = impl_
+            .defs
+            .iter()
+            .map(|x| self.print_define(x))
+            .try_collect()?;
         Ok(quote!(
             impl #name {
                 #(#methods)*
@@ -615,7 +619,7 @@ impl RustPrinter {
     }
     pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
         match item {
-            Item::Def(n) => self.print_def(n),
+            Item::Def(n) => self.print_define(n),
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
             _ => bail!("Unable to serialize {:?}", item),
