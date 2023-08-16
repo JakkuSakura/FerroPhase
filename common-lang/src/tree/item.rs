@@ -8,36 +8,67 @@ pub enum Item {
     Module(Module),
     Def(Define),
     Import(Import),
-    Stmt(Expr),
-    Expr(Expr),
     Impl(Impl),
     Any(AnyBox),
 }
 
 impl Item {
-    pub fn try_make_stmt(&mut self) {
-        if let Item::Expr(expr) = self {
-            *self = Item::Stmt(expr.clone());
-        }
-    }
-    pub fn try_make_expr(&mut self) {
-        if let Item::Stmt(expr) = self {
-            *self = Item::Expr(expr.clone());
-        }
-    }
     pub fn any<T: Debug + 'static>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }
+pub type ItemChunk = Vec<Item>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Module {
     pub name: Ident,
-    pub items: Vec<Item>,
+    pub items: ItemChunk,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatementExpr {
+    pub expr: Expr,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Statement {
+    Item(Box<Item>),
+    Let(Let),
+    StmtExpr(StatementExpr),
+    Expr(Expr),
+    Any(AnyBox),
+}
+impl Statement {
+    pub fn any<T: Debug + 'static>(any: T) -> Self {
+        Self::Any(AnyBox::new(any))
+    }
+    pub fn item(item: Item) -> Self {
+        Self::Item(Box::new(item))
+    }
+    pub fn stmt_expr(expr: Expr) -> Self {
+        Self::StmtExpr(StatementExpr { expr })
+    }
+    pub fn maybe_stmt_expr(expr: Expr, is_stmt: bool) -> Self {
+        if is_stmt {
+            Self::stmt_expr(expr)
+        } else {
+            Self::Expr(expr)
+        }
+    }
+    pub fn try_make_stmt(&mut self) {
+        if let Self::Expr(expr) = self {
+            *self = Self::stmt_expr(expr.clone());
+        }
+    }
+    pub fn try_make_expr(&mut self) {
+        if let Self::StmtExpr(expr) = self {
+            *self = Self::Expr(expr.expr.clone());
+        }
+    }
+}
+pub type StatementChunk = Vec<Statement>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
-    pub stmts: Vec<Item>,
+    pub stmts: StatementChunk,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]
@@ -53,7 +84,6 @@ pub enum DefKind {
     Function,
     Type,
     Const,
-    Variable,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +91,6 @@ pub enum DefValue {
     Function(FunctionValue),
     Type(TypeExpr),
     Const(Expr),
-    Variable(Expr),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +100,13 @@ pub struct Define {
     pub ty: Option<TypeValue>,
     pub value: DefValue,
     pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Let {
+    pub name: Ident,
+    pub ty: Option<TypeValue>,
+    pub value: Expr,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

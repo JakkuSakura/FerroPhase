@@ -37,7 +37,7 @@ impl Expr {
     pub fn block(block: Block) -> Expr {
         if block.stmts.len() == 1 {
             let last = block.stmts.last().unwrap();
-            if let Item::Expr(expr) = last {
+            if let Statement::Expr(expr) = last {
                 return expr.clone();
             }
         }
