@@ -2,7 +2,7 @@ use common::*;
 
 use common_lang::context::ExecutionContext;
 use common_lang::interpreter::Interpreter;
-use common_lang::passes::{load_optimizer, Specializer};
+use common_lang::passes::load_optimizer;
 use common_lang::{Deserializer, Serializer};
 use rust_lang::printer::RustPrinter;
 use rust_lang::rustfmt::format_code;
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
         .map(|x| Ok::<_, Error>(x?.path()))
         .try_collect()?;
     dirs.sort();
-
+    let rust_serde = RustSerde::new(false);
     for file_in in dirs {
         let file_str = file_in.file_name().unwrap().to_string_lossy().to_string();
         if !file_str.contains("main_") || file_str.contains("_gen.rs") {
@@ -32,20 +32,20 @@ fn main() -> Result<()> {
         info!("{} => {}", file_in.display(), file_out.display());
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
-        let node = RustSerde.deserialize(&file_content)?;
+        let node = rust_serde.deserialize(&file_content)?;
         let ctx = ExecutionContext::new();
-        let optimizer = load_optimizer(Rc::new(RustSerde));
+        let optimizer = load_optimizer(Rc::new(rust_serde));
         let node = optimizer
             .optimize_tree(node, &ctx)?
             .context("Failed to specialize tree")?;
-        let code = RustSerde.serialize_tree(&node)?;
+        let code = rust_serde.serialize_tree(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;
         file_out.set_len(0)?;
         file_out.seek(SeekFrom::Start(0))?;
         writeln!(&mut file_out, "{}", code)?;
 
-        let inp = Interpreter::new(Rc::new(RustSerde));
+        let inp = Interpreter::new(Rc::new(rust_serde));
         let ctx = ExecutionContext::new();
         let intp_result = inp.interpret_tree(&node, &ctx)?;
         for row in ctx.take_outputs() {
