@@ -6,10 +6,10 @@ use crate::Serializer;
 use common::*;
 use std::rc::Rc;
 
-pub struct Inliner {
+pub struct InlinePass {
     pub serializer: Rc<dyn Serializer>,
 }
-impl Inliner {
+impl InlinePass {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self { serializer }
     }
@@ -60,7 +60,10 @@ impl Inliner {
     }
 }
 
-impl OptimizePass for Inliner {
+impl OptimizePass for InlinePass {
+    fn name(&self) -> &str {
+        "inline"
+    }
     fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
         self.inline_expr(expr, ctx)
     }

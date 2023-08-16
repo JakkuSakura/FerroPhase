@@ -9,13 +9,13 @@ use crate::*;
 use common::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub struct Specializer {
+pub struct SpecializePass {
     spec_id: AtomicUsize,
     serializer: Rc<dyn Serializer>,
     interpreter: Interpreter,
     type_system: TypeSystem,
 }
-impl Specializer {
+impl SpecializePass {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
@@ -49,7 +49,8 @@ impl Specializer {
             _ => None,
         })
     }
-    pub fn specialize_expr_inner(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+
+    pub fn specialize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
         match expr {
             Expr::Ident(ref n) => match n.as_str() {
                 "print" => Ok(expr),
@@ -76,34 +77,13 @@ impl Specializer {
                 );
                 Ok(value)
             }
-            Expr::Value(_) => Ok(expr.clone()),
             Expr::Block(x) => self.specialize_block(x, ctx).map(Expr::Block),
-            Expr::Cond(x) => self.specialize_cond(x, ctx),
             Expr::Invoke(x) => self.specialize_invoke(x, ctx),
-            Expr::BinOpKind(_) => Ok(expr.clone()),
-            Expr::Any(x) => Ok(Expr::Any(x.clone())),
-            _ => bail!("Could not specialize {:?}", expr),
+            Expr::Cond(x) => self.specialize_cond(x, ctx),
+            _ => Ok(expr),
         }
     }
-    pub fn specialize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
-        let expr_serialized = self.serializer.serialize_expr(&expr)?;
-        debug!("Specializing {}", expr_serialized);
-        let specialized = self.specialize_expr_inner(expr, ctx);
-        match specialized {
-            Ok(specialized) => {
-                debug!(
-                    "Specialized {} => {}",
-                    expr_serialized,
-                    self.serializer.serialize_expr(&specialized)?
-                );
-                Ok(specialized)
-            }
-            Err(err) => {
-                warn!("Failed to specialize {}: {}", expr_serialized, err);
-                Err(err)
-            }
-        }
-    }
+
     pub fn specialize_import(&self, import: Import, _ctx: &ExecutionContext) -> Result<Import> {
         Ok(import)
     }
@@ -237,18 +217,12 @@ impl Specializer {
             }
         }
     }
-    pub fn specialize_module(&self, m: Module, ctx: &ExecutionContext) -> Result<Module> {
+    pub fn specialize_module(&self, mut module: Module, ctx: &ExecutionContext) -> Result<Module> {
         debug!(
             "Specializing module {}",
-            self.serializer.serialize_module(&m)?
+            self.serializer.serialize_module(&module)?
         );
 
-        let items: Vec<_> = m
-            .items
-            .into_iter()
-            .map(|x| self.specialize_item(x, ctx))
-            .try_collect()?;
-        let mut items: Vec<_> = items.into_iter().flatten().collect();
         for specialized_name in ctx.list_specialized().into_iter().sorted() {
             let func = ctx.get_func_decl(specialized_name).unwrap();
             let define = Define {
@@ -260,13 +234,10 @@ impl Specializer {
                 value: DefValue::Function(func),
                 visibility: Visibility::Public,
             };
-            items.push(Item::Def(define));
+            module.items.push(Item::Def(define));
         }
 
-        Ok(Module {
-            name: m.name.clone(),
-            items,
-        })
+        Ok(module)
     }
     pub fn specialize_item_inner(
         &self,
@@ -418,52 +389,43 @@ impl Specializer {
         }))
     }
 
-    pub fn specialize_def(&self, def: Define, ctx: &ExecutionContext) -> Result<Option<Define>> {
-        match def.value.clone() {
-            DefValue::Function(f) => match def.name.as_str() {
-                "main" => {
+    pub fn specialize_def(
+        &self,
+        mut def: Define,
+        ctx: &ExecutionContext,
+    ) -> Result<Option<Define>> {
+        match def.name.as_str() {
+            "main" => match def.value {
+                DefValue::Function(f) => {
                     debug!(
                         "Specializing main function {} => {}",
                         def.name,
                         self.serializer.serialize_expr(&f.body)?
                     );
-                    let define = Define {
-                        value: DefValue::Function(FunctionValue {
-                            body: self.specialize_expr(*f.body, ctx)?.into(),
-                            ..f
-                        }),
-                        ..def
-                    };
-                    Ok(Some(define))
-                }
+                    let body = self.specialize_expr(*f.body, ctx)?;
+                    def.value = DefValue::Function(FunctionValue {
+                        body: body.into(),
+                        name: f.name,
+                        params: f.params,
+                        generics_params: f.generics_params,
+                        ret: f.ret,
+                    });
 
-                _ => {
-                    debug!(
-                        "Registering function {} => {}",
-                        def.name,
-                        self.serializer.serialize_expr(&f.body)?
-                    );
-
-                    ctx.insert_func_decl(def.name.clone(), f.clone());
-                    match def.name.as_str() {
-                        "print" => Ok(Some(def)),
-                        _ => Ok(None),
-                    }
+                    Ok(Some(def))
                 }
+                _ => bail!("Expected function for main"),
             },
-            _ => Ok(Some(def.clone())),
-        }
-    }
-    pub fn specialize_tree(&self, node: Tree, ctx: &ExecutionContext) -> Result<Option<Tree>> {
-        match node {
-            Tree::Item(item) => {
-                let item = self.specialize_item(item, ctx)?;
-                Ok(item.map(Tree::Item))
-            }
+            "print" => Ok(Some(def)),
+            _ if matches!(def.value, DefValue::Function(_)) => Ok(None),
+            _ => Ok(Some(def)),
         }
     }
 }
-impl OptimizePass for Specializer {
+impl OptimizePass for SpecializePass {
+    fn name(&self) -> &str {
+        "specialize"
+    }
+
     fn optimize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
         self.specialize_item(item, ctx)
     }
