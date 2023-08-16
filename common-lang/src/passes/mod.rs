@@ -11,6 +11,7 @@ pub use optimizer::*;
 pub use specializer::*;
 #[allow(unused_variables)]
 pub trait OptimizePass {
+    fn name(&self) -> &str;
     fn optimize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
         Ok(Some(item))
     }
@@ -27,7 +28,7 @@ pub trait OptimizePass {
 
 pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> Optimizer {
     let mut opt = Optimizer::new(serializer.clone());
-    opt.add_pass(Specializer::new(serializer.clone()));
-    opt.add_pass(Inliner::new(serializer.clone()));
+    opt.add_pass(SpecializePass::new(serializer.clone()));
+    opt.add_pass(InlinePass::new(serializer.clone()));
     opt
 }
