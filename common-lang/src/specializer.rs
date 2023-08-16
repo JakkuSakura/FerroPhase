@@ -380,13 +380,14 @@ impl Specializer {
         }
     }
     pub fn specialize_block(&self, b: &Block, ctx: &ExecutionContext) -> Result<Block> {
+        let ctx = ctx.child();
         let items: Vec<_> = b
             .stmts
             .iter()
-            .map(|x| self.specialize_stmt(x, ctx))
+            .map(|x| self.specialize_stmt(x, &ctx))
             .try_collect()?;
-        let items: Vec<_> = items.into_iter().flatten().collect();
-        Ok(Block { stmts: items })
+        let stmts: Vec<_> = items.into_iter().flatten().collect();
+        Ok(Block { stmts })
     }
     pub fn specialize_cond(&self, b: &Cond, ctx: &ExecutionContext) -> Result<Expr> {
         for case in &b.cases {
