@@ -52,19 +52,6 @@ impl RustPrinter {
                     const #name: #ty = #value;
                 ));
             }
-            DefValue::Variable(n) => {
-                let name = self.print_ident(&def.name);
-                let ty = if let Some(ty) = &def.ty {
-                    let ty = self.print_type_value(ty)?;
-                    quote!(: #ty)
-                } else {
-                    quote!()
-                };
-                let value = self.print_expr(n)?;
-                return Ok(quote!(
-                    let #name #ty = #value;
-                ));
-            }
         }
     }
     pub fn print_field(&self, field: &FieldTypeValue) -> Result<TokenStream> {
@@ -158,10 +145,7 @@ impl RustPrinter {
             #fun::<#(#args), *>
         ))
     }
-    pub fn print_stmts(&self, stmts: &[Expr]) -> Result<TokenStream> {
-        let stmts: Vec<_> = stmts.iter().map(|x| self.print_stmt(x)).try_collect()?;
-        Ok(quote!(#(#stmts);*))
-    }
+
     pub fn print_items_chunk(&self, items: &[Item]) -> Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
@@ -170,8 +154,39 @@ impl RustPrinter {
         }
         Ok(quote!(#(#stmts) *))
     }
+    pub fn print_let(&self, let_: &Let) -> Result<TokenStream> {
+        let name = self.print_ident(&let_.name);
+        let ty = if let Some(ty) = &let_.ty {
+            let x = self.print_type_value(ty)?;
+            quote!(: #x)
+        } else {
+            quote!()
+        };
+        let value = self.print_expr(&let_.value)?;
+        Ok(quote!(
+            let #name #ty = #value;
+        ))
+    }
+
+    pub fn print_statement(&self, stmt: &Statement) -> Result<TokenStream> {
+        match stmt {
+            Statement::Item(item) => self.print_item(item),
+            Statement::Let(let_) => self.print_let(let_),
+            Statement::StmtExpr(stmt) => self.print_stmt_expr(&stmt),
+            Statement::Expr(expr) => self.print_expr(expr),
+            Statement::Any(any) => self.print_any(any),
+        }
+    }
+    pub fn print_statement_chunk(&self, items: &[Statement]) -> Result<TokenStream> {
+        let mut stmts = vec![];
+        for item in items {
+            let item = self.print_statement(item)?;
+            stmts.push(item);
+        }
+        Ok(quote!(#(#stmts) *))
+    }
     pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
-        let chunk = self.print_items_chunk(&n.stmts)?;
+        let chunk = self.print_statement_chunk(&n.stmts)?;
         Ok(quote!({
             #chunk
         }))
@@ -388,16 +403,16 @@ impl RustPrinter {
         ))
     }
     pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
-        let stmts: Vec<_> = m.items.iter().map(|x| self.print_item(x)).try_collect()?;
+        let stmts = self.print_items_chunk(&m.items)?;
         if m.name.as_str() == "__file__" {
             Ok(quote!(
-                #(#stmts)*
+                #stmts
             ))
         } else {
-            let file = format_ident!("{}", m.name.as_str());
+            let mod_name = format_ident!("{}", m.name.as_str());
             Ok(quote!(
-                pub mod #file {
-                    #(#stmts)*
+                pub mod #mod_name {
+                    #stmts
                 }
             ))
         }
@@ -573,14 +588,14 @@ impl RustPrinter {
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
-    pub fn print_stmt(&self, node: &Expr) -> Result<TokenStream> {
-        let expr = self.print_expr(node)?;
+    pub fn print_stmt_expr(&self, node: &StatementExpr) -> Result<TokenStream> {
+        let expr = self.print_expr(&node.expr)?;
         Ok(quote!(#expr;))
     }
     pub fn print_expr_optimized(&self, node: &Expr) -> Result<TokenStream> {
         match node {
             Expr::Cond(n) => self.print_cond(n),
-            Expr::Block(n) => self.print_items_chunk(&n.stmts),
+            Expr::Block(n) => self.print_statement_chunk(&n.stmts),
             Expr::Value(Value::Unit(_)) => Ok(quote!()),
             _ => self.print_expr(node),
         }
@@ -603,8 +618,6 @@ impl RustPrinter {
             Item::Def(n) => self.print_def(n),
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
-            Item::Expr(n) => self.print_expr(n),
-            Item::Stmt(n) => self.print_stmt(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }
