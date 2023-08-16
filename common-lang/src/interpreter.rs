@@ -9,11 +9,13 @@ use std::rc::Rc;
 
 pub struct Interpreter {
     pub serializer: Rc<dyn Serializer>,
+    pub type_system: TypeSystem,
     pub ignore_missing_items: bool,
 }
 impl Interpreter {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
+            type_system: TypeSystem::new(serializer.clone()),
             serializer,
             ignore_missing_items: false,
         }
@@ -282,8 +284,15 @@ impl Interpreter {
         })
     }
     pub fn interpret_type(&self, node: &TypeValue, ctx: &ExecutionContext) -> Result<TypeValue> {
-        let ty = TypeSystem::new(self.serializer.clone());
-        ty.evaluate_type_value(node, ctx)
+        match node {
+            TypeValue::AnyBox(n) => {
+                if let Some(exp) = n.downcast_ref::<LazyValue<TypeExpr>>() {
+                    return self.type_system.evaluate_type_expr(&exp.expr, &exp.ctx);
+                }
+                bail!("Failed to interpret type {:?}", node)
+            }
+            _ => self.type_system.evaluate_type_value(node, ctx),
+        }
     }
     pub fn interpret_function_value(
         &self,
@@ -323,7 +332,18 @@ impl Interpreter {
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
             Value::Tuple(n) => self.interpret_tuple(n, ctx).map(Value::Tuple),
             Value::Expr(n) => self.interpret_expr(n, ctx),
-            Value::Any(_) => Ok(node.clone()),
+            Value::Any(n) => {
+                if let Some(exp) = n.downcast_ref::<LazyValue<Expr>>() {
+                    let ret = self.interpret_expr(&exp.expr, &exp.ctx)?;
+                    return Ok(ret);
+                }
+
+                if self.ignore_missing_items {
+                    return Ok(node.clone());
+                }
+
+                bail!("Failed to interpret {:?}", node)
+            }
         }
     }
     pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Value> {
