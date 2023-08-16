@@ -16,22 +16,39 @@ impl InlinePass {
 
     pub fn inline_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
         match expr {
-            Expr::Ident(ident) => self.inline_ident(ident, ctx),
-            Expr::Path(path) => self.inline_path(path, ctx),
             Expr::Value(value) => self.inline_value(value, ctx).map(Expr::Value),
+            Expr::Invoke(invoke) => self.inline_invoke(invoke, ctx),
             _ => Ok(expr),
         }
     }
-    pub fn inline_ident(&self, ident: Ident, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn inline_invoke(&self, invoke: Invoke, ctx: &ExecutionContext) -> Result<Expr> {
+        if invoke.args.is_empty() {
+            let fun = self.try_get_expr(*invoke.fun.clone(), ctx)?;
+            match fun {
+                Expr::Value(Value::Function(f)) => Ok(*f.body),
+                _ => Ok(Expr::Invoke(invoke)),
+            }
+        } else {
+            Ok(Expr::Invoke(invoke))
+        }
+    }
+    pub fn try_get_ident(&self, ident: Ident, ctx: &ExecutionContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::Ident(ident)),
         }
     }
-    pub fn inline_path(&self, path: Path, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn try_get_path(&self, path: Path, ctx: &ExecutionContext) -> Result<Expr> {
         match ctx.get_expr(path.clone()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::path(path)),
+        }
+    }
+    pub fn try_get_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+        match expr {
+            Expr::Ident(ident) => self.try_get_ident(ident, ctx),
+            Expr::Path(path) => self.try_get_path(path, ctx),
+            _ => Ok(expr),
         }
     }
     pub fn inline_value(&self, value: Value, ctx: &ExecutionContext) -> Result<Value> {
@@ -40,31 +57,13 @@ impl InlinePass {
             _ => Ok(value),
         }
     }
-
-    pub fn inline_stmt(&self, stmt: Statement, ctx: &ExecutionContext) -> Result<Statement> {
-        match stmt {
-            Statement::Expr(expr) => {
-                let expr = self.inline_expr(expr, ctx)?;
-                Ok(Statement::Expr(expr))
-            }
-            Statement::Let(node) => {
-                let value = self.inline_expr(node.value, ctx)?;
-                Ok(Statement::Let(Let {
-                    name: node.name.clone(),
-                    ty: node.ty.clone(),
-                    value,
-                }))
-            }
-            _ => Ok(stmt.clone()),
-        }
-    }
 }
 
 impl OptimizePass for InlinePass {
     fn name(&self) -> &str {
         "inline"
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+    fn optimize_expr_post(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
         self.inline_expr(expr, ctx)
     }
 }

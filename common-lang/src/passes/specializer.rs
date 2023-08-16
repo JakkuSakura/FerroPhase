@@ -421,7 +421,7 @@ impl OptimizePass for SpecializePass {
         "specialize"
     }
 
-    fn optimize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
+    fn optimize_item_post(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
         self.specialize_item(item, ctx)
     }
     // fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
