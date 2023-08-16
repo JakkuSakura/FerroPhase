@@ -52,7 +52,7 @@ impl Expr {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Invoke {
-    pub fun: Box<Expr>,
+    pub func: Box<Expr>,
     pub args: Vec<Expr>,
 }
 

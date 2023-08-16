@@ -44,7 +44,7 @@ impl Interpreter {
             "Will execute call {}",
             self.serializer.serialize_invoke(&node)?
         );
-        let fun = self.interpret_expr(&node.fun, ctx)?;
+        let fun = self.interpret_expr(&node.func, ctx)?;
         debug!(
             "Will call function {}",
             self.serializer.serialize_value(&fun)?
@@ -52,7 +52,7 @@ impl Interpreter {
         let args = self.interpret_args(&node.args, ctx)?;
         match fun {
             Value::Function(f) => {
-                let name = self.serializer.serialize_expr(&node.fun)?;
+                let name = self.serializer.serialize_expr(&node.func)?;
                 let sub = ctx.child();
                 for (i, arg) in args.iter().cloned().enumerate() {
                     let param = f

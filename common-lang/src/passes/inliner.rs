@@ -23,7 +23,7 @@ impl InlinePass {
     }
     pub fn inline_invoke(&self, invoke: Invoke, ctx: &ExecutionContext) -> Result<Expr> {
         if invoke.args.is_empty() {
-            let fun = self.try_get_expr(*invoke.fun.clone(), ctx)?;
+            let fun = self.try_get_expr(*invoke.func.clone(), ctx)?;
             match fun {
                 Expr::Value(Value::Function(f)) => Ok(*f.body),
                 _ => Ok(Expr::Invoke(invoke)),
