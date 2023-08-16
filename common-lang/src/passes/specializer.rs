@@ -117,7 +117,7 @@ impl SpecializePass {
         match name {
             "print" => {
                 return Ok(Expr::Invoke(Invoke {
-                    fun: Expr::Ident(func.name.clone().unwrap()).into(),
+                    func: Expr::Ident(func.name.clone().unwrap()).into(),
                     args,
                 }))
             }
@@ -165,7 +165,7 @@ impl SpecializePass {
             },
         );
         return Ok(Expr::Invoke(Invoke {
-            fun: Expr::Ident(new_name).into(),
+            func: Expr::Ident(new_name).into(),
             args: Default::default(),
         }));
     }
@@ -186,7 +186,7 @@ impl SpecializePass {
         );
 
         let result_invoke = Invoke {
-            fun: Expr::BinOpKind(kind.clone()).into(),
+            func: Expr::BinOpKind(kind.clone()).into(),
             args: args.clone(),
         };
         match self.interpreter.interpret_invoke(&result_invoke, ctx) {
@@ -203,10 +203,10 @@ impl SpecializePass {
         }
     }
     pub fn specialize_invoke(&self, node: Invoke, ctx: &ExecutionContext) -> Result<Expr> {
-        if let Some(fun) = self.lookup_func_decl(&node.fun, ctx)? {
+        if let Some(fun) = self.lookup_func_decl(&node.func, ctx)? {
             self.specialize_invoke_details(fun, node.args, ctx)
         } else {
-            let fun = self.specialize_expr(*node.fun, ctx)?;
+            let fun = self.specialize_expr(*node.func, ctx)?;
 
             match fun {
                 Expr::Value(Value::Function(f)) => {
