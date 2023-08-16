@@ -1,4 +1,4 @@
-use crate::context::{ExecutionContext, LazyValue};
+use crate::context::{LazyValue, ScopedContext};
 use crate::ops::*;
 use crate::tree::*;
 use crate::type_system::TypeSystem;
@@ -20,13 +20,13 @@ impl Interpreter {
             ignore_missing_items: false,
         }
     }
-    pub fn interpret_module(&self, node: &Module, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_module(&self, node: &Module, ctx: &ScopedContext) -> Result<Value> {
         node.items.iter().for_each(|x| match x {
             Item::Def(x) => match &x.value {
                 DefValue::Function(n) => {
                     debug!("Inserting function {} into context", x.name);
 
-                    ctx.insert_func_decl(&x.name, n.clone());
+                    ctx.insert_function(&x.name, n.clone());
                 }
                 _ => {}
             },
@@ -39,7 +39,7 @@ impl Interpreter {
             .try_collect()?;
         Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
-    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ScopedContext) -> Result<Value> {
         debug!(
             "Will execute call {}",
             self.serializer.serialize_invoke(&node)?
@@ -88,7 +88,7 @@ impl Interpreter {
                     }
                     _ => {}
                 }
-                bail!("Failed to interpret {:?}", node);
+                bail!("Failed to interpret {:?}: {:?}", node, x);
             }
             Value::Any(any) => {
                 if let Some(f) = any.downcast_ref::<BuiltinFn>() {
@@ -106,10 +106,10 @@ impl Interpreter {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_import(&self, _node: &Import, _ctx: &ExecutionContext) -> Result<()> {
+    pub fn interpret_import(&self, _node: &Import, _ctx: &ScopedContext) -> Result<()> {
         Ok(())
     }
-    pub fn interpret_block(&self, node: &Block, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_block(&self, node: &Block, ctx: &ScopedContext) -> Result<Value> {
         let ctx = ctx.child();
         let ret: Vec<_> = node
             .stmts
@@ -122,7 +122,7 @@ impl Interpreter {
             Ok(Value::unit())
         }
     }
-    pub fn interpret_cond(&self, node: &Cond, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_cond(&self, node: &Cond, ctx: &ScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;
             match interpret {
@@ -140,11 +140,7 @@ impl Interpreter {
         }
         Ok(Value::unit())
     }
-    pub fn interpret_print(
-        se: &dyn Serializer,
-        args: &[Expr],
-        ctx: &ExecutionContext,
-    ) -> Result<()> {
+    pub fn interpret_print(se: &dyn Serializer, args: &[Expr], ctx: &ScopedContext) -> Result<()> {
         let formatted: Vec<_> = args
             .into_iter()
             .map(|x| se.serialize_expr(x))
@@ -152,7 +148,7 @@ impl Interpreter {
         ctx.root().print_str(formatted.join(" "));
         Ok(())
     }
-    pub fn interpret_ident(&self, ident: &Ident, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_ident(&self, ident: &Ident, ctx: &ScopedContext) -> Result<Value> {
         return match ident.as_str() {
             "+" => Ok(Value::any(builtin_add())),
             "-" => Ok(Value::any(builtin_sub())),
@@ -165,24 +161,21 @@ impl Interpreter {
             "print" => Ok(Value::any(builtin_print(self.serializer.clone()))),
             "true" => Ok(Value::bool(true)),
             "false" => Ok(Value::bool(false)),
-            _ => Ok(Value::expr(
-                ctx.get_expr(ident)
-                    .or_else(|| {
-                        if self.ignore_missing_items {
-                            Some(Expr::Ident(ident.clone()))
-                        } else {
-                            None
-                        }
-                    })
-                    .with_context(|| format!("could not find {:?} in context", ident.name))?,
-            )),
+            _ => {
+                info!("Get value recursive {:?}", ident);
+                ctx.get_value_recursive(ident)
+                    // .or_else(|| {
+                    //     if self.ignore_missing_items {
+                    //         Some(Value::expr(Expr::Ident(ident.clone())))
+                    //     } else {
+                    //         None
+                    //     }
+                    // })
+                    .with_context(|| format!("could not find {:?} in context", ident.name))
+            }
         };
     }
-    pub fn interpret_bin_op_kind(
-        &self,
-        op: BinOpKind,
-        _ctx: &ExecutionContext,
-    ) -> Result<BuiltinFn> {
+    pub fn interpret_bin_op_kind(&self, op: BinOpKind, _ctx: &ScopedContext) -> Result<BuiltinFn> {
         match op {
             BinOpKind::Add => Ok(builtin_add()),
             BinOpKind::Sub => Ok(builtin_sub()),
@@ -204,14 +197,14 @@ impl Interpreter {
             _ => bail!("Could not process {:?}", op),
         }
     }
-    pub fn interpret_def(&self, def: &Define, ctx: &ExecutionContext) -> Result<()> {
+    pub fn interpret_def(&self, def: &Define, ctx: &ScopedContext) -> Result<()> {
         match &def.value {
             DefValue::Function(n) => {
                 return if def.name == Ident::new("main") {
                     self.interpret_expr(&n.body, ctx).map(|_| ())
                 } else {
                     let name = &def.name;
-                    ctx.insert_func_decl(name, n.clone());
+                    ctx.insert_function(name, n.clone());
                     Ok(())
                 };
             }
@@ -237,7 +230,7 @@ impl Interpreter {
             }
         }
     }
-    pub fn interpret_args(&self, node: &[Expr], ctx: &ExecutionContext) -> Result<Vec<Value>> {
+    pub fn interpret_args(&self, node: &[Expr], ctx: &ScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
             .iter()
             .map(|x| self.interpret_expr(x, ctx))
@@ -247,7 +240,7 @@ impl Interpreter {
     pub fn interpret_struct_value(
         &self,
         node: &StructValue,
-        ctx: &ExecutionContext,
+        ctx: &ScopedContext,
     ) -> Result<StructValue> {
         let fields: Vec<_> = node
             .fields
@@ -264,7 +257,7 @@ impl Interpreter {
             fields,
         })
     }
-    pub fn interpret_select(&self, s: &Select, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn interpret_select(&self, s: &Select, ctx: &ScopedContext) -> Result<Expr> {
         let obj = self.interpret_expr(&s.obj, ctx)?;
         // TODO: try to select values
         Ok(Expr::Select(Select {
@@ -273,7 +266,7 @@ impl Interpreter {
             select: s.select,
         }))
     }
-    pub fn interpret_tuple(&self, node: &TupleValue, ctx: &ExecutionContext) -> Result<TupleValue> {
+    pub fn interpret_tuple(&self, node: &TupleValue, ctx: &ScopedContext) -> Result<TupleValue> {
         let values: Vec<_> = node
             .values
             .iter()
@@ -283,7 +276,7 @@ impl Interpreter {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
-    pub fn interpret_type(&self, node: &TypeValue, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn interpret_type(&self, node: &TypeValue, ctx: &ScopedContext) -> Result<TypeValue> {
         match node {
             TypeValue::AnyBox(n) => {
                 if let Some(exp) = n.downcast_ref::<LazyValue<TypeExpr>>() {
@@ -297,15 +290,20 @@ impl Interpreter {
     pub fn interpret_function_value(
         &self,
         node: &FunctionValue,
-        ctx: &ExecutionContext,
+        ctx: &ScopedContext,
     ) -> Result<FunctionValue> {
+        let sub = ctx.child();
+        for generic in &node.generics_params {
+            let ty = self.type_system.evaluate_type_expr(&generic.expr, ctx)?;
+            sub.insert_type(&generic.name, ty);
+        }
         let params: Vec<_> = node
             .params
             .iter()
             .map(|x| {
                 Ok::<_, Error>(FunctionParam {
                     name: x.name.clone(),
-                    ty: self.interpret_type(&x.ty, ctx)?,
+                    ty: self.interpret_type(&x.ty, &sub)?,
                 })
             })
             .try_collect()?;
@@ -314,11 +312,11 @@ impl Interpreter {
             name: node.name.clone(),
             params,
             generics_params: node.generics_params.clone(),
-            ret: self.interpret_type(&node.ret, ctx)?,
+            ret: self.interpret_type(&node.ret, &sub)?,
             body: node.body.clone(),
         })
     }
-    pub fn interpret_value(&self, node: &Value, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_value(&self, node: &Value, ctx: &ScopedContext) -> Result<Value> {
         match node {
             Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
             Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
@@ -346,37 +344,27 @@ impl Interpreter {
             Value::Unit(_) => Ok(node.clone()),
             Value::Null(_) => Ok(node.clone()),
             Value::Undefined(_) => Ok(node.clone()),
+            Value::BinOpKind(x) => self
+                .interpret_bin_op_kind(x.clone(), ctx)
+                .map(|x| Value::any(x)),
         }
     }
-    pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ScopedContext) -> Result<Value> {
         match node {
-            Expr::Ident(n) => return self.interpret_ident(n, ctx),
-            Expr::Path(n) => {
-                return Ok(Value::expr(
-                    ctx.get_expr(n)
-                        .with_context(|| format!("could not find {:?} in context", n))?,
-                ))
-            }
-            Expr::Value(n) => return Ok(self.interpret_value(n, ctx)?.into()),
-            Expr::Block(n) => return self.interpret_block(n, ctx),
-            Expr::Cond(c) => {
-                return self.interpret_cond(c, ctx);
-            }
-            Expr::Invoke(invoke) => {
-                return self.interpret_invoke(invoke, ctx);
-            }
-            Expr::Any(n) => {
-                return Ok(Value::Any(n.clone()));
-            }
-            Expr::BinOpKind(bin_op) => {
-                return Ok(Value::any(self.interpret_bin_op_kind(bin_op.clone(), ctx)?));
-            }
-            _ => {}
-        }
+            Expr::Ident(n) => self.interpret_ident(n, ctx),
+            Expr::Path(n) => ctx
+                .get_value_recursive(n)
+                .with_context(|| format!("could not find {:?} in context", n)),
+            Expr::Value(n) => Ok(self.interpret_value(n, ctx)?.into()),
+            Expr::Block(n) => self.interpret_block(n, ctx),
+            Expr::Cond(c) => self.interpret_cond(c, ctx),
+            Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
+            Expr::Any(n) => Ok(Value::Any(n.clone())),
 
-        bail!("Failed to interpret {:?}", node)
+            _ => bail!("Failed to interpret {:?}", node),
+        }
     }
-    pub fn interpret_expr(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_expr(&self, node: &Expr, ctx: &ScopedContext) -> Result<Value> {
         // trace!("Interpreting {}", self.serializer.serialize_expr(&node)?);
         let result = self.interpret_expr_inner(node, ctx);
         match result {
@@ -389,16 +377,16 @@ impl Interpreter {
                 Ok(result)
             }
             Err(err) => {
-                warn!(
-                    "Failed to interpret {} => {:?}",
-                    self.serializer.serialize_expr(&node)?,
-                    err
-                );
+                // warn!(
+                //     "Failed to interpret {} => {:?}",
+                //     self.serializer.serialize_expr(&node)?,
+                //     err
+                // );
                 Err(err)
             }
         }
     }
-    pub fn interpret_item_inner(&self, node: &Item, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_item_inner(&self, node: &Item, ctx: &ScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
             Item::Module(n) => self.interpret_module(n, ctx),
@@ -409,7 +397,7 @@ impl Interpreter {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_item(&self, node: &Item, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_item(&self, node: &Item, ctx: &ScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         let result = self.interpret_item_inner(node, ctx);
         match result {
@@ -422,31 +410,31 @@ impl Interpreter {
                 Ok(result)
             }
             Err(err) => {
-                warn!(
-                    "Failed to interpret {} => {:?}",
-                    self.serializer.serialize_item(&node)?,
-                    err
-                );
+                // warn!(
+                //     "Failed to interpret {} => {:?}",
+                //     self.serializer.serialize_item(&node)?,
+                //     err
+                // );
                 Err(err)
             }
         }
     }
-    pub fn interpret_let(&self, node: &Let, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_let(&self, node: &Let, ctx: &ScopedContext) -> Result<Value> {
         let value = self.interpret_expr(&node.value, ctx)?;
         ctx.insert_value(node.name.clone(), value.clone());
         Ok(value)
     }
-    pub fn interpret_stmt_inner(&self, node: &Statement, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_stmt_inner(&self, node: &Statement, ctx: &ScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         match node {
             Statement::Item(n) => self.interpret_item(n, ctx),
             Statement::Let(n) => self.interpret_let(n, ctx).map(|_| Value::unit()),
             Statement::Expr(n) => self.interpret_expr(n, ctx),
-            Statement::StmtExpr(n) => self.interpret_expr(&n.expr, ctx).map(|_| Value::unit()),
+            Statement::SideEffect(n) => self.interpret_expr(&n.expr, ctx).map(|_| Value::unit()),
             Statement::Any(n) => Ok(Value::Any(n.clone())),
         }
     }
-    pub fn interpret_stmt(&self, node: &Statement, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_stmt(&self, node: &Statement, ctx: &ScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         let result = self.interpret_stmt_inner(node, ctx);
         match result {
@@ -459,16 +447,16 @@ impl Interpreter {
                 Ok(result)
             }
             Err(err) => {
-                warn!(
-                    "Failed to interpret {} => {:?}",
-                    self.serializer.serialize_stmt(&node)?,
-                    err
-                );
+                // warn!(
+                //     "Failed to interpret {} => {:?}",
+                //     self.serializer.serialize_stmt(&node)?,
+                //     err
+                // );
                 Err(err)
             }
         }
     }
-    pub fn interpret_tree(&self, node: &Tree, ctx: &ExecutionContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: &Tree, ctx: &ScopedContext) -> Result<Value> {
         match node {
             Tree::Item(item) => self.interpret_item(item, ctx),
         }

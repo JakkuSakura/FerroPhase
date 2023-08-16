@@ -1,3 +1,4 @@
+use crate::ops::BinOpKind;
 use crate::tree::*;
 use crate::value::TypeValue;
 use common::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ pub enum Value {
     Function(FunctionValue),
     Tuple(TupleValue),
     Expr(Box<Expr>),
+    BinOpKind(BinOpKind),
     Any(AnyBox),
 }
 impl Value {
@@ -135,10 +137,15 @@ pub struct FunctionParam {
     pub ty: TypeValue,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericParam {
+    pub name: Ident,
+    pub expr: TypeExpr,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionValue {
     pub name: Option<Ident>,
     pub params: Vec<FunctionParam>,
-    pub generics_params: Vec<FunctionParam>,
+    pub generics_params: Vec<GenericParam>,
     pub ret: TypeValue,
     pub body: Box<Expr>,
 }
