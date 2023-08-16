@@ -76,6 +76,8 @@ impl TypeSystem {
             Value::Tuple(_) => {}
             Value::Expr(_) => {}
             Value::Any(_) => {}
+            Value::Null(_) => {}
+            Value::Undefined(_) => {}
         }
         Ok(())
     }
