@@ -1,15 +1,21 @@
 use crate::context::ExecutionContext;
-use crate::passes::OptimizePass;
+use crate::passes::{InlinePass, OptimizePass, SpecializePass};
 use crate::tree::*;
 use crate::value::*;
 use crate::*;
 use common::*;
+pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer {
+    let mut opt = FoldOptimizer::new(serializer.clone());
+    opt.add_pass(SpecializePass::new(serializer.clone()));
+    opt.add_pass(InlinePass::new(serializer.clone()));
+    opt
+}
 
-pub struct Optimizer {
+pub struct FoldOptimizer {
     serializer: Rc<dyn Serializer>,
     passes: Vec<Box<dyn OptimizePass>>,
 }
-impl Optimizer {
+impl FoldOptimizer {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
             serializer,
