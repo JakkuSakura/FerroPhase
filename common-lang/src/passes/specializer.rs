@@ -394,29 +394,24 @@ impl SpecializePass {
         mut def: Define,
         ctx: &ExecutionContext,
     ) -> Result<Option<Define>> {
-        match def.name.as_str() {
-            "main" => match def.value {
-                DefValue::Function(f) => {
-                    debug!(
-                        "Specializing main function {} => {}",
-                        def.name,
-                        self.serializer.serialize_expr(&f.body)?
-                    );
-                    let body = self.specialize_expr(*f.body, ctx)?;
-                    def.value = DefValue::Function(FunctionValue {
-                        body: body.into(),
-                        name: f.name,
-                        params: f.params,
-                        generics_params: f.generics_params,
-                        ret: f.ret,
-                    });
+        match def.value {
+            DefValue::Function(f) if f.params.is_empty() && f.generics_params.is_empty() => {
+                debug!(
+                    "Specializing main function {} => {}",
+                    def.name,
+                    self.serializer.serialize_expr(&f.body)?
+                );
+                let body = self.specialize_expr(*f.body, ctx)?;
+                def.value = DefValue::Function(FunctionValue {
+                    body: body.into(),
+                    name: f.name,
+                    params: f.params,
+                    generics_params: f.generics_params,
+                    ret: f.ret,
+                });
 
-                    Ok(Some(def))
-                }
-                _ => bail!("Expected function for main"),
-            },
-            "print" => Ok(Some(def)),
-            _ if matches!(def.value, DefValue::Function(_)) => Ok(None),
+                Ok(Some(def))
+            }
             _ => Ok(Some(def)),
         }
     }
@@ -429,7 +424,7 @@ impl OptimizePass for SpecializePass {
     fn optimize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
         self.specialize_item(item, ctx)
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
-        self.specialize_expr(expr, ctx)
-    }
+    // fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+    //     self.specialize_expr(expr, ctx)
+    // }
 }

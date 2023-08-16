@@ -29,6 +29,6 @@ pub trait OptimizePass {
 pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> Optimizer {
     let mut opt = Optimizer::new(serializer.clone());
     opt.add_pass(SpecializePass::new(serializer.clone()));
-    opt.add_pass(InlinePass::new(serializer.clone()));
+    // opt.add_pass(InlinePass::new(serializer.clone()));
     opt
 }
