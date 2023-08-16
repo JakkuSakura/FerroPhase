@@ -271,9 +271,7 @@ impl Specializer {
             Item::Import(x) => self.specialize_import(x, ctx).map(Item::Import),
             Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module),
             Item::Any(x) => Ok(Item::Any(x.clone())),
-            Item::Expr(x) => self.specialize_expr(x, ctx).map(Item::Expr),
             Item::Impl(x) => Ok(Item::Impl(x.clone())),
-            Item::Stmt(x) => self.specialize_expr(x, ctx).map(Item::Stmt),
         }
         .map(Some)
     }
@@ -309,11 +307,83 @@ impl Specializer {
             }
         }
     }
+    pub fn specialize_let(&self, let_: &Let, ctx: &ExecutionContext) -> Result<Let> {
+        // TODO: handle side effects with ctx
+        let value = self.specialize_expr(&let_.value, ctx)?;
+        ctx.insert_expr(let_.name.clone().into(), value.clone());
+        let ty = self.type_system.infer_expr(&value, ctx)?;
+        Ok(Let {
+            name: let_.name.clone(),
+            value,
+            ty: Some(ty),
+        })
+    }
+    pub fn specialize_stmt_inner(
+        &self,
+        stmt: &Statement,
+        ctx: &ExecutionContext,
+    ) -> Result<Option<Statement>> {
+        match stmt {
+            Statement::Expr(x) => {
+                let expr = self.specialize_expr(x, ctx)?;
+                Ok(Some(Statement::Expr(expr)))
+            }
+            Statement::Item(x) => {
+                if let Some(x) = self.specialize_item(x, ctx)? {
+                    Ok(Some(Statement::Item(x.into())))
+                } else {
+                    Ok(None)
+                }
+            }
+            Statement::Any(x) => Ok(Some(Statement::Any(x.clone()))),
+            Statement::Let(x) => self.specialize_let(x, ctx).map(Statement::Let).map(Some),
+            Statement::StmtExpr(x) => self
+                .specialize_expr(&x.expr, ctx)
+                .map(Statement::stmt_expr)
+                .map(Some),
+        }
+    }
+    pub fn specialize_stmt(
+        &self,
+        stmt: &Statement,
+        ctx: &ExecutionContext,
+    ) -> Result<Option<Statement>> {
+        debug!(
+            "Specializing stmt {}",
+            self.serializer.serialize_stmt(stmt)?
+        );
+        let specialized = self.specialize_stmt_inner(stmt, ctx);
+        match specialized {
+            Ok(Some(specialized)) => {
+                debug!(
+                    "Specialized {} => {}",
+                    self.serializer.serialize_stmt(stmt)?,
+                    self.serializer.serialize_stmt(&specialized)?
+                );
+                Ok(Some(specialized))
+            }
+            Ok(None) => {
+                debug!(
+                    "Specialized {} => None",
+                    self.serializer.serialize_stmt(stmt)?
+                );
+                Ok(None)
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to specialize {}: {}",
+                    self.serializer.serialize_stmt(stmt)?,
+                    err
+                );
+                Err(err)
+            }
+        }
+    }
     pub fn specialize_block(&self, b: &Block, ctx: &ExecutionContext) -> Result<Block> {
         let items: Vec<_> = b
             .stmts
             .iter()
-            .map(|x| self.specialize_item(x, ctx))
+            .map(|x| self.specialize_stmt(x, ctx))
             .try_collect()?;
         let items: Vec<_> = items.into_iter().flatten().collect();
         Ok(Block { stmts: items })

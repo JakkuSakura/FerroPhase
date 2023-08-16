@@ -4,6 +4,7 @@ use crate::Serializer;
 use common::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::mem::replace;
 use std::rc::Rc;
 
@@ -40,8 +41,8 @@ impl ExecutionContext {
     pub fn insert_tree(&self, key: Path, value: Tree) {
         self.inner.borrow_mut().trees.insert(key, value);
     }
-    pub fn insert_type(&self, key: Path, value: TypeValue) {
-        self.inner.borrow_mut().types.insert(key, value);
+    pub fn insert_type(&self, key: impl Into<Path>, value: TypeValue) {
+        self.inner.borrow_mut().types.insert(key.into(), value);
     }
     pub fn insert_func_decl(&self, key: impl Into<Path>, value: FunctionValue) {
         let key = key.into();
@@ -49,13 +50,10 @@ impl ExecutionContext {
         self.inner.borrow_mut().func_decls.insert(key.into(), value);
     }
     pub fn insert_expr(&self, key: Path, value: Expr) {
-        self.inner
-            .borrow_mut()
-            .values
-            .insert(key, Value::expr(value));
+        self.insert_value(key, Value::expr(value));
     }
-    pub fn insert_value(&self, key: Path, value: Value) {
-        self.inner.borrow_mut().values.insert(key, value);
+    pub fn insert_value(&self, key: impl Into<Path>, value: Value) {
+        self.inner.borrow_mut().values.insert(key.into(), value);
     }
 
     pub fn print_values(&self, s: impl Serializer) -> Result<()> {
@@ -136,5 +134,25 @@ impl ExecutionContext {
             .filter(|x| *x.1)
             .map(|x| x.0.clone())
             .collect()
+    }
+}
+#[derive(Clone)]
+pub struct LazyValue<Expr> {
+    pub ctx: ExecutionContext,
+    pub expr: Expr,
+}
+impl<Expr: Debug> Debug for LazyValue<Expr> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LazyValue({:?})", self.expr)
+    }
+}
+impl Serialize for LazyValue<Expr> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{:?}", self))
+    }
+}
+impl<'de> Deserialize<'de> for LazyValue<Expr> {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        unreachable!()
     }
 }

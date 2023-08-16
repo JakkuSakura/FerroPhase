@@ -41,6 +41,7 @@ pub trait Serializer {
         }
         Ok(s)
     }
+    fn serialize_stmt(&self, node: &Statement) -> Result<String>;
 }
 
 pub trait Deserializer {
