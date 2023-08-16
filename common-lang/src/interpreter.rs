@@ -108,10 +108,11 @@ impl Interpreter {
         Ok(())
     }
     pub fn interpret_block(&self, node: &Block, ctx: &ExecutionContext) -> Result<Value> {
+        let ctx = ctx.child();
         let ret: Vec<_> = node
             .stmts
             .iter()
-            .map(|x| self.interpret_stmt(x, ctx))
+            .map(|x| self.interpret_stmt(x, &ctx))
             .try_collect()?;
         if !ret.is_empty() {
             Ok(ret.last().cloned().unwrap())
