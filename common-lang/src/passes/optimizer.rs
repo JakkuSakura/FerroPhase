@@ -37,31 +37,8 @@ impl Optimizer {
         let serialized = self.serializer.serialize_expr(&expr)?;
         debug!("Optimizing {}", serialized);
         let mut expr = match expr {
-            Expr::Ident(ref n) => match n.as_str() {
-                "print" => expr,
-                _ => {
-                    let value = ctx
-                        .get_expr(n)
-                        .with_context(|| format!("Could not find {:?} in context", n))?;
-                    debug!(
-                        "Look up {} => {}",
-                        n,
-                        self.serializer.serialize_expr(&value)?
-                    );
-                    value
-                }
-            },
-            Expr::Path(n) => {
-                let value = ctx
-                    .get_expr(n.clone())
-                    .with_context(|| format!("Could not find {:?} in context", n))?;
-                debug!(
-                    "Look up {} => {}",
-                    n,
-                    self.serializer.serialize_expr(&value)?
-                );
-                value
-            }
+            Expr::Ident(_) => expr,
+            Expr::Path(_) => expr,
             Expr::Value(_) => expr,
             Expr::Block(x) => self.optimize_block(x, ctx).map(Expr::Block)?,
             Expr::Cond(x) => self.optimize_cond(x, ctx)?,
@@ -224,8 +201,23 @@ impl Optimizer {
             if_style: b.if_style,
         }))
     }
+    pub fn optimize_func(
+        &self,
+        func: FunctionValue,
+        ctx: &ExecutionContext,
+    ) -> Result<FunctionValue> {
+        let body = self.optimize_expr(*func.body, ctx)?;
+        Ok(FunctionValue {
+            body: body.into(),
+            ..func
+        })
+    }
 
-    pub fn optimize_def(&self, def: Define, _ctx: &ExecutionContext) -> Result<Define> {
+    pub fn optimize_def(&self, mut def: Define, ctx: &ExecutionContext) -> Result<Define> {
+        def.value = match def.value {
+            DefValue::Function(func) => self.optimize_func(func, ctx).map(DefValue::Function)?,
+            _ => def.value,
+        };
         Ok(def)
     }
     pub fn prescan_def(&self, def: &Define, ctx: &ExecutionContext) -> Result<()> {
