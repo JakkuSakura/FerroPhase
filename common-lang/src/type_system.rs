@@ -1,4 +1,4 @@
-use crate::context::ExecutionContext;
+use crate::context::ScopedContext;
 use crate::tree::*;
 use crate::value::*;
 use crate::Serializer;
@@ -78,6 +78,7 @@ impl TypeSystem {
             Value::Any(_) => {}
             Value::Null(_) => {}
             Value::Undefined(_) => {}
+            Value::BinOpKind(_) => {}
         }
         Ok(())
     }
@@ -85,7 +86,7 @@ impl TypeSystem {
         &self,
         expr: &Expr,
         type_value: &TypeValue,
-        ctx: &ExecutionContext,
+        ctx: &ScopedContext,
     ) -> Result<()> {
         match expr {
             Expr::Ident(n) => {
@@ -100,11 +101,7 @@ impl TypeSystem {
         }
         Ok(())
     }
-    pub fn evaluate_type_value_op(
-        &self,
-        op: &TypeBinOp,
-        ctx: &ExecutionContext,
-    ) -> Result<TypeValue> {
+    pub fn evaluate_type_value_op(&self, op: &TypeBinOp, ctx: &ScopedContext) -> Result<TypeValue> {
         match op {
             TypeBinOp::Add(a) => {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
@@ -134,7 +131,7 @@ impl TypeSystem {
             }
         }
     }
-    pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ScopedContext) -> Result<TypeValue> {
         match ty {
             TypeValue::Expr(expr) => self.evaluate_type_expr(expr, ctx),
             TypeValue::NamedStruct(n) => {
@@ -169,12 +166,17 @@ impl TypeSystem {
                 Ok(TypeValue::UnnamedStruct(UnnamedStructType { fields }))
             }
             TypeValue::Function(f) => {
+                let sub = ctx.child();
+                for g in &f.generics_params {
+                    let constrain = self.evaluate_type_expr(&g.expr, &sub)?;
+                    sub.insert_type(g.name.clone(), constrain);
+                }
                 let params = f
                     .params
                     .iter()
-                    .map(|x| self.evaluate_type_value(x, ctx))
+                    .map(|x| self.evaluate_type_value(x, &sub))
                     .try_collect()?;
-                let ret = self.evaluate_type_value(&f.ret, ctx)?;
+                let ret = self.evaluate_type_value(&f.ret, &sub)?;
                 Ok(TypeValue::Function(FunctionType {
                     params,
                     generics_params: f.generics_params.clone(),
@@ -184,10 +186,14 @@ impl TypeSystem {
             _ => Ok(ty.clone()),
         }
     }
-    pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ScopedContext) -> Result<TypeValue> {
         match ty {
             TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
             TypeExpr::Ident(i) => {
+                match i.as_str() {
+                    "Add" => return Ok(TypeValue::impl_trait("Add".into())),
+                    _ => {}
+                }
                 let ty = ctx
                     .get_type(i)
                     .with_context(|| format!("Could not find type {:?}", i))?;
@@ -198,12 +204,7 @@ impl TypeSystem {
         }
     }
 
-    pub fn type_check_expr(
-        &self,
-        expr: &Expr,
-        ty: &TypeExpr,
-        ctx: &ExecutionContext,
-    ) -> Result<()> {
+    pub fn type_check_expr(&self, expr: &Expr, ty: &TypeExpr, ctx: &ScopedContext) -> Result<()> {
         let tv = self.evaluate_type_expr(ty, ctx)?;
         self.type_check_expr_against_value(expr, &tv, ctx)
     }
@@ -212,7 +213,7 @@ impl TypeSystem {
         &self,
         callee: &Expr,
         params: &[Expr],
-        ctx: &ExecutionContext,
+        ctx: &ScopedContext,
     ) -> Result<TypeValue> {
         match callee {
             Expr::Ident(ident) => match ident.as_str() {
@@ -233,13 +234,13 @@ impl TypeSystem {
 
         bail!("Could not infer type call {:?}", callee)
     }
-    pub fn infer_ident(&self, ident: &Ident, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn infer_ident(&self, ident: &Ident, ctx: &ScopedContext) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(TypeValue::Function(FunctionType {
-                    generics_params: vec![FunctionParam {
+                    generics_params: vec![GenericParam {
                         name: Ident::new("T"),
-                        ty: TypeValue::Any(AnyType),
+                        expr: TypeExpr::Value(TypeValue::Any(AnyType)),
                     }],
                     params: vec![
                         TypeValue::expr(TypeExpr::Ident("T".into())),
@@ -262,7 +263,7 @@ impl TypeSystem {
             .with_context(|| format!("Could not find {:?} in context", ident))?;
         self.infer_expr(&expr, ctx)
     }
-    pub fn infer_expr(&self, expr: &Expr, ctx: &ExecutionContext) -> Result<TypeValue> {
+    pub fn infer_expr(&self, expr: &Expr, ctx: &ScopedContext) -> Result<TypeValue> {
         match expr {
             Expr::Ident(n) => {
                 let ty = ctx
@@ -298,7 +299,7 @@ impl TypeSystem {
     pub fn infer_function(
         &self,
         func: &FunctionValue,
-        _ctx: &ExecutionContext,
+        _ctx: &ScopedContext,
     ) -> Result<FunctionType> {
         let mut params = vec![];
         for p in &func.params {

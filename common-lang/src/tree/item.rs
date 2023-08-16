@@ -25,14 +25,14 @@ pub struct Module {
     pub items: ItemChunk,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatementExpr {
+pub struct SideEffect {
     pub expr: Expr,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Statement {
     Item(Box<Item>),
     Let(Let),
-    StmtExpr(StatementExpr),
+    SideEffect(SideEffect),
     Expr(Expr),
     Any(AnyBox),
 }
@@ -44,7 +44,7 @@ impl Statement {
         Self::Item(Box::new(item))
     }
     pub fn stmt_expr(expr: Expr) -> Self {
-        Self::StmtExpr(StatementExpr { expr })
+        Self::SideEffect(SideEffect { expr })
     }
     pub fn maybe_stmt_expr(expr: Expr, is_stmt: bool) -> Self {
         if is_stmt {
@@ -59,7 +59,7 @@ impl Statement {
         }
     }
     pub fn try_make_expr(&mut self) {
-        if let Self::StmtExpr(expr) = self {
+        if let Self::SideEffect(expr) = self {
             *self = Self::Expr(expr.expr.clone());
         }
     }
@@ -69,6 +69,28 @@ pub type StatementChunk = Vec<Statement>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub stmts: StatementChunk,
+}
+impl Block {
+    pub fn new(stmts: StatementChunk) -> Self {
+        Self { stmts }
+    }
+    pub fn prepend(lhs: StatementChunk, rhs: Expr) -> Self {
+        let mut stmts = lhs;
+        match rhs {
+            Expr::Block(block) => {
+                stmts.extend(block.stmts);
+            }
+            _ => {
+                stmts.push(Statement::Expr(rhs));
+            }
+        }
+        Self::new(stmts)
+    }
+    pub fn make_last_side_effect(&mut self) {
+        if let Some(last) = self.stmts.last_mut() {
+            last.try_make_stmt();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Copy)]

@@ -1,5 +1,5 @@
 use crate::tree::{AnyBox, Ident, Path, TypeExpr};
-use crate::value::FunctionParam;
+use crate::value::GenericParam;
 use common::*;
 use std::fmt::Debug;
 
@@ -41,6 +41,10 @@ impl TypeValue {
     }
     pub fn any_box<T: Debug + 'static>(any: T) -> Self {
         Self::AnyBox(AnyBox::new(any))
+    }
+
+    pub fn impl_trait(name: Ident) -> Self {
+        Self::ImplTraits(ImplTraits::new(vec![ImplTrait::new(name)]))
     }
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -111,7 +115,7 @@ pub struct UnnamedStructType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionType {
     pub params: Vec<TypeValue>,
-    pub generics_params: Vec<FunctionParam>,
+    pub generics_params: Vec<GenericParam>,
     pub ret: Box<TypeValue>,
 }
 

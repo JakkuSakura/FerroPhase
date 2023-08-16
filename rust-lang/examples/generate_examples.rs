@@ -1,6 +1,6 @@
 use common::*;
 
-use common_lang::context::ExecutionContext;
+use common_lang::context::ScopedContext;
 use common_lang::interpreter::Interpreter;
 use common_lang::optimizer::load_optimizer;
 use common_lang::{Deserializer, Serializer};
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
         let node = rust_serde.deserialize(&file_content)?;
-        let ctx = ExecutionContext::new();
+        let ctx = ScopedContext::new();
         let optimizer = load_optimizer(Rc::new(rust_serde));
         let node = optimizer
             .optimize_tree(node, &ctx)?
@@ -46,7 +46,7 @@ fn main() -> Result<()> {
         writeln!(&mut file_out, "{}", code)?;
 
         let inp = Interpreter::new(Rc::new(rust_serde));
-        let ctx = ExecutionContext::new();
+        let ctx = ScopedContext::new();
         let intp_result = inp.interpret_tree(&node, &ctx)?;
         for row in ctx.take_outputs() {
             writeln!(&mut file_out, "// stdout: {}", row)?;

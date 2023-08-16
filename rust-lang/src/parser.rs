@@ -5,9 +5,7 @@ use common_lang::tree::*;
 use common_lang::value::*;
 use quote::ToTokens;
 use syn::parse::ParseStream;
-use syn::{
-    parse_quote, FieldsNamed, FnArg, GenericParam, Lit, Pat, ReturnType, Token, TypeParamBound,
-};
+use syn::{parse_quote, FieldsNamed, FnArg, Lit, Pat, ReturnType, Token, TypeParamBound};
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -130,12 +128,10 @@ fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
         .params
         .into_iter()
         .map(|x| match x {
-            GenericParam::Type(t) => Ok(FunctionParam {
+            syn::GenericParam::Type(t) => Ok(GenericParam {
                 name: parse_ident(t.ident),
                 // TODO: support multiple type bounds
-                ty: TypeValue::expr(TypeExpr::path(parse_type_param_bound(
-                    t.bounds.first().cloned().unwrap(),
-                )?)),
+                expr: TypeExpr::path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
             }),
             _ => bail!("Does not generic param {:?}", x),
         })
@@ -228,7 +224,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     if flatten {
         match &mut lhs {
             Expr::Invoke(first_arg) => match &*first_arg.func {
-                Expr::BinOpKind(i) if i == &op => {
+                Expr::Value(Value::BinOpKind(i)) if i == &op => {
                     first_arg.args.push(rhs);
                     return Ok(first_arg.clone());
                 }
@@ -238,7 +234,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         }
     }
     Ok(Invoke {
-        func: Expr::BinOpKind(op).into(),
+        func: Expr::value(Value::BinOpKind(op)).into(),
         args: vec![lhs, rhs],
     })
 }
