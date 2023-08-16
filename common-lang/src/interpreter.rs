@@ -320,13 +320,6 @@ impl Interpreter {
     }
     pub fn interpret_value(&self, node: &Value, ctx: &ExecutionContext) -> Result<Value> {
         match node {
-            Value::Int(_) => Ok(node.clone()),
-            Value::Bool(_) => Ok(node.clone()),
-            Value::Decimal(_) => Ok(node.clone()),
-            Value::Char(_) => Ok(node.clone()),
-            Value::String(_) => Ok(node.clone()),
-            Value::List(_) => Ok(node.clone()),
-            Value::Unit(_) => Ok(node.clone()),
             Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
             Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
@@ -344,6 +337,15 @@ impl Interpreter {
 
                 bail!("Failed to interpret {:?}", node)
             }
+            Value::Int(_) => Ok(node.clone()),
+            Value::Bool(_) => Ok(node.clone()),
+            Value::Decimal(_) => Ok(node.clone()),
+            Value::Char(_) => Ok(node.clone()),
+            Value::String(_) => Ok(node.clone()),
+            Value::List(_) => Ok(node.clone()),
+            Value::Unit(_) => Ok(node.clone()),
+            Value::Null(_) => Ok(node.clone()),
+            Value::Undefined(_) => Ok(node.clone()),
         }
     }
     pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Value> {

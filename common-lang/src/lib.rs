@@ -1,7 +1,9 @@
 pub mod context;
+
 pub mod interpreter;
 pub mod ops;
-pub mod specializer;
+pub mod passes;
+
 pub mod tree;
 pub mod type_system;
 pub mod value;
@@ -16,7 +18,7 @@ use std::rc::Rc;
 pub trait Serializer {
     fn serialize_tree(&self, node: &Tree) -> Result<String>;
     fn serialize_expr(&self, node: &Expr) -> Result<String>;
-    fn serialize_exprs(&self, nodes: &[Expr]) -> Result<String> {
+    fn serialize_args(&self, nodes: &[Expr]) -> Result<String> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
             if i > 0 {

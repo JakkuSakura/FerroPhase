@@ -1,5 +1,7 @@
 use crate::context::ExecutionContext;
 use crate::interpreter::Interpreter;
+use crate::ops::BinOpKind;
+use crate::passes::OptimizePass;
 use crate::tree::*;
 use crate::type_system::TypeSystem;
 use crate::value::*;
@@ -10,12 +12,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct Specializer {
     spec_id: AtomicUsize,
     serializer: Rc<dyn Serializer>,
+    interpreter: Interpreter,
     type_system: TypeSystem,
 }
 impl Specializer {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
+            interpreter: Interpreter::new(serializer.clone()),
             type_system: TypeSystem::new(serializer.clone()),
             serializer,
         }
@@ -45,11 +49,10 @@ impl Specializer {
             _ => None,
         })
     }
-    pub fn specialize_expr_inner(&self, expr: &Expr, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn specialize_expr_inner(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
         match expr {
-            Expr::Ident(n) => match n.as_str() {
-                "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(expr.clone()),
-                "print" => Ok(expr.clone()),
+            Expr::Ident(ref n) => match n.as_str() {
+                "print" => Ok(expr),
                 _ => {
                     let value = ctx
                         .get_expr(n)
@@ -82,46 +85,44 @@ impl Specializer {
             _ => bail!("Could not specialize {:?}", expr),
         }
     }
-    pub fn specialize_expr(&self, expr: &Expr, ctx: &ExecutionContext) -> Result<Expr> {
-        debug!("Specializing {}", self.serializer.serialize_expr(expr)?);
+    pub fn specialize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+        let expr_serialized = self.serializer.serialize_expr(&expr)?;
+        debug!("Specializing {}", expr_serialized);
         let specialized = self.specialize_expr_inner(expr, ctx);
         match specialized {
             Ok(specialized) => {
                 debug!(
                     "Specialized {} => {}",
-                    self.serializer.serialize_expr(expr)?,
+                    expr_serialized,
                     self.serializer.serialize_expr(&specialized)?
                 );
                 Ok(specialized)
             }
             Err(err) => {
-                warn!(
-                    "Failed to specialize {}: {}",
-                    self.serializer.serialize_expr(expr)?,
-                    err
-                );
+                warn!("Failed to specialize {}: {}", expr_serialized, err);
                 Err(err)
             }
         }
     }
-    pub fn specialize_import(&self, import: &Import, _ctx: &ExecutionContext) -> Result<Import> {
-        Ok(import.clone())
+    pub fn specialize_import(&self, import: Import, _ctx: &ExecutionContext) -> Result<Import> {
+        Ok(import)
     }
+
     pub fn specialize_invoke_details(
         &self,
-        func: &FunctionValue,
-        params: &[Expr],
+        func: FunctionValue,
+        params: Vec<Expr>,
         ctx: &ExecutionContext,
     ) -> Result<Expr> {
         let name = func.name.as_ref().map(|x| x.name.as_str()).unwrap_or("fun");
         let args: Vec<_> = params
-            .iter()
+            .into_iter()
             .map(|x| self.specialize_expr(x, ctx))
             .try_collect()?;
         debug!(
             "Specializing Invoke {} with {}",
             name,
-            self.serializer.serialize_exprs(&args)?
+            self.serializer.serialize_args(&args)?
         );
 
         let sub = ctx.child();
@@ -142,7 +143,8 @@ impl Specializer {
             }
             _ => {}
         }
-        let new_body = self.specialize_expr(&func.body, &sub)?;
+
+        let new_body = self.specialize_expr(*func.body, &sub)?;
         let new_name = Ident::new(format!(
             "{}_{}",
             name,
@@ -151,7 +153,7 @@ impl Specializer {
         debug!(
             "Specialized function {} with {} => {} {}",
             name,
-            self.serializer.serialize_exprs(&args)?,
+            self.serializer.serialize_args(&args)?,
             new_name,
             self.serializer.serialize_expr(&new_body)?
         );
@@ -171,6 +173,7 @@ impl Specializer {
             },
             _ => {}
         }
+
         ctx.root().insert_specialized(
             new_name.clone().into(),
             FunctionValue {
@@ -186,53 +189,63 @@ impl Specializer {
             args: Default::default(),
         }));
     }
-    pub fn specialize_invoke(&self, node: &Invoke, ctx: &ExecutionContext) -> Result<Expr> {
-        if let Some(fun) = self.lookup_func_decl(&node.fun, ctx)? {
-            self.specialize_invoke_details(&fun, &node.args, ctx)
-        } else {
-            let fun = self.specialize_expr(&node.fun, ctx)?;
+    pub fn specialize_invoke_bin_op(
+        &self,
+        kind: BinOpKind,
+        args: Vec<Expr>,
+        ctx: &ExecutionContext,
+    ) -> Result<Expr> {
+        let args: Vec<_> = args
+            .into_iter()
+            .map(|x| self.specialize_expr(x, ctx))
+            .try_collect()?;
+        debug!(
+            "Specializing Invoke {:?} with {}",
+            kind,
+            self.serializer.serialize_args(&args)?
+        );
 
-            match fun {
-                Expr::Value(Value::Function(f)) => {
-                    self.specialize_invoke_details(&f, &node.args, ctx)
-                }
-                Expr::BinOpKind(op) => {
-                    let args: Vec<_> = node
-                        .args
-                        .iter()
-                        .map(|x| self.specialize_expr(x, ctx))
-                        .try_collect()?;
-                    debug!(
-                        "Invoking {:?} with {}",
-                        op,
-                        self.serializer.serialize_exprs(&args)?
-                    );
-
-                    let result_invoke = Invoke {
-                        fun: Expr::BinOpKind(op).into(),
-                        args,
-                    };
-                    if let Ok(val) = Interpreter::new(self.serializer.clone())
-                        .interpret_invoke(&result_invoke, ctx)
-                    {
-                        Ok(Expr::value(val))
-                    } else {
-                        Ok(Expr::Invoke(result_invoke))
-                    }
-                }
-                _ => bail!("Failed to specialize {:?} {:?}", node, fun),
+        let result_invoke = Invoke {
+            fun: Expr::BinOpKind(kind.clone()).into(),
+            args: args.clone(),
+        };
+        match self.interpreter.interpret_invoke(&result_invoke, ctx) {
+            Ok(val) => Ok(Expr::value(val)),
+            Err(err) => {
+                warn!(
+                    "Failed to interpret {:?} {}: {:?}",
+                    kind,
+                    self.serializer.serialize_args(&args)?,
+                    err
+                );
+                Ok(Expr::Invoke(result_invoke))
             }
         }
     }
-    pub fn specialize_module(&self, m: &Module, ctx: &ExecutionContext) -> Result<Module> {
+    pub fn specialize_invoke(&self, node: Invoke, ctx: &ExecutionContext) -> Result<Expr> {
+        if let Some(fun) = self.lookup_func_decl(&node.fun, ctx)? {
+            self.specialize_invoke_details(fun, node.args, ctx)
+        } else {
+            let fun = self.specialize_expr(*node.fun, ctx)?;
+
+            match fun {
+                Expr::Value(Value::Function(f)) => {
+                    self.specialize_invoke_details(f, node.args, ctx)
+                }
+                Expr::BinOpKind(op) => self.specialize_invoke_bin_op(op, node.args, ctx),
+                _ => bail!("Failed to specialize {:?}", fun),
+            }
+        }
+    }
+    pub fn specialize_module(&self, m: Module, ctx: &ExecutionContext) -> Result<Module> {
         debug!(
             "Specializing module {}",
-            self.serializer.serialize_module(m)?
+            self.serializer.serialize_module(&m)?
         );
 
         let items: Vec<_> = m
             .items
-            .iter()
+            .into_iter()
             .map(|x| self.specialize_item(x, ctx))
             .try_collect()?;
         let mut items: Vec<_> = items.into_iter().flatten().collect();
@@ -257,7 +270,7 @@ impl Specializer {
     }
     pub fn specialize_item_inner(
         &self,
-        item: &Item,
+        item: Item,
         ctx: &ExecutionContext,
     ) -> Result<Option<Item>> {
         match item {
@@ -275,41 +288,31 @@ impl Specializer {
         }
         .map(Some)
     }
-    pub fn specialize_item(&self, item: &Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
-        debug!(
-            "Specializing item {}",
-            self.serializer.serialize_item(item)?
-        );
+    pub fn specialize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
+        let item_serialized = self.serializer.serialize_item(&item)?;
+        debug!("Specializing item {}", item_serialized);
         let specialized = self.specialize_item_inner(item, ctx);
         match specialized {
             Ok(Some(specialized)) => {
                 debug!(
                     "Specialized {} => {}",
-                    self.serializer.serialize_item(item)?,
+                    item_serialized,
                     self.serializer.serialize_item(&specialized)?
                 );
                 Ok(Some(specialized))
             }
             Ok(None) => {
-                debug!(
-                    "Specialized {} => None",
-                    self.serializer.serialize_item(item)?
-                );
+                debug!("Specialized {} => None", item_serialized);
                 Ok(None)
             }
             Err(err) => {
-                warn!(
-                    "Failed to specialize {}: {}",
-                    self.serializer.serialize_item(item)?,
-                    err
-                );
+                warn!("Failed to specialize {}: {}", item_serialized, err);
                 Err(err)
             }
         }
     }
-    pub fn specialize_let(&self, let_: &Let, ctx: &ExecutionContext) -> Result<Let> {
-        // TODO: handle side effects with ctx
-        let value = self.specialize_expr(&let_.value, ctx)?;
+    pub fn specialize_let(&self, let_: Let, ctx: &ExecutionContext) -> Result<Let> {
+        let value = self.specialize_expr(let_.value, ctx)?;
         ctx.insert_expr(let_.name.clone().into(), value.clone());
         let ty = self.type_system.infer_expr(&value, ctx)?;
         Ok(Let {
@@ -320,7 +323,7 @@ impl Specializer {
     }
     pub fn specialize_stmt_inner(
         &self,
-        stmt: &Statement,
+        stmt: Statement,
         ctx: &ExecutionContext,
     ) -> Result<Option<Statement>> {
         match stmt {
@@ -329,7 +332,7 @@ impl Specializer {
                 Ok(Some(Statement::Expr(expr)))
             }
             Statement::Item(x) => {
-                if let Some(x) = self.specialize_item(x, ctx)? {
+                if let Some(x) = self.specialize_item(*x, ctx)? {
                     Ok(Some(Statement::Item(x.into())))
                 } else {
                     Ok(None)
@@ -337,66 +340,62 @@ impl Specializer {
             }
             Statement::Any(x) => Ok(Some(Statement::Any(x.clone()))),
             Statement::Let(x) => self.specialize_let(x, ctx).map(Statement::Let).map(Some),
-            Statement::StmtExpr(x) => self
-                .specialize_expr(&x.expr, ctx)
-                .map(Statement::stmt_expr)
-                .map(Some),
+            Statement::StmtExpr(x) => {
+                let expr = self.specialize_expr(x.expr, ctx)?;
+
+                if matches!(&expr, Expr::Value(Value::Unit(_))) {
+                    Ok(None)
+                } else {
+                    Ok(Some(Statement::stmt_expr(expr)))
+                }
+            }
         }
     }
     pub fn specialize_stmt(
         &self,
-        stmt: &Statement,
+        stmt: Statement,
         ctx: &ExecutionContext,
     ) -> Result<Option<Statement>> {
-        debug!(
-            "Specializing stmt {}",
-            self.serializer.serialize_stmt(stmt)?
-        );
+        let stmt_serialized = self.serializer.serialize_stmt(&stmt)?;
+        debug!("Specializing stmt {}", stmt_serialized);
         let specialized = self.specialize_stmt_inner(stmt, ctx);
         match specialized {
             Ok(Some(specialized)) => {
                 debug!(
                     "Specialized {} => {}",
-                    self.serializer.serialize_stmt(stmt)?,
+                    stmt_serialized,
                     self.serializer.serialize_stmt(&specialized)?
                 );
                 Ok(Some(specialized))
             }
             Ok(None) => {
-                debug!(
-                    "Specialized {} => None",
-                    self.serializer.serialize_stmt(stmt)?
-                );
+                debug!("Specialized {} => None", stmt_serialized);
                 Ok(None)
             }
             Err(err) => {
-                warn!(
-                    "Failed to specialize {}: {}",
-                    self.serializer.serialize_stmt(stmt)?,
-                    err
-                );
+                warn!("Failed to specialize {}: {}", stmt_serialized, err);
                 Err(err)
             }
         }
     }
-    pub fn specialize_block(&self, b: &Block, ctx: &ExecutionContext) -> Result<Block> {
+    pub fn specialize_block(&self, b: Block, ctx: &ExecutionContext) -> Result<Block> {
         let ctx = ctx.child();
         let items: Vec<_> = b
             .stmts
-            .iter()
+            .into_iter()
             .map(|x| self.specialize_stmt(x, &ctx))
             .try_collect()?;
         let stmts: Vec<_> = items.into_iter().flatten().collect();
         Ok(Block { stmts })
     }
-    pub fn specialize_cond(&self, b: &Cond, ctx: &ExecutionContext) -> Result<Expr> {
+    pub fn specialize_cond(&self, b: Cond, ctx: &ExecutionContext) -> Result<Expr> {
         for case in &b.cases {
             let interpreted =
                 Interpreter::new(self.serializer.clone()).interpret_expr(&case.cond, ctx)?;
             match interpreted {
                 Value::Bool(b) => {
                     if b.value {
-                        return self.specialize_expr(&case.body, ctx);
+                        return self.specialize_expr(case.body.clone(), ctx);
                     } else {
                         continue;
                     }
@@ -407,11 +406,11 @@ impl Specializer {
         Ok(Expr::Cond(Cond {
             cases: b
                 .cases
-                .iter()
+                .into_iter()
                 .map(|case| {
                     Ok::<_, Error>(CondCase {
-                        cond: self.specialize_expr(&case.cond, ctx)?,
-                        body: self.specialize_expr(&case.body, ctx)?,
+                        cond: self.specialize_expr(case.cond, ctx)?,
+                        body: self.specialize_expr(case.body, ctx)?,
                     })
                 })
                 .try_collect()?,
@@ -419,8 +418,7 @@ impl Specializer {
         }))
     }
 
-    pub fn specialize_def(&self, def: &Define, ctx: &ExecutionContext) -> Result<Option<Define>> {
-        let def = def.clone();
+    pub fn specialize_def(&self, def: Define, ctx: &ExecutionContext) -> Result<Option<Define>> {
         match def.value.clone() {
             DefValue::Function(f) => match def.name.as_str() {
                 "main" => {
@@ -431,7 +429,7 @@ impl Specializer {
                     );
                     let define = Define {
                         value: DefValue::Function(FunctionValue {
-                            body: self.specialize_expr(&f.body, ctx)?.into(),
+                            body: self.specialize_expr(*f.body, ctx)?.into(),
                             ..f
                         }),
                         ..def
@@ -456,12 +454,20 @@ impl Specializer {
             _ => Ok(Some(def.clone())),
         }
     }
-    pub fn specialize_tree(&self, node: &Tree, ctx: &ExecutionContext) -> Result<Option<Tree>> {
+    pub fn specialize_tree(&self, node: Tree, ctx: &ExecutionContext) -> Result<Option<Tree>> {
         match node {
             Tree::Item(item) => {
                 let item = self.specialize_item(item, ctx)?;
                 Ok(item.map(Tree::Item))
             }
         }
+    }
+}
+impl OptimizePass for Specializer {
+    fn optimize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
+        self.specialize_item(item, ctx)
+    }
+    fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+        self.specialize_expr(expr, ctx)
     }
 }
