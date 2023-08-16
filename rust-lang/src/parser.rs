@@ -159,13 +159,13 @@ fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
     Ok(Invoke {
-        fun: fun.into(),
+        func: fun.into(),
         args,
     })
 }
 fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
     Ok(Invoke {
-        fun: Expr::Select(Select {
+        func: Expr::Select(Select {
             obj: parse_expr(*call.receiver)?.into(),
             field: parse_ident(call.method),
             select: SelectType::Method,
@@ -227,7 +227,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     };
     if flatten {
         match &mut lhs {
-            Expr::Invoke(first_arg) => match &*first_arg.fun {
+            Expr::Invoke(first_arg) => match &*first_arg.func {
                 Expr::BinOpKind(i) if i == &op => {
                     first_arg.args.push(rhs);
                     return Ok(first_arg.clone());
@@ -238,7 +238,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         }
     }
     Ok(Invoke {
-        fun: Expr::BinOpKind(op).into(),
+        func: Expr::BinOpKind(op).into(),
         args: vec![lhs, rhs],
     })
 }

@@ -104,7 +104,7 @@ impl RustPrinter {
         }
     }
     pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
-        match &*invoke.fun {
+        match &*invoke.func {
             Expr::BinOpKind(op) => {
                 let op = self.print_bin_op_kind(op);
                 let args: Vec<_> = invoke
@@ -122,7 +122,7 @@ impl RustPrinter {
                 return Ok(stream);
             }
             _ => {
-                let fun = self.print_expr(&invoke.fun)?;
+                let fun = self.print_expr(&invoke.func)?;
                 let args: Vec<_> = invoke
                     .args
                     .iter()
@@ -135,7 +135,7 @@ impl RustPrinter {
         }
     }
     pub fn print_invoke_type(&self, invoke: &Invoke) -> Result<TokenStream> {
-        let fun = self.print_expr(&invoke.fun)?;
+        let fun = self.print_expr(&invoke.func)?;
         let args: Vec<_> = invoke
             .args
             .iter()
@@ -288,9 +288,9 @@ impl RustPrinter {
         ));
     }
     pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
-        let fun = self.print_expr(&node.fun)?;
+        let fun = self.print_expr(&node.func)?;
         let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
-        match &*node.fun {
+        match &*node.func {
             Expr::Select(select) => match select.select {
                 SelectType::Field => {
                     return Ok(quote!(

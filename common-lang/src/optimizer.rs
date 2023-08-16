@@ -27,14 +27,14 @@ impl FoldOptimizer {
     }
 
     pub fn optimize_invoke(&self, invoke: Invoke, ctx: &ExecutionContext) -> Result<Expr> {
-        let func = self.optimize_expr(*invoke.fun, ctx)?;
+        let func = self.optimize_expr(*invoke.func, ctx)?;
         let args: Vec<_> = invoke
             .args
             .into_iter()
             .map(|x| self.optimize_expr(x, ctx))
             .try_collect()?;
         let invoke = Invoke {
-            fun: func.into(),
+            func: func.into(),
             args,
         };
         Ok(Expr::Invoke(invoke))
