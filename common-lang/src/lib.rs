@@ -1,9 +1,8 @@
 pub mod context;
-
 pub mod interpreter;
 pub mod ops;
+pub mod optimizer;
 pub mod passes;
-
 pub mod tree;
 pub mod type_system;
 pub mod value;

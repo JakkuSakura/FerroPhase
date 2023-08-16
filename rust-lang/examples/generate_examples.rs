@@ -2,7 +2,7 @@ use common::*;
 
 use common_lang::context::ExecutionContext;
 use common_lang::interpreter::Interpreter;
-use common_lang::passes::load_optimizer;
+use common_lang::optimizer::load_optimizer;
 use common_lang::{Deserializer, Serializer};
 use rust_lang::printer::RustPrinter;
 use rust_lang::rustfmt::format_code;

@@ -38,10 +38,10 @@ impl SpecializePass {
         expr: &Expr,
         ctx: &ExecutionContext,
     ) -> Result<Option<FunctionValue>> {
-        debug!(
-            "Lookup for func decl: {}",
-            self.serializer.serialize_expr(expr)?
-        );
+        // debug!(
+        //     "Lookup for func decl: {}",
+        //     self.serializer.serialize_expr(expr)?
+        // );
 
         Ok(match expr {
             Expr::Ident(n) => ctx.get_func_decl(n),
@@ -58,11 +58,11 @@ impl SpecializePass {
                     let value = ctx
                         .get_expr(n)
                         .with_context(|| format!("Could not find {:?} in context", n))?;
-                    debug!(
-                        "Look up {} => {}",
-                        n,
-                        self.serializer.serialize_expr(&value)?
-                    );
+                    // trace!(
+                    //     "Look up {} => {}",
+                    //     n,
+                    //     self.serializer.serialize_expr(&value)?
+                    // );
                     Ok(value)
                 }
             },
@@ -99,11 +99,11 @@ impl SpecializePass {
             .into_iter()
             .map(|x| self.specialize_expr(x, ctx))
             .try_collect()?;
-        debug!(
-            "Specializing Invoke {} with {}",
-            name,
-            self.serializer.serialize_args(&args)?
-        );
+        // debug!(
+        //     "Specializing Invoke {} with {}",
+        //     name,
+        //     self.serializer.serialize_args(&args)?
+        // );
 
         let sub = ctx.child();
         for (i, arg) in args.iter().cloned().enumerate() {
@@ -130,7 +130,7 @@ impl SpecializePass {
             name,
             self.spec_id.fetch_add(1, Ordering::Relaxed)
         ));
-        debug!(
+        trace!(
             "Specialized function {} with {} => {} {}",
             name,
             self.serializer.serialize_args(&args)?,
@@ -239,11 +239,7 @@ impl SpecializePass {
 
         Ok(module)
     }
-    pub fn specialize_item_inner(
-        &self,
-        item: Item,
-        ctx: &ExecutionContext,
-    ) -> Result<Option<Item>> {
+    pub fn specialize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
         match item {
             Item::Def(x) => {
                 return if let Some(x) = self.specialize_def(x, ctx)? {
@@ -259,29 +255,7 @@ impl SpecializePass {
         }
         .map(Some)
     }
-    pub fn specialize_item(&self, item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
-        let item_serialized = self.serializer.serialize_item(&item)?;
-        debug!("Specializing item {}", item_serialized);
-        let specialized = self.specialize_item_inner(item, ctx);
-        match specialized {
-            Ok(Some(specialized)) => {
-                debug!(
-                    "Specialized {} => {}",
-                    item_serialized,
-                    self.serializer.serialize_item(&specialized)?
-                );
-                Ok(Some(specialized))
-            }
-            Ok(None) => {
-                debug!("Specialized {} => None", item_serialized);
-                Ok(None)
-            }
-            Err(err) => {
-                warn!("Failed to specialize {}: {}", item_serialized, err);
-                Err(err)
-            }
-        }
-    }
+
     pub fn specialize_let(&self, let_: Let, ctx: &ExecutionContext) -> Result<Let> {
         let value = self.specialize_expr(let_.value, ctx)?;
         ctx.insert_expr(let_.name.clone().into(), value.clone());
@@ -328,7 +302,7 @@ impl SpecializePass {
         ctx: &ExecutionContext,
     ) -> Result<Option<Statement>> {
         let stmt_serialized = self.serializer.serialize_stmt(&stmt)?;
-        debug!("Specializing stmt {}", stmt_serialized);
+        // debug!("Specializing stmt {}", stmt_serialized);
         let specialized = self.specialize_stmt_inner(stmt, ctx);
         match specialized {
             Ok(Some(specialized)) => {
@@ -397,7 +371,7 @@ impl SpecializePass {
         match def.value {
             DefValue::Function(f) if f.params.is_empty() && f.generics_params.is_empty() => {
                 debug!(
-                    "Specializing main function {} => {}",
+                    "Specializing function {} => {}",
                     def.name,
                     self.serializer.serialize_expr(&f.body)?
                 );
@@ -412,6 +386,11 @@ impl SpecializePass {
 
                 Ok(Some(def))
             }
+            DefValue::Function(_) => match def.name.as_str() {
+                "print" => Ok(Some(def)),
+                _ => Ok(None),
+            },
+
             _ => Ok(Some(def)),
         }
     }
