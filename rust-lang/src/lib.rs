@@ -8,7 +8,7 @@ use common_lang::*;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
-use common_lang::value::Value;
+use common_lang::value::{FunctionValue, Value};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use syn::parse_str;
@@ -134,6 +134,12 @@ impl Serializer for RustSerde {
     fn serialize_stmt(&self, node: &Statement) -> Result<String> {
         RustPrinter
             .print_statement(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_function(&self, node: &FunctionValue) -> Result<String> {
+        RustPrinter
+            .print_function(node, Visibility::Private)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 }

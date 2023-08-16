@@ -1,4 +1,4 @@
-use crate::ops::{BinOp, BinOpKind};
+use crate::ops::BinOp;
 use crate::tree::*;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,6 @@ pub enum Expr {
     Select(Select),
     Reference(Reference),
     BinOp(BinOp<Expr>),
-    BinOpKind(BinOpKind),
     Any(AnyBox),
 }
 impl Expr {
@@ -24,7 +23,7 @@ impl Expr {
     }
     pub fn value(v: Value) -> Expr {
         match v {
-            Value::Unit(_) => Expr::unit(),
+            Value::Expr(expr) => *expr,
             _ => Expr::Value(v),
         }
     }
@@ -39,6 +38,13 @@ impl Expr {
             let last = block.stmts.last().unwrap();
             if let Statement::Expr(expr) = last {
                 return expr.clone();
+            }
+            if let Statement::SideEffect(expr) = last {
+                if let Expr::Block(block) = &expr.expr {
+                    let mut block = block.clone();
+                    block.make_last_side_effect();
+                    return Expr::block(block);
+                }
             }
         }
         if block.stmts.is_empty() {
