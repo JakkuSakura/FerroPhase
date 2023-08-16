@@ -11,7 +11,7 @@ use tree::*;
 
 use crate::tree::Tree;
 
-use crate::value::Value;
+use crate::value::{FunctionValue, Value};
 use std::rc::Rc;
 
 pub trait Serializer {
@@ -43,6 +43,7 @@ pub trait Serializer {
         Ok(s)
     }
     fn serialize_stmt(&self, node: &Statement) -> Result<String>;
+    fn serialize_function(&self, node: &FunctionValue) -> Result<String>;
 }
 
 pub trait Deserializer {

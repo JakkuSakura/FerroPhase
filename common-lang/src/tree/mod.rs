@@ -91,6 +91,12 @@ impl Path {
     pub fn new(segments: Vec<Ident>) -> Self {
         Self { segments }
     }
+    pub fn try_into_ident(self) -> Option<Ident> {
+        if self.segments.len() != 1 {
+            return None;
+        }
+        self.segments.into_iter().next()
+    }
 }
 impl Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

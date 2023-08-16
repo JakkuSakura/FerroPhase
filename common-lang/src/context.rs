@@ -10,9 +10,7 @@ use std::rc::Rc;
 
 #[derive(Default)]
 pub struct InterpreterContextInner {
-    parent: Option<ExecutionContext>,
-    trees: HashMap<Path, Tree>,
-    func_decls: HashMap<Path, FunctionValue>,
+    parent: Option<ScopedContext>,
     values: HashMap<Path, Value>,
     types: HashMap<Path, TypeValue>,
     is_specialized: HashMap<Path, bool>,
@@ -20,17 +18,17 @@ pub struct InterpreterContextInner {
 }
 
 #[derive(Clone)]
-pub struct ExecutionContext {
+pub struct ScopedContext {
     inner: Rc<RefCell<InterpreterContextInner>>,
 }
 
-impl ExecutionContext {
+impl ScopedContext {
     pub fn new() -> Self {
         Self {
             inner: Rc::new(RefCell::new(InterpreterContextInner::default())),
         }
     }
-    pub fn child(&self) -> ExecutionContext {
+    pub fn child(&self) -> ScopedContext {
         Self {
             inner: Rc::new(RefCell::new(InterpreterContextInner {
                 parent: Some(self.clone()),
@@ -38,57 +36,51 @@ impl ExecutionContext {
             })),
         }
     }
-    pub fn insert_tree(&self, key: Path, value: Tree) {
-        self.inner.borrow_mut().trees.insert(key, value);
-    }
+
     pub fn insert_type(&self, key: impl Into<Path>, value: TypeValue) {
         self.inner.borrow_mut().types.insert(key.into(), value);
     }
-    pub fn insert_func_decl(&self, key: impl Into<Path>, value: FunctionValue) {
+    pub fn insert_function(&self, key: impl Into<Path>, value: FunctionValue) {
         let key = key.into();
         self.insert_expr(key.clone(), Expr::value(Value::Function(value.clone())));
-        self.inner.borrow_mut().func_decls.insert(key.into(), value);
     }
-    pub fn insert_expr(&self, key: Path, value: Expr) {
+    pub fn insert_expr(&self, key: impl Into<Path>, value: Expr) {
         self.insert_value(key, Value::expr(value));
     }
     pub fn insert_value(&self, key: impl Into<Path>, value: Value) {
         self.inner.borrow_mut().values.insert(key.into(), value);
     }
-
-    pub fn print_values(&self, s: impl Serializer) -> Result<()> {
+    pub fn list_values(&self) -> Vec<Path> {
+        if let Some(parent) = &self.inner.borrow().parent {
+            let mut values = parent.list_values();
+            values.extend(self.inner.borrow().values.keys().cloned());
+            values
+        } else {
+            self.inner.borrow().values.keys().cloned().collect()
+        }
+    }
+    pub fn print_values(&self, s: &dyn Serializer) -> Result<()> {
+        if let Some(parent) = &self.inner.borrow().parent {
+            parent.print_values(s)?;
+        }
         let inner = self.inner.borrow();
-        for (k, v) in &inner.trees {
-            info!("{}: {}", k, s.serialize_tree(v)?)
+        for (k, v) in &inner.values {
+            info!("{}: {}", k, s.serialize_value(v)?)
         }
         Ok(())
     }
     pub fn insert_specialized(&self, key: Path, value: FunctionValue) {
-        self.inner
-            .borrow_mut()
-            .func_decls
-            .insert(key.clone(), value);
+        self.insert_function(key.clone(), value);
         self.inner.borrow_mut().is_specialized.insert(key, true);
     }
-    pub fn get_func_decl(&self, key: impl Into<Path>) -> Option<FunctionValue> {
-        let inner = self.inner.borrow();
-        let key = key.into();
-        inner
-            .func_decls
-            .get(&key)
-            .cloned()
-            .or_else(|| inner.parent.as_ref()?.get_func_decl(key))
+    pub fn get_function(&self, key: impl Into<Path>) -> Option<FunctionValue> {
+        let value = self.get_value(key)?;
+        match value {
+            Value::Function(func) => Some(func),
+            _ => None,
+        }
     }
-    pub fn get_tree(&self, key: impl Into<Path>) -> Option<Tree> {
-        let inner = self.inner.borrow();
-        let key = key.into();
 
-        inner
-            .trees
-            .get(&key)
-            .cloned()
-            .or_else(|| inner.parent.as_ref()?.get_tree(key))
-    }
     pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
         let inner = self.inner.borrow();
         let key = key.into();
@@ -112,7 +104,7 @@ impl ExecutionContext {
             .cloned()
             .or_else(|| inner.parent.as_ref()?.get_type(key))
     }
-    pub fn root(&self) -> ExecutionContext {
+    pub fn root(&self) -> ScopedContext {
         self.inner
             .borrow()
             .parent
@@ -135,10 +127,30 @@ impl ExecutionContext {
             .map(|x| x.0.clone())
             .collect()
     }
+    pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
+        match expr {
+            Expr::Ident(ident) => self.get_value(ident),
+            Expr::Path(path) => self.get_value(path),
+            Expr::Value(Value::BinOpKind(kind)) => Some(Value::BinOpKind(kind.clone())),
+            _ => None,
+        }
+    }
+    pub fn get_value_recursive(&self, key: impl Into<Path>) -> Option<Value> {
+        let key = key.into();
+        info!("get_value_recursive {}", key);
+        let expr = self.get_expr(&key)?;
+        info!("get_value_recursive {} => {:?}", key, expr);
+        match expr {
+            Expr::Ident(ident) => self.get_value_recursive(ident),
+            Expr::Path(path) => self.get_value_recursive(path),
+            _ => Some(Value::expr(expr)),
+        }
+    }
 }
+
 #[derive(Clone)]
 pub struct LazyValue<Expr> {
-    pub ctx: ExecutionContext,
+    pub ctx: ScopedContext,
     pub expr: Expr,
 }
 impl<Expr: Debug> Debug for LazyValue<Expr> {
