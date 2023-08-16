@@ -1,4 +1,4 @@
-use crate::context::ExecutionContext;
+use crate::context::{ExecutionContext, LazyValue};
 use crate::ops::*;
 use crate::tree::*;
 use crate::type_system::TypeSystem;
@@ -59,7 +59,7 @@ impl Interpreter {
                         .with_context(|| format!("Couldn't find {} parameter of {:?}", i, f))?;
                     // TODO: type check here
 
-                    sub.insert_value(param.name.clone().into(), arg);
+                    sub.insert_value(param.name.clone(), arg);
                 }
                 debug!(
                     "Invoking {} with {}",
@@ -111,7 +111,7 @@ impl Interpreter {
         let ret: Vec<_> = node
             .stmts
             .iter()
-            .map(|x| self.interpret_item(x, ctx))
+            .map(|x| self.interpret_stmt(x, ctx))
             .try_collect()?;
         if !ret.is_empty() {
             Ok(ret.last().cloned().unwrap())
@@ -212,12 +212,27 @@ impl Interpreter {
                     Ok(())
                 };
             }
-            DefValue::Type(_) => {}
-            DefValue::Const(_) => {}
-            DefValue::Variable(_) => {}
+            DefValue::Type(n) => {
+                ctx.insert_type(
+                    &def.name,
+                    TypeValue::any_box(LazyValue {
+                        ctx: ctx.clone(),
+                        expr: n.clone(),
+                    }),
+                );
+                return Ok(());
+            }
+            DefValue::Const(n) => {
+                ctx.insert_value(
+                    &def.name,
+                    Value::any(LazyValue {
+                        ctx: ctx.clone(),
+                        expr: n.clone(),
+                    }),
+                );
+                return Ok(());
+            }
         }
-
-        bail!("Could not process {:?}", def)
     }
     pub fn interpret_args(&self, node: &[Expr], ctx: &ExecutionContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
@@ -367,8 +382,7 @@ impl Interpreter {
             Item::Module(n) => self.interpret_module(n, ctx),
             Item::Def(n) => self.interpret_def(n, ctx).map(|_| Value::unit()),
             Item::Import(n) => self.interpret_import(n, ctx).map(|_| Value::unit()),
-            Item::Expr(n) => self.interpret_expr(n, ctx),
-            Item::Stmt(n) => self.interpret_expr(n, ctx).map(|_| Value::unit()),
+
             Item::Any(n) => Ok(Value::Any(n.clone())),
             _ => bail!("Failed to interpret {:?}", node),
         }
@@ -389,6 +403,43 @@ impl Interpreter {
                 warn!(
                     "Failed to interpret {} => {:?}",
                     self.serializer.serialize_item(&node)?,
+                    err
+                );
+                Err(err)
+            }
+        }
+    }
+    pub fn interpret_let(&self, node: &Let, ctx: &ExecutionContext) -> Result<Value> {
+        let value = self.interpret_expr(&node.value, ctx)?;
+        ctx.insert_value(node.name.clone(), value.clone());
+        Ok(value)
+    }
+    pub fn interpret_stmt_inner(&self, node: &Statement, ctx: &ExecutionContext) -> Result<Value> {
+        debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
+        match node {
+            Statement::Item(n) => self.interpret_item(n, ctx),
+            Statement::Let(n) => self.interpret_let(n, ctx).map(|_| Value::unit()),
+            Statement::Expr(n) => self.interpret_expr(n, ctx),
+            Statement::StmtExpr(n) => self.interpret_expr(&n.expr, ctx).map(|_| Value::unit()),
+            Statement::Any(n) => Ok(Value::Any(n.clone())),
+        }
+    }
+    pub fn interpret_stmt(&self, node: &Statement, ctx: &ExecutionContext) -> Result<Value> {
+        debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
+        let result = self.interpret_stmt_inner(node, ctx);
+        match result {
+            Ok(result) => {
+                debug!(
+                    "Interpreted {} => {}",
+                    self.serializer.serialize_stmt(&node)?,
+                    self.serializer.serialize_value(&result)?
+                );
+                Ok(result)
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to interpret {} => {:?}",
+                    self.serializer.serialize_stmt(&node)?,
                     err
                 );
                 Err(err)

@@ -1,5 +1,6 @@
 use common::*;
-use common_lang::interpreter::ExecutionContext;
+
+use common_lang::context::ExecutionContext;
 use common_lang::specializer::Specializer;
 use common_lang::tree::Expr;
 use proc_macro::TokenStream;

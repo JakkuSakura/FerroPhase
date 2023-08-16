@@ -1,6 +1,7 @@
-use crate::tree::{Ident, Path, TypeExpr};
+use crate::tree::{AnyBox, Ident, Path, TypeExpr};
 use crate::value::FunctionParam;
 use common::*;
+use std::fmt::Debug;
 
 /// TypeValue is a solid type value
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +18,7 @@ pub enum TypeValue {
     Nothing(NothingType),
     Type(TypeType),
     Expr(Box<TypeExpr>),
+    AnyBox(AnyBox),
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {
@@ -36,6 +38,9 @@ impl TypeValue {
     }
     pub fn ident(ident: Ident) -> TypeValue {
         TypeValue::expr(TypeExpr::Ident(ident))
+    }
+    pub fn any_box<T: Debug + 'static>(any: T) -> Self {
+        Self::AnyBox(AnyBox::new(any))
     }
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]

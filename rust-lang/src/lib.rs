@@ -97,6 +97,10 @@ impl Serializer for RustSerde {
     fn serialize_value(&self, node: &Value) -> Result<String> {
         RustPrinter.print_value(node).map(|x| x.to_string())
     }
+
+    fn serialize_stmt(&self, node: &Statement) -> Result<String> {
+        RustPrinter.print_statement(node).map(|x| x.to_string())
+    }
 }
 impl Deserializer for RustSerde {
     fn deserialize(&self, code: &str) -> Result<Tree> {

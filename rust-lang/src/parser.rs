@@ -305,17 +305,17 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     })
 }
 
-fn parse_stmt(stmt: syn::Stmt) -> Result<Item> {
+fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
     Ok(match stmt {
-        syn::Stmt::Local(l) => Item::Def(Define {
+        syn::Stmt::Local(l) => Statement::Let(Let {
             name: parse_pat(l.pat)?,
-            kind: DefKind::Variable,
             ty: None,
-            value: DefValue::Variable(parse_expr(*l.init.context("No value")?.expr)?),
-            visibility: Visibility::Public,
+            value: parse_expr(*l.init.context("No value")?.expr)?,
         }),
-        syn::Stmt::Item(tm) => parse_item(tm)?,
-        syn::Stmt::Expr(e, _) => Item::Stmt(parse_expr(e)?),
+        syn::Stmt::Item(tm) => parse_item(tm).map(Statement::item)?,
+        syn::Stmt::Expr(e, semicolon) => {
+            Statement::maybe_stmt_expr(parse_expr(e)?, semicolon.is_some())
+        }
         syn::Stmt::Macro(m) => bail!("Macro not supported: {:?}", m),
     })
 }
