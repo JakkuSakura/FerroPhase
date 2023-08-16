@@ -349,7 +349,6 @@ impl Interpreter {
         }
     }
     pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Value> {
-        debug!("Interpreting {}", self.serializer.serialize_expr(&node)?);
         match node {
             Expr::Ident(n) => return self.interpret_ident(n, ctx),
             Expr::Path(n) => {
@@ -378,7 +377,7 @@ impl Interpreter {
         bail!("Failed to interpret {:?}", node)
     }
     pub fn interpret_expr(&self, node: &Expr, ctx: &ExecutionContext) -> Result<Value> {
-        debug!("Interpreting {}", self.serializer.serialize_expr(&node)?);
+        // trace!("Interpreting {}", self.serializer.serialize_expr(&node)?);
         let result = self.interpret_expr_inner(node, ctx);
         match result {
             Ok(result) => {
