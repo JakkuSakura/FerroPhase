@@ -67,39 +67,74 @@ pub struct RawTokenSteam {
 macro_rules! t {
     ($t: tt) => {};
 }
+#[derive(Debug, Clone, Copy)]
+pub struct RustSerde {
+    rustfmt: bool,
+}
+impl RustSerde {
+    pub fn new(rustfmt: bool) -> Self {
+        Self { rustfmt }
+    }
+    pub fn maybe_rustfmt_token_stream(&self, code: &proc_macro2::TokenStream) -> Result<String> {
+        self.maybe_rustfmt(&code.to_string())
+    }
+    pub fn maybe_rustfmt(&self, code: &str) -> Result<String> {
+        if self.rustfmt {
+            if let Ok(ok) = rustfmt::format_code(code) {
+                return Ok(ok);
+            }
+        }
 
-pub struct RustSerde;
+        Ok(code.to_string())
+    }
+}
 impl Serializer for RustSerde {
     fn serialize_tree(&self, node: &Tree) -> Result<String> {
-        RustPrinter.print_tree(node).map(|x| x.to_string())
+        RustPrinter
+            .print_tree(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_expr(&self, node: &Expr) -> Result<String> {
-        RustPrinter.print_expr(node).map(|x| x.to_string())
+        RustPrinter
+            .print_expr(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
-        RustPrinter.print_invoke(node).map(|x| x.to_string())
+        RustPrinter
+            .print_invoke(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_item(&self, node: &Item) -> Result<String> {
-        RustPrinter.print_item(node).map(|x| x.to_string())
+        RustPrinter
+            .print_item(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_block(&self, node: &Block) -> Result<String> {
-        RustPrinter.print_block(node).map(|x| x.to_string())
+        RustPrinter
+            .print_block(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_module(&self, node: &Module) -> Result<String> {
-        RustPrinter.print_module(node).map(|x| x.to_string())
+        RustPrinter
+            .print_module(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_value(&self, node: &Value) -> Result<String> {
-        RustPrinter.print_value(node).map(|x| x.to_string())
+        RustPrinter
+            .print_value(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
     fn serialize_stmt(&self, node: &Statement) -> Result<String> {
-        RustPrinter.print_statement(node).map(|x| x.to_string())
+        RustPrinter
+            .print_statement(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 }
 impl Deserializer for RustSerde {

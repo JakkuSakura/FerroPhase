@@ -34,6 +34,8 @@ impl Optimizer {
         Ok(Expr::Invoke(invoke))
     }
     pub fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
+        let serialized = self.serializer.serialize_expr(&expr)?;
+        debug!("Optimizing {}", serialized);
         let mut expr = match expr {
             Expr::Ident(ref n) => match n.as_str() {
                 "print" => expr,
@@ -66,10 +68,24 @@ impl Optimizer {
             Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
             Expr::BinOpKind(_) => expr,
             Expr::Any(x) => Expr::Any(x.clone()),
-            _ => bail!("Could not specialize {:?}", expr),
+            _ => bail!("Could not optimize {:?}", expr),
         };
+        debug!(
+            "Optimized {} => {}",
+            serialized,
+            self.serializer.serialize_expr(&expr)?
+        );
         for pass in &self.passes {
+            let serialized = self.serializer.serialize_expr(&expr)?;
+            debug!("Doing pass {} for {}", pass.name(), serialized);
             expr = pass.optimize_expr(expr, ctx)?;
+            let serialized2 = self.serializer.serialize_expr(&expr)?;
+            debug!(
+                "Done pass {} for {} => {}",
+                pass.name(),
+                serialized,
+                serialized2
+            );
         }
         Ok(expr)
     }
@@ -99,21 +115,30 @@ impl Optimizer {
         }
     }
     pub fn optimize_item(&self, mut item: Item, ctx: &ExecutionContext) -> Result<Option<Item>> {
+        let serialized = self.serializer.serialize_item(&item)?;
+        debug!("Optimizing {}", serialized);
         item = match item {
-            Item::Def(x) => {
-                if let Some(x) = self.optimize_def(x, ctx)? {
-                    Item::Def(x)
-                } else {
-                    return Ok(None);
-                }
-            }
+            Item::Def(x) => self.optimize_def(x, ctx).map(Item::Def)?,
             Item::Import(x) => self.optimize_import(x, ctx).map(Item::Import)?,
             Item::Module(x) => self.optimize_module(x, ctx).map(Item::Module)?,
             _ => item,
         };
+        debug!(
+            "Optimized {} => {}",
+            serialized,
+            self.serializer.serialize_item(&item)?
+        );
         for pass in &self.passes {
+            let serialized = self.serializer.serialize_item(&item)?;
+            debug!("Doing pass {} for {}", pass.name(), serialized);
             match pass.optimize_item(item, ctx)? {
                 Some(new_item) => {
+                    debug!(
+                        "Done pass {} for {} => {}",
+                        pass.name(),
+                        serialized,
+                        self.serializer.serialize_item(&new_item)?
+                    );
                     item = new_item;
                 }
                 None => {
@@ -200,18 +225,8 @@ impl Optimizer {
         }))
     }
 
-    pub fn optimize_def(&self, mut def: Define, ctx: &ExecutionContext) -> Result<Option<Define>> {
-        for pass in &self.passes {
-            match pass.optimize_def(def, ctx)? {
-                Some(new_def) => {
-                    def = new_def;
-                }
-                None => {
-                    return Ok(None);
-                }
-            }
-        }
-        Ok(Some(def))
+    pub fn optimize_def(&self, def: Define, _ctx: &ExecutionContext) -> Result<Define> {
+        Ok(def)
     }
     pub fn prescan_def(&self, def: &Define, ctx: &ExecutionContext) -> Result<()> {
         let def = def.clone();
