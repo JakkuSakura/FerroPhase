@@ -7,10 +7,10 @@ fn print(i: impl Display) {
     println!("{}", i)
 }
 fn main() {
-    let c = 3i64;
-    let b = 2i64;
     let d = 4i64;
     let op = add;
+    let b = 2i64;
+    let c = 3i64;
     let a = 1i64;
     if a > 0i64 {
         print(op(a, b));
@@ -19,10 +19,10 @@ fn main() {
     };
 }
 pub fn do_op_0() {
-    let c = 3i64;
-    let b = 2i64;
     let d = 4i64;
     let op = add;
+    let b = 2i64;
+    let c = 3i64;
     let a = 1i64;
     if a > 0i64 {
         print(op(a, b));

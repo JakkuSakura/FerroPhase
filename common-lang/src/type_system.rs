@@ -108,7 +108,7 @@ impl TypeSystem {
                 let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
                     (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
-                        l.traits.extend(r.traits);
+                        l.bounds.bounds.extend(r.bounds.bounds);
                         return Ok(TypeValue::ImplTraits(l));
                     }
                     _ => {}
@@ -119,12 +119,12 @@ impl TypeSystem {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
                 let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
                 match (lhs, rhs) {
-                    (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
-                        for r in r.traits {
-                            l.traits.retain(|x| x.name != r.name);
-                        }
-                        return Ok(TypeValue::ImplTraits(l));
-                    }
+                    // (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
+                    //     for r in r.bounds.bounds {
+                    //         l.bounds.bounds.retain(|x| x.name != r.name);
+                    //     }
+                    //     return Ok(TypeValue::ImplTraits(l));
+                    // }
                     _ => {}
                 }
                 bail!("Could not evaluate type value op {:?}", op)
@@ -168,7 +168,7 @@ impl TypeSystem {
             TypeValue::Function(f) => {
                 let sub = ctx.child();
                 for g in &f.generics_params {
-                    let constrain = self.evaluate_type_expr(&g.expr, &sub)?;
+                    let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
                     sub.insert_type(g.name.clone(), constrain);
                 }
                 let params = f
@@ -183,7 +183,20 @@ impl TypeSystem {
                     ret: Box::new(ret),
                 }))
             }
+            TypeValue::TypeBounds(b) => self.evaluate_type_bounds(b, ctx),
+            TypeValue::ImplTraits(t) => self.evaluate_impl_traits(t, ctx),
             _ => Ok(ty.clone()),
+        }
+    }
+    pub fn evaluate_impl_traits(
+        &self,
+        traits: &ImplTraits,
+        ctx: &ScopedContext,
+    ) -> Result<TypeValue> {
+        let traits = self.evaluate_type_bounds(&traits.bounds, ctx)?;
+        match traits {
+            TypeValue::TypeBounds(bounds) => Ok(TypeValue::ImplTraits(ImplTraits { bounds })),
+            _ => Ok(traits),
         }
     }
     pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ScopedContext) -> Result<TypeValue> {
@@ -202,6 +215,26 @@ impl TypeSystem {
             TypeExpr::BinOp(o) => self.evaluate_type_value_op(o, ctx),
             _ => bail!("Could not evaluate type value {:?}", ty),
         }
+    }
+    pub fn evaluate_type_bounds(
+        &self,
+        bounds: &TypeBounds,
+        ctx: &ScopedContext,
+    ) -> Result<TypeValue> {
+        let bounds: Vec<_> = bounds
+            .bounds
+            .iter()
+            .map(|x| self.evaluate_type_expr(x, ctx))
+            .try_collect()?;
+        if bounds.is_empty() {
+            return Ok(TypeValue::any());
+        }
+        if bounds.len() == 1 {
+            return Ok(bounds.first().unwrap().clone());
+        }
+
+        bail!("failed to evaluate type bounds: {:?}", bounds)
+        // Ok(TypeValue::TypeBounds(TypeBounds { bounds }))
     }
 
     pub fn type_check_expr(&self, expr: &Expr, ty: &TypeExpr, ctx: &ScopedContext) -> Result<()> {
@@ -240,7 +273,7 @@ impl TypeSystem {
                 return Ok(TypeValue::Function(FunctionType {
                     generics_params: vec![GenericParam {
                         name: Ident::new("T"),
-                        expr: TypeExpr::Value(TypeValue::Any(AnyType)),
+                        bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
                     }],
                     params: vec![
                         TypeValue::expr(TypeExpr::Ident("T".into())),
