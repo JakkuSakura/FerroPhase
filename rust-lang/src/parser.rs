@@ -1,4 +1,4 @@
-use crate::{RawExpr, RawExprMacro, RawItemMacro, RawUse};
+use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
 use common_lang::ops::{AddOp, BinOpKind, SubOp};
 use common_lang::tree::*;
@@ -311,7 +311,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
         syn::Stmt::Expr(e, semicolon) => {
             Statement::maybe_stmt_expr(parse_expr(e)?, semicolon.is_some())
         }
-        syn::Stmt::Macro(m) => bail!("Macro not supported: {:?}", m),
+        syn::Stmt::Macro(raw) => Statement::any(RawStmtMacro { raw }),
     })
 }
 
@@ -626,30 +626,21 @@ mod tests {
     use syn::parse_quote;
 
     #[test]
-    fn test_parse_fn() {
+    fn test_parse_fn() -> Result<()> {
         let code: syn::ItemFn = parse_quote!(
             fn foo(a: i32) -> i32 {
                 a + 1
             }
         );
-        let (name, expr) = super::parse_fn(code).unwrap();
-        assert_eq!(name, super::parse_ident(format_ident!("foo")));
+        let func = parse_fn(code).unwrap();
+        assert_eq!(func.name.unwrap(), parse_ident(format_ident!("foo")));
         let serde = RustSerde::new(false);
         assert_eq!(
-            serde
-                .serialize_tree(
-                    &expr
-                        .as_ast::<FunctionValue>()
-                        .unwrap()
-                        .body
-                        .clone()
-                        .unwrap()
-                        .stmts[0]
-                )
-                .unwrap(),
+            serde.serialize_expr(&func.body).unwrap(),
             serde
                 .serialize_expr(&parse_expr(parse_quote!(a + 1)).unwrap())
                 .unwrap()
         );
+        Ok(())
     }
 }
