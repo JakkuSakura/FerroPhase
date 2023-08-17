@@ -5,7 +5,7 @@ use common_lang::tree::*;
 use common_lang::value::*;
 use quote::ToTokens;
 use syn::parse::ParseStream;
-use syn::{parse_quote, FieldsNamed, FnArg, Lit, Pat, ReturnType, Token, TypeParamBound};
+use syn::{parse_quote, FieldsNamed, FnArg, Lit, ReturnType, Token};
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -59,9 +59,7 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
                 _ => TypeExpr::path(parse_path(p.path)?),
             }
         }
-        syn::Type::ImplTrait(im) => {
-            TypeExpr::value(TypeValue::ImplTraits(ImplTraits::new(parse_impl_trait(im))))
-        }
+        syn::Type::ImplTrait(im) => TypeExpr::value(TypeValue::ImplTraits(parse_impl_trait(im)?)),
         syn::Type::Tuple(t) if t.elems.is_empty() => TypeExpr::unit().into(),
 
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => parse_custom_type_expr(m)?,
@@ -69,16 +67,10 @@ fn parse_type(t: syn::Type) -> Result<TypeExpr> {
     };
     Ok(t)
 }
-fn parse_impl_trait(im: syn::TypeImplTrait) -> Vec<ImplTrait> {
-    im.bounds
-        .into_iter()
-        .map(|x| match x {
-            TypeParamBound::Trait(t) => ImplTrait {
-                name: parse_ident(t.path.segments.first().unwrap().ident.clone()),
-            },
-            _ => panic!("Does not support type bound {:?}", x),
-        })
-        .collect()
+fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
+    Ok(ImplTraits {
+        bounds: parse_type_param_bounds(im.bounds.into_iter().collect())?,
+    })
 }
 fn parse_input(i: FnArg) -> Result<FunctionParam> {
     Ok(match i {
@@ -101,8 +93,8 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
 
 fn parse_pat(p: syn::Pat) -> Result<Ident> {
     Ok(match p {
-        Pat::Ident(name) => parse_ident(name.ident),
-        Pat::Wild(_) => Ident::new("_"),
+        syn::Pat::Ident(name) => parse_ident(name.ident),
+        syn::Pat::Wild(_) => Ident::new("_"),
         _ => bail!("Pattern not supported {:?}", p),
     })
 }
@@ -113,11 +105,19 @@ fn parse_return_type(o: ReturnType) -> Result<TypeExpr> {
         ReturnType::Type(_, t) => parse_type(*t)?,
     })
 }
-fn parse_type_param_bound(b: TypeParamBound) -> Result<Path> {
+fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<TypeExpr> {
     match b {
-        TypeParamBound::Trait(t) => parse_path(t.path),
+        syn::TypeParamBound::Trait(t) => {
+            let path = parse_path(t.path)?;
+            Ok(TypeExpr::path(path))
+        }
         _ => bail!("Does not support liftimes {:?}", b),
     }
+}
+fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> Result<TypeBounds> {
+    Ok(TypeBounds {
+        bounds: bs.into_iter().map(parse_type_param_bound).try_collect()?,
+    })
 }
 
 fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
@@ -130,8 +130,7 @@ fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
         .map(|x| match x {
             syn::GenericParam::Type(t) => Ok(GenericParam {
                 name: parse_ident(t.ident),
-                // TODO: support multiple type bounds
-                expr: TypeExpr::path(parse_type_param_bound(t.bounds.first().cloned().unwrap())?),
+                bounds: parse_type_param_bounds(t.bounds.into_iter().collect())?,
             }),
             _ => bail!("Does not generic param {:?}", x),
         })
@@ -635,9 +634,9 @@ mod tests {
         );
         let (name, expr) = super::parse_fn(code).unwrap();
         assert_eq!(name, super::parse_ident(format_ident!("foo")));
-
+        let serde = RustSerde::new(false);
         assert_eq!(
-            RustSerde
+            serde
                 .serialize_tree(
                     &expr
                         .as_ast::<FunctionValue>()
@@ -648,7 +647,7 @@ mod tests {
                         .stmts[0]
                 )
                 .unwrap(),
-            RustSerde
+            serde
                 .serialize_expr(&parse_expr(parse_quote!(a + 1)).unwrap())
                 .unwrap()
         );

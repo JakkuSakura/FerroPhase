@@ -1,6 +1,6 @@
 use crate::ops::BinOpKind;
 use crate::tree::*;
-use crate::value::TypeValue;
+use crate::value::{TypeBounds, TypeValue};
 use common::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -139,7 +139,7 @@ pub struct FunctionParam {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericParam {
     pub name: Ident,
-    pub expr: TypeExpr,
+    pub bounds: TypeBounds,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionValue {
