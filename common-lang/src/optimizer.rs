@@ -1,6 +1,6 @@
+use crate::ast::*;
 use crate::context::ScopedContext;
 use crate::passes::*;
-use crate::tree::*;
 use crate::value::*;
 use crate::*;
 use common::*;

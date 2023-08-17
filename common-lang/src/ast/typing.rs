@@ -1,5 +1,6 @@
+use crate::ast::*;
+use crate::ast::{Ident, Invoke};
 use crate::ops::*;
-use crate::tree::*;
 use crate::value::*;
 
 /// TypeExpr is an expression that returns a type

@@ -2,8 +2,8 @@ use common::Result;
 use common::*;
 
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
+use common_lang::ast::*;
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
-use common_lang::tree::*;
 use common_lang::value::*;
 use proc_macro2::TokenStream;
 use quote::*;
