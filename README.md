@@ -132,3 +132,5 @@ type Foo = 1
 
 Struct is (partly) similar to GoLang and Zig
 Similar to Zig's comptime system, but aims to do more than Zig with less and simpler code. https://kristoff.it/blog/what-is-zig-comptime/
+Interesting article describes biformity which SHLL aims to solve:
+https://hirrolot.github.io/posts/why-static-languages-suffer-from-complexity.html
