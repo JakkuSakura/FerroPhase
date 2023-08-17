@@ -1,4 +1,4 @@
-use crate::tree::{AnyBox, Ident, Path, TypeExpr};
+use crate::tree::{AnyBox, AnyBoxable, Ident, Path, TypeExpr};
 use crate::value::GenericParam;
 use common::*;
 use std::fmt::Debug;
@@ -43,7 +43,7 @@ impl TypeValue {
     pub fn ident(ident: Ident) -> TypeValue {
         TypeValue::expr(TypeExpr::Ident(ident))
     }
-    pub fn any_box<T: Debug + 'static>(any: T) -> Self {
+    pub fn any_box<T: AnyBoxable>(any: T) -> Self {
         Self::AnyBox(AnyBox::new(any))
     }
 
