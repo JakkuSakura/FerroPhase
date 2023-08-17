@@ -1,5 +1,5 @@
+use crate::ast::*;
 use crate::context::ScopedContext;
-use crate::tree::*;
 use common::*;
 
 mod inliner;
