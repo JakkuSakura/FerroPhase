@@ -294,7 +294,9 @@ impl Interpreter {
     ) -> Result<FunctionValue> {
         let sub = ctx.child();
         for generic in &node.generics_params {
-            let ty = self.type_system.evaluate_type_expr(&generic.expr, ctx)?;
+            let ty = self
+                .type_system
+                .evaluate_type_bounds(&generic.bounds, ctx)?;
             sub.insert_type(&generic.name, ty);
         }
         let params: Vec<_> = node

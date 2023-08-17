@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::ops::Add;
 
-fn do_op(a: i64, b: i64, c: f64, d: f64, op: fn(i64, i64) -> i64) {
+fn do_op<T: Add>(a: i64, b: i64, c: f64, d: f64, op: fn(T, T) -> T) {
     print2(op(a, b));
     print2(op(c, d));
 }

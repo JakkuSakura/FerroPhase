@@ -11,6 +11,7 @@ pub enum TypeValue {
     UnnamedStruct(UnnamedStructType),
     Function(FunctionType),
     ImplTraits(ImplTraits),
+    TypeBounds(TypeBounds),
     Tuple(TupleType),
     Vec(VecType),
     Any(AnyType),
@@ -23,6 +24,9 @@ pub enum TypeValue {
 impl TypeValue {
     pub fn unit() -> TypeValue {
         TypeValue::Unit(UnitType)
+    }
+    pub fn any() -> TypeValue {
+        TypeValue::Any(AnyType)
     }
     pub fn bool() -> TypeValue {
         TypeValue::Primitive(PrimitiveType::Bool)
@@ -44,7 +48,12 @@ impl TypeValue {
     }
 
     pub fn impl_trait(name: Ident) -> Self {
-        Self::ImplTraits(ImplTraits::new(vec![ImplTrait::new(name)]))
+        Self::ImplTraits(ImplTraits {
+            bounds: TypeBounds::new(TypeExpr::ident(name)),
+        })
+    }
+    pub fn type_bound(expr: TypeExpr) -> Self {
+        Self::TypeBounds(TypeBounds::new(expr))
     }
 }
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
@@ -120,24 +129,23 @@ pub struct FunctionType {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ImplTrait {
-    pub name: Ident,
-}
-
-impl ImplTrait {
-    pub fn new(name: Ident) -> Self {
-        Self { name }
-    }
+pub struct ImplTraits {
+    pub bounds: TypeBounds,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct ImplTraits {
-    pub traits: Vec<ImplTrait>,
+pub struct TypeBounds {
+    pub bounds: Vec<TypeExpr>,
 }
-
-impl ImplTraits {
-    pub fn new(traits: Vec<ImplTrait>) -> Self {
-        Self { traits }
+impl TypeBounds {
+    pub fn any() -> Self {
+        Self { bounds: vec![] }
+    }
+    pub fn new(expr: TypeExpr) -> Self {
+        if matches!(expr, TypeExpr::Value(TypeValue::Any(_))) {
+            return TypeBounds::any();
+        }
+        TypeBounds { bounds: vec![expr] }
     }
 }
 

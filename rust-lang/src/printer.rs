@@ -273,7 +273,7 @@ impl RustPrinter {
             let gb: Vec<_> = func
                 .generics_params
                 .iter()
-                .map(|x| self.print_type_expr(&x.expr))
+                .map(|x| self.print_type_bounds(&x.bounds))
                 .try_collect()?;
             gg = quote!(<#(#gt: #gb), *>)
         } else {
@@ -538,12 +538,16 @@ impl RustPrinter {
         }
     }
     pub fn print_impl_traits(&self, traits: &ImplTraits) -> Result<TokenStream> {
-        let traits: Vec<_> = traits
-            .traits
+        let bounds = self.print_type_bounds(&traits.bounds)?;
+        Ok(quote!(impl #bounds))
+    }
+    pub fn print_type_bounds(&self, bounds: &TypeBounds) -> Result<TokenStream> {
+        let bounds: Vec<_> = bounds
+            .bounds
             .iter()
-            .map(|x| self.print_ident(&x.name))
-            .collect();
-        Ok(quote!(impl #(#traits)+ *))
+            .map(|x| self.print_type_expr(&x))
+            .try_collect()?;
+        Ok(quote!(#(#bounds)+ *))
     }
     pub fn print_type_value(&self, v: &TypeValue) -> Result<TokenStream> {
         match v {
@@ -553,6 +557,7 @@ impl RustPrinter {
             TypeValue::UnnamedStruct(s) => self.print_unnamed_struct_type(s),
             TypeValue::Expr(e) => self.print_type_expr(e),
             TypeValue::ImplTraits(t) => self.print_impl_traits(t),
+            TypeValue::TypeBounds(t) => self.print_type_bounds(t),
             TypeValue::Unit(_) => Ok(quote!(())),
             TypeValue::Any(_) => Ok(quote!(Box<dyn Any>)),
             TypeValue::Nothing(_) => Ok(quote!(!)),
