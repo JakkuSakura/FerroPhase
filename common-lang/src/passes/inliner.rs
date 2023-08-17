@@ -29,7 +29,7 @@ impl InlinePass {
                     if let Some(name) = f.name {
                         match name.as_str() {
                             "print" => {
-                                invoke.func = Expr::Ident(name).into();
+                                invoke.func = Expr::ident(name).into();
                                 return Ok(Expr::Invoke(invoke));
                             }
                             _ => {}
@@ -43,22 +43,16 @@ impl InlinePass {
             Ok(Expr::Invoke(invoke))
         }
     }
-    pub fn try_get_ident(&self, ident: Ident, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn try_get_pat(&self, ident: Pat, ctx: &ScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
-            None => Ok(Expr::Ident(ident)),
+            None => Ok(Expr::Pat(ident)),
         }
     }
-    pub fn try_get_path(&self, path: Path, ctx: &ScopedContext) -> Result<Expr> {
-        match ctx.get_expr(path.clone()) {
-            Some(expr) => Ok(expr),
-            None => Ok(Expr::path(path)),
-        }
-    }
+
     pub fn try_get_expr(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
         match expr {
-            Expr::Ident(ident) => self.try_get_ident(ident, ctx),
-            Expr::Path(path) => self.try_get_path(path, ctx),
+            Expr::Pat(ident) => self.try_get_pat(ident, ctx),
             _ => Ok(expr),
         }
     }

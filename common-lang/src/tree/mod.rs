@@ -17,6 +17,54 @@ pub enum Tree {
     Item(Item),
 }
 #[derive(Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Pat {
+    Ident(Ident),
+    Path(Path),
+}
+impl Pat {
+    pub fn ident(ident: Ident) -> Self {
+        Self::Ident(ident)
+    }
+    pub fn path(path: Path) -> Self {
+        if path.segments.len() == 1 {
+            return Self::Ident(path.segments[0].clone());
+        }
+        Self::Path(path)
+    }
+}
+impl Into<Path> for Pat {
+    fn into(self) -> Path {
+        match self {
+            Self::Ident(ident) => ident.into(),
+            Self::Path(path) => path,
+        }
+    }
+}
+impl<'a> Into<Path> for &'a Pat {
+    fn into(self) -> Path {
+        match self {
+            Pat::Ident(ident) => ident.into(),
+            Pat::Path(path) => path.clone(),
+        }
+    }
+}
+impl Display for Pat {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ident(ident) => Display::fmt(ident, f),
+            Self::Path(path) => Display::fmt(path, f),
+        }
+    }
+}
+impl Debug for Pat {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ident(ident) => Debug::fmt(ident, f),
+            Self::Path(path) => Debug::fmt(path, f),
+        }
+    }
+}
+#[derive(Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ident {
     pub name: String,
 }
