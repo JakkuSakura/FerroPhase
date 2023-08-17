@@ -112,8 +112,7 @@ impl FoldOptimizer {
         }
 
         expr = match expr {
-            Expr::Ident(_) => expr,
-            Expr::Path(_) => expr,
+            Expr::Pat(_) => expr,
             Expr::Value(_) => expr,
             Expr::Block(x) => self.optimize_block(x, ctx)?,
             Expr::Cond(x) => self.optimize_cond(x, ctx)?,

@@ -353,8 +353,8 @@ impl Interpreter {
     }
     pub fn interpret_expr_inner(&self, node: &Expr, ctx: &ScopedContext) -> Result<Value> {
         match node {
-            Expr::Ident(n) => self.interpret_ident(n, ctx),
-            Expr::Path(n) => ctx
+            Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx),
+            Expr::Pat(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),
             Expr::Value(n) => Ok(self.interpret_value(n, ctx)?.into()),

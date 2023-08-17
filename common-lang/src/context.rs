@@ -129,8 +129,7 @@ impl ScopedContext {
     }
     pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
         match expr {
-            Expr::Ident(ident) => self.get_value(ident),
-            Expr::Path(path) => self.get_value(path),
+            Expr::Pat(ident) => self.get_value(ident),
             Expr::Value(Value::BinOpKind(kind)) => Some(Value::BinOpKind(kind.clone())),
             _ => None,
         }
@@ -141,8 +140,7 @@ impl ScopedContext {
         let expr = self.get_expr(&key)?;
         info!("get_value_recursive {} => {:?}", key, expr);
         match expr {
-            Expr::Ident(ident) => self.get_value_recursive(ident),
-            Expr::Path(path) => self.get_value_recursive(path),
+            Expr::Pat(ident) => self.get_value_recursive(ident),
             _ => Some(Value::expr(expr)),
         }
     }
