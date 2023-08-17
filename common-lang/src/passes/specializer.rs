@@ -25,8 +25,8 @@ impl SpecializePass {
     }
     pub fn get_expr_by_ident(&self, ident: Ident, ctx: &ScopedContext) -> Result<Expr> {
         return match ident.as_str() {
-            "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(Expr::Ident(ident)),
-            "print" => Ok(Expr::Ident(ident)),
+            "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(Expr::ident(ident)),
+            "print" => Ok(Expr::ident(ident)),
             _ => ctx
                 .get_expr(&ident)
                 .with_context(|| format!("Could not find {:?} in context", ident)),
@@ -55,12 +55,10 @@ impl SpecializePass {
             .args
             .iter()
             .map(|x| match x {
-                Expr::Ident(v) => ctx
+                Expr::Pat(v) => ctx
                     .get_expr(v)
                     .with_context(|| format!("Couldn't find {:?} in context", v)),
-                Expr::Path(v) => ctx
-                    .get_expr(v)
-                    .with_context(|| format!("Couldn't find {:?} in context", v)),
+
                 _ => Ok(x.clone()),
             })
             .try_collect()?;
@@ -103,7 +101,7 @@ impl SpecializePass {
                 continue;
             }
             let Some(name) = name.try_into_ident() else {
-                continue
+                continue;
             };
 
             let binding = Statement::Let(Let {
@@ -154,7 +152,7 @@ impl SpecializePass {
         ctx.root()
             .insert_specialized(new_name.clone().into(), new_func);
         return Ok(Invoke {
-            func: Expr::Ident(new_name).into(),
+            func: Expr::ident(new_name).into(),
             args: Default::default(),
         });
     }
@@ -166,7 +164,7 @@ impl SpecializePass {
         ctx: &ScopedContext,
     ) -> Result<Invoke> {
         match &*invoke.func {
-            Expr::Ident(ident) if ident.as_str() == "print" => {
+            Expr::Pat(Pat::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke);
             }
             _ => {}
