@@ -3,7 +3,7 @@ use common::*;
 use common_lang::context::ScopedContext;
 use common_lang::optimizer::{load_optimizer, FoldOptimizer};
 
-use common_lang::tree::{Expr, Module};
+use common_lang::ast::{Expr, Module};
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;

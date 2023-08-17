@@ -1,6 +1,6 @@
+use crate::ast::Ident;
 use crate::context::ScopedContext;
 use crate::ops::BinOpKind;
-use crate::tree::Ident;
 use crate::value::*;
 use crate::Serializer;
 use common::*;

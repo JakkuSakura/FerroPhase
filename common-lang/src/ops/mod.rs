@@ -2,7 +2,7 @@ use serde::*;
 use std::fmt::{Debug, Display, Formatter};
 pub mod builtins;
 
-use crate::tree::Ident;
+use crate::ast::Ident;
 pub use builtins::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]

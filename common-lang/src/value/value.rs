@@ -1,5 +1,5 @@
+use crate::ast::*;
 use crate::ops::BinOpKind;
-use crate::tree::*;
 use crate::value::{TypeBounds, TypeValue};
 use common::{Deserialize, Serialize};
 use std::fmt::Debug;

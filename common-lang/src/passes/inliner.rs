@@ -1,6 +1,6 @@
+use crate::ast::*;
 use crate::context::ScopedContext;
 use crate::passes::OptimizePass;
-use crate::tree::*;
 use crate::value::Value;
 use crate::Serializer;
 use common::*;

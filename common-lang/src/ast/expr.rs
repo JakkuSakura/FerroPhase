@@ -1,5 +1,5 @@
+use crate::ast::*;
 use crate::ops::BinOp;
-use crate::tree::*;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
 
@@ -81,4 +81,16 @@ pub struct Select {
 pub struct Reference {
     pub referee: Box<Expr>,
     pub mutable: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Cond {
+    pub cases: Vec<CondCase>,
+    pub if_style: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CondCase {
+    pub cond: Expr,
+    pub body: Expr,
 }
