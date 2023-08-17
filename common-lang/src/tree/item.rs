@@ -13,7 +13,7 @@ pub enum Item {
 }
 
 impl Item {
-    pub fn any<T: Debug + 'static>(any: T) -> Self {
+    pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }
@@ -37,7 +37,7 @@ pub enum Statement {
     Any(AnyBox),
 }
 impl Statement {
-    pub fn any<T: Debug + 'static>(any: T) -> Self {
+    pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
     pub fn item(item: Item) -> Self {
