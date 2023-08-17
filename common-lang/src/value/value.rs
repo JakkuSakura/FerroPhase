@@ -45,7 +45,7 @@ impl Value {
             _ => Value::Expr(Box::new(e)),
         }
     }
-    pub fn any<T: Debug + 'static>(any: T) -> Self {
+    pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }

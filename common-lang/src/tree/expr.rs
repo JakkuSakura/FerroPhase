@@ -52,7 +52,7 @@ impl Expr {
         }
         Expr::Block(block)
     }
-    pub fn any<T: Debug + 'static>(any: T) -> Self {
+    pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }
