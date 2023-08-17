@@ -21,6 +21,9 @@ impl TypeExpr {
             TypeExpr::Path(path)
         }
     }
+    pub fn ident(ident: Ident) -> TypeExpr {
+        TypeExpr::Ident(ident)
+    }
     pub fn unit() -> TypeExpr {
         TypeExpr::value(TypeValue::unit())
     }
@@ -29,6 +32,9 @@ impl TypeExpr {
             TypeValue::Expr(expr) => *expr,
             _ => TypeExpr::Value(v),
         }
+    }
+    pub fn type_bound(expr: TypeExpr) -> TypeExpr {
+        TypeExpr::value(TypeValue::type_bound(expr))
     }
 }
 
