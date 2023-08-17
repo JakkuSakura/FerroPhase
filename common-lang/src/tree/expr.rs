@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Expr is an expression that returns a value
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
-    Ident(Ident),
-    Path(Path),
+    Pat(Pat),
     Value(Value),
     Block(Block),
     Cond(Cond),
@@ -27,11 +26,11 @@ impl Expr {
             _ => Expr::Value(v),
         }
     }
+    pub fn ident(name: Ident) -> Expr {
+        Expr::Pat(Pat::ident(name))
+    }
     pub fn path(path: Path) -> Expr {
-        if path.segments.len() == 1 {
-            return Expr::Ident(path.segments[0].clone());
-        }
-        Expr::Path(path)
+        Expr::Pat(Pat::path(path))
     }
     pub fn block(block: Block) -> Expr {
         if block.stmts.len() == 1 {

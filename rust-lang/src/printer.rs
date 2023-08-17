@@ -606,8 +606,8 @@ impl RustPrinter {
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Ident(n) => Ok(self.print_ident(n)),
-            Expr::Path(n) => Ok(self.print_path(n)),
+            Expr::Pat(Pat::Ident(n)) => Ok(self.print_ident(n)),
+            Expr::Pat(Pat::Path(n)) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),

@@ -89,13 +89,13 @@ impl TypeSystem {
         ctx: &ScopedContext,
     ) -> Result<()> {
         match expr {
-            Expr::Ident(n) => {
+            Expr::Pat(n) => {
                 let expr = ctx
                     .get_expr(n)
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return self.type_check_expr_against_value(&expr, type_value, ctx);
             }
-            Expr::Path(_) => {}
+
             Expr::Value(v) => return self.type_check_value(v, type_value),
             _ => {}
         }
@@ -249,7 +249,7 @@ impl TypeSystem {
         ctx: &ScopedContext,
     ) -> Result<TypeValue> {
         match callee {
-            Expr::Ident(ident) => match ident.as_str() {
+            Expr::Pat(Pat::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(params.first().context("No param")?, ctx)
                 }
@@ -298,13 +298,12 @@ impl TypeSystem {
     }
     pub fn infer_expr(&self, expr: &Expr, ctx: &ScopedContext) -> Result<TypeValue> {
         match expr {
-            Expr::Ident(n) => {
+            Expr::Pat(n) => {
                 let ty = ctx
                     .get_type(n)
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return Ok(ty);
             }
-            Expr::Path(_) => {}
             Expr::Value(l) => match l {
                 Value::Int(_) => return Ok(TypeValue::Primitive(PrimitiveType::Int(IntType::I64))),
                 Value::Decimal(_) => {
