@@ -24,6 +24,10 @@ pub struct RawItemMacro {
 }
 
 #[derive(Debug, Clone)]
+pub struct RawStmtMacro {
+    pub raw: syn::StmtMacro,
+}
+#[derive(Debug, Clone)]
 pub struct RawType {
     pub raw: syn::TypePath,
 }
