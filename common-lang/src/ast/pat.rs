@@ -1,21 +1,6 @@
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 
-mod expr;
-mod item;
-
-mod anybox;
-mod typing;
-
-pub use anybox::*;
-pub use expr::*;
-pub use item::*;
-pub use typing::*;
-/// Tree is any syntax tree element
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Tree {
-    Item(Item),
-}
 #[derive(Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Pat {
     Ident(Ident),

@@ -1,4 +1,4 @@
-use crate::tree::{AnyBox, AnyBoxable, Ident, Path, TypeExpr};
+use crate::ast::{AnyBox, AnyBoxable, Ident, Path, TypeExpr};
 use crate::value::GenericParam;
 use common::*;
 use std::fmt::Debug;

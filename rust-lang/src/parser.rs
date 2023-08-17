@@ -1,7 +1,7 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
+use common_lang::ast::*;
 use common_lang::ops::{AddOp, BinOpKind, SubOp};
-use common_lang::tree::*;
 use common_lang::value::*;
 use quote::ToTokens;
 use syn::parse::ParseStream;

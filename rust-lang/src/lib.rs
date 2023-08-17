@@ -3,7 +3,7 @@ pub mod printer;
 pub mod rustfmt;
 
 use common::Result;
-use common_lang::tree::{Tree, *};
+use common_lang::ast::{Tree, *};
 use common_lang::*;
 
 use crate::parser::RustParser;

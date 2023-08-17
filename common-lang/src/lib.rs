@@ -1,15 +1,15 @@
+pub mod ast;
 pub mod context;
 pub mod interpreter;
 pub mod ops;
 pub mod optimizer;
 pub mod passes;
-pub mod tree;
 pub mod type_system;
 pub mod value;
+use ast::*;
 use common::*;
-use tree::*;
 
-use crate::tree::Tree;
+use crate::ast::Tree;
 
 use crate::value::{FunctionValue, Value};
 use std::rc::Rc;

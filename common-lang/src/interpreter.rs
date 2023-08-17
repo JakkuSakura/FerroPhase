@@ -1,6 +1,6 @@
+use crate::ast::*;
 use crate::context::{LazyValue, ScopedContext};
 use crate::ops::*;
-use crate::tree::*;
 use crate::type_system::TypeSystem;
 use crate::value::*;
 use crate::*;

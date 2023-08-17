@@ -1,7 +1,7 @@
+use crate::ast::*;
 use crate::context::ScopedContext;
 use crate::interpreter::Interpreter;
 use crate::passes::OptimizePass;
-use crate::tree::*;
 use crate::type_system::TypeSystem;
 use crate::value::*;
 use crate::*;
