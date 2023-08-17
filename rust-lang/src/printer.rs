@@ -1,7 +1,7 @@
 use common::Result;
 use common::*;
 
-use crate::{RawExpr, RawExprMacro};
+use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use common_lang::tree::*;
 use common_lang::value::*;
@@ -492,6 +492,9 @@ impl RustPrinter {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = n.downcast_ref::<RawExpr>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = n.downcast_ref::<RawStmtMacro>() {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(f) = n.downcast_ref::<BuiltinFn>() {
