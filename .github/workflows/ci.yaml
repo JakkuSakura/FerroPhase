@@ -23,7 +23,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run rust-lang examples
-        run: cargo run --package rust-lang --example generate_examples
+        run: cd rust-lang && cargo run --example generate_examples
 
       - name: Run tests
         run: cargo test test
