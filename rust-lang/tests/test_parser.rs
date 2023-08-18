@@ -4,13 +4,13 @@ use common_lang::value::{FunctionParam, FunctionValue, PrimitiveType, TypeValue}
 macro_rules! shll_parse_item {
     ($($tt:tt)*) => {{
         let code: syn::Item = syn::parse_quote!($($tt)*);
-        rust_lang::parser::RustParser.parse_item(code)?
+        rust_lang::parser::RustParser::new().parse_item(code)?
     }};
 }
 macro_rules! shll_parse_expr {
     ($($tt:tt)*) => {{
         let code: syn::Expr = syn::parse_quote!($($tt)*);
-        rust_lang::parser::RustParser.parse_expr(code)?
+        rust_lang::parser::RustParser::new().parse_expr(code)?
     }};
 }
 #[test]
