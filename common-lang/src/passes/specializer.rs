@@ -269,7 +269,13 @@ impl OptimizePass for SpecializePass {
     ) -> Result<Invoke> {
         self.specialize_invoking(invoke, &func, ctx)
     }
-    // fn optimize_expr(&self, expr: Expr, ctx: &ExecutionContext) -> Result<Expr> {
-    //     self.specialize_expr(expr, ctx)
-    // }
+    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+        match self.interpreter.opt.pass.evaluate_condition(expr, ctx) {
+            Ok(ok) => Ok(ok),
+            Err(err) => {
+                warn!("Cannot evaluate condition: {:?}", err);
+                Ok(None)
+            }
+        }
+    }
 }
