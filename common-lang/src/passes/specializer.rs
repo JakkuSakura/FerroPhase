@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::context::ScopedContext;
-use crate::interpreter::Interpreter;
+use crate::interpreter::OptimizeInterpreter;
 use crate::passes::OptimizePass;
 use crate::type_system::TypeSystem;
 use crate::value::*;
@@ -11,14 +11,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct SpecializePass {
     spec_id: AtomicUsize,
     serializer: Rc<dyn Serializer>,
-    interpreter: Interpreter,
+    interpreter: OptimizeInterpreter,
     type_system: TypeSystem,
 }
 impl SpecializePass {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
-            interpreter: Interpreter::new(serializer.clone()),
+            interpreter: OptimizeInterpreter::new(serializer.clone()),
             type_system: TypeSystem::new(serializer.clone()),
             serializer,
         }
@@ -75,7 +75,7 @@ impl SpecializePass {
         let mut new_params: Vec<FunctionParam> = vec![];
         let mut new_args: Vec<Expr> = vec![];
         for (param, arg) in zip_eq(func.params.iter(), args.iter()) {
-            match self.interpreter.interpret_expr(arg, ctx) {
+            match self.interpreter.interpret_expr(arg.clone(), ctx) {
                 Err(err) => {
                     warn!("Cannot evaluate arg {} {:?}: {:?}", param.name, arg, err);
                     new_args.push(arg.clone());
@@ -210,8 +210,8 @@ impl SpecializePass {
 
     pub fn specialize_cond(&self, b: Cond, ctx: &ScopedContext) -> Result<Expr> {
         for case in &b.cases {
-            let interpreted =
-                Interpreter::new(self.serializer.clone()).interpret_expr(&case.cond, ctx)?;
+            let interpreted = OptimizeInterpreter::new(self.serializer.clone())
+                .interpret_expr(case.cond.clone(), ctx)?;
             match interpreted {
                 Value::Bool(b) => {
                     if b.value {
