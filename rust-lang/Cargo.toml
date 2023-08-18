@@ -13,3 +13,4 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 serde = "1"
+syn-inline-mod = "0.6.0"

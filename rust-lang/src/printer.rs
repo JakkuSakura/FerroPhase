@@ -628,6 +628,7 @@ impl RustPrinter {
         match node {
             Tree::Item(n) => self.print_item(n),
             Tree::Expr(n) => self.print_expr(n),
+            Tree::File(n) => self.print_module(&n.module),
         }
     }
 }

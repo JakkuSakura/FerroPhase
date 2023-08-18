@@ -11,6 +11,7 @@ use crate::printer::RustPrinter;
 use common_lang::value::{FunctionValue, Value};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::path::PathBuf;
 use syn::parse_str;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -156,9 +157,7 @@ impl Serializer for RustSerde {
 impl Deserializer for RustSerde {
     fn deserialize(&self, code: &str) -> Result<Tree> {
         let code: syn::File = parse_str(code)?;
-        RustParser
-            .parse_file(code)
-            .map(Item::Module)
-            .map(Tree::Item)
+        let path = PathBuf::from("__file__");
+        RustParser::new().parse_file(path, code).map(Tree::File)
     }
 }
