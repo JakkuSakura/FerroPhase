@@ -458,10 +458,12 @@ impl Interpreter {
             }
         }
     }
+
     pub fn interpret_tree(&self, node: &Tree, ctx: &ScopedContext) -> Result<Value> {
         match node {
             Tree::Item(item) => self.interpret_item(item, ctx),
             Tree::Expr(expr) => self.interpret_expr(expr, ctx),
+            Tree::File(file) => self.interpret_module(&file.module, ctx),
         }
     }
 }

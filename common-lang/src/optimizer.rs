@@ -313,6 +313,13 @@ impl FoldOptimizer {
                 let expr = self.optimize_expr(expr, ctx)?;
                 Ok(Some(Tree::Expr(expr)))
             }
+            Tree::File(file) => {
+                let module = self.optimize_module(file.module, ctx)?;
+                Ok(Some(Tree::File(File {
+                    path: file.path,
+                    module,
+                })))
+            }
         }
     }
 }
