@@ -56,7 +56,13 @@ impl ScopedContext {
             values.extend(self.inner.borrow().values.keys().cloned());
             values
         } else {
-            self.inner.borrow().values.keys().cloned().collect()
+            self.inner
+                .borrow()
+                .values
+                .keys()
+                .cloned()
+                .sorted()
+                .collect()
         }
     }
     pub fn print_values(&self, s: &dyn Serializer) -> Result<()> {
