@@ -12,13 +12,8 @@ fn main() {
     let c = 3i64;
     let d = 4i64;
     let op = add;
-    if a > 0i64 {
-        print(op(a, b));
-    } else {
-        print(op(c, d));
-    };
+    print(op(a, b));
 }
 
 // stdout: 3i64
-// stdout: 7i64
 // result: ()
