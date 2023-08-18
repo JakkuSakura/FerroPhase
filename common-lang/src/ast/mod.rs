@@ -19,4 +19,5 @@ pub use typing::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Tree {
     Item(Item),
+    Expr(Expr),
 }

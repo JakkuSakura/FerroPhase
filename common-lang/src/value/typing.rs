@@ -4,7 +4,7 @@ use common::*;
 use std::fmt::Debug;
 
 /// TypeValue is a solid type value
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TypeValue {
     Primitive(PrimitiveType),
     NamedStruct(NamedStructType),
@@ -56,7 +56,7 @@ impl TypeValue {
         Self::TypeBounds(TypeBounds::new(expr))
     }
 }
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum IntType {
     I64,
     U64,
@@ -68,14 +68,14 @@ pub enum IntType {
     U8,
     BigInt,
 }
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum DecimalType {
     F64,
     F32,
     BigDecimal,
     Decimal { precision: u32, scale: u32 },
 }
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum PrimitiveType {
     Int(IntType),
     Decimal(DecimalType),
@@ -97,43 +97,43 @@ impl PrimitiveType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VecType {
     pub ty: Box<TypeValue>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TupleType {
     pub types: Vec<TypeValue>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FieldTypeValue {
     pub name: Ident,
     pub value: TypeValue,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NamedStructType {
     pub name: Ident,
     pub fields: Vec<FieldTypeValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UnnamedStructType {
     pub fields: Vec<FieldTypeValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FunctionType {
     pub params: Vec<TypeValue>,
     pub generics_params: Vec<GenericParam>,
     pub ret: Box<TypeValue>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ImplTraits {
     pub bounds: TypeBounds,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct TypeBounds {
     pub bounds: Vec<TypeExpr>,
 }
@@ -149,11 +149,11 @@ impl TypeBounds {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnyType;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UnitType;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NothingType;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TypeType;

@@ -3,7 +3,7 @@ use crate::value::{FunctionValue, TypeValue};
 use common::{Deserialize, Serialize};
 
 /// Item is an syntax tree node that "declares" a thing without returning a value
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Item {
     Module(Module),
     Def(Define),
@@ -19,13 +19,13 @@ impl Item {
 }
 pub type ItemChunk = Vec<Item>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Module {
     pub name: Ident,
     pub items: ItemChunk,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Block {
     pub stmts: StatementChunk,
 }
@@ -52,7 +52,7 @@ impl Block {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Copy)]
 pub enum Visibility {
     Public,
     Private,
@@ -67,14 +67,14 @@ pub enum DefKind {
     Const,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum DefValue {
     Function(FunctionValue),
     Type(TypeExpr),
     Const(Expr),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Define {
     pub name: Ident,
     pub kind: DefKind,
@@ -83,13 +83,13 @@ pub struct Define {
     pub visibility: Visibility,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Import {
     pub visibility: Visibility,
     pub path: Path,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Impl {
     pub name: Ident,
     pub defs: Vec<Define>,
