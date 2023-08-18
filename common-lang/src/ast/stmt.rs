@@ -6,6 +6,20 @@ use common::{Deserialize, Serialize};
 pub struct SideEffect {
     pub expr: Expr,
 }
+impl SideEffect {
+    pub fn new(expr: Expr) -> Self {
+        match expr {
+            Expr::Block(block) => {
+                let mut block = block;
+                block.make_last_side_effect();
+                Self {
+                    expr: Expr::Block(block),
+                }
+            }
+            _ => Self { expr },
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Statement {
