@@ -9,24 +9,24 @@ fn print(i: impl Display) {
 fn main() {
     let c = 3f64;
     let b = 2i64;
+    let d = 4f64;
     let op = add;
     let a = 1i64;
-    let d = 4f64;
     {
         let c = 3f64;
         let b = 2i64;
+        let d = 4f64;
         let op = add;
         let a = 1i64;
-        let d = 4f64;
         let i = op(a, b);
         print(i);
     };
     {
         let c = 3f64;
         let b = 2i64;
+        let d = 4f64;
         let op = add;
         let a = 1i64;
-        let d = 4f64;
         let i = op(c, d);
         print(i);
     };
