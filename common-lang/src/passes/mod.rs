@@ -40,6 +40,9 @@ pub trait OptimizePass {
     ) -> Result<Invoke> {
         Ok(invoke)
     }
+    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+        Ok(None)
+    }
 }
 
 pub struct NoopPass;
@@ -112,5 +115,14 @@ impl OptimizePass for MultiplePass {
             invoke = pass.optimize_invoke_post(invoke, func, ctx)?;
         }
         Ok(invoke)
+    }
+    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+        // don't know what to do if multiple passes return different results
+        for pass in self {
+            if let Some(flow) = pass.evaluate_condition(expr.clone(), ctx)? {
+                return Ok(Some(flow));
+            }
+        }
+        Ok(None)
     }
 }

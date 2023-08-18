@@ -94,3 +94,11 @@ pub struct CondCase {
     pub cond: Expr,
     pub body: Expr,
 }
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub enum ControlFlow {
+    Continue,
+    Break(Option<Expr>),
+    Return(Option<Expr>),
+    Into,
+    IntoAndBreak(Option<Expr>),
+}

@@ -131,6 +131,7 @@ impl ScopedContext {
         match expr {
             Expr::Pat(ident) => self.get_value(ident),
             Expr::Value(Value::BinOpKind(kind)) => Some(Value::BinOpKind(kind.clone())),
+
             _ => None,
         }
     }
