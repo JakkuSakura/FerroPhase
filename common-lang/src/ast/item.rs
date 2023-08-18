@@ -9,6 +9,7 @@ pub enum Item {
     Def(Define),
     Import(Import),
     Impl(Impl),
+    Expr(Expr),
     Any(AnyBox),
 }
 

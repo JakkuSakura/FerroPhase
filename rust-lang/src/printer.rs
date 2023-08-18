@@ -621,6 +621,7 @@ impl RustPrinter {
             Item::Def(n) => self.print_define(n),
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
+            Item::Expr(n) => self.print_expr(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }

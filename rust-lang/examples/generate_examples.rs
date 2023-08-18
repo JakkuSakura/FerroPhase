@@ -1,7 +1,7 @@
 use common::*;
 
 use common_lang::context::ScopedContext;
-use common_lang::interpreter::Interpreter;
+use common_lang::interpreter::OptimizeInterpreter;
 use common_lang::optimizer::load_optimizer;
 use common_lang::{Deserializer, Serializer};
 use rust_lang::printer::RustPrinter;
@@ -45,9 +45,9 @@ fn main() -> Result<()> {
         file_out.seek(SeekFrom::Start(0))?;
         writeln!(&mut file_out, "{}", code)?;
 
-        let inp = Interpreter::new(Rc::new(rust_serde));
+        let inp = OptimizeInterpreter::new(Rc::new(rust_serde));
         let ctx = ScopedContext::new();
-        let intp_result = inp.interpret_tree(&node, &ctx)?;
+        let intp_result = inp.interpret_tree(node, &ctx)?;
         for row in ctx.take_outputs() {
             writeln!(&mut file_out, "// stdout: {}", row)?;
         }
