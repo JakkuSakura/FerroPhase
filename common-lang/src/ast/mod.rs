@@ -1,5 +1,6 @@
 use common::*;
 use std::fmt::Debug;
+use std::path::PathBuf;
 
 mod anybox;
 mod expr;
@@ -20,4 +21,11 @@ pub use typing::*;
 pub enum Tree {
     Item(Item),
     Expr(Expr),
+    File(File),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct File {
+    pub path: PathBuf,
+    pub module: Module,
 }

@@ -4,8 +4,10 @@ use common_lang::ast::*;
 use common_lang::ops::{AddOp, BinOpKind, SubOp};
 use common_lang::value::*;
 use quote::ToTokens;
+use std::path::PathBuf;
 use syn::parse::ParseStream;
 use syn::{parse_quote, FieldsNamed, FnArg, Lit, ReturnType, Token};
+use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -585,11 +587,12 @@ fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
     })
 }
 
-pub fn parse_file(file: syn::File) -> Result<Module> {
-    Ok(Module {
+pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
+    let module = Module {
         name: Ident::new("__file__"),
         items: file.items.into_iter().map(parse_item).try_collect()?,
-    })
+    };
+    Ok(File { path, module })
 }
 pub fn parse_module(file: syn::ItemMod) -> Result<Module> {
     Ok(Module {
@@ -603,17 +606,37 @@ pub fn parse_module(file: syn::ItemMod) -> Result<Module> {
             .try_collect()?,
     })
 }
-pub struct RustParser;
+pub struct RustParser {}
 
 impl RustParser {
+    pub fn new() -> Self {
+        RustParser {}
+    }
+    pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
+        let builder = InlinerBuilder::new();
+        let module = builder.parse_and_inline_modules(&path)?;
+        let (outputs, errors) = module.into_output_and_errors();
+        let mut errors_str = String::new();
+        for err in errors {
+            errors_str.push_str(&format!("{}\n", err));
+        }
+        ensure!(
+            errors_str.is_empty(),
+            "Errors when parsing {}: {}",
+            path.display(),
+            errors_str
+        );
+        let file = self.parse_file(path, outputs)?;
+        Ok(file)
+    }
     pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
         parse_expr(code)
     }
     pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
         parse_item(code)
     }
-    pub fn parse_file(&self, code: syn::File) -> Result<Module> {
-        parse_file(code)
+    pub fn parse_file(&self, path: PathBuf, code: syn::File) -> Result<File> {
+        parse_file(path, code)
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
