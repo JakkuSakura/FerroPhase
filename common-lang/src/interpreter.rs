@@ -450,9 +450,22 @@ impl OptimizePass for InterpreterPass {
             _ => Ok(None),
         }
     }
+    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+        let value = self.interpret_expr(&expr, ctx)?;
+        match value {
+            Value::Bool(b) => {
+                if b.value {
+                    Ok(Some(ControlFlow::IntoAndBreak(None)))
+                } else {
+                    Ok(Some(ControlFlow::Continue))
+                }
+            }
+            _ => bail!("Failed to interpret {:?} => {:?}", expr, value),
+        }
+    }
 }
 pub struct OptimizeInterpreter {
-    pub opt: FoldOptimizer,
+    pub opt: FoldOptimizer<InterpreterPass>,
 }
 impl OptimizeInterpreter {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {

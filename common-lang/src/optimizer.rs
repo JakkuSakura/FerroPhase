@@ -5,7 +5,7 @@ use crate::value::*;
 use crate::*;
 use common::*;
 
-pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer {
+pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer<MultiplePass> {
     let passes: MultiplePass = vec![
         Box::new(SpecializePass::new(serializer.clone())),
         Box::new(InlinePass::new(serializer.clone())),
@@ -14,16 +14,13 @@ pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer {
     FoldOptimizer::new(serializer.clone(), passes)
 }
 
-pub struct FoldOptimizer {
+pub struct FoldOptimizer<Pass: OptimizePass> {
     serializer: Rc<dyn Serializer>,
-    pass: Box<dyn OptimizePass>,
+    pub pass: Pass,
 }
-impl FoldOptimizer {
-    pub fn new(serializer: Rc<dyn Serializer>, pass: impl OptimizePass + 'static) -> Self {
-        Self {
-            serializer,
-            pass: Box::new(pass),
-        }
+impl<Pass: OptimizePass> FoldOptimizer<Pass> {
+    pub fn new(serializer: Rc<dyn Serializer>, pass: Pass) -> Self {
+        Self { serializer, pass }
     }
 
     pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &ScopedContext) -> Result<Expr> {
@@ -56,18 +53,20 @@ impl FoldOptimizer {
 
                 _ => {
                     warn!(
-                        "Failed to optimize further {}",
-                        self.serializer.serialize_expr(&func)?
+                        "Failed to optimize further {}: {:?}",
+                        self.serializer.serialize_expr(&func)?,
+                        looked_up
                     )
                 }
             }
+        } else {
+            warn!(
+                "Couldn't optimize {}",
+                self.serializer.serialize_invoke(&invoke)?
+            );
         }
 
         let invoke = Expr::Invoke(invoke);
-        info!(
-            "Couldn't optimize {}",
-            self.serializer.serialize_expr(&invoke)?
-        );
         Ok(invoke)
     }
 
@@ -78,31 +77,38 @@ impl FoldOptimizer {
         ctx: &ScopedContext,
     ) -> Result<Expr> {
         let serialized = self.serializer.serialize_invoke(&invoke)?;
-        debug!("Doing passes {} for {}", self.pass.name(), serialized);
+        debug!("Doing {} for {}", self.pass.name(), serialized);
 
         invoke = self.pass.optimize_invoke_pre(invoke.clone(), &func, ctx)?;
 
         let func_body_serialized = self.serializer.serialize_expr(&func.body)?;
-        debug!("Doing passes for {}", func_body_serialized);
+        debug!("Doing {} for {}", self.pass.name(), func_body_serialized);
         func.body = self.optimize_expr(*func.body, ctx)?.into();
         let func_body_serialized2 = self.serializer.serialize_expr(&func.body)?;
         // if func_body_serialized != func_body_serialized2 {
         debug!(
-            "Done passes for {} => {}",
-            func_body_serialized, func_body_serialized2
+            "Done {} for {} => {}",
+            self.pass.name(),
+            func_body_serialized,
+            func_body_serialized2
         );
         // }
         invoke = self.pass.optimize_invoke_post(invoke.clone(), &func, ctx)?;
 
         let serialized2 = self.serializer.serialize_invoke(&invoke)?;
         // if serialized != serialized2 {
-        debug!("Done passes for {} => {}", serialized, serialized2);
+        debug!(
+            "Done {} for {} => {}",
+            self.pass.name(),
+            serialized,
+            serialized2
+        );
         // }
         Ok(Expr::Invoke(invoke))
     }
     pub fn optimize_expr(&self, mut expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
         let serialized = self.serializer.serialize_expr(&expr)?;
-        debug!("Doing passes for {}", serialized);
+        debug!("Doing {} for {}", self.pass.name(), serialized);
 
         expr = self.pass.optimize_expr_pre(expr, ctx)?;
 
@@ -119,7 +125,12 @@ impl FoldOptimizer {
 
         let serialized2 = self.serializer.serialize_expr(&expr)?;
         // if serialized != serialized2 {
-        debug!("Done passes for {} => {}", serialized, serialized2);
+        debug!(
+            "Done {} for {} => {}",
+            self.pass.name(),
+            serialized,
+            serialized2
+        );
         // }
         Ok(expr)
     }
@@ -150,7 +161,7 @@ impl FoldOptimizer {
     }
     pub fn optimize_item(&self, mut item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
         let serialized = self.serializer.serialize_item(&item)?;
-        debug!("Doing passes for {}", serialized);
+        debug!("Doing {} for {}", self.pass.name(), serialized);
 
         item = match self.pass.optimize_item_pre(item, ctx)? {
             Some(new_item) => new_item,
@@ -179,7 +190,12 @@ impl FoldOptimizer {
 
         let serialized2 = self.serializer.serialize_item(&item)?;
         // if serialized != serialized2 {
-        debug!("Done passes for {} => {}", serialized, serialized2);
+        debug!(
+            "Done {} for {} => {}",
+            self.pass.name(),
+            serialized,
+            serialized2
+        );
         // }
         Ok(Some(item))
     }
@@ -242,15 +258,31 @@ impl FoldOptimizer {
         Ok(Expr::block(b))
     }
     pub fn optimize_cond(&self, b: Cond, ctx: &ScopedContext) -> Result<Expr> {
-        let cases: Vec<_> = b
-            .cases
-            .into_iter()
-            .map(|x| {
-                let cond = self.optimize_expr(x.cond, ctx)?;
-                let body = self.optimize_expr(x.body, ctx)?;
-                Ok::<_, Error>(CondCase { cond, body })
-            })
-            .try_collect()?;
+        let mut cases = vec![];
+        for case in b.cases {
+            let cond = self.optimize_expr(case.cond, ctx)?;
+            let do_continue = self
+                .pass
+                .evaluate_condition(cond.clone(), ctx)?
+                .unwrap_or(ControlFlow::Into);
+            match do_continue {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break(_) => break,
+                ControlFlow::Return(_) => break,
+                ControlFlow::Into => {
+                    let body = self.optimize_expr(case.body, ctx)?;
+                    cases.push(CondCase { cond, body });
+                }
+                ControlFlow::IntoAndBreak(_) => {
+                    let body = self.optimize_expr(case.body, ctx)?;
+                    cases.push(CondCase { cond, body });
+                    break;
+                }
+            }
+        }
+        if cases.len() == 1 {
+            return Ok(cases.into_iter().next().unwrap().body);
+        }
         Ok(Expr::Cond(Cond {
             cases,
             if_style: b.if_style,
