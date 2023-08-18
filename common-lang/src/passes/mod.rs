@@ -40,10 +40,77 @@ pub trait OptimizePass {
     ) -> Result<Invoke> {
         Ok(invoke)
     }
-    fn optimize_block_pre(&self, block: Block, ctx: &ScopedContext) -> Result<Expr> {
-        Ok(Expr::block(block))
+}
+
+pub struct NoopPass;
+impl OptimizePass for NoopPass {
+    fn name(&self) -> &str {
+        "noop"
     }
-    fn optimize_block_post(&self, block: Block, ctx: &ScopedContext) -> Result<Expr> {
-        Ok(Expr::block(block))
+}
+pub type MultiplePass = Vec<Box<dyn OptimizePass>>;
+impl OptimizePass for MultiplePass {
+    fn name(&self) -> &str {
+        "multiple"
+    }
+    fn optimize_item_pre(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
+        let mut item = item;
+        for pass in self {
+            if let Some(new_item) = pass.optimize_item_pre(item, ctx)? {
+                item = new_item;
+            } else {
+                return Ok(None);
+            }
+        }
+        Ok(Some(item))
+    }
+    fn optimize_item_post(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
+        let mut item = item;
+        for pass in self {
+            if let Some(new_item) = pass.optimize_item_post(item, ctx)? {
+                item = new_item;
+            } else {
+                return Ok(None);
+            }
+        }
+        Ok(Some(item))
+    }
+    fn optimize_expr_pre(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+        let mut expr = expr;
+        for pass in self {
+            expr = pass.optimize_expr_pre(expr, ctx)?;
+        }
+        Ok(expr)
+    }
+    fn optimize_expr_post(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+        let mut expr = expr;
+        for pass in self {
+            expr = pass.optimize_expr_post(expr, ctx)?;
+        }
+        Ok(expr)
+    }
+    fn optimize_invoke_pre(
+        &self,
+        invoke: Invoke,
+        func: &FunctionValue,
+        ctx: &ScopedContext,
+    ) -> Result<Invoke> {
+        let mut invoke = invoke;
+        for pass in self {
+            invoke = pass.optimize_invoke_pre(invoke, func, ctx)?;
+        }
+        Ok(invoke)
+    }
+    fn optimize_invoke_post(
+        &self,
+        invoke: Invoke,
+        func: &FunctionValue,
+        ctx: &ScopedContext,
+    ) -> Result<Invoke> {
+        let mut invoke = invoke;
+        for pass in self {
+            invoke = pass.optimize_invoke_post(invoke, func, ctx)?;
+        }
+        Ok(invoke)
     }
 }

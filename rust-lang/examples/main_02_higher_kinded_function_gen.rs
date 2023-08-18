@@ -7,72 +7,29 @@ fn print(i: impl Display) {
     println!("{}", i)
 }
 fn main() {
-    let d = 4f64;
-    let a = 1i64;
-    let b = 2i64;
     let c = 3f64;
+    let b = 2i64;
     let op = add;
+    let a = 1i64;
+    let d = 4f64;
     {
-        let d = 4f64;
-        let a = 1i64;
-        let b = 2i64;
         let c = 3f64;
+        let b = 2i64;
         let op = add;
+        let a = 1i64;
+        let d = 4f64;
         let i = op(a, b);
-        print(i)
+        print(i);
     };
     {
-        let d = 4f64;
-        let a = 1i64;
-        let b = 2i64;
         let c = 3f64;
+        let b = 2i64;
         let op = add;
+        let a = 1i64;
+        let d = 4f64;
         let i = op(c, d);
-        print(i)
+        print(i);
     };
-}
-pub fn do_op_2() {
-    let d = 4f64;
-    let a = 1i64;
-    let b = 2i64;
-    let c = 3f64;
-    let op = add;
-    {
-        let d = 4f64;
-        let a = 1i64;
-        let b = 2i64;
-        let c = 3f64;
-        let op = add;
-        let i = op(a, b);
-        print(i)
-    };
-    {
-        let d = 4f64;
-        let a = 1i64;
-        let b = 2i64;
-        let c = 3f64;
-        let op = add;
-        let i = op(c, d);
-        print(i)
-    };
-}
-pub fn print2_0() {
-    let d = 4f64;
-    let a = 1i64;
-    let b = 2i64;
-    let c = 3f64;
-    let op = add;
-    let i = op(a, b);
-    print(i)
-}
-pub fn print2_1() {
-    let d = 4f64;
-    let a = 1i64;
-    let b = 2i64;
-    let c = 3f64;
-    let op = add;
-    let i = op(c, d);
-    print(i)
 }
 
 // stdout: 3i64
