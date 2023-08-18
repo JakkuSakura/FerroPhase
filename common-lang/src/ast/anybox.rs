@@ -2,12 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt::Debug;
 use std::rc::Rc;
-pub trait AnyBoxable: Any + Debug + Clone + 'static {}
-impl<T: Any + Debug + Clone + 'static> AnyBoxable for T {}
+pub trait AnyBoxable: Any + Debug + Clone + PartialEq + Eq + 'static {}
+impl<T: Any + Debug + Clone + PartialEq + Eq + 'static> AnyBoxable for T {}
 pub struct AnyBox {
     pub value: Box<dyn Any>,
     debug: Rc<str>,
     clone: fn(&dyn Any) -> Box<dyn Any>,
+    equals: fn(&dyn Any, &dyn Any) -> bool,
 }
 impl AnyBox {
     pub fn new<T: AnyBoxable>(t: T) -> Self {
@@ -15,6 +16,11 @@ impl AnyBox {
             debug: Rc::from(format!("{:?}", t)),
             value: Box::new(t),
             clone: |v| Box::new(v.downcast_ref::<T>().unwrap().clone()),
+            equals: |a, b| {
+                let a = a.downcast_ref::<T>().unwrap();
+                let b = b.downcast_ref::<T>().unwrap();
+                a == b
+            },
         }
     }
 
@@ -39,6 +45,7 @@ impl Clone for AnyBox {
             debug: self.debug.clone(),
             value: (self.clone)(self.value.as_ref()),
             clone: self.clone,
+            equals: self.equals,
         }
     }
 }
@@ -52,6 +59,12 @@ impl Serialize for AnyBox {
         self.debug.serialize(serializer)
     }
 }
+impl PartialEq for AnyBox {
+    fn eq(&self, other: &Self) -> bool {
+        (self.equals)(self.value.as_ref(), other.value.as_ref())
+    }
+}
+impl Eq for AnyBox {}
 impl<'de> Deserialize<'de> for AnyBox {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;

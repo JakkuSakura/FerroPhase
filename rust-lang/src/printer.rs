@@ -627,6 +627,7 @@ impl RustPrinter {
     pub fn print_tree(&self, node: &Tree) -> Result<TokenStream> {
         match node {
             Tree::Item(n) => self.print_item(n),
+            Tree::Expr(n) => self.print_expr(n),
         }
     }
 }

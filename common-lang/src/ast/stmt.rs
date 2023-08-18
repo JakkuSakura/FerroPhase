@@ -1,13 +1,13 @@
-use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item, Tree};
+use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item};
 use crate::value::TypeValue;
 use common::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct SideEffect {
     pub expr: Expr,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Statement {
     Item(Box<Item>),
     Let(Let),
@@ -47,28 +47,28 @@ impl Statement {
 
 pub type StatementChunk = Vec<Statement>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Let {
     pub name: Ident,
     pub ty: Option<TypeValue>,
     pub value: Expr,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Assign {
     pub target: Expr,
     pub value: Expr,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ForEach {
     pub variable: Ident,
-    pub iterable: Tree,
+    pub iterable: Expr,
     pub body: Block,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct While {
-    pub cond: Tree,
+    pub cond: Expr,
     pub body: Block,
 }

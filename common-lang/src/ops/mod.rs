@@ -5,7 +5,7 @@ pub mod builtins;
 use crate::ast::Ident;
 pub use builtins::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BinOpKind {
     Add,
     Sub,
@@ -48,7 +48,7 @@ impl Display for BinOpKind {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BinOp<T> {
     Add(AddOp<T>),
     Sub(SubOp<T>),
@@ -64,64 +64,64 @@ pub enum BinOp<T> {
     Any(AnyBinOp<T>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AddOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SubOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MulOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DivOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GtOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LtOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GteOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LteOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EqOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NeOp<T> {
     pub lhs: Box<T>,
     pub rhs: Box<T>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AnyBinOp<T> {
     pub kind: BinOpKind,
     pub lhs: Box<T>,

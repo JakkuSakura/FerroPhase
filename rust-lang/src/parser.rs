@@ -609,38 +609,13 @@ impl RustParser {
     pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
         parse_expr(code)
     }
+    pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
+        parse_item(code)
+    }
     pub fn parse_file(&self, code: syn::File) -> Result<Module> {
         parse_file(code)
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::RustSerde;
-    use common_lang::Serializer;
-    use quote::format_ident;
-    use syn::parse_quote;
-
-    #[test]
-    fn test_parse_fn() -> Result<()> {
-        let code: syn::ItemFn = parse_quote!(
-            fn foo(a: i32) -> i32 {
-                a + 1
-            }
-        );
-        let func = parse_fn(code).unwrap();
-        assert_eq!(func.name.unwrap(), parse_ident(format_ident!("foo")));
-        let serde = RustSerde::new(false);
-        assert_eq!(
-            serde.serialize_expr(&func.body).unwrap(),
-            serde
-                .serialize_expr(&parse_expr(parse_quote!(a + 1)).unwrap())
-                .unwrap()
-        );
-        Ok(())
     }
 }

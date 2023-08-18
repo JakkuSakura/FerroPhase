@@ -309,6 +309,10 @@ impl FoldOptimizer {
                 let item = self.optimize_item(item, ctx)?;
                 Ok(item.map(Tree::Item))
             }
+            Tree::Expr(expr) => {
+                let expr = self.optimize_expr(expr, ctx)?;
+                Ok(Some(Tree::Expr(expr)))
+            }
         }
     }
 }
