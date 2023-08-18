@@ -13,21 +13,21 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use syn::parse_str;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawExprMacro {
     pub raw: syn::ExprMacro,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawItemMacro {
     pub raw: syn::ItemMacro,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawStmtMacro {
     pub raw: syn::StmtMacro,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawType {
     pub raw: syn::TypePath,
 }
@@ -48,17 +48,17 @@ impl<'de> Deserialize<'de> for RawType {
         unreachable!()
     }
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawUse {
     pub raw: syn::ItemUse,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawImplTrait {
     pub raw: syn::TypeImplTrait,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawExpr {
     pub raw: syn::Expr,
 }
@@ -67,11 +67,17 @@ pub struct RawExpr {
 pub struct RawTokenSteam {
     pub raw: proc_macro2::TokenStream,
 }
+impl PartialEq for RawTokenSteam {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw.to_string() == other.raw.to_string()
+    }
+}
+impl Eq for RawTokenSteam {}
 #[macro_export]
 macro_rules! t {
     ($t: tt) => {};
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct RustSerde {
     rustfmt: bool,
 }

@@ -8,7 +8,7 @@ use std::fmt::{Debug, Formatter};
 use std::mem::replace;
 use std::rc::Rc;
 
-#[derive(Default)]
+#[derive(Default, Eq, PartialEq)]
 pub struct InterpreterContextInner {
     parent: Option<ScopedContext>,
     values: HashMap<Path, Value>,
@@ -17,7 +17,7 @@ pub struct InterpreterContextInner {
     buffer: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ScopedContext {
     inner: Rc<RefCell<InterpreterContextInner>>,
 }
@@ -146,7 +146,7 @@ impl ScopedContext {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct LazyValue<Expr> {
     pub ctx: ScopedContext,
     pub expr: Expr,
