@@ -4,7 +4,7 @@ use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
 
 /// Expr is an expression that returns a value
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Expr {
     Pat(Pat),
     Value(Value),
@@ -55,7 +55,7 @@ impl Expr {
         Self::Any(AnyBox::new(any))
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Invoke {
     pub func: Box<Expr>,
     pub args: Vec<Expr>,
@@ -70,26 +70,26 @@ pub enum SelectType {
     Const,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Select {
     pub obj: Box<Expr>,
     pub field: Ident,
     pub select: SelectType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Reference {
     pub referee: Box<Expr>,
     pub mutable: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Cond {
     pub cases: Vec<CondCase>,
     pub if_style: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct CondCase {
     pub cond: Expr,
     pub body: Expr,

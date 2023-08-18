@@ -7,7 +7,7 @@ use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum BuiltinFnName {
     BinOpKind(BinOpKind),
     Name(Ident),
@@ -79,6 +79,12 @@ impl<'de> Deserialize<'de> for BuiltinFn {
     }
 }
 
+impl PartialEq for BuiltinFn {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl Eq for BuiltinFn {}
 pub fn operate_on_literals(
     name: BinOpKind,
     op_i64: impl Fn(&[i64]) -> i64 + 'static,

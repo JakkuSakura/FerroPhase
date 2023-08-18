@@ -4,7 +4,7 @@ use crate::ops::*;
 use crate::value::*;
 
 /// TypeExpr is an expression that returns a type
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TypeExpr {
     Ident(Ident),
     Path(Path),
@@ -39,13 +39,13 @@ impl TypeExpr {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TypeBinOp {
     Add(AddOp<TypeExpr>),
     Sub(SubOp<TypeExpr>),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct SelfType {
     pub reference: bool,
     pub mutability: bool,
