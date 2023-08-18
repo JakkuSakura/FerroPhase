@@ -163,6 +163,10 @@ impl FoldOptimizer {
             Item::Def(x) => self.optimize_def(x, ctx).map(Item::Def)?,
             Item::Import(x) => self.optimize_import(x, ctx).map(Item::Import)?,
             Item::Module(x) => self.optimize_module(x, ctx).map(Item::Module)?,
+            Item::Expr(x) => {
+                let expr = self.optimize_expr(x, ctx)?;
+                Item::Expr(expr)
+            }
             _ => item,
         };
 
