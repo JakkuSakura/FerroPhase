@@ -51,19 +51,13 @@ impl ScopedContext {
         self.inner.borrow_mut().values.insert(key.into(), value);
     }
     pub fn list_values(&self) -> Vec<Path> {
-        if let Some(parent) = &self.inner.borrow().parent {
-            let mut values = parent.list_values();
-            values.extend(self.inner.borrow().values.keys().cloned());
-            values
+        let mut values = if let Some(parent) = &self.inner.borrow().parent {
+            parent.list_values()
         } else {
-            self.inner
-                .borrow()
-                .values
-                .keys()
-                .cloned()
-                .sorted()
-                .collect()
-        }
+            vec![]
+        };
+        values.extend(self.inner.borrow().values.keys().sorted().cloned());
+        values
     }
     pub fn print_values(&self, s: &dyn Serializer) -> Result<()> {
         if let Some(parent) = &self.inner.borrow().parent {
