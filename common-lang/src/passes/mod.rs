@@ -136,4 +136,11 @@ impl OptimizePass for MultiplePass {
         }
         Ok(None)
     }
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+        let mut pat = pat.clone();
+        for pass in self {
+            pat = pass.try_evaluate_expr(&pat, ctx)?;
+        }
+        Ok(pat)
+    }
 }

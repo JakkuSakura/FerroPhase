@@ -328,12 +328,22 @@ impl TypeSystem {
                 Value::List(_) => return Ok(TypeValue::Primitive(PrimitiveType::List)),
                 _ => {}
             },
+            Expr::Invoke(invoke) => match &*invoke.func {
+                Expr::Value(Value::BinOpKind(kind)) if kind.is_bool() => {
+                    return Ok(TypeValue::Primitive(PrimitiveType::Bool))
+                }
+                Expr::Value(Value::BinOpKind(_)) => {
+                    return Ok(self.infer_expr(invoke.args.first().context("No param")?, ctx)?)
+                }
+                _ => {}
+            },
             _ => {}
         }
 
         bail!(
-            "Could not infer type of {}",
-            self.serializer.serialize_expr(expr)?
+            "Could not infer type of {}: {:?}",
+            self.serializer.serialize_expr(expr)?,
+            expr
         )
     }
 
