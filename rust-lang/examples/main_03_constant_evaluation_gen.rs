@@ -1,5 +1,12 @@
 use std::fmt::Display;
 use std::ops::Add;
+fn do_op(a: i64, b: i64, c: i64, d: i64, op: fn(i64, i64) -> i64) {
+    if a > 0i64 {
+        print(op(a, b));
+    } else {
+        print(op(c, d));
+    }
+}
 fn add<T: Add>(a: T, b: T) -> T {
     a + b
 }
@@ -7,13 +14,9 @@ fn print(i: impl Display) {
     println!("{}", i)
 }
 fn main() {
-    let a = 1i64;
-    let b = 2i64;
-    let c = 3i64;
-    let d = 4i64;
-    let op = add;
-    print(op(a, b));
+    do_op(1i64, 2i64, 3i64, 4i64, add);
 }
 
+// stdout: 3i64
 // stdout: 3i64
 // result: ()

@@ -11,7 +11,7 @@ use common::*;
 
 use crate::ast::Tree;
 
-use crate::value::{FunctionValue, Value};
+use crate::value::{FunctionValue, TypeValue, Value};
 use std::rc::Rc;
 
 pub trait Serializer {
@@ -42,6 +42,7 @@ pub trait Serializer {
         }
         Ok(s)
     }
+    fn serialize_type(&self, node: &TypeValue) -> Result<String>;
     fn serialize_stmt(&self, node: &Statement) -> Result<String>;
     fn serialize_function(&self, node: &FunctionValue) -> Result<String>;
 }

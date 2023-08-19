@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::context::ScopedContext;
+use crate::context::ArcScopedContext;
 use crate::passes::OptimizePass;
 use crate::value::Value;
 use crate::Serializer;
@@ -14,14 +14,14 @@ impl InlinePass {
         Self { serializer }
     }
 
-    pub fn inline_expr(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn inline_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
             Expr::Value(value) => self.inline_value(value, ctx).map(Expr::value),
             Expr::Invoke(invoke) => self.inline_invoke(invoke, ctx),
             _ => Ok(expr),
         }
     }
-    pub fn inline_invoke(&self, mut invoke: Invoke, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn inline_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
         if invoke.args.is_empty() {
             let fun = self.try_get_expr(*invoke.func.clone(), ctx)?;
             match fun {
@@ -43,20 +43,20 @@ impl InlinePass {
             Ok(Expr::Invoke(invoke))
         }
     }
-    pub fn try_get_pat(&self, ident: Pat, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn try_get_pat(&self, ident: Pat, ctx: &ArcScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::Pat(ident)),
         }
     }
 
-    pub fn try_get_expr(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn try_get_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
             Expr::Pat(ident) => self.try_get_pat(ident, ctx),
             _ => Ok(expr),
         }
     }
-    pub fn inline_value(&self, value: Value, ctx: &ScopedContext) -> Result<Value> {
+    pub fn inline_value(&self, value: Value, ctx: &ArcScopedContext) -> Result<Value> {
         match value {
             Value::Expr(expr) => self.inline_expr(*expr, ctx).map(Value::expr),
             _ => Ok(value),
@@ -68,7 +68,7 @@ impl OptimizePass for InlinePass {
     fn name(&self) -> &str {
         "inline"
     }
-    fn optimize_expr_post(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         self.inline_expr(expr, ctx)
     }
 }

@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::context::ScopedContext;
+use crate::context::ArcScopedContext;
 use crate::value::FunctionValue;
 use common::*;
 
@@ -14,24 +14,29 @@ pub use specialize::*;
 #[allow(unused_variables)]
 pub trait OptimizePass {
     fn name(&self) -> &str;
-    fn optimize_item_pre(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
-        Ok(Some(item))
+    fn optimize_item_pre(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
+        Ok(item)
     }
-    fn optimize_item_post(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
-        Ok(Some(item))
+    fn optimize_item_post(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
+        Ok(item)
     }
-    fn optimize_expr_pre(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    fn optimize_expr_pre(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         Ok(expr)
     }
-    fn optimize_expr_post(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         Ok(expr)
     }
-
+    fn optimize_module_pre(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+        Ok(module)
+    }
+    fn optimize_module_post(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+        Ok(module)
+    }
     fn optimize_invoke_pre(
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         Ok(invoke)
     }
@@ -39,12 +44,19 @@ pub trait OptimizePass {
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         Ok(invoke)
     }
-    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+    fn evaluate_condition(
+        &self,
+        expr: Expr,
+        ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
         Ok(None)
+    }
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+        Ok(pat.clone())
     }
 }
 
@@ -59,36 +71,28 @@ impl OptimizePass for MultiplePass {
     fn name(&self) -> &str {
         "multiple"
     }
-    fn optimize_item_pre(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
+    fn optimize_item_pre(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         let mut item = item;
         for pass in self {
-            if let Some(new_item) = pass.optimize_item_pre(item, ctx)? {
-                item = new_item;
-            } else {
-                return Ok(None);
-            }
+            item = pass.optimize_item_pre(item, ctx)?;
         }
-        Ok(Some(item))
+        Ok(item)
     }
-    fn optimize_item_post(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
+    fn optimize_item_post(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         let mut item = item;
         for pass in self {
-            if let Some(new_item) = pass.optimize_item_post(item, ctx)? {
-                item = new_item;
-            } else {
-                return Ok(None);
-            }
+            item = pass.optimize_item_post(item, ctx)?;
         }
-        Ok(Some(item))
+        Ok(item)
     }
-    fn optimize_expr_pre(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    fn optimize_expr_pre(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let mut expr = expr;
         for pass in self {
             expr = pass.optimize_expr_pre(expr, ctx)?;
         }
         Ok(expr)
     }
-    fn optimize_expr_post(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let mut expr = expr;
         for pass in self {
             expr = pass.optimize_expr_post(expr, ctx)?;
@@ -99,7 +103,7 @@ impl OptimizePass for MultiplePass {
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         let mut invoke = invoke;
         for pass in self {
@@ -111,7 +115,7 @@ impl OptimizePass for MultiplePass {
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         let mut invoke = invoke;
         for pass in self {
@@ -119,7 +123,11 @@ impl OptimizePass for MultiplePass {
         }
         Ok(invoke)
     }
-    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+    fn evaluate_condition(
+        &self,
+        expr: Expr,
+        ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
         // don't know what to do if multiple passes return different results
         for pass in self {
             if let Some(flow) = pass.evaluate_condition(expr.clone(), ctx)? {

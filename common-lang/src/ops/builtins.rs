@@ -1,5 +1,5 @@
 use crate::ast::Ident;
-use crate::context::ScopedContext;
+use crate::context::ArcScopedContext;
 use crate::ops::BinOpKind;
 use crate::value::*;
 use crate::Serializer;
@@ -31,12 +31,12 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    f: Rc<dyn Fn(&[Value], &ScopedContext) -> Result<Value>>,
+    f: Rc<dyn Fn(&[Value], &ArcScopedContext) -> Result<Value>>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[Value], &ScopedContext) -> Result<Value> + 'static,
+        f: impl Fn(&[Value], &ArcScopedContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
@@ -45,14 +45,14 @@ impl BuiltinFn {
     }
     pub fn new_with_ident(
         name: Ident,
-        f: impl Fn(&[Value], &ScopedContext) -> Result<Value> + 'static,
+        f: impl Fn(&[Value], &ArcScopedContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
             f: Rc::new(f),
         }
     }
-    pub fn call(&self, args: &[Value], ctx: &ScopedContext) -> Result<Value> {
+    pub fn call(&self, args: &[Value], ctx: &ArcScopedContext) -> Result<Value> {
         (self.f)(args, ctx)
     }
 }
