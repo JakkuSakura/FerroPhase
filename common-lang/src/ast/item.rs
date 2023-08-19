@@ -24,6 +24,7 @@ pub type ItemChunk = Vec<Item>;
 pub struct Module {
     pub name: Ident,
     pub items: ItemChunk,
+    pub visibility: Visibility,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]

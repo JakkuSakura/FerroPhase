@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::context::ScopedContext;
+use crate::context::ArcScopedContext;
 use crate::value::*;
 use crate::Serializer;
 use common::*;
@@ -86,7 +86,7 @@ impl TypeSystem {
         &self,
         expr: &Expr,
         type_value: &TypeValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<()> {
         match expr {
             Expr::Pat(n) => {
@@ -101,7 +101,11 @@ impl TypeSystem {
         }
         Ok(())
     }
-    pub fn evaluate_type_value_op(&self, op: &TypeBinOp, ctx: &ScopedContext) -> Result<TypeValue> {
+    pub fn evaluate_type_value_op(
+        &self,
+        op: &TypeBinOp,
+        ctx: &ArcScopedContext,
+    ) -> Result<TypeValue> {
         match op {
             TypeBinOp::Add(a) => {
                 let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
@@ -131,7 +135,7 @@ impl TypeSystem {
             }
         }
     }
-    pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ScopedContext) -> Result<TypeValue> {
+    pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ty {
             TypeValue::Expr(expr) => self.evaluate_type_expr(expr, ctx),
             TypeValue::NamedStruct(n) => {
@@ -166,7 +170,7 @@ impl TypeSystem {
                 Ok(TypeValue::UnnamedStruct(UnnamedStructType { fields }))
             }
             TypeValue::Function(f) => {
-                let sub = ctx.child();
+                let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
                 for g in &f.generics_params {
                     let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
                     sub.insert_type(g.name.clone(), constrain);
@@ -191,7 +195,7 @@ impl TypeSystem {
     pub fn evaluate_impl_traits(
         &self,
         traits: &ImplTraits,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         let traits = self.evaluate_type_bounds(&traits.bounds, ctx)?;
         match traits {
@@ -199,7 +203,7 @@ impl TypeSystem {
             _ => Ok(traits),
         }
     }
-    pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ScopedContext) -> Result<TypeValue> {
+    pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ty {
             TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
             TypeExpr::Ident(i) => {
@@ -219,7 +223,7 @@ impl TypeSystem {
     pub fn evaluate_type_bounds(
         &self,
         bounds: &TypeBounds,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         let bounds: Vec<_> = bounds
             .bounds
@@ -237,7 +241,12 @@ impl TypeSystem {
         // Ok(TypeValue::TypeBounds(TypeBounds { bounds }))
     }
 
-    pub fn type_check_expr(&self, expr: &Expr, ty: &TypeExpr, ctx: &ScopedContext) -> Result<()> {
+    pub fn type_check_expr(
+        &self,
+        expr: &Expr,
+        ty: &TypeExpr,
+        ctx: &ArcScopedContext,
+    ) -> Result<()> {
         let tv = self.evaluate_type_expr(ty, ctx)?;
         self.type_check_expr_against_value(expr, &tv, ctx)
     }
@@ -246,7 +255,7 @@ impl TypeSystem {
         &self,
         callee: &Expr,
         params: &[Expr],
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         match callee {
             Expr::Pat(Pat::Ident(ident)) => match ident.as_str() {
@@ -267,7 +276,7 @@ impl TypeSystem {
 
         bail!("Could not infer type call {:?}", callee)
     }
-    pub fn infer_ident(&self, ident: &Ident, ctx: &ScopedContext) -> Result<TypeValue> {
+    pub fn infer_ident(&self, ident: &Ident, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(TypeValue::Function(FunctionType {
@@ -296,7 +305,7 @@ impl TypeSystem {
             .with_context(|| format!("Could not find {:?} in context", ident))?;
         self.infer_expr(&expr, ctx)
     }
-    pub fn infer_expr(&self, expr: &Expr, ctx: &ScopedContext) -> Result<TypeValue> {
+    pub fn infer_expr(&self, expr: &Expr, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match expr {
             Expr::Pat(n) => {
                 let ty = ctx
@@ -331,7 +340,7 @@ impl TypeSystem {
     pub fn infer_function(
         &self,
         func: &FunctionValue,
-        _ctx: &ScopedContext,
+        _ctx: &ArcScopedContext,
     ) -> Result<FunctionType> {
         let mut params = vec![];
         for p in &func.params {

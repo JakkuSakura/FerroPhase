@@ -71,6 +71,12 @@ impl Ident {
     pub fn as_str(&self) -> &str {
         self.name.as_str()
     }
+    pub fn is_root(&self) -> bool {
+        self.name == "__root__"
+    }
+    pub fn root() -> Self {
+        Self::new("__root__")
+    }
 }
 impl<T: Into<String>> From<T> for Ident {
     fn from(value: T) -> Self {
@@ -92,6 +98,17 @@ impl Path {
             return None;
         }
         self.segments.into_iter().next()
+    }
+    pub fn is_root(&self) -> bool {
+        self.segments.len() == 1 && self.segments[0].is_root()
+    }
+    pub fn root() -> Self {
+        Self::new(vec![Ident::root()])
+    }
+    pub fn with_ident(&self, ident: Ident) -> Self {
+        let mut segments = self.segments.clone();
+        segments.push(ident);
+        Self::new(segments)
     }
 }
 impl Display for Path {

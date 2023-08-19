@@ -480,13 +480,7 @@ impl RustPrinter {
     pub fn print_unit(&self, _n: &UnitValue) -> Result<TokenStream> {
         Ok(quote!(()))
     }
-    pub fn print_type(&self, t: &TypeValue) -> Result<TokenStream> {
-        match t {
-            TypeValue::Function(f) => self.print_func_type(f),
-            TypeValue::NamedStruct(s) => self.print_struct_type(s),
-            _ => bail!("Not supported {:?}", t),
-        }
-    }
+
     pub fn print_any(&self, n: &AnyBox) -> Result<TokenStream> {
         if let Some(n) = n.downcast_ref::<RawExprMacro>() {
             return Ok(n.raw.to_token_stream());
@@ -513,7 +507,7 @@ impl RustPrinter {
             Value::String(s) => self.print_string(s),
             Value::List(l) => self.print_list_value(l),
             Value::Unit(u) => self.print_unit(u),
-            Value::Type(t) => self.print_type(t),
+            Value::Type(t) => self.print_type_value(t),
             Value::Struct(s) => self.print_struct_value(s),
             Value::Any(n) => self.print_any(n),
             Value::BinOpKind(op) => Ok(self.print_bin_op_kind(op)),
@@ -562,7 +556,7 @@ impl RustPrinter {
             TypeValue::ImplTraits(t) => self.print_impl_traits(t),
             TypeValue::TypeBounds(t) => self.print_type_bounds(t),
             TypeValue::Unit(_) => Ok(quote!(())),
-            TypeValue::Any(_) => Ok(quote!(Box<dyn Any>)),
+            TypeValue::Any(_) => Ok(quote!(dyn Any)),
             TypeValue::Nothing(_) => Ok(quote!(!)),
             _ => bail!("Not supported {:?}", v),
         }
