@@ -48,6 +48,9 @@ impl Value {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
+    pub fn undefined() -> Self {
+        Self::Undefined(UndefinedValue)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Ord, PartialOrd)]

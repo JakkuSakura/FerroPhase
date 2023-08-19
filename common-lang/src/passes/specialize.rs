@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::context::ScopedContext;
+use crate::context::ArcScopedContext;
 use crate::interpreter::OptimizeInterpreter;
 use crate::passes::OptimizePass;
 use crate::type_system::TypeSystem;
@@ -23,7 +23,7 @@ impl SpecializePass {
             serializer,
         }
     }
-    pub fn get_expr_by_ident(&self, ident: Ident, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn get_expr_by_ident(&self, ident: Ident, ctx: &ArcScopedContext) -> Result<Expr> {
         return match ident.as_str() {
             "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(Expr::ident(ident)),
             "print" => Ok(Expr::ident(ident)),
@@ -33,7 +33,7 @@ impl SpecializePass {
         };
     }
 
-    pub fn specialize_expr(&self, expr: Expr, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn specialize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
             Expr::Any(x) => Ok(Expr::Any(x.clone())),
             Expr::Cond(x) => self.specialize_cond(x, ctx),
@@ -41,7 +41,7 @@ impl SpecializePass {
         }
     }
 
-    pub fn specialize_import(&self, import: Import, _ctx: &ScopedContext) -> Result<Import> {
+    pub fn specialize_import(&self, import: Import, _ctx: &ArcScopedContext) -> Result<Import> {
         Ok(import)
     }
 
@@ -49,7 +49,7 @@ impl SpecializePass {
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         let args: Vec<_> = invoke
             .args
@@ -161,7 +161,7 @@ impl SpecializePass {
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         match &*invoke.func {
             Expr::Pat(Pat::Ident(ident)) if ident.as_str() == "print" => {
@@ -172,12 +172,11 @@ impl SpecializePass {
 
         self.specialize_invoke_details(invoke, func, ctx)
     }
-    pub fn specialize_module(&self, mut module: Module, ctx: &ScopedContext) -> Result<Module> {
+    pub fn specialize_module(&self, mut module: Module, ctx: &ArcScopedContext) -> Result<Module> {
         debug!(
             "Specializing module {}",
             self.serializer.serialize_module(&module)?
         );
-
         for specialized_name in ctx.list_specialized().into_iter().sorted() {
             let func = ctx.get_function(specialized_name).unwrap();
             let define = Define {
@@ -194,21 +193,15 @@ impl SpecializePass {
 
         Ok(module)
     }
-    pub fn specialize_item(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
+    pub fn specialize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         match item {
-            Item::Def(x) => {
-                if let Some(x) = self.specialize_def(x, ctx)? {
-                    Ok(Some(Item::Def(x)))
-                } else {
-                    Ok(None)
-                }
-            }
-            Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module).map(Some),
-            _ => Ok(Some(item)),
+            Item::Def(_) => Ok(item),
+            Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module),
+            _ => Ok(item),
         }
     }
 
-    pub fn specialize_cond(&self, b: Cond, ctx: &ScopedContext) -> Result<Expr> {
+    pub fn specialize_cond(&self, b: Cond, ctx: &ArcScopedContext) -> Result<Expr> {
         for case in &b.cases {
             let interpreted = OptimizeInterpreter::new(self.serializer.clone())
                 .interpret_expr(case.cond.clone(), ctx)?;
@@ -238,38 +231,46 @@ impl SpecializePass {
         }))
     }
 
-    pub fn specialize_def(&self, def: Define, _ctx: &ScopedContext) -> Result<Option<Define>> {
-        match &def.value {
-            DefValue::Function(f) if f.params.is_empty() && f.generics_params.is_empty() => {
-                Ok(Some(def))
-            }
-            DefValue::Function(_) => match def.name.as_str() {
-                "print" => Ok(Some(def)),
-                "add" => Ok(Some(def)),
-                _ => Ok(None),
-            },
-
-            _ => Ok(Some(def)),
-        }
-    }
+    // pub fn specialize_def(&self, def: Define, _ctx: &ArcScopedContext) -> Result<Item> {
+    //     match &def.value {
+    //         DefValue::Function(f) if f.params.is_empty() && f.generics_params.is_empty() => {
+    //             Ok(def)
+    //         }
+    //         DefValue::Function(_) => match def.name.as_str() {
+    //             "print" => Ok(def),
+    //             "add" => Ok(def),
+    //             _ => Ok(None),
+    //         },
+    //
+    //         _ => Ok(Some(def)),
+    //     }
+    // }
 }
 impl OptimizePass for SpecializePass {
     fn name(&self) -> &str {
         "specialize"
     }
 
-    fn optimize_item_post(&self, item: Item, ctx: &ScopedContext) -> Result<Option<Item>> {
+    fn optimize_item_post(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         self.specialize_item(item, ctx)
     }
     fn optimize_invoke_post(
         &self,
         invoke: Invoke,
         func: &FunctionValue,
-        ctx: &ScopedContext,
+        ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         self.specialize_invoking(invoke, &func, ctx)
     }
-    fn evaluate_condition(&self, expr: Expr, ctx: &ScopedContext) -> Result<Option<ControlFlow>> {
+    fn optimize_module_post(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+        self.specialize_module(module, ctx)
+    }
+
+    fn evaluate_condition(
+        &self,
+        expr: Expr,
+        ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
         match self.interpreter.opt.pass.evaluate_condition(expr, ctx) {
             Ok(ok) => Ok(ok),
             Err(err) => {

@@ -591,19 +591,21 @@ pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
     let module = Module {
         name: Ident::new("__file__"),
         items: file.items.into_iter().map(parse_item).try_collect()?,
+        visibility: Visibility::Public,
     };
     Ok(File { path, module })
 }
-pub fn parse_module(file: syn::ItemMod) -> Result<Module> {
+pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
     Ok(Module {
-        name: parse_ident(file.ident),
-        items: file
+        name: parse_ident(m.ident),
+        items: m
             .content
             .unwrap()
             .1
             .into_iter()
             .map(parse_item)
             .try_collect()?,
+        visibility: parse_vis(m.vis),
     })
 }
 pub struct RustParser {}
