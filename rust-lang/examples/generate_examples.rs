@@ -10,6 +10,7 @@ use rust_lang::RustSerde;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::rc::Rc;
+use std::sync::Arc;
 
 fn main() -> Result<()> {
     setup_logs(LogLevel::Trace)?;
@@ -33,11 +34,9 @@ fn main() -> Result<()> {
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
         let node = rust_serde.deserialize(&file_content)?;
-        let ctx = ScopedContext::new();
+        let ctx = Arc::new(ScopedContext::new());
         let optimizer = load_optimizer(Rc::new(rust_serde));
-        let node = optimizer
-            .optimize_tree(node, &ctx)?
-            .context("Failed to specialize tree")?;
+        let node = optimizer.optimize_tree(node, &ctx)?;
         let code = rust_serde.serialize_tree(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;
@@ -46,7 +45,7 @@ fn main() -> Result<()> {
         writeln!(&mut file_out, "{}", code)?;
 
         let inp = OptimizeInterpreter::new(Rc::new(rust_serde));
-        let ctx = ScopedContext::new();
+        let ctx = Arc::new(ScopedContext::new());
         let intp_result = inp.interpret_tree(node, &ctx)?;
         for row in ctx.take_outputs() {
             writeln!(&mut file_out, "// stdout: {}", row)?;
