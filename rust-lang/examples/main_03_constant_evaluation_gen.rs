@@ -14,9 +14,8 @@ fn print(i: impl Display) {
     println!("{}", i)
 }
 fn main() {
-    do_op(1i64, 2i64, 3i64, 4i64, add);
+    print(1i64 + 2i64);
 }
 
-// stdout: 3i64
 // stdout: 3i64
 // result: ()
