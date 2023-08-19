@@ -1,16 +1,11 @@
 use crate::ast::*;
 use crate::context::{ArcScopedContext, LazyValue};
-use crate::ops::{
-    builtin_add, builtin_eq, builtin_ge, builtin_gt, builtin_le, builtin_lt, builtin_mul,
-    builtin_ne, builtin_print, builtin_sub, BinOpKind, BuiltinFn,
-};
+use crate::ops::*;
 use crate::passes::OptimizePass;
 use crate::type_system::TypeSystem;
-use crate::value::{
-    FieldValue, FunctionParam, FunctionValue, StructValue, TupleValue, TypeValue, Value,
-};
+use crate::value::*;
 use crate::Serializer;
-use common::{bail, debug, info, ContextCompat, Error, Itertools};
+use common::*;
 use std::rc::Rc;
 
 pub struct InterpreterPass {
@@ -28,18 +23,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_module(&self, node: &Module, ctx: &ArcScopedContext) -> common::Result<Value> {
-        node.items.iter().for_each(|x| match x {
-            Item::Def(x) => match &x.value {
-                DefValue::Function(n) => {
-                    debug!("Inserting function {} into context", x.name);
-
-                    ctx.insert_function(x.name.clone(), n.clone());
-                }
-                _ => {}
-            },
-            _ => {}
-        });
+    pub fn interpret_module(&self, node: &Module, ctx: &ArcScopedContext) -> Result<Value> {
         let result: Vec<_> = node
             .items
             .iter()
@@ -47,7 +31,7 @@ impl InterpreterPass {
             .try_collect()?;
         Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
-    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> Result<Value> {
         debug!(
             "Will execute call {}",
             self.serializer.serialize_invoke(&node)?
@@ -114,10 +98,10 @@ impl InterpreterPass {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_import(&self, _node: &Import, _ctx: &ArcScopedContext) -> common::Result<()> {
+    pub fn interpret_import(&self, _node: &Import, _ctx: &ArcScopedContext) -> Result<()> {
         Ok(())
     }
-    pub fn interpret_block(&self, node: &Block, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_block(&self, node: &Block, ctx: &ArcScopedContext) -> Result<Value> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         for (i, stmt) in node.stmts.iter().enumerate() {
             let ret = self.interpret_stmt(&stmt, &ctx)?;
@@ -129,7 +113,7 @@ impl InterpreterPass {
         }
         Ok(Value::unit())
     }
-    pub fn interpret_cond(&self, node: &Cond, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_cond(&self, node: &Cond, ctx: &ArcScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;
             match interpret {
@@ -151,7 +135,7 @@ impl InterpreterPass {
         se: &dyn Serializer,
         args: &[Expr],
         ctx: &ArcScopedContext,
-    ) -> common::Result<()> {
+    ) -> Result<()> {
         let formatted: Vec<_> = args
             .into_iter()
             .map(|x| se.serialize_expr(x))
@@ -159,7 +143,7 @@ impl InterpreterPass {
         ctx.root().print_str(formatted.join(" "));
         Ok(())
     }
-    pub fn interpret_ident(&self, ident: &Ident, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_ident(&self, ident: &Ident, ctx: &ArcScopedContext) -> Result<Value> {
         return match ident.as_str() {
             "+" => Ok(Value::any(builtin_add())),
             "-" => Ok(Value::any(builtin_sub())),
@@ -184,7 +168,7 @@ impl InterpreterPass {
         &self,
         op: BinOpKind,
         _ctx: &ArcScopedContext,
-    ) -> common::Result<BuiltinFn> {
+    ) -> Result<BuiltinFn> {
         match op {
             BinOpKind::Add => Ok(builtin_add()),
             BinOpKind::Sub => Ok(builtin_sub()),
@@ -206,7 +190,7 @@ impl InterpreterPass {
             _ => bail!("Could not process {:?}", op),
         }
     }
-    pub fn interpret_def(&self, def: &Define, ctx: &ArcScopedContext) -> common::Result<()> {
+    pub fn interpret_def(&self, def: &Define, ctx: &ArcScopedContext) -> Result<()> {
         match &def.value {
             DefValue::Function(n) => {
                 if def.name == Ident::new("main") {
@@ -239,11 +223,7 @@ impl InterpreterPass {
             }
         }
     }
-    pub fn interpret_args(
-        &self,
-        node: &[Expr],
-        ctx: &ArcScopedContext,
-    ) -> common::Result<Vec<Value>> {
+    pub fn interpret_args(&self, node: &[Expr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
             .iter()
             .map(|x| self.interpret_expr(x, ctx))
@@ -254,7 +234,7 @@ impl InterpreterPass {
         &self,
         node: &StructValue,
         ctx: &ArcScopedContext,
-    ) -> common::Result<StructValue> {
+    ) -> Result<StructValue> {
         let fields: Vec<_> = node
             .fields
             .iter()
@@ -270,7 +250,7 @@ impl InterpreterPass {
             fields,
         })
     }
-    pub fn interpret_select(&self, s: &Select, ctx: &ArcScopedContext) -> common::Result<Expr> {
+    pub fn interpret_select(&self, s: &Select, ctx: &ArcScopedContext) -> Result<Expr> {
         let obj = self.interpret_expr(&s.obj, ctx)?;
         // TODO: try to select values
         Ok(Expr::Select(Select {
@@ -279,11 +259,7 @@ impl InterpreterPass {
             select: s.select,
         }))
     }
-    pub fn interpret_tuple(
-        &self,
-        node: &TupleValue,
-        ctx: &ArcScopedContext,
-    ) -> common::Result<TupleValue> {
+    pub fn interpret_tuple(&self, node: &TupleValue, ctx: &ArcScopedContext) -> Result<TupleValue> {
         let values: Vec<_> = node
             .values
             .iter()
@@ -293,11 +269,7 @@ impl InterpreterPass {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
-    pub fn interpret_type(
-        &self,
-        node: &TypeValue,
-        ctx: &ArcScopedContext,
-    ) -> common::Result<TypeValue> {
+    pub fn interpret_type(&self, node: &TypeValue, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match node {
             TypeValue::AnyBox(n) => {
                 if let Some(exp) = n.downcast_ref::<LazyValue<TypeExpr>>() {
@@ -312,7 +284,7 @@ impl InterpreterPass {
         &self,
         node: &FunctionValue,
         ctx: &ArcScopedContext,
-    ) -> common::Result<FunctionValue> {
+    ) -> Result<FunctionValue> {
         let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
         for generic in &node.generics_params {
             let ty = self
@@ -339,7 +311,7 @@ impl InterpreterPass {
             body: node.body.clone(),
         })
     }
-    pub fn interpret_value(&self, node: &Value, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_value(&self, node: &Value, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
             Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
             Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
@@ -373,7 +345,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
             Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx),
             Expr::Pat(n) => ctx
@@ -388,11 +360,7 @@ impl InterpreterPass {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_item_inner(
-        &self,
-        node: &Item,
-        ctx: &ArcScopedContext,
-    ) -> common::Result<Value> {
+    pub fn interpret_item(&self, node: &Item, ctx: &ArcScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
             Item::Module(n) => self.interpret_module(n, ctx),
@@ -403,29 +371,8 @@ impl InterpreterPass {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_item(&self, node: &Item, ctx: &ArcScopedContext) -> common::Result<Value> {
-        debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
-        let result = self.interpret_item_inner(node, ctx);
-        match result {
-            Ok(result) => {
-                debug!(
-                    "Interpreted {} => {}",
-                    self.serializer.serialize_item(&node)?,
-                    self.serializer.serialize_value(&result)?
-                );
-                Ok(result)
-            }
-            Err(err) => {
-                // warn!(
-                //     "Failed to interpret {} => {:?}",
-                //     self.serializer.serialize_item(&node)?,
-                //     err
-                // );
-                Err(err)
-            }
-        }
-    }
-    pub fn interpret_let(&self, node: &Let, ctx: &ArcScopedContext) -> common::Result<Value> {
+
+    pub fn interpret_let(&self, node: &Let, ctx: &ArcScopedContext) -> Result<Value> {
         let value = self.interpret_expr(&node.value, ctx)?;
         ctx.insert_value(node.name.clone(), value.clone());
         Ok(value)
@@ -435,7 +382,7 @@ impl InterpreterPass {
         &self,
         node: &Statement,
         ctx: &ArcScopedContext,
-    ) -> common::Result<Option<Value>> {
+    ) -> Result<Option<Value>> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         match node {
             Statement::Let(n) => self.interpret_let(n, ctx).map(|_| None),
@@ -452,7 +399,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_tree(&self, node: &Tree, ctx: &ArcScopedContext) -> common::Result<Value> {
+    pub fn interpret_tree(&self, node: &Tree, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
             Tree::Item(item) => self.interpret_item(item, ctx),
             Tree::Expr(expr) => self.interpret_expr(expr, ctx),
@@ -465,11 +412,11 @@ impl OptimizePass for InterpreterPass {
     fn name(&self) -> &str {
         "interpreter"
     }
-    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> common::Result<Expr> {
+    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let value = self.interpret_expr(&expr, ctx)?;
         Ok(Expr::value(value))
     }
-    fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> common::Result<Item> {
+    fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
         match item {
             Item::Def(def) if def.name.as_str() == "main" => match def.value {
                 DefValue::Function(func) => Ok(Item::Expr(*func.body)),
@@ -482,7 +429,7 @@ impl OptimizePass for InterpreterPass {
         &self,
         expr: Expr,
         ctx: &ArcScopedContext,
-    ) -> common::Result<Option<ControlFlow>> {
+    ) -> Result<Option<ControlFlow>> {
         let value = self.interpret_expr(&expr, ctx)?;
         match value {
             Value::Bool(b) => {
