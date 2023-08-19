@@ -14,12 +14,15 @@ pub struct ValueStorage {
 }
 pub struct ScopedContext {
     parent: Option<ArcScopedContext>,
+    #[allow(dead_code)]
     ident: Ident,
     path: Path,
     storages: DashMap<Ident, ValueStorage>,
     childs: DashMap<Ident, ArcScopedContext>,
     buffer: Mutex<Vec<String>>,
+    #[allow(dead_code)]
     visibility: Visibility,
+    #[allow(dead_code)]
     access_parent: bool,
 }
 

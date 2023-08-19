@@ -30,7 +30,10 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             .args
             .clone()
             .into_iter()
-            .map(|x| self.optimize_expr(x, ctx))
+            .map(|x| {
+                let expr = self.optimize_expr(x, ctx)?;
+                self.pass.try_evaluate_expr(&expr, ctx)
+            })
             .try_collect()?;
         let looked_up = self.pass.try_evaluate_expr(&func, ctx)?;
         match looked_up {
@@ -53,7 +56,9 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
                 return Ok(ret);
             }
-
+            // Expr::Value(Value::BinOpKind(_)) => {
+            //
+            // }
             _ => {
                 warn!(
                     "Couldn't optimize {} due to {:?} not in context",

@@ -8,7 +8,7 @@ fn print(i: i64) {
     println!("{}", i)
 }
 fn main() {
-    print(inc(1i64));
+    print(1i64 + 1i64 + 2i64 + 3i64);
 }
 
 // stdout: 7i64
