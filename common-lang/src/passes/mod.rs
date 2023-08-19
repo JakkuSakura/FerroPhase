@@ -1,12 +1,15 @@
 use crate::ast::*;
 use crate::context::ScopedContext;
+use crate::value::FunctionValue;
 use common::*;
 
-mod inliner;
-mod specializer;
-use crate::value::FunctionValue;
-pub use inliner::*;
-pub use specializer::*;
+mod inline;
+mod interpret;
+mod specialize;
+
+pub use inline::*;
+pub use interpret::*;
+pub use specialize::*;
 
 #[allow(unused_variables)]
 pub trait OptimizePass {
