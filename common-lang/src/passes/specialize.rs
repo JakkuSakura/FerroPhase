@@ -279,4 +279,10 @@ impl OptimizePass for SpecializePass {
             }
         }
     }
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+        match ctx.try_get_value_from_expr(pat) {
+            Some(value) => Ok(Expr::value(value)),
+            None => Ok(pat.clone()),
+        }
+    }
 }

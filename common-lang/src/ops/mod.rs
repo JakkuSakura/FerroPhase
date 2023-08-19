@@ -25,6 +25,21 @@ pub enum BinOpKind {
     BitXor,
     Any(Ident),
 }
+impl BinOpKind {
+    pub fn is_bool(&self) -> bool {
+        match self {
+            BinOpKind::Gt
+            | BinOpKind::Lt
+            | BinOpKind::Ge
+            | BinOpKind::Le
+            | BinOpKind::Eq
+            | BinOpKind::Ne
+            | BinOpKind::LogicalOr
+            | BinOpKind::LogicalAnd => true,
+            _ => false,
+        }
+    }
+}
 impl Display for BinOpKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

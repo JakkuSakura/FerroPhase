@@ -14,13 +14,14 @@ fn print2(i: impl Display) {
     print(i);
 }
 fn main() {
-    do_op(1i64, 2i64, 3f64, 4f64, add);
+    {
+        print(1i64 + 2i64);
+    };
+    {
+        print(3f64 + 4f64);
+    };
 }
 
-// stdout: 3i64
-// stdout: 3i64
-// stdout: 7f64
-// stdout: 7f64
 // stdout: 3i64
 // stdout: 7f64
 // result: ()
