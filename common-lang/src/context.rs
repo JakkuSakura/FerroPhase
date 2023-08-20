@@ -143,10 +143,10 @@ impl ScopedContext {
             let value = self.storages.get(&key.segments[0]);
             return if let Some(value) = value {
                 Some(value.value().clone())
-            // } else if self.access_parent {
-            } else {
+            } else if self.access_parent {
                 self.parent.as_ref()?.get_storage(key)
-                // None
+            } else {
+                None
             };
         }
 

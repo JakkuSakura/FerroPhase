@@ -143,4 +143,18 @@ impl OptimizePass for MultiplePass {
         }
         Ok(pat)
     }
+    fn optimize_module_pre(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+        let mut module = module;
+        for pass in self {
+            module = pass.optimize_module_pre(module, ctx)?;
+        }
+        Ok(module)
+    }
+    fn optimize_module_post(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+        let mut module = module;
+        for pass in self {
+            module = pass.optimize_module_post(module, ctx)?;
+        }
+        Ok(module)
+    }
 }
