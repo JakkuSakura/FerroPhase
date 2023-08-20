@@ -14,14 +14,22 @@ fn print2(i: impl Display) {
     print(i);
 }
 fn main() {
-    {
-        print(1i64 + 2i64);
-    };
-    {
-        print(3f64 + 4f64);
-    };
+    print2(add_0());
+    print2(add_1());
+}
+pub fn add_0() -> i64 {
+    1i64 + 2i64
+}
+pub fn add_1() -> f64 {
+    3f64 + 4f64
+}
+pub fn do_op_2() {
+    print2(add_0());
+    print2(add_1());
 }
 
 // stdout: 3i64
+// stdout: 3i64
+// stdout: 7f64
 // stdout: 7f64
 // result: ()
