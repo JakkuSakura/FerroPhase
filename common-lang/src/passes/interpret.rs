@@ -32,70 +32,15 @@ impl InterpreterPass {
         Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> Result<Value> {
-        debug!(
-            "Will execute call {}",
-            self.serializer.serialize_invoke(&node)?
-        );
-        let fun = self.interpret_expr(&node.func, ctx)?;
-        debug!(
-            "Will call function {}",
-            self.serializer.serialize_value(&fun)?
-        );
-        let args = self.interpret_args(&node.args, ctx)?;
-        match fun {
-            Value::Function(f) => {
-                let name = self.serializer.serialize_expr(&node.func)?;
-                let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
-                for (i, arg) in args.iter().cloned().enumerate() {
-                    let param = f
-                        .params
-                        .get(i)
-                        .with_context(|| format!("Couldn't find {} parameter of {:?}", i, f))?;
-                    // TODO: type check here
-
-                    sub.insert_value(param.name.clone(), arg);
-                }
-                debug!(
-                    "Invoking {} with {}",
-                    name,
-                    self.serializer.serialize_values(&args)?
-                );
-                let ret = self.interpret_expr(&f.body, &sub)?;
-                debug!(
-                    "Invoked {} with {} => {}",
-                    name,
-                    self.serializer.serialize_values(&args)?,
-                    self.serializer.serialize_value(&ret)?
-                );
-                return Ok(ret);
+        match &*node.func {
+            Expr::Value(Value::BinOpKind(kind)) => {
+                self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
             }
-
-            Value::Expr(x) => {
-                match &*x {
-                    Expr::Select(s) => {
-                        // FIXME this is hack for rust
-                        if s.field.as_str() == "into" {
-                            return Ok(Value::expr(*s.obj.clone()));
-                        }
-                    }
-                    _ => {}
-                }
-                bail!("Failed to interpret {:?}: {:?}", node, x);
+            Expr::Pat(pat) if pat.to_string() == "print" => {
+                Self::interpret_print(self.serializer.as_ref(), &node.args, ctx)?;
+                Ok(Value::unit())
             }
-            Value::Any(any) => {
-                if let Some(f) = any.downcast_ref::<BuiltinFn>() {
-                    let args_ = self.serializer.serialize_values(&args)?;
-
-                    debug!("Invoking {} with {}", f.name, args_);
-                    let ret = f.call(&args, ctx)?;
-                    let ret_ = self.serializer.serialize_value(&ret)?;
-
-                    debug!("Invoked {} with {} => {}", f.name, args_, ret_);
-                    return Ok(ret);
-                }
-                bail!("Failed to interpret {:?}", node);
-            }
-            _ => bail!("Failed to interpret {:?}", node),
+            kind => bail!("Could not invoke {:?}", kind),
         }
     }
     pub fn interpret_import(&self, _node: &Import, _ctx: &ArcScopedContext) -> Result<()> {
@@ -143,17 +88,22 @@ impl InterpreterPass {
         ctx.root().print_str(formatted.join(" "));
         Ok(())
     }
-    pub fn interpret_ident(&self, ident: &Ident, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_ident(
+        &self,
+        ident: &Ident,
+        ctx: &ArcScopedContext,
+        resolve: bool,
+    ) -> Result<Value> {
         return match ident.as_str() {
-            "+" => Ok(Value::any(builtin_add())),
-            "-" => Ok(Value::any(builtin_sub())),
-            "*" => Ok(Value::any(builtin_mul())),
-            ">" => Ok(Value::any(builtin_gt())),
-            ">=" => Ok(Value::any(builtin_ge())),
-            "==" => Ok(Value::any(builtin_eq())),
-            "<=" => Ok(Value::any(builtin_le())),
-            "<" => Ok(Value::any(builtin_lt())),
-            "print" => Ok(Value::any(builtin_print(self.serializer.clone()))),
+            "+" if resolve => Ok(Value::any(builtin_add())),
+            "-" if resolve => Ok(Value::any(builtin_sub())),
+            "*" if resolve => Ok(Value::any(builtin_mul())),
+            ">" if resolve => Ok(Value::any(builtin_gt())),
+            ">=" if resolve => Ok(Value::any(builtin_ge())),
+            "==" if resolve => Ok(Value::any(builtin_eq())),
+            "<=" if resolve => Ok(Value::any(builtin_le())),
+            "<" if resolve => Ok(Value::any(builtin_lt())),
+            "print" if resolve => Ok(Value::any(builtin_print(self.serializer.clone()))),
             "true" => Ok(Value::bool(true)),
             "false" => Ok(Value::bool(false)),
             _ => {
@@ -226,7 +176,7 @@ impl InterpreterPass {
     pub fn interpret_args(&self, node: &[Expr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
             .iter()
-            .map(|x| self.interpret_expr(x, ctx))
+            .map(|x| self.try_evaluate_expr(x, ctx).map(Value::expr))
             .try_collect()?;
         Ok(args)
     }
@@ -241,7 +191,7 @@ impl InterpreterPass {
             .map(|x| {
                 Ok::<_, Error>(FieldValue {
                     name: x.name.clone(),
-                    value: self.interpret_value(&x.value, ctx)?,
+                    value: self.interpret_value(&x.value, ctx, true)?,
                 })
             })
             .try_collect()?;
@@ -259,11 +209,16 @@ impl InterpreterPass {
             select: s.select,
         }))
     }
-    pub fn interpret_tuple(&self, node: &TupleValue, ctx: &ArcScopedContext) -> Result<TupleValue> {
+    pub fn interpret_tuple(
+        &self,
+        node: &TupleValue,
+        ctx: &ArcScopedContext,
+        resolve: bool,
+    ) -> Result<TupleValue> {
         let values: Vec<_> = node
             .values
             .iter()
-            .map(|x| self.interpret_value(x, ctx))
+            .map(|x| self.interpret_value(x, ctx, resolve))
             .try_collect()?;
         Ok(TupleValue {
             values: values.into_iter().map(|x| x.into()).collect(),
@@ -311,12 +266,17 @@ impl InterpreterPass {
             body: node.body.clone(),
         })
     }
-    pub fn interpret_value(&self, node: &Value, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_value(
+        &self,
+        node: &Value,
+        ctx: &ArcScopedContext,
+        resolve: bool,
+    ) -> Result<Value> {
         match node {
             Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
             Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
-            Value::Tuple(n) => self.interpret_tuple(n, ctx).map(Value::Tuple),
+            Value::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(Value::Tuple),
             Value::Expr(n) => self.interpret_expr(n, ctx),
             Value::Any(n) => {
                 if let Some(exp) = n.downcast_ref::<LazyValue<Expr>>() {
@@ -339,19 +299,44 @@ impl InterpreterPass {
             Value::Unit(_) => Ok(node.clone()),
             Value::Null(_) => Ok(node.clone()),
             Value::Undefined(_) => Ok(node.clone()),
-            Value::BinOpKind(x) => self
+            Value::BinOpKind(x) if resolve => self
                 .interpret_bin_op_kind(x.clone(), ctx)
                 .map(|x| Value::any(x)),
+            Value::BinOpKind(_) => Ok(node.clone()),
         }
     }
-
+    pub fn interpret_invoke_binop(
+        &self,
+        op: BinOpKind,
+        args: &[Expr],
+        ctx: &ArcScopedContext,
+    ) -> Result<Value> {
+        let builtin_fn = self.interpret_bin_op_kind(op, ctx)?;
+        let args = self.interpret_args(args, ctx)?;
+        builtin_fn.invoke(&args, ctx)
+    }
     pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
-            Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx),
+            Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx, true),
             Expr::Pat(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),
-            Expr::Value(n) => Ok(self.interpret_value(n, ctx)?.into()),
+            Expr::Value(n) => Ok(self.interpret_value(n, ctx, true)?.into()),
+            Expr::Block(n) => self.interpret_block(n, ctx),
+            Expr::Cond(c) => self.interpret_cond(c, ctx),
+            Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
+            Expr::Any(n) => Ok(Value::Any(n.clone())),
+
+            _ => bail!("Failed to interpret {:?}", node),
+        }
+    }
+    pub fn interpret_expr_no_resolve(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
+        match node {
+            Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx, false),
+            Expr::Pat(n) => ctx
+                .get_value_recursive(n)
+                .with_context(|| format!("could not find {:?} in context", n)),
+            Expr::Value(n) => Ok(self.interpret_value(n, ctx, false)?.into()),
             Expr::Block(n) => self.interpret_block(n, ctx),
             Expr::Cond(c) => self.interpret_cond(c, ctx),
             Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
@@ -413,7 +398,7 @@ impl OptimizePass for InterpreterPass {
         "interpreter"
     }
     fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
-        let value = self.interpret_expr(&expr, ctx)?;
+        let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         Ok(Expr::value(value))
     }
     fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
@@ -430,7 +415,7 @@ impl OptimizePass for InterpreterPass {
         expr: Expr,
         ctx: &ArcScopedContext,
     ) -> Result<Option<ControlFlow>> {
-        let value = self.interpret_expr(&expr, ctx)?;
+        let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         match value {
             Value::Bool(b) => {
                 if b.value {
@@ -448,5 +433,22 @@ impl OptimizePass for InterpreterPass {
         _ctx: &ArcScopedContext,
     ) -> Result<Option<ControlFlow>> {
         Ok(Some(ControlFlow::Into))
+    }
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+        let value = ctx.try_get_value_from_expr(pat).with_context(|| {
+            format!(
+                "could not find {:?} in context {:?}",
+                pat,
+                ctx.list_values()
+                    .into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+        Ok(Expr::value(value))
+    }
+    fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
+        let value = self.interpret_invoke(&invoke, ctx)?;
+        Ok(Expr::value(value))
     }
 }

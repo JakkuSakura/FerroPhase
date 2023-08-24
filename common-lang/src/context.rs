@@ -133,21 +133,24 @@ impl ScopedContext {
 
         Some(this)
     }
-    pub fn get_storage(self: &ArcScopedContext, key: impl Into<Path>) -> Option<ValueStorage> {
+    pub fn get_storage(
+        self: &ArcScopedContext,
+        key: impl Into<Path>,
+        access_local: bool,
+    ) -> Option<ValueStorage> {
         let key = key.into();
         debug!("get_storage in {} {}", self.path, key);
         if key.segments.is_empty() {
             return None;
         }
         if key.segments.len() == 1 {
-            let value = self.storages.get(&key.segments[0]);
-            return if let Some(value) = value {
-                Some(value.value().clone())
-            } else if self.access_parent {
-                self.parent.as_ref()?.get_storage(key)
-            } else {
-                None
-            };
+            if access_local {
+                let value = self.storages.get(&key.segments[0]);
+                if let Some(value) = value {
+                    return Some(value.value().clone());
+                }
+            }
+            return self.parent.as_ref()?.get_storage(key, self.access_parent);
         }
 
         let (paths, key) = key.segments.split_at(key.segments.len() - 1);
@@ -156,14 +159,14 @@ impl ScopedContext {
         Some(value)
     }
     pub fn get_value(self: &ArcScopedContext, key: impl Into<Path>) -> Option<Value> {
-        let storage = self.get_storage(key)?;
+        let storage = self.get_storage(key, true)?;
         storage.value
     }
     pub fn get_expr(self: &ArcScopedContext, key: impl Into<Path>) -> Option<Expr> {
         self.get_value(key).map(Expr::value)
     }
     pub fn get_type(self: &ArcScopedContext, key: impl Into<Path>) -> Option<TypeValue> {
-        let storage = self.get_storage(key)?;
+        let storage = self.get_storage(key, true)?;
         storage.ty
     }
     pub fn root(self: &ArcScopedContext) -> ArcScopedContext {
@@ -187,12 +190,13 @@ impl ScopedContext {
     }
     pub fn try_get_value_from_expr(self: &ArcScopedContext, expr: &Expr) -> Option<Value> {
         info!("try_get_value_from_expr {:?}", expr);
-        match expr {
+        let ret = match expr {
             Expr::Pat(ident) => self.get_value(ident),
-            Expr::Value(Value::BinOpKind(kind)) => Some(Value::BinOpKind(kind.clone())),
-
+            Expr::Value(value) => Some(value.clone()),
             _ => None,
-        }
+        };
+        info!("try_get_value_from_expr {:?} => {:?}", expr, ret);
+        ret
     }
     pub fn get_value_recursive(self: &ArcScopedContext, key: impl Into<Path>) -> Option<Value> {
         let key = key.into();
