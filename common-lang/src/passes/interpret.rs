@@ -442,4 +442,11 @@ impl OptimizePass for InterpreterPass {
             _ => bail!("Failed to interpret {:?} => {:?}", expr, value),
         }
     }
+    fn evaluate_invoke(
+        &self,
+        _invoke: Invoke,
+        _ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
+        Ok(Some(ControlFlow::Into))
+    }
 }
