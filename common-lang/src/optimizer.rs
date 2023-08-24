@@ -35,38 +35,47 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
                 self.pass.try_evaluate_expr(&expr, ctx)
             })
             .try_collect()?;
-        let looked_up = self.pass.try_evaluate_expr(&func, ctx)?;
-        match looked_up {
-            Expr::Value(Value::Function(f)) => {
-                let sub_ctx = ctx.child(
-                    f.name.clone().unwrap_or(Ident::new("__func__")),
-                    Visibility::Private,
-                    false,
-                );
-                for (i, arg) in invoke.args.iter().cloned().enumerate() {
-                    let param = f
-                        .params
-                        .get(i)
-                        .with_context(|| format!("Couldn't find {} parameter of {:?}", i, f))?;
+        let control = self
+            .pass
+            .evaluate_invoke(invoke.clone(), ctx)?
+            .unwrap_or(ControlFlow::Continue);
+        match control {
+            ControlFlow::Into => {
+                let looked_up = self.pass.try_evaluate_expr(&func, ctx)?;
+                match looked_up {
+                    Expr::Value(Value::Function(f)) => {
+                        let sub_ctx = ctx.child(
+                            f.name.clone().unwrap_or(Ident::new("__func__")),
+                            Visibility::Private,
+                            false,
+                        );
+                        for (i, arg) in invoke.args.iter().cloned().enumerate() {
+                            let param = f.params.get(i).with_context(|| {
+                                format!("Couldn't find {} parameter of {:?}", i, f)
+                            })?;
 
-                    sub_ctx.insert_expr(param.name.clone(), arg);
+                            sub_ctx.insert_expr(param.name.clone(), arg);
+                        }
+
+                        let ret = self.optimize_invoking(invoke, f, &sub_ctx)?;
+
+                        return Ok(ret);
+                    }
+                    // Expr::Value(Value::BinOpKind(_)) => {
+                    //
+                    // }
+                    _ => {
+                        warn!(
+                            "Couldn't optimize {} due to {:?} not in context",
+                            self.serializer.serialize_invoke(&invoke)?,
+                            func
+                        );
+                        ctx.print_values(&*self.serializer)?;
+                    }
                 }
-
-                let ret = self.optimize_invoking(invoke, f, &sub_ctx)?;
-
-                return Ok(ret);
             }
-            // Expr::Value(Value::BinOpKind(_)) => {
-            //
-            // }
-            _ => {
-                warn!(
-                    "Couldn't optimize {} due to {:?} not in context",
-                    self.serializer.serialize_invoke(&invoke)?,
-                    func
-                );
-                ctx.print_values(&*self.serializer)?;
-            }
+            ControlFlow::Continue => {}
+            _ => bail!("Cannot handle control flow {:?}", control),
         }
 
         let invoke = Expr::Invoke(invoke);
