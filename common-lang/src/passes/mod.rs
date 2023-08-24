@@ -66,6 +66,9 @@ pub trait OptimizePass {
     fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         Ok(pat.clone())
     }
+    fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
+        Ok(Expr::Invoke(invoke))
+    }
 }
 
 pub struct NoopPass;
@@ -177,5 +180,13 @@ impl OptimizePass for MultiplePass {
             }
         }
         Ok(None)
+    }
+    fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
+        // don't know what to do if multiple passes return different results
+        let invoke = invoke;
+        for pass in self {
+            return pass.optimize_bin_op(invoke, ctx);
+        }
+        Ok(Expr::Invoke(invoke))
     }
 }

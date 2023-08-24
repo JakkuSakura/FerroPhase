@@ -31,7 +31,7 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    f: Rc<dyn Fn(&[Value], &ArcScopedContext) -> Result<Value>>,
+    func: Rc<dyn Fn(&[Value], &ArcScopedContext) -> Result<Value>>,
 }
 impl BuiltinFn {
     pub fn new(
@@ -40,7 +40,7 @@ impl BuiltinFn {
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
-            f: Rc::new(f),
+            func: Rc::new(f),
         }
     }
     pub fn new_with_ident(
@@ -49,11 +49,11 @@ impl BuiltinFn {
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
-            f: Rc::new(f),
+            func: Rc::new(f),
         }
     }
-    pub fn call(&self, args: &[Value], ctx: &ArcScopedContext) -> Result<Value> {
-        (self.f)(args, ctx)
+    pub fn invoke(&self, args: &[Value], ctx: &ArcScopedContext) -> Result<Value> {
+        (self.func)(args, ctx)
     }
 }
 
@@ -74,7 +74,7 @@ impl<'de> Deserialize<'de> for BuiltinFn {
         let name = BuiltinFnName::deserialize(deserializer)?;
         Ok(Self {
             name,
-            f: Rc::new(|_, _| unreachable!()),
+            func: Rc::new(|_, _| unreachable!()),
         })
     }
 }

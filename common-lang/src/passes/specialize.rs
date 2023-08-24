@@ -23,23 +23,6 @@ impl SpecializePass {
             serializer,
         }
     }
-    pub fn get_expr_by_ident(&self, ident: Ident, ctx: &ArcScopedContext) -> Result<Expr> {
-        return match ident.as_str() {
-            "+" | "-" | "*" | "<" | ">" | "<=" | ">=" | "==" | "!=" => Ok(Expr::ident(ident)),
-            "print" => Ok(Expr::ident(ident)),
-            _ => ctx
-                .get_expr(&ident)
-                .with_context(|| format!("Could not find {:?} in context", ident)),
-        };
-    }
-
-    pub fn specialize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
-        match expr {
-            Expr::Any(x) => Ok(Expr::Any(x.clone())),
-            Expr::Cond(x) => self.specialize_cond(x, ctx),
-            _ => Ok(expr),
-        }
-    }
 
     pub fn specialize_import(&self, import: Import, _ctx: &ArcScopedContext) -> Result<Import> {
         Ok(import)
@@ -177,6 +160,21 @@ impl SpecializePass {
             "Specializing module {}",
             self.serializer.serialize_module(&module)?
         );
+        module.items = module
+            .items
+            .into_iter()
+            .filter(|x| match x {
+                Item::Def(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => true,
+                Item::Def(d) => {
+                    let func = match &d.value {
+                        DefValue::Function(f) => f,
+                        _ => return true,
+                    };
+                    func.params.is_empty() && func.generics_params.is_empty()
+                }
+                _ => true,
+            })
+            .collect();
         for specialized_name in ctx.list_specialized().into_iter().sorted() {
             let func = ctx.get_function(specialized_name).unwrap();
             let define = Define {
@@ -200,51 +198,6 @@ impl SpecializePass {
             _ => Ok(item),
         }
     }
-
-    pub fn specialize_cond(&self, b: Cond, ctx: &ArcScopedContext) -> Result<Expr> {
-        for case in &b.cases {
-            let interpreted = OptimizeInterpreter::new(self.serializer.clone())
-                .interpret_expr(case.cond.clone(), ctx)?;
-            match interpreted {
-                Value::Bool(b) => {
-                    if b.value {
-                        return self.specialize_expr(case.body.clone(), ctx);
-                    } else {
-                        continue;
-                    }
-                }
-                _ => break,
-            }
-        }
-        Ok(Expr::Cond(Cond {
-            cases: b
-                .cases
-                .into_iter()
-                .map(|case| {
-                    Ok::<_, Error>(CondCase {
-                        cond: self.specialize_expr(case.cond, ctx)?,
-                        body: self.specialize_expr(case.body, ctx)?,
-                    })
-                })
-                .try_collect()?,
-            if_style: b.if_style,
-        }))
-    }
-
-    // pub fn specialize_def(&self, def: Define, _ctx: &ArcScopedContext) -> Result<Item> {
-    //     match &def.value {
-    //         DefValue::Function(f) if f.params.is_empty() && f.generics_params.is_empty() => {
-    //             Ok(def)
-    //         }
-    //         DefValue::Function(_) => match def.name.as_str() {
-    //             "print" => Ok(def),
-    //             "add" => Ok(def),
-    //             _ => Ok(None),
-    //         },
-    //
-    //         _ => Ok(Some(def)),
-    //     }
-    // }
 }
 impl OptimizePass for SpecializePass {
     fn name(&self) -> &str {
@@ -274,7 +227,7 @@ impl OptimizePass for SpecializePass {
         match self.interpreter.opt.pass.evaluate_condition(expr, ctx) {
             Ok(ok) => Ok(ok),
             Err(err) => {
-                warn!("Cannot evaluate condition: {:?}", err);
+                warn!("Cannot evaluate condition: {}", err);
                 Ok(None)
             }
         }

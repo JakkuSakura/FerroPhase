@@ -61,9 +61,9 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
                         return Ok(ret);
                     }
-                    // Expr::Value(Value::BinOpKind(_)) => {
-                    //
-                    // }
+                    Expr::Value(Value::BinOpKind(_)) => {
+                        return self.pass.optimize_bin_op(invoke, ctx);
+                    }
                     _ => {
                         warn!(
                             "Couldn't optimize {} due to {:?} not in context",
