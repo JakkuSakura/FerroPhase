@@ -286,4 +286,11 @@ impl OptimizePass for SpecializePass {
             None => Ok(pat.clone()),
         }
     }
+    fn evaluate_invoke(
+        &self,
+        _invoke: Invoke,
+        _ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
+        Ok(Some(ControlFlow::Into))
+    }
 }
