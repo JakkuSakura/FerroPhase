@@ -55,6 +55,14 @@ pub trait OptimizePass {
     ) -> Result<Option<ControlFlow>> {
         Ok(None)
     }
+    fn evaluate_invoke(
+        &self,
+        invoke: Invoke,
+        ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
+        Ok(None)
+    }
+
     fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         Ok(pat.clone())
     }
@@ -156,5 +164,18 @@ impl OptimizePass for MultiplePass {
             module = pass.optimize_module_post(module, ctx)?;
         }
         Ok(module)
+    }
+    fn evaluate_invoke(
+        &self,
+        invoke: Invoke,
+        ctx: &ArcScopedContext,
+    ) -> Result<Option<ControlFlow>> {
+        // don't know what to do if multiple passes return different results
+        for pass in self {
+            if let Some(flow) = pass.evaluate_invoke(invoke.clone(), ctx)? {
+                return Ok(Some(flow));
+            }
+        }
+        Ok(None)
     }
 }
