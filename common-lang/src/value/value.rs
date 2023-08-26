@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::ops::BinOpKind;
+use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{TypeBounds, TypeValue};
 use common::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -21,6 +21,7 @@ pub enum Value {
     Tuple(TupleValue),
     Expr(Box<Expr>),
     BinOpKind(BinOpKind),
+    UnOpKind(UnOpKind),
     Any(AnyBox),
 }
 impl Value {

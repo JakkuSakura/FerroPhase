@@ -79,6 +79,7 @@ impl TypeSystem {
             Value::Null(_) => {}
             Value::Undefined(_) => {}
             Value::BinOpKind(_) => {}
+            Value::UnOpKind(_) => {}
         }
         Ok(())
     }

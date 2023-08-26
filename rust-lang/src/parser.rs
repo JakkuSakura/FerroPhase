@@ -1,7 +1,7 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
 use common_lang::ast::*;
-use common_lang::ops::{AddOp, BinOpKind, SubOp};
+use common_lang::ops::{AddOp, BinOpKind, SubOp, UnOpKind};
 use common_lang::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
@@ -218,8 +218,8 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         syn::BinOp::BitOr(_) => (BinOpKind::BitOr, true),
         syn::BinOp::BitAnd(_) => (BinOpKind::BitAnd, true),
         syn::BinOp::BitXor(_) => (BinOpKind::BitXor, true),
-        syn::BinOp::Or(_) => (BinOpKind::LogicalOr, true),
-        syn::BinOp::And(_) => (BinOpKind::LogicalAnd, true),
+        syn::BinOp::Or(_) => (BinOpKind::Or, true),
+        syn::BinOp::And(_) => (BinOpKind::And, true),
         _ => bail!("Op not supported {:?}", b.op),
     };
     if flatten {
@@ -279,14 +279,25 @@ pub fn parse_literal(lit: syn::Lit) -> Result<Value> {
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
+pub fn parse_unary(u: syn::ExprUnary) -> Result<Invoke> {
+    let expr = parse_expr(*u.expr)?;
+    let op = match u.op {
+        syn::UnOp::Neg(_) => UnOpKind::Neg,
+        syn::UnOp::Not(_) => UnOpKind::Not,
+        _ => bail!("Unary op not supported: {:?}", u.op),
+    };
+    Ok(Invoke {
+        func: Expr::value(Value::UnOpKind(op)).into(),
+        args: vec![expr],
+    })
+}
 pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
         syn::Expr::Binary(b) => Expr::Invoke(parse_binary(b)?),
+        syn::Expr::Unary(u) => Expr::Invoke(parse_unary(u)?),
         syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
-
         syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?),
         syn::Expr::If(i) => Expr::Cond(parse_if(i)?),
-
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?),

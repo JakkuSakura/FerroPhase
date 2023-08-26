@@ -18,8 +18,8 @@ pub enum BinOpKind {
     Le,
     Eq,
     Ne,
-    LogicalOr,
-    LogicalAnd,
+    Or,
+    And,
     BitOr,
     BitAnd,
     BitXor,
@@ -34,8 +34,8 @@ impl BinOpKind {
             | BinOpKind::Le
             | BinOpKind::Eq
             | BinOpKind::Ne
-            | BinOpKind::LogicalOr
-            | BinOpKind::LogicalAnd => true,
+            | BinOpKind::Or
+            | BinOpKind::And => true,
             _ => false,
         }
     }
@@ -54,8 +54,8 @@ impl Display for BinOpKind {
             BinOpKind::Le => write!(f, "<="),
             BinOpKind::Eq => write!(f, "=="),
             BinOpKind::Ne => write!(f, "!="),
-            BinOpKind::LogicalOr => write!(f, "||"),
-            BinOpKind::LogicalAnd => write!(f, "&&"),
+            BinOpKind::Or => write!(f, "||"),
+            BinOpKind::And => write!(f, "&&"),
             BinOpKind::BitOr => write!(f, "|"),
             BinOpKind::BitAnd => write!(f, "&"),
             BinOpKind::BitXor => write!(f, "^"),
@@ -63,6 +63,22 @@ impl Display for BinOpKind {
         }
     }
 }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum UnOpKind {
+    Not,
+    Neg,
+    Any(Ident),
+}
+impl Display for UnOpKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnOpKind::Not => write!(f, "!"),
+            UnOpKind::Neg => write!(f, "-"),
+            UnOpKind::Any(i) => write!(f, "{}", i),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BinOp<T> {
     Add(AddOp<T>),
@@ -141,4 +157,23 @@ pub struct AnyBinOp<T> {
     pub kind: BinOpKind,
     pub lhs: Box<T>,
     pub rhs: Box<T>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnOp<T> {
+    pub kind: UnOpKind,
+    pub expr: Box<T>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotOp<T> {
+    pub expr: Box<T>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NegOp<T> {
+    pub expr: Box<T>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AnyUniOp<T> {
+    pub kind: UnOpKind,
+    pub expr: Box<T>,
 }
