@@ -1,5 +1,4 @@
 use crate::ast::*;
-use crate::ops::BinOp;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +12,6 @@ pub enum Expr {
     Invoke(Invoke),
     Select(Select),
     Reference(Reference),
-    BinOp(BinOp<Expr>),
     Any(AnyBox),
 }
 impl Expr {

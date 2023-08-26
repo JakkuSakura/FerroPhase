@@ -36,6 +36,11 @@ impl InterpreterPass {
             Expr::Value(Value::BinOpKind(kind)) => {
                 self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
             }
+            Expr::Value(Value::UnOpKind(func)) => {
+                ensure!(node.args.len() == 1, "Expected 1 arg for {:?}", func);
+                let arg = self.interpret_expr(&node.args[0], ctx)?;
+                self.interpret_invoke_unop(func.clone(), arg, ctx)
+            }
             Expr::Pat(pat) if pat.to_string() == "print" => {
                 Self::interpret_print(self.serializer.as_ref(), &node.args, ctx)?;
                 Ok(Value::unit())
@@ -57,6 +62,21 @@ impl InterpreterPass {
             }
         }
         Ok(Value::unit())
+    }
+    pub fn interpret_un_op(&self, node: &UnOp<Expr>, ctx: &ArcScopedContext) -> Result<Value> {
+        let value = self.interpret_expr(&node.expr, ctx)?;
+        match node.kind {
+            UnOpKind::Neg => match value {
+                Value::Int(x) => Ok(Value::Int(IntValue::new(-x.value))),
+                Value::Decimal(x) => Ok(Value::Decimal(DecimalValue::new(-x.value))),
+                _ => bail!("Failed to interpret {:?}", node),
+            },
+            UnOpKind::Not => match value {
+                Value::Bool(x) => Ok(Value::Bool(BoolValue::new(!x.value))),
+                _ => bail!("Failed to interpret {:?}", node),
+            },
+            _ => bail!("Failed to interpret {:?}", node),
+        }
     }
     pub fn interpret_cond(&self, node: &Cond, ctx: &ArcScopedContext) -> Result<Value> {
         for case in &node.cases {
@@ -95,6 +115,7 @@ impl InterpreterPass {
         resolve: bool,
     ) -> Result<Value> {
         return match ident.as_str() {
+            // TODO: can we remove these?
             "+" if resolve => Ok(Value::any(builtin_add())),
             "-" if resolve => Ok(Value::any(builtin_sub())),
             "*" if resolve => Ok(Value::any(builtin_mul())),
@@ -140,6 +161,7 @@ impl InterpreterPass {
             _ => bail!("Could not process {:?}", op),
         }
     }
+
     pub fn interpret_def(&self, def: &Define, ctx: &ArcScopedContext) -> Result<()> {
         match &def.value {
             DefValue::Function(n) => {
@@ -303,6 +325,7 @@ impl InterpreterPass {
                 .interpret_bin_op_kind(x.clone(), ctx)
                 .map(|x| Value::any(x)),
             Value::BinOpKind(_) => Ok(node.clone()),
+            Value::UnOpKind(_) => Ok(node.clone()),
         }
     }
     pub fn interpret_invoke_binop(
@@ -314,6 +337,25 @@ impl InterpreterPass {
         let builtin_fn = self.interpret_bin_op_kind(op, ctx)?;
         let args = self.interpret_args(args, ctx)?;
         builtin_fn.invoke(&args, ctx)
+    }
+    pub fn interpret_invoke_unop(
+        &self,
+        op: UnOpKind,
+        arg: Value,
+        _ctx: &ArcScopedContext,
+    ) -> Result<Value> {
+        match op {
+            UnOpKind::Neg => match arg {
+                Value::Int(val) => Ok(Value::Int(IntValue::new(-val.value))),
+                Value::Decimal(val) => Ok(Value::Decimal(DecimalValue::new(-val.value))),
+                _ => bail!("Failed to interpret {:?}", op),
+            },
+            UnOpKind::Not => match arg {
+                Value::Bool(val) => Ok(Value::Bool(BoolValue::new(!val.value))),
+                _ => bail!("Failed to interpret {:?}", op),
+            },
+            _ => bail!("Could not process {:?}", op),
+        }
     }
     pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
