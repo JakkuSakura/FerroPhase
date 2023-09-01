@@ -11,14 +11,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 use syn::spanned::Spanned;
 
-trait Optomizee {
+trait Optimizee {
     fn optimize<P>(
         self,
         optimizer: FoldOptimizer<P>,
         ctx: &ArcScopedContext,
     ) -> Result<TokenStream>;
 }
-impl Optomizee for Expr {
+impl Optimizee for Expr {
     fn optimize<P>(
         self,
         optimizer: FoldOptimizer<P>,
@@ -29,7 +29,7 @@ impl Optomizee for Expr {
         Ok(node.into())
     }
 }
-impl Optomizee for Module {
+impl Optimizee for Module {
     fn optimize<P>(
         self,
         optimizer: FoldOptimizer<P>,
@@ -40,7 +40,7 @@ impl Optomizee for Module {
         Ok(node.into())
     }
 }
-fn specialize_inner(code: impl Optomizee) -> Result<TokenStream> {
+fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
     let ctx = Arc::new(ScopedContext::new());
     let formatter = RustSerde::new(false);
     let optimizer = load_optimizer(Rc::new(formatter));
