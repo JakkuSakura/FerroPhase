@@ -632,6 +632,15 @@ impl RustPrinter {
             TypeValue::Unit(_) => Ok(quote!(())),
             TypeValue::Any(_) => Ok(quote!(dyn Any)),
             TypeValue::Nothing(_) => Ok(quote!(!)),
+            TypeValue::Reference(r) => {
+                let ty = self.print_type_value(&r.ty)?;
+                if r.mutability == Some(true) {
+                    Ok(quote!(&mut #ty))
+                } else {
+                    Ok(quote!(&#ty))
+                }
+            }
+            TypeValue::Value(v) => self.print_value(&v.value),
             _ => bail!("Not supported {:?}", v),
         }
     }
