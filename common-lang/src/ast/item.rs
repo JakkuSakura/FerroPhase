@@ -17,6 +17,36 @@ impl Item {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
+    pub fn as_expr(&self) -> Option<&Expr> {
+        match self {
+            Self::Expr(expr) => Some(expr),
+            _ => None,
+        }
+    }
+    pub fn as_define(&self) -> Option<&Define> {
+        match self {
+            Self::Define(define) => Some(define),
+            _ => None,
+        }
+    }
+    pub fn as_module(&self) -> Option<&Module> {
+        match self {
+            Self::Module(module) => Some(module),
+            _ => None,
+        }
+    }
+    pub fn as_import(&self) -> Option<&Import> {
+        match self {
+            Self::Import(import) => Some(import),
+            _ => None,
+        }
+    }
+    pub fn as_impl(&self) -> Option<&Impl> {
+        match self {
+            Self::Impl(impl_) => Some(impl_),
+            _ => None,
+        }
+    }
 }
 pub type ItemChunk = Vec<Item>;
 
@@ -25,6 +55,16 @@ pub struct Module {
     pub name: Ident,
     pub items: ItemChunk,
     pub visibility: Visibility,
+}
+impl Module {
+    pub fn find_item(&self, name: &str) -> Option<&Item> {
+        self.items.iter().find(|item| match item {
+            Item::Define(define) => define.name.as_str() == name,
+            Item::Module(module) => module.name.as_str() == name,
+            Item::Import(import) => import.path.to_string().as_str() == name,
+            _ => false,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -75,7 +115,26 @@ pub enum DefValue {
     Type(TypeExpr),
     Const(Expr),
 }
-
+impl DefValue {
+    pub fn as_function(&self) -> Option<&FunctionValue> {
+        match self {
+            DefValue::Function(fn_) => Some(fn_),
+            _ => None,
+        }
+    }
+    pub fn as_type(&self) -> Option<&TypeExpr> {
+        match self {
+            DefValue::Type(ty) => Some(ty),
+            _ => None,
+        }
+    }
+    pub fn as_const(&self) -> Option<&Expr> {
+        match self {
+            DefValue::Const(expr) => Some(expr),
+            _ => None,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Define {
     pub name: Ident,
@@ -96,4 +155,14 @@ pub struct Impl {
     pub trait_ty: Option<Pat>,
     pub self_ty: TypeExpr,
     pub items: ItemChunk,
+}
+impl Impl {
+    pub fn find_item(&self, name: &str) -> Option<&Item> {
+        self.items.iter().find(|item| match item {
+            Item::Define(define) => define.name.as_str() == name,
+            Item::Module(module) => module.name.as_str() == name,
+            Item::Import(import) => import.path.to_string().as_str() == name,
+            _ => false,
+        })
+    }
 }

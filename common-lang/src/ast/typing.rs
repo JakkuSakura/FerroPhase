@@ -32,6 +32,12 @@ impl TypeExpr {
     pub fn type_bound(expr: TypeExpr) -> TypeExpr {
         TypeExpr::value(TypeValue::type_bound(expr))
     }
+    pub fn as_pat(&self) -> Option<&Pat> {
+        match self {
+            TypeExpr::Pat(pat) => Some(pat),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]

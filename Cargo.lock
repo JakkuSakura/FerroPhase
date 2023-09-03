@@ -226,6 +226,7 @@ dependencies = [
  "common",
  "dashmap",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
