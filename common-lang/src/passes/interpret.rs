@@ -32,6 +32,7 @@ impl InterpreterPass {
         Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> Result<Value> {
+        // FIXME: call stack may not work properly
         match &*node.func {
             Expr::Value(Value::BinOpKind(kind)) => {
                 self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
@@ -41,10 +42,35 @@ impl InterpreterPass {
                 let arg = self.interpret_expr(&node.args[0], ctx)?;
                 self.interpret_invoke_unop(func.clone(), arg, ctx)
             }
-            Expr::Pat(pat) if pat.to_string() == "print" => {
-                Self::interpret_print(self.serializer.as_ref(), &node.args, ctx)?;
-                Ok(Value::unit())
+            Expr::Any(any) => {
+                if let Some(exp) = any.downcast_ref::<BuiltinFn>() {
+                    let args = self.interpret_args(&node.args, ctx)?;
+                    exp.invoke(&args, ctx)
+                } else {
+                    bail!("Could not invoke {:?}", node)
+                }
             }
+            Expr::Locator(Locator::Ident(ident)) => {
+                let func = self.interpret_ident(ident, ctx, true)?;
+                self.interpret_invoke(
+                    &Invoke {
+                        func: Expr::value(func).into(),
+                        args: node.args.clone(),
+                    },
+                    ctx,
+                )
+            }
+            Expr::Select(select) => match select.field.as_str() {
+                "to_string" => match &*select.obj {
+                    Expr::Value(Value::String(obj)) => {
+                        let mut obj = obj.clone();
+                        obj.owned = true;
+                        Ok(Value::String(obj))
+                    }
+                    _ => bail!("Expected struct for {:?}", select),
+                },
+                x => bail!("Could not invoke {:?}", x),
+            },
             kind => bail!("Could not invoke {:?}", kind),
         }
     }
@@ -127,6 +153,11 @@ impl InterpreterPass {
             "print" if resolve => Ok(Value::any(builtin_print(self.serializer.clone()))),
             "true" => Ok(Value::bool(true)),
             "false" => Ok(Value::bool(false)),
+            "None" => Ok(Value::None(NoneValue)),
+            "null" => Ok(Value::Null(NullValue)),
+            "unit" => Ok(Value::Unit(UnitValue)),
+            "undefined" => Ok(Value::Undefined(UndefinedValue)),
+            "Some" => Ok(Value::any(builtin_some())),
             _ => {
                 info!("Get value recursive {:?}", ident);
                 ctx.print_values(&*self.serializer)?;
@@ -164,7 +195,7 @@ impl InterpreterPass {
 
     pub fn interpret_def(&self, def: &Define, ctx: &ArcScopedContext) -> Result<()> {
         match &def.value {
-            DefValue::Function(n) => {
+            DefineValue::Function(n) => {
                 if def.name == Ident::new("main") {
                     self.interpret_expr(&n.body, ctx).map(|_| ())
                 } else {
@@ -173,7 +204,7 @@ impl InterpreterPass {
                     Ok(())
                 }
             }
-            DefValue::Type(n) => {
+            DefineValue::Type(n) => {
                 ctx.insert_type(
                     def.name.clone(),
                     TypeValue::any_box(LazyValue {
@@ -183,7 +214,7 @@ impl InterpreterPass {
                 );
                 Ok(())
             }
-            DefValue::Const(n) => {
+            DefineValue::Const(n) => {
                 ctx.insert_value(
                     def.name.clone(),
                     Value::any(LazyValue {
@@ -193,6 +224,7 @@ impl InterpreterPass {
                 );
                 Ok(())
             }
+            _ => bail!("Failed to interpret {:?}", def),
         }
     }
     pub fn interpret_args(&self, node: &[Expr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
@@ -202,11 +234,17 @@ impl InterpreterPass {
             .try_collect()?;
         Ok(args)
     }
-    pub fn interpret_struct_value(
+    pub fn interpret_struct_expr(
         &self,
-        node: &StructValue,
+        node: &StructExpr,
         ctx: &ArcScopedContext,
     ) -> Result<StructValue> {
+        let struct_ = self
+            .type_system
+            .evaluate_type_expr(&node.name, ctx)?
+            .as_struct()
+            .context("Expected struct")?
+            .clone();
         let fields: Vec<_> = node
             .fields
             .iter()
@@ -218,18 +256,47 @@ impl InterpreterPass {
             })
             .try_collect()?;
         Ok(StructValue {
-            struct_: node.struct_.clone(),
-            fields,
+            ty: struct_,
+            structural: StructuralValue { fields },
         })
     }
-    pub fn interpret_select(&self, s: &Select, ctx: &ArcScopedContext) -> Result<Expr> {
-        let obj = self.interpret_expr(&s.obj, ctx)?;
-        // TODO: try to select values
-        Ok(Expr::Select(Select {
-            obj: Expr::value(obj).into(),
-            field: s.field.clone(),
-            select: s.select,
-        }))
+    pub fn interpret_struct_value(
+        &self,
+        node: &StructValue,
+        ctx: &ArcScopedContext,
+    ) -> Result<StructValue> {
+        let fields: Vec<_> = node
+            .structural
+            .fields
+            .iter()
+            .map(|x| {
+                Ok::<_, Error>(FieldValue {
+                    name: x.name.clone(),
+                    value: self.interpret_value(&x.value, ctx, true)?,
+                })
+            })
+            .try_collect()?;
+        Ok(StructValue {
+            ty: node.ty.clone(),
+            structural: StructuralValue { fields },
+        })
+    }
+    pub fn interpret_select(&self, s: &Select, ctx: &ArcScopedContext) -> Result<Value> {
+        let obj0 = self.interpret_expr(&s.obj, ctx)?;
+        let obj = obj0.as_structural().with_context(|| {
+            format!(
+                "Expected structural type, got {}",
+                self.serializer.serialize_value(&obj0).unwrap()
+            )
+        })?;
+        let value = obj.get_field(&s.field).with_context(|| {
+            format!(
+                "Could not find field {} in {}",
+                s.field,
+                self.serializer.serialize_value(&obj0).unwrap()
+            )
+        })?;
+        Ok(value.value.clone())
     }
     pub fn interpret_tuple(
         &self,
@@ -279,25 +346,28 @@ impl InterpreterPass {
                 })
             })
             .try_collect()?;
-
-        Ok(FunctionValue {
-            name: node.name.clone(),
+        let sig = FunctionSignature {
+            name: node.sig.name.clone(),
             params,
             generics_params: node.generics_params.clone(),
             ret: self.interpret_type(&node.ret, &sub)?,
+        };
+
+        Ok(FunctionValue {
+            sig,
             body: node.body.clone(),
         })
     }
     pub fn interpret_value(
         &self,
-        node: &Value,
+        val: &Value,
         ctx: &ArcScopedContext,
         resolve: bool,
     ) -> Result<Value> {
-        match node {
+        match val {
             Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
             Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
-            Value::Structural(_) => bail!("Failed to interpret {:?}", node),
+            Value::Structural(_) => bail!("Failed to interpret {:?}", val),
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
             Value::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(Value::Tuple),
             Value::Expr(n) => self.interpret_expr(n, ctx),
@@ -308,25 +378,36 @@ impl InterpreterPass {
                 }
 
                 if self.ignore_missing_items {
-                    return Ok(node.clone());
+                    return Ok(val.clone());
                 }
 
-                bail!("Failed to interpret {:?}", node)
+                bail!("Failed to interpret {:?}", val)
             }
-            Value::Int(_) => Ok(node.clone()),
-            Value::Bool(_) => Ok(node.clone()),
-            Value::Decimal(_) => Ok(node.clone()),
-            Value::Char(_) => Ok(node.clone()),
-            Value::String(_) => Ok(node.clone()),
-            Value::List(_) => Ok(node.clone()),
-            Value::Unit(_) => Ok(node.clone()),
-            Value::Null(_) => Ok(node.clone()),
-            Value::Undefined(_) => Ok(node.clone()),
+            Value::Int(_) => Ok(val.clone()),
+            Value::Bool(_) => Ok(val.clone()),
+            Value::Decimal(_) => Ok(val.clone()),
+            Value::Char(_) => Ok(val.clone()),
+            Value::String(_) => Ok(val.clone()),
+            Value::List(_) => Ok(val.clone()),
+            Value::Unit(_) => Ok(val.clone()),
+            Value::Null(_) => Ok(val.clone()),
+            Value::None(_) => Ok(val.clone()),
+            Value::Some(val) => Ok(Value::Some(SomeValue::new(
+                self.interpret_value(&val.value, ctx, resolve)?.into(),
+            ))),
+            Value::Option(value) => Ok(Value::Option(OptionValue::new(
+                value
+                    .value
+                    .as_ref()
+                    .map(|x| self.interpret_value(&x, ctx, resolve))
+                    .transpose()?,
+            ))),
+            Value::Undefined(_) => Ok(val.clone()),
             Value::BinOpKind(x) if resolve => self
                 .interpret_bin_op_kind(x.clone(), ctx)
                 .map(|x| Value::any(x)),
-            Value::BinOpKind(_) => Ok(node.clone()),
-            Value::UnOpKind(_) => Ok(node.clone()),
+            Value::BinOpKind(_) => Ok(val.clone()),
+            Value::UnOpKind(_) => Ok(val.clone()),
         }
     }
     pub fn interpret_invoke_binop(
@@ -358,35 +439,32 @@ impl InterpreterPass {
             _ => bail!("Could not process {:?}", op),
         }
     }
-    pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_expr_common(
+        &self,
+        node: &Expr,
+        ctx: &ArcScopedContext,
+        resolve: bool,
+    ) -> Result<Value> {
         match node {
-            Expr::Pat(Locator::Ident(n)) => self.interpret_ident(n, ctx, true),
-            Expr::Pat(n) => ctx
+            Expr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
+            Expr::Locator(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),
-            Expr::Value(n) => Ok(self.interpret_value(n, ctx, true)?.into()),
+            Expr::Value(n) => self.interpret_value(n, ctx, resolve),
             Expr::Block(n) => self.interpret_block(n, ctx),
             Expr::Cond(c) => self.interpret_cond(c, ctx),
             Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
             Expr::Any(n) => Ok(Value::Any(n.clone())),
-
+            Expr::Select(s) => self.interpret_select(s, ctx),
+            Expr::Struct(s) => self.interpret_struct_expr(s, ctx).map(Value::Struct),
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
+    pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
+        self.interpret_expr_common(node, ctx, true)
+    }
     pub fn interpret_expr_no_resolve(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
-        match node {
-            Expr::Pat(Locator::Ident(n)) => self.interpret_ident(n, ctx, false),
-            Expr::Pat(n) => ctx
-                .get_value_recursive(n)
-                .with_context(|| format!("could not find {:?} in context", n)),
-            Expr::Value(n) => Ok(self.interpret_value(n, ctx, false)?.into()),
-            Expr::Block(n) => self.interpret_block(n, ctx),
-            Expr::Cond(c) => self.interpret_cond(c, ctx),
-            Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
-            Expr::Any(n) => Ok(Value::Any(n.clone())),
-
-            _ => bail!("Failed to interpret {:?}", node),
-        }
+        self.interpret_expr_common(node, ctx, false)
     }
     pub fn interpret_item(&self, node: &Item, ctx: &ArcScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
@@ -447,7 +525,7 @@ impl OptimizePass for InterpreterPass {
     fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
         match item {
             Item::Define(def) if def.name.as_str() == "main" => match def.value {
-                DefValue::Function(func) => Ok(Item::Expr(*func.body)),
+                DefineValue::Function(func) => Ok(Item::Expr(*func.body)),
                 _ => bail!("main should be a function"),
             },
             _ => Ok(Item::Expr(Expr::unit())),

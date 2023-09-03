@@ -191,7 +191,7 @@ impl ScopedContext {
     pub fn try_get_value_from_expr(self: &ArcScopedContext, expr: &Expr) -> Option<Value> {
         info!("try_get_value_from_expr {:?}", expr);
         let ret = match expr {
-            Expr::Pat(ident) => self.get_value(ident),
+            Expr::Locator(ident) => self.get_value(ident),
             Expr::Value(value) => Some(value.clone()),
             _ => None,
         };
@@ -204,7 +204,7 @@ impl ScopedContext {
         let expr = self.get_expr(&key)?;
         info!("get_value_recursive {} => {:?}", key, expr);
         match expr {
-            Expr::Pat(ident) => self.get_value_recursive(ident),
+            Expr::Locator(ident) => self.get_value_recursive(ident),
             _ => Some(Value::expr(expr)),
         }
     }

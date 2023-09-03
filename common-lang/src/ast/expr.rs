@@ -5,7 +5,7 @@ use std::hash::Hash;
 common_derives! {
     /// Expr is an expression that returns a value
     pub enum Expr {
-        Pat(Locator),
+        Locator(Locator),
         Value(Value),
         Block(Block),
         Cond(Cond),
@@ -24,14 +24,15 @@ impl Expr {
     pub fn value(v: Value) -> Expr {
         match v {
             Value::Expr(expr) => *expr,
+            Value::Any(any) => Expr::Any(any),
             _ => Expr::Value(v),
         }
     }
     pub fn ident(name: Ident) -> Expr {
-        Expr::Pat(Locator::ident(name))
+        Expr::Locator(Locator::ident(name))
     }
     pub fn path(path: Path) -> Expr {
-        Expr::Pat(Locator::path(path))
+        Expr::Locator(Locator::path(path))
     }
     pub fn block(block: Block) -> Expr {
         if block.stmts.len() == 1 {

@@ -206,3 +206,11 @@ pub fn builtin_print(se: Rc<dyn Serializer>) -> BuiltinFn {
         Ok(Value::unit())
     })
 }
+pub fn builtin_some() -> BuiltinFn {
+    BuiltinFn::new_with_ident("Some".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("Some expects 1 argument, got: {:?}", args)
+        }
+        Ok(Value::Some(SomeValue::new(args[0].clone().into())))
+    })
+}

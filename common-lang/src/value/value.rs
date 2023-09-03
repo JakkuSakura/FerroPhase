@@ -14,7 +14,8 @@ pub trait ToJson {
         Self: Sized,
     {
         let json = self.to_json()?;
-        Ok(serde_json::from_value(json)?)
+        let str = serde_json::to_string(&json)?;
+        Ok(serde_json::from_value(json).with_context(|| format!("value: {}", str))?)
     }
 }
 /// wrap struct declare with derive Debug, Clone, Serialize, Deserialize,
@@ -25,21 +26,15 @@ macro_rules! plain_value {
         $(#[$attr])*
         #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
         pub struct $name;
-        impl ToJson for $name {
-            fn to_json(&self) -> Result<serde_json::Value> {
-                Ok(json!(null))
-            }
-        }
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{}", stringify!($name))
             }
         }
     };
-
-    ($(#[$attr:meta])* $name:ident: $ty:ty) => {
+    (no_ord $(#[$attr:meta])* $name:ident: $ty:ty) => {
         $(#[$attr])*
-        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
         pub struct $name {
             pub value: $ty,
         }
@@ -59,6 +54,9 @@ macro_rules! plain_value {
             }
         }
     };
+    ($(#[$attr:meta])* $name:ident: $ty:ty) => {
+        plain_value!(no_ord $(#[$attr])* #[derive(PartialOrd, Ord)] $name: $ty);
+    };
 }
 
 common_derives! {
@@ -71,10 +69,13 @@ common_derives! {
         List(ListValue),
         Unit(UnitValue),
         Null(NullValue),
+        None(NoneValue),
+        Some(SomeValue),
+        Option(OptionValue),
         Undefined(UndefinedValue),
         Type(TypeValue),
         Struct(StructValue),
-        Structural(StructuralStructValue),
+        Structural(StructuralValue),
         Function(FunctionValue),
         Tuple(TupleValue),
         Expr(Box<Expr>),
@@ -111,6 +112,13 @@ impl Value {
     pub fn undefined() -> Self {
         Self::Undefined(UndefinedValue)
     }
+    pub fn as_structural(&self) -> Option<&StructuralValue> {
+        match self {
+            Value::Struct(s) => Some(&s.structural),
+            Value::Structural(s) => Some(s),
+            _ => None,
+        }
+    }
 }
 impl ToJson for Value {
     fn to_json(&self) -> Result<serde_json::Value> {
@@ -126,6 +134,9 @@ impl ToJson for Value {
             Value::Undefined(u) => u.to_json(),
             Value::Struct(s) => s.to_json(),
             Value::Tuple(t) => t.to_json(),
+            Value::None(n) => n.to_json(),
+            Value::Some(s) => s.to_json(),
+            Value::Option(o) => o.to_json(),
             _ => bail!("cannot convert value to json: {:?}", self),
         }
     }
@@ -148,6 +159,7 @@ impl Display for Value {
         }
     }
 }
+
 plain_value! {
     IntValue: i64
 }
@@ -264,9 +276,69 @@ impl Display for ListValue {
     }
 }
 plain_value!(UnitValue);
-plain_value!(NullValue);
-plain_value!(UndefinedValue);
+impl ToJson for UnitValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        Ok(json!({}))
+    }
+}
 
+plain_value!(NullValue);
+impl ToJson for NullValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        Ok(json!(null))
+    }
+}
+plain_value!(UndefinedValue);
+impl ToJson for UndefinedValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        Ok(json!(null))
+    }
+}
+plain_value!(NoneValue);
+impl ToJson for NoneValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        Ok(json!(null))
+    }
+}
+
+common_derives! {
+    pub struct SomeValue {
+        pub value: Box<Value>,
+    }
+}
+impl SomeValue {
+    pub fn new(value: Value) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+}
+impl ToJson for SomeValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        self.value.to_json()
+    }
+}
+common_derives! {
+    pub struct OptionValue {
+        pub value: Option<Box<Value>>,
+    }
+}
+
+impl OptionValue {
+    pub fn new(value: Option<Value>) -> Self {
+        Self {
+            value: value.map(|x| x.into()),
+        }
+    }
+}
+impl ToJson for OptionValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        match &self.value {
+            Some(v) => v.to_json(),
+            None => Ok(json!(null)),
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct FieldValue {
     pub name: Ident,
@@ -280,29 +352,29 @@ impl FieldValue {
 
 common_derives! {
     pub struct StructValue {
-        pub struct_: StructType,
-        pub fields: Vec<FieldValue>,
+        pub ty: StructType,
+        pub structural: StructuralValue
     }
 }
 impl StructValue {
-    pub fn new(struct_: StructType, fields: Vec<FieldValue>) -> Self {
-        Self { struct_, fields }
+    pub fn new(ty: StructType, fields: Vec<FieldValue>) -> Self {
+        Self {
+            ty,
+            structural: StructuralValue { fields },
+        }
     }
 }
 impl ToJson for StructValue {
     fn to_json(&self) -> Result<serde_json::Value> {
-        let mut map = serde_json::Map::new();
-        for field in &self.fields {
-            map.insert(field.name.name.clone(), field.value.to_json()?);
-        }
-        Ok(json!(map))
+        self.structural.to_json()
     }
 }
 impl Display for StructValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.ty.name)?;
         write!(f, "{{")?;
         let mut first = true;
-        for field in &self.fields {
+        for field in &self.structural.fields {
             if !first {
                 write!(f, ", ")?;
             }
@@ -313,25 +385,30 @@ impl Display for StructValue {
     }
 }
 common_derives! {
-    pub struct StructuralStructValue {
+    pub struct StructuralValue {
         pub fields: Vec<FieldValue>,
     }
 }
-impl StructuralStructValue {
+impl StructuralValue {
     pub fn new(fields: Vec<FieldValue>) -> Self {
         Self { fields }
     }
+    pub fn get_field(&self, name: &Ident) -> Option<&FieldValue> {
+        self.fields.iter().find(|x| &x.name == name)
+    }
 }
-impl ToJson for StructuralStructValue {
+impl ToJson for StructuralValue {
     fn to_json(&self) -> Result<serde_json::Value> {
         let mut map = serde_json::Map::new();
         for field in &self.fields {
+            let value = field.value.to_json()?;
             map.insert(field.name.name.clone(), field.value.to_json()?);
         }
+
         Ok(json!(map))
     }
 }
-impl Display for StructuralStructValue {
+impl Display for StructuralValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{")?;
         let mut first = true;
@@ -360,20 +437,36 @@ common_derives! {
     }
 
 }
-
 common_derives! {
-    pub struct FunctionValue {
+    pub struct FunctionSignature {
         pub name: Option<Ident>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
         pub ret: TypeValue,
+    }
+}
+
+common_derives! {
+    pub struct FunctionValue {
+        pub sig: FunctionSignature,
         pub body: Box<Expr>,
     }
-
 }
 impl FunctionValue {
     pub fn is_runtime_only(&self) -> bool {
         self.generics_params.is_empty()
+    }
+}
+impl Deref for FunctionValue {
+    type Target = FunctionSignature;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sig
+    }
+}
+impl DerefMut for FunctionValue {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.sig
     }
 }
 common_derives! {

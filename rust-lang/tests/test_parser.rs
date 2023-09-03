@@ -1,6 +1,8 @@
 use common::*;
 use common_lang::ast::*;
-use common_lang::value::{FunctionParam, FunctionValue, PrimitiveType, TypeValue};
+use common_lang::value::{
+    FunctionParam, FunctionSignature, FunctionValue, PrimitiveType, TypeValue,
+};
 macro_rules! shll_parse_item {
     ($($tt:tt)*) => {{
         let code: syn::Item = syn::parse_quote!($($tt)*);
@@ -27,17 +29,19 @@ fn test_parse_fn() -> Result<()> {
         code,
         Item::Define(Define {
             name: "foo".into(),
-            kind: DefKind::Function,
+            kind: DefineKind::Function,
             ty: None,
-            value: DefValue::Function(FunctionValue {
-                name: Some("foo".into()),
-                params: vec![FunctionParam {
-                    name: "a".into(),
-                    ty: TypeValue::Primitive(PrimitiveType::i64())
-                }],
-                generics_params: vec![],
+            value: DefineValue::Function(FunctionValue {
+                sig: FunctionSignature {
+                    name: Some("foo".into()),
+                    params: vec![FunctionParam {
+                        name: "a".into(),
+                        ty: TypeValue::Primitive(PrimitiveType::i64())
+                    }],
+                    generics_params: vec![],
+                    ret: TypeValue::Primitive(PrimitiveType::i64())
+                },
                 body: block.into(),
-                ret: TypeValue::Primitive(PrimitiveType::i64())
             }),
             visibility: Visibility::Private,
         })
@@ -58,25 +62,11 @@ fn test_parse_impl_for() -> Result<()> {
         Item::Impl(Impl {
             trait_ty: Some(Locator::Ident("Foo".into())),
             self_ty: TypeExpr::ident("Bar".into()),
-            items: vec![Item::Define(Define {
-                name: "foo".into(),
-                kind: DefKind::Function,
-                ty: None,
-                value: DefValue::Function(FunctionValue {
-                    name: Some("foo".into()),
-                    params: vec![FunctionParam {
-                        name: "a".into(),
-                        ty: TypeValue::Primitive(PrimitiveType::i64())
-                    }],
-                    generics_params: vec![],
-                    body: shll_parse_expr! {
-                        a + 1
-                    }
-                    .into(),
-                    ret: TypeValue::Primitive(PrimitiveType::i64())
-                }),
-                visibility: Visibility::Private,
-            })],
+            items: vec![shll_parse_item! {
+                fn foo(a: i64) -> i64 {
+                    a + 1
+                }
+            }],
         })
     );
     Ok(())

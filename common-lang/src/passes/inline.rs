@@ -26,10 +26,10 @@ impl InlinePass {
             let fun = self.try_get_expr(*invoke.func.clone(), ctx)?;
             match fun {
                 Expr::Value(Value::Function(f)) => {
-                    if let Some(name) = f.name {
+                    if let Some(name) = &f.name {
                         match name.as_str() {
                             "print" => {
-                                invoke.func = Expr::ident(name).into();
+                                invoke.func = Expr::ident(name.clone()).into();
                                 return Ok(Expr::Invoke(invoke));
                             }
                             _ => {}
@@ -46,13 +46,13 @@ impl InlinePass {
     pub fn try_get_pat(&self, ident: Locator, ctx: &ArcScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
-            None => Ok(Expr::Pat(ident)),
+            None => Ok(Expr::Locator(ident)),
         }
     }
 
     pub fn try_get_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
-            Expr::Pat(ident) => self.try_get_pat(ident, ctx),
+            Expr::Locator(ident) => self.try_get_pat(ident, ctx),
             _ => Ok(expr),
         }
     }

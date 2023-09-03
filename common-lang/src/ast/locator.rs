@@ -23,6 +23,18 @@ impl Locator {
         }
         Self::Path(path)
     }
+    pub fn parameter_path(path: ParameterPath) -> Self {
+        // if no parameters, convert to path
+        if path.segments.iter().all(|seg| seg.args.is_empty()) {
+            let segments = path
+                .segments
+                .into_iter()
+                .map(|seg| seg.ident)
+                .collect::<Vec<_>>();
+            return Self::path(Path::new(segments));
+        }
+        Self::ParameterPath(path)
+    }
 }
 impl Into<Path> for Locator {
     fn into(self) -> Path {
