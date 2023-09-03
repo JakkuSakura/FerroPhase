@@ -207,7 +207,7 @@ impl TypeSystem {
     pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ty {
             TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
-            TypeExpr::Pat(i) => {
+            TypeExpr::Locator(i) => {
                 match i.to_string().as_str() {
                     "Add" => return Ok(TypeValue::impl_trait("Add".into())),
                     _ => {}

@@ -29,29 +29,29 @@ pub fn parse_path(p: syn::Path) -> Result<Path> {
             .try_collect()?,
     })
 }
-// pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
-//     Ok(ParameterPath {
-//         segments: p
-//             .segments
-//             .into_iter()
-//             .map(|x| {
-//                 let ident = parse_ident(x.ident);
-//                 let params = match x.arguments {
-//                     syn::PathArguments::AngleBracketed(a) => a
-//                         .args
-//                         .into_iter()
-//                         .map(|x| match x {
-//                             syn::GenericArgument::Type(t) => Ok(parse_type_value(t)?),
-//                             _ => bail!("Does not support path arguments: {:?}", x),
-//                         })
-//                         .try_collect()?,
-//                     _ => bail!("Does not support path arguments: {:?}", x),
-//                 };
-//                 Ok(ParameterPathSegment { ident, params })
-//             })
-//             .try_collect()?,
-//     })
-// }
+pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
+    Ok(ParameterPath {
+        segments: p
+            .segments
+            .into_iter()
+            .map(|x| {
+                let args = match x.arguments {
+                    syn::PathArguments::AngleBracketed(a) => a
+                        .args
+                        .into_iter()
+                        .map(|x| match x {
+                            syn::GenericArgument::Type(t) => Ok(parse_type_value(t)?),
+                            _ => bail!("Does not support path arguments: {:?}", x),
+                        })
+                        .try_collect()?,
+                    _ => bail!("Does not support path arguments: {:?}", x),
+                };
+                let ident = parse_ident(x.ident);
+                Ok(ParameterPathSegment { ident, args })
+            })
+            .try_collect()?,
+    })
+}
 
 fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
     let t = match t {

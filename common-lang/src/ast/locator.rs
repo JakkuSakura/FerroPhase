@@ -1,5 +1,5 @@
 use crate::common_derives;
-use crate::value::{ToJson, Value};
+use crate::value::TypeValue;
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
@@ -159,10 +159,10 @@ impl<'a> From<&'a Path> for Path {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ParameterPathSegment {
     pub ident: Ident,
-    pub args: Vec<Value>,
+    pub args: Vec<TypeValue>,
 }
 impl ParameterPathSegment {
-    pub fn new(ident: Ident, args: Vec<Value>) -> Self {
+    pub fn new(ident: Ident, args: Vec<TypeValue>) -> Self {
         Self { ident, args }
     }
 }
@@ -187,6 +187,9 @@ impl Ord for ParameterPathSegment {
         self.ident.cmp(&other.ident)
     }
 }
+
+/// ParameterPath is a specialized locator for paths like Foo::<T>::bar<U>
+/// it is equivalent to Invoke(Select(Invoke(Foo, T), bar), U)
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ParameterPath {
     pub segments: Vec<ParameterPathSegment>,
@@ -209,7 +212,7 @@ impl Display for ParameterPath {
                         write!(f, ", ")?;
                     }
                     first = false;
-                    write!(f, "{}", arg.to_json().expect("failed to format to json"))?;
+                    write!(f, "{}", arg)?;
                 }
                 write!(f, ">")?;
             }

@@ -30,6 +30,9 @@ common_derives! {
         Let(Let),
         Assign(Assign),
         SideEffect(SideEffect),
+        ForEach(ForEach),
+        While(While),
+        Loop(Loop),
         Expr(Expr),
         Any(AnyBox),
     }
@@ -82,15 +85,22 @@ common_derives! {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct ForEach {
-    pub variable: Ident,
-    pub iterable: Expr,
-    pub body: Block,
+common_derives! {
+    pub struct ForEach {
+        pub variable: Ident,
+        pub iterable: Expr,
+        pub body: Block,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct While {
-    pub cond: Expr,
-    pub body: Block,
+common_derives! {
+    pub struct While {
+        pub cond: Expr,
+        pub body: Block,
+    }
+}
+common_derives! {
+    pub struct Loop {
+        pub body: Block,
+    }
 }

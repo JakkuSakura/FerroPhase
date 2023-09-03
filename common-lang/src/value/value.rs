@@ -4,7 +4,7 @@ use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{TypeBounds, TypeValue};
 use common::*;
 use serde_json::json;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 
 pub trait ToJson {
@@ -23,11 +23,16 @@ pub trait ToJson {
 macro_rules! plain_value {
     ($(#[$attr:meta])* $name:ident) => {
         $(#[$attr])*
-        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
         pub struct $name;
         impl ToJson for $name {
             fn to_json(&self) -> Result<serde_json::Value> {
                 Ok(json!(null))
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", stringify!($name))
             }
         }
     };
@@ -46,6 +51,11 @@ macro_rules! plain_value {
         impl ToJson for $name {
             fn to_json(&self) -> Result<serde_json::Value> {
                 Ok(json!(self.value))
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.value)
             }
         }
     };
@@ -119,7 +129,24 @@ impl ToJson for Value {
         }
     }
 }
-
+impl Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Int(i) => Display::fmt(i, f),
+            Value::Bool(b) => Display::fmt(b, f),
+            Value::Decimal(d) => Display::fmt(d, f),
+            Value::Char(c) => Display::fmt(c, f),
+            Value::String(s) => Display::fmt(s, f),
+            Value::List(l) => Display::fmt(l, f),
+            Value::Unit(u) => Display::fmt(u, f),
+            Value::Null(n) => Display::fmt(n, f),
+            Value::Undefined(u) => Display::fmt(u, f),
+            Value::Struct(s) => Display::fmt(s, f),
+            Value::Tuple(t) => Display::fmt(t, f),
+            _ => panic!("cannot display value: {:?}", self),
+        }
+    }
+}
 plain_value! {
     IntValue: i64
 }
@@ -163,6 +190,11 @@ impl ToJson for DecimalValue {
         Ok(json!(self.value))
     }
 }
+impl Display for DecimalValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
 
 plain_value! {
     CharValue: char
@@ -195,6 +227,11 @@ impl ToJson for StringValue {
     }
 }
 
+impl Display for StringValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
 common_derives! {
     pub struct ListValue {
         pub values: Vec<Value>,
@@ -209,6 +246,20 @@ impl ToJson for ListValue {
     fn to_json(&self) -> Result<serde_json::Value> {
         let values: Vec<_> = self.values.iter().map(|x| x.to_json()).try_collect()?;
         Ok(json!(values))
+    }
+}
+impl Display for ListValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        let mut first = true;
+        for value in &self.values {
+            if !first {
+                write!(f, ", ")?;
+            }
+            first = false;
+            write!(f, "{}", value)?;
+        }
+        write!(f, "]")
     }
 }
 plain_value!(UnitValue);
@@ -244,6 +295,20 @@ impl ToJson for StructValue {
             map.insert(field.name.name.clone(), field.value.to_json()?);
         }
         Ok(json!(map))
+    }
+}
+impl Display for StructValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        let mut first = true;
+        for field in &self.fields {
+            if !first {
+                write!(f, ", ")?;
+            }
+            first = false;
+            write!(f, "{}: {}", field.name, field.value)?;
+        }
+        write!(f, "}}")
     }
 }
 
@@ -292,5 +357,19 @@ impl ToJson for TupleValue {
     fn to_json(&self) -> Result<serde_json::Value> {
         let values: Vec<_> = self.values.iter().map(|x| x.to_json()).try_collect()?;
         Ok(json!(values))
+    }
+}
+impl Display for TupleValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(")?;
+        let mut first = true;
+        for value in &self.values {
+            if !first {
+                write!(f, ", ")?;
+            }
+            first = false;
+            write!(f, "{}", value)?;
+        }
+        write!(f, ")")
     }
 }
