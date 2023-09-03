@@ -179,7 +179,30 @@ impl RustPrinter {
             #target = #value;
         ))
     }
-
+    pub fn print_for_each(&self, for_each: &ForEach) -> Result<TokenStream> {
+        let name = self.print_ident(&for_each.variable);
+        let iter = self.print_expr(&for_each.iterable)?;
+        let body = self.print_block(&for_each.body)?;
+        Ok(quote!(
+            for #name in #iter
+                #body
+        ))
+    }
+    pub fn print_while(&self, while_: &While) -> Result<TokenStream> {
+        let cond = self.print_expr(&while_.cond)?;
+        let body = self.print_block(&while_.body)?;
+        Ok(quote!(
+            while #cond
+                #body
+        ))
+    }
+    pub fn print_loop(&self, loop_: &Loop) -> Result<TokenStream> {
+        let body = self.print_block(&loop_.body)?;
+        Ok(quote!(
+            loop
+                #body
+        ))
+    }
     pub fn print_statement(&self, stmt: &Statement) -> Result<TokenStream> {
         match stmt {
             Statement::Item(item) => self.print_item(item),
@@ -188,6 +211,9 @@ impl RustPrinter {
             Statement::Expr(expr) => self.print_expr(expr),
             Statement::Any(any) => self.print_any(any),
             Statement::Assign(assign) => self.print_assign(assign),
+            Statement::ForEach(for_each) => self.print_for_each(for_each),
+            Statement::While(while_) => self.print_while(while_),
+            Statement::Loop(loop_) => self.print_loop(loop_),
         }
     }
     pub fn print_statement_chunk(&self, items: &[Statement]) -> Result<TokenStream> {
@@ -584,7 +610,7 @@ impl RustPrinter {
     }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
         match node {
-            TypeExpr::Pat(n) => self.print_pat(n),
+            TypeExpr::Locator(n) => self.print_pat(n),
             TypeExpr::Value(n) => self.print_type_value(n),
             TypeExpr::Invoke(n) => self.print_invoke_type(n),
             TypeExpr::BinOp(TypeBinOp::Add(add)) => {
