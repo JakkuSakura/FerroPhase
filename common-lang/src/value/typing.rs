@@ -41,7 +41,7 @@ impl TypeValue {
         TypeValue::expr(TypeExpr::path(path))
     }
     pub fn ident(ident: Ident) -> TypeValue {
-        TypeValue::expr(TypeExpr::Ident(ident))
+        TypeValue::expr(TypeExpr::ident(ident))
     }
     pub fn any_box<T: AnyBoxable>(any: T) -> Self {
         Self::AnyBox(AnyBox::new(any))

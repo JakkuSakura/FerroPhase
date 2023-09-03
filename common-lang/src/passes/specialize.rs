@@ -105,7 +105,7 @@ impl SpecializePass {
         let mut ret = func.ret.clone();
         match &ret {
             TypeValue::Expr(expr) => match &**expr {
-                TypeExpr::Ident(ident)
+                TypeExpr::Pat(Pat::Ident(ident))
                     if func
                         .generics_params
                         .iter()
@@ -164,8 +164,8 @@ impl SpecializePass {
             .items
             .into_iter()
             .filter(|x| match x {
-                Item::Def(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => true,
-                Item::Def(d) => {
+                Item::Define(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => true,
+                Item::Define(d) => {
                     let func = match &d.value {
                         DefValue::Function(f) => f,
                         _ => return true,
@@ -186,14 +186,14 @@ impl SpecializePass {
                 value: DefValue::Function(func),
                 visibility: Visibility::Public,
             };
-            module.items.push(Item::Def(define));
+            module.items.push(Item::Define(define));
         }
 
         Ok(module)
     }
     pub fn specialize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         match item {
-            Item::Def(_) => Ok(item),
+            Item::Define(_) => Ok(item),
             Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module),
             _ => Ok(item),
         }
