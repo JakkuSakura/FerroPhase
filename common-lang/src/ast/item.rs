@@ -6,7 +6,7 @@ use common::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Item {
     Module(Module),
-    Def(Define),
+    Define(Define),
     Import(Import),
     Impl(Impl),
     Expr(Expr),
@@ -93,6 +93,7 @@ pub struct Import {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Impl {
-    pub name: Ident,
-    pub defs: Vec<Define>,
+    pub trait_ty: Option<Pat>,
+    pub self_ty: TypeExpr,
+    pub items: ItemChunk,
 }

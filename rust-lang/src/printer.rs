@@ -384,15 +384,11 @@ impl RustPrinter {
     }
 
     pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
-        let name = self.print_ident(&impl_.name);
-        let methods: Vec<_> = impl_
-            .defs
-            .iter()
-            .map(|x| self.print_define(x))
-            .try_collect()?;
+        let name = self.print_type_expr(&impl_.self_ty)?;
+        let methods = self.print_items_chunk(&impl_.items)?;
         Ok(quote!(
             impl #name {
-                #(#methods)*
+                #methods
             }
         ))
     }
@@ -566,11 +562,16 @@ impl RustPrinter {
         let segments: Vec<_> = path.segments.iter().map(|x| self.print_ident(x)).collect();
         quote!(#(#segments)::*)
     }
-
+    pub fn print_pat(&self, pat: &Pat) -> TokenStream {
+        match pat {
+            Pat::Ident(n) => self.print_ident(n),
+            Pat::Path(n) => self.print_path(n),
+            // _ => bail!("Unable to serialize {:?}", pat),
+        }
+    }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
         match node {
-            TypeExpr::Ident(n) => Ok(self.print_ident(n)),
-            TypeExpr::Path(n) => Ok(self.print_path(n)),
+            TypeExpr::Pat(n) => Ok(self.print_pat(n)),
             TypeExpr::Value(n) => self.print_type_value(n),
             TypeExpr::Invoke(n) => self.print_invoke_type(n),
             TypeExpr::BinOp(TypeBinOp::Add(add)) => {
@@ -612,7 +613,7 @@ impl RustPrinter {
     }
     pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
         match item {
-            Item::Def(n) => self.print_define(n),
+            Item::Define(n) => self.print_define(n),
             Item::Module(n) => self.print_module(n),
             Item::Import(n) => self.print_import(n),
             Item::Expr(n) => self.print_expr(n),
