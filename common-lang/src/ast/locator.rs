@@ -206,6 +206,11 @@ impl Ord for ParameterPathSegment {
 pub struct ParameterPath {
     pub segments: Vec<ParameterPathSegment>,
 }
+impl ParameterPath {
+    pub fn last(&self) -> &ParameterPathSegment {
+        self.segments.last().unwrap()
+    }
+}
 
 impl Display for ParameterPath {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
