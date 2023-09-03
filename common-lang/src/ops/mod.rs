@@ -5,7 +5,7 @@ pub mod builtins;
 use crate::ast::Ident;
 pub use builtins::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum BinOpKind {
     Add,
     Sub,
@@ -63,7 +63,7 @@ impl Display for BinOpKind {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum UnOpKind {
     Not,
     Neg,

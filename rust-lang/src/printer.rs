@@ -163,8 +163,20 @@ impl RustPrinter {
             quote!()
         };
         let value = self.print_expr(&let_.value)?;
+        let mutable = if let_.mutability.unwrap_or_default() {
+            quote!(mut)
+        } else {
+            quote!()
+        };
         Ok(quote!(
-            let #name #ty = #value;
+            let #mutable #name #ty = #value;
+        ))
+    }
+    pub fn print_assign(&self, assign: &Assign) -> Result<TokenStream> {
+        let target = self.print_expr(&assign.target)?;
+        let value = self.print_expr(&assign.value)?;
+        Ok(quote!(
+            #target = #value;
         ))
     }
 
@@ -175,6 +187,7 @@ impl RustPrinter {
             Statement::SideEffect(stmt) => self.print_stmt_expr(&stmt),
             Statement::Expr(expr) => self.print_expr(expr),
             Statement::Any(any) => self.print_any(any),
+            Statement::Assign(assign) => self.print_assign(assign),
         }
     }
     pub fn print_statement_chunk(&self, items: &[Statement]) -> Result<TokenStream> {
@@ -562,16 +575,16 @@ impl RustPrinter {
         let segments: Vec<_> = path.segments.iter().map(|x| self.print_ident(x)).collect();
         quote!(#(#segments)::*)
     }
-    pub fn print_pat(&self, pat: &Pat) -> TokenStream {
-        match pat {
-            Pat::Ident(n) => self.print_ident(n),
-            Pat::Path(n) => self.print_path(n),
-            // _ => bail!("Unable to serialize {:?}", pat),
-        }
+    pub fn print_pat(&self, pat: &Locator) -> Result<TokenStream> {
+        Ok(match pat {
+            Locator::Ident(n) => self.print_ident(n),
+            Locator::Path(n) => self.print_path(n),
+            _ => bail!("Unable to serialize {:?}", pat),
+        })
     }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
         match node {
-            TypeExpr::Pat(n) => Ok(self.print_pat(n)),
+            TypeExpr::Pat(n) => self.print_pat(n),
             TypeExpr::Value(n) => self.print_type_value(n),
             TypeExpr::Invoke(n) => self.print_invoke_type(n),
             TypeExpr::BinOp(TypeBinOp::Add(add)) => {
@@ -601,8 +614,8 @@ impl RustPrinter {
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Pat(Pat::Ident(n)) => Ok(self.print_ident(n)),
-            Expr::Pat(Pat::Path(n)) => Ok(self.print_path(n)),
+            Expr::Pat(Locator::Ident(n)) => Ok(self.print_ident(n)),
+            Expr::Pat(Locator::Path(n)) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),

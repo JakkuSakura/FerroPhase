@@ -1,6 +1,8 @@
 use crate::ast::*;
 use crate::value::{FunctionValue, TypeValue};
 use common::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+use std::mem::discriminant;
 
 /// Item is an syntax tree node that "declares" a thing without returning a value
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -48,13 +50,27 @@ impl Item {
         }
     }
 }
+impl Hash for Item {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        discriminant(self).hash(state);
+        match self {
+            Self::Module(module) => module.hash(state),
+            Self::Define(define) => define.hash(state),
+            Self::Import(import) => import.hash(state),
+            Self::Impl(impl_) => impl_.hash(state),
+            Self::Expr(expr) => expr.hash(state),
+            Self::Any(any) => any.hash(state),
+        }
+    }
+}
 pub type ItemChunk = Vec<Item>;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Module {
-    pub name: Ident,
-    pub items: ItemChunk,
-    pub visibility: Visibility,
+common_derives! {
+    pub struct Module {
+        pub name: Ident,
+        pub items: ItemChunk,
+        pub visibility: Visibility,
+    }
 }
 impl Module {
     pub fn find_item(&self, name: &str) -> Option<&Item> {
@@ -67,9 +83,10 @@ impl Module {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Block {
-    pub stmts: StatementChunk,
+common_derives! {
+    pub struct Block {
+        pub stmts: StatementChunk,
+    }
 }
 impl Block {
     pub fn new(stmts: StatementChunk) -> Self {
@@ -94,26 +111,31 @@ impl Block {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Copy)]
-pub enum Visibility {
-    Public,
-    Private,
-    Inherited,
+common_derives! {
+    #[derive(Copy)]
+    pub enum Visibility {
+        Public,
+        Private,
+        Inherited,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum DefKind {
-    Unknown,
-    Function,
-    Type,
-    Const,
+common_derives! {
+    #[derive(Copy)]
+    pub enum DefKind {
+        Unknown,
+        Function,
+        Type,
+        Const,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum DefValue {
-    Function(FunctionValue),
-    Type(TypeExpr),
-    Const(Expr),
+common_derives! {
+    pub enum DefValue {
+        Function(FunctionValue),
+        Type(TypeExpr),
+        Const(Expr),
+    }
 }
 impl DefValue {
     pub fn as_function(&self) -> Option<&FunctionValue> {
@@ -135,26 +157,30 @@ impl DefValue {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Define {
-    pub name: Ident,
-    pub kind: DefKind,
-    pub ty: Option<TypeValue>,
-    pub value: DefValue,
-    pub visibility: Visibility,
+
+common_derives! {
+    pub struct Define {
+        pub name: Ident,
+        pub kind: DefKind,
+        pub ty: Option<TypeValue>,
+        pub value: DefValue,
+        pub visibility: Visibility,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Import {
-    pub visibility: Visibility,
-    pub path: Path,
+common_derives! {
+    pub struct Import {
+        pub visibility: Visibility,
+        pub path: Path,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Impl {
-    pub trait_ty: Option<Pat>,
-    pub self_ty: TypeExpr,
-    pub items: ItemChunk,
+common_derives! {
+    pub struct Impl {
+        pub trait_ty: Option<Locator>,
+        pub self_ty: TypeExpr,
+        pub items: ItemChunk,
+    }
 }
 impl Impl {
     pub fn find_item(&self, name: &str) -> Option<&Item> {
