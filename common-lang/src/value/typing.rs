@@ -9,8 +9,8 @@ common_derives! {
     /// TypeValue is a solid type value
     pub enum TypeValue {
         Primitive(PrimitiveType),
-        NamedStruct(NamedStructType),
-        UnnamedStruct(UnnamedStructType),
+        Struct(StructType),
+        Structural(StructuralType),
         Function(FunctionType),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
@@ -144,13 +144,13 @@ common_derives! {
     }
 }
 common_derives! {
-    pub struct NamedStructType {
+    pub struct StructType {
         pub name: Ident,
         pub fields: Vec<FieldTypeValue>,
     }
 }
 common_derives! {
-    pub struct UnnamedStructType {
+    pub struct StructuralType {
         pub fields: Vec<FieldTypeValue>,
     }
 }
