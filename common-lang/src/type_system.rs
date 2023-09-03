@@ -207,8 +207,8 @@ impl TypeSystem {
     pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ty {
             TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
-            TypeExpr::Ident(i) => {
-                match i.as_str() {
+            TypeExpr::Pat(i) => {
+                match i.to_string().as_str() {
                     "Add" => return Ok(TypeValue::impl_trait("Add".into())),
                     _ => {}
                 }
@@ -285,10 +285,7 @@ impl TypeSystem {
                         name: Ident::new("T"),
                         bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
                     }],
-                    params: vec![
-                        TypeValue::expr(TypeExpr::Ident("T".into())),
-                        TypeValue::expr(TypeExpr::Ident("T".into())),
-                    ],
+                    params: vec![TypeValue::ident("T".into()), TypeValue::ident("T".into())],
                     ret: Box::new(TypeValue::bool()),
                 }));
             }
