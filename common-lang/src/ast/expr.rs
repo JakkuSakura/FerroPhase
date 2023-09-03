@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::value::{UnitValue, Value};
+use crate::value::{FieldValue, UnitValue, Value};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 common_derives! {
@@ -11,6 +11,7 @@ common_derives! {
         Cond(Cond),
         Invoke(Invoke),
         Select(Select),
+        Struct(StructExpr),
         Reference(Reference),
         Any(AnyBox),
     }
@@ -110,5 +111,11 @@ common_derives! {
         Return(Option<Expr>),
         Into,
         IntoAndBreak(Option<Expr>),
+    }
+}
+common_derives! {
+    pub struct StructExpr {
+        pub name: Box<TypeExpr>,
+        pub fields: Vec<FieldValue>,
     }
 }

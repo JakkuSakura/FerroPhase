@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::common_derives;
 use crate::ops::{BinOpKind, UnOpKind};
-use crate::value::{TypeBounds, TypeValue};
+use crate::value::{StructType, TypeBounds, TypeValue};
 use common::*;
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
@@ -74,6 +74,7 @@ common_derives! {
         Undefined(UndefinedValue),
         Type(TypeValue),
         Struct(StructValue),
+        Structural(StructuralStructValue),
         Function(FunctionValue),
         Tuple(TupleValue),
         Expr(Box<Expr>),
@@ -279,13 +280,13 @@ impl FieldValue {
 
 common_derives! {
     pub struct StructValue {
-        pub name: TypeExpr, // either Ident or Struct
+        pub struct_: StructType,
         pub fields: Vec<FieldValue>,
     }
 }
 impl StructValue {
-    pub fn new(name: TypeExpr, fields: Vec<FieldValue>) -> Self {
-        Self { name, fields }
+    pub fn new(struct_: StructType, fields: Vec<FieldValue>) -> Self {
+        Self { struct_, fields }
     }
 }
 impl ToJson for StructValue {
@@ -298,6 +299,39 @@ impl ToJson for StructValue {
     }
 }
 impl Display for StructValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        let mut first = true;
+        for field in &self.fields {
+            if !first {
+                write!(f, ", ")?;
+            }
+            first = false;
+            write!(f, "{}: {}", field.name, field.value)?;
+        }
+        write!(f, "}}")
+    }
+}
+common_derives! {
+    pub struct StructuralStructValue {
+        pub fields: Vec<FieldValue>,
+    }
+}
+impl StructuralStructValue {
+    pub fn new(fields: Vec<FieldValue>) -> Self {
+        Self { fields }
+    }
+}
+impl ToJson for StructuralStructValue {
+    fn to_json(&self) -> Result<serde_json::Value> {
+        let mut map = serde_json::Map::new();
+        for field in &self.fields {
+            map.insert(field.name.name.clone(), field.value.to_json()?);
+        }
+        Ok(json!(map))
+    }
+}
+impl Display for StructuralStructValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{")?;
         let mut first = true;

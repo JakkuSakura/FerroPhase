@@ -218,7 +218,7 @@ impl InterpreterPass {
             })
             .try_collect()?;
         Ok(StructValue {
-            name: node.name.clone(),
+            struct_: node.struct_.clone(),
             fields,
         })
     }
@@ -297,6 +297,7 @@ impl InterpreterPass {
         match node {
             Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
             Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
+            Value::Structural(_) => bail!("Failed to interpret {:?}", node),
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
             Value::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(Value::Tuple),
             Value::Expr(n) => self.interpret_expr(n, ctx),

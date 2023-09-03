@@ -80,6 +80,7 @@ impl TypeSystem {
             Value::Undefined(_) => {}
             Value::BinOpKind(_) => {}
             Value::UnOpKind(_) => {}
+            Value::Structural(_) => {}
         }
         Ok(())
     }
@@ -139,7 +140,7 @@ impl TypeSystem {
     pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ty {
             TypeValue::Expr(expr) => self.evaluate_type_expr(expr, ctx),
-            TypeValue::NamedStruct(n) => {
+            TypeValue::Struct(n) => {
                 let fields = n
                     .fields
                     .iter()
@@ -151,12 +152,12 @@ impl TypeSystem {
                         })
                     })
                     .try_collect()?;
-                Ok(TypeValue::NamedStruct(NamedStructType {
+                Ok(TypeValue::Struct(StructType {
                     name: n.name.clone(),
                     fields,
                 }))
             }
-            TypeValue::UnnamedStruct(n) => {
+            TypeValue::Structural(n) => {
                 let fields = n
                     .fields
                     .iter()
@@ -168,7 +169,7 @@ impl TypeSystem {
                         })
                     })
                     .try_collect()?;
-                Ok(TypeValue::UnnamedStruct(UnnamedStructType { fields }))
+                Ok(TypeValue::Structural(StructuralType { fields }))
             }
             TypeValue::Function(f) => {
                 let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
