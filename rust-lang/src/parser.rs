@@ -353,7 +353,7 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-fn parse_impl_item(item: syn::ImplItem) -> Result<Define> {
+fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
     match item {
         syn::ImplItem::Fn(m) => {
             // TODO: defaultness
@@ -363,31 +363,33 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Define> {
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
-            Ok(Define {
+            Ok(Item::Define(Define {
                 name: expr.name.clone().unwrap(),
                 kind: DefKind::Function,
                 ty: None,
                 value: DefValue::Function(expr),
                 visibility: parse_vis(m.vis),
-            })
+            }))
         }
-        syn::ImplItem::Type(t) => Ok(Define {
+        syn::ImplItem::Type(t) => Ok(Item::Define(Define {
             name: parse_ident(t.ident),
             kind: DefKind::Type,
             ty: None,
             value: DefValue::Type(parse_type(t.ty)?),
             visibility: parse_vis(t.vis),
-        }),
+        })),
         _ => bail!("Does not support impl item {:?}", item),
     }
 }
 fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
     Ok(Impl {
-        name: match parse_type(*im.self_ty.clone())? {
-            TypeExpr::Ident(i) => i,
-            _ => bail!("Does not support impl for {:?}", im.self_ty),
-        },
-        defs: im.items.into_iter().map(parse_impl_item).try_collect()?,
+        trait_ty: im
+            .trait_
+            .map(|x| parse_path(x.1))
+            .transpose()?
+            .map(Pat::path),
+        self_ty: parse_type(*im.self_ty.clone())?,
+        items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
 fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
@@ -558,7 +560,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 value: DefValue::Function(f),
                 visibility,
             };
-            Ok(Item::Def(d))
+            Ok(Item::Define(d))
         }
         syn::Item::Impl(im) => Ok(Item::Impl(parse_impl(im)?)),
         syn::Item::Use(u) => Ok(match parse_use(u) {
@@ -570,7 +572,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
             let visibility = parse_vis(s.vis.clone());
 
             let struct_type = parse_item_struct(s)?;
-            Ok(Item::Def(Define {
+            Ok(Item::Define(Define {
                 name: struct_type.name.clone(),
                 kind: DefKind::Type,
                 ty: None,
@@ -580,7 +582,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
         }
         syn::Item::Type(t) => {
             let visibility = parse_vis(t.vis.clone());
-            Ok(Item::Def(Define {
+            Ok(Item::Define(Define {
                 name: parse_ident(t.ident),
                 kind: DefKind::Type,
                 ty: None,

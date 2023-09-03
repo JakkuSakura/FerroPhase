@@ -181,7 +181,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     }
     fn prescan_item(&self, item: &Item, ctx: &ArcScopedContext) -> Result<()> {
         match item {
-            Item::Def(x) => self.prescan_def(x, ctx),
+            Item::Define(x) => self.prescan_def(x, ctx),
             Item::Module(x) => self.prescan_module(x, ctx),
             _ => Ok(()),
         }
@@ -200,7 +200,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         item = self.pass.optimize_item_pre(item, ctx)?;
 
         item = match item {
-            Item::Def(x) => self.optimize_def(x, ctx).map(Item::Def)?,
+            Item::Define(x) => self.optimize_def(x, ctx).map(Item::Define)?,
             Item::Import(x) => self.optimize_import(x, ctx).map(Item::Import)?,
             Item::Module(x) => self.optimize_module(x, ctx, true).map(Item::Module)?,
             Item::Expr(x) => {

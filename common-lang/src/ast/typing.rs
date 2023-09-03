@@ -6,8 +6,7 @@ use crate::value::*;
 /// TypeExpr is an expression that returns a type
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TypeExpr {
-    Ident(Ident),
-    Path(Path),
+    Pat(Pat),
     BinOp(TypeBinOp),
     Invoke(Invoke),
     SelfType(SelfType),
@@ -16,14 +15,10 @@ pub enum TypeExpr {
 
 impl TypeExpr {
     pub fn path(path: Path) -> TypeExpr {
-        if path.segments.len() == 1 {
-            TypeExpr::Ident(path.segments[0].clone())
-        } else {
-            TypeExpr::Path(path)
-        }
+        TypeExpr::Pat(Pat::path(path))
     }
     pub fn ident(ident: Ident) -> TypeExpr {
-        TypeExpr::Ident(ident)
+        TypeExpr::Pat(Pat::ident(ident))
     }
     pub fn unit() -> TypeExpr {
         TypeExpr::value(TypeValue::unit())

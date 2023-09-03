@@ -391,7 +391,7 @@ impl InterpreterPass {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
             Item::Module(n) => self.interpret_module(n, ctx),
-            Item::Def(n) => self.interpret_def(n, ctx).map(|_| Value::unit()),
+            Item::Define(n) => self.interpret_def(n, ctx).map(|_| Value::unit()),
             Item::Import(n) => self.interpret_import(n, ctx).map(|_| Value::unit()),
 
             Item::Any(n) => Ok(Value::Any(n.clone())),
@@ -445,7 +445,7 @@ impl OptimizePass for InterpreterPass {
     }
     fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
         match item {
-            Item::Def(def) if def.name.as_str() == "main" => match def.value {
+            Item::Define(def) if def.name.as_str() == "main" => match def.value {
                 DefValue::Function(func) => Ok(Item::Expr(*func.body)),
                 _ => bail!("main should be a function"),
             },
