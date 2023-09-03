@@ -19,55 +19,93 @@ pub fn parse_path(p: syn::Path) -> Result<Path> {
             .into_iter()
             .map(|x| {
                 let ident = parse_ident(x.ident);
-                ensure!(x.arguments.is_none(), "Does not support path arguments");
+                ensure!(
+                    x.arguments.is_none(),
+                    "Does not support path arguments: {:?}",
+                    x.arguments
+                );
                 Ok(ident)
             })
             .try_collect()?,
     })
 }
+// pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
+//     Ok(ParameterPath {
+//         segments: p
+//             .segments
+//             .into_iter()
+//             .map(|x| {
+//                 let ident = parse_ident(x.ident);
+//                 let params = match x.arguments {
+//                     syn::PathArguments::AngleBracketed(a) => a
+//                         .args
+//                         .into_iter()
+//                         .map(|x| match x {
+//                             syn::GenericArgument::Type(t) => Ok(parse_type_value(t)?),
+//                             _ => bail!("Does not support path arguments: {:?}", x),
+//                         })
+//                         .try_collect()?,
+//                     _ => bail!("Does not support path arguments: {:?}", x),
+//                 };
+//                 Ok(ParameterPathSegment { ident, params })
+//             })
+//             .try_collect()?,
+//     })
+// }
 
-fn parse_type(t: syn::Type) -> Result<TypeExpr> {
+fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
     let t = match t {
-        syn::Type::BareFn(f) => TypeExpr::value(TypeValue::Function(FunctionType {
+        syn::Type::BareFn(f) => TypeValue::Function(FunctionType {
             params: f
                 .inputs
                 .into_iter()
                 .map(|x| x.ty)
-                .map(parse_type)
-                .map(|x| x.map(Box::new).map(TypeValue::Expr))
+                .map(parse_type_value)
                 .try_collect()?,
             generics_params: vec![],
-            ret: TypeValue::expr(parse_return_type(f.output)?.into()).into(),
-        }))
+            ret: parse_return_type(f.output)?.into(),
+        })
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
+            fn int(ty: IntType) -> TypeValue {
+                TypeValue::Primitive(PrimitiveType::Int(ty))
+            }
+            fn float(ty: DecimalType) -> TypeValue {
+                TypeValue::Primitive(PrimitiveType::Decimal(ty))
+            }
 
             match s.as_str() {
-                "i64" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I64))),
-                "i32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I32))),
-                "i16" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I16))),
-                "i8" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::I8))),
-                "u64" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U64))),
-                "u32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U32))),
-                "u16" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U16))),
-                "u8" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Int(IntType::U8))),
-                "f64" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Decimal(
-                    DecimalType::F64,
-                ))),
-                "f32" => TypeExpr::value(TypeValue::Primitive(PrimitiveType::Decimal(
-                    DecimalType::F32,
-                ))),
-                _ => TypeExpr::path(parse_path(p.path)?),
+                "i64" => int(IntType::I64),
+                "i32" => int(IntType::I32),
+                "i16" => int(IntType::I16),
+                "i8" => int(IntType::I8),
+                "u64" => int(IntType::U64),
+                "u32" => int(IntType::U32),
+                "u16" => int(IntType::U16),
+                "u8" => int(IntType::U8),
+                "f64" => float(DecimalType::F64),
+                "f32" => float(DecimalType::F32),
+                _ => TypeValue::path(parse_path(p.path)?),
             }
         }
-        syn::Type::ImplTrait(im) => TypeExpr::value(TypeValue::ImplTraits(parse_impl_trait(im)?)),
-        syn::Type::Tuple(t) if t.elems.is_empty() => TypeExpr::unit().into(),
-
-        syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => parse_custom_type_expr(m)?,
+        syn::Type::ImplTrait(im) => TypeValue::ImplTraits(parse_impl_trait(im)?),
+        syn::Type::Tuple(t) if t.elems.is_empty() => TypeValue::unit().into(),
+        // types like t!{ }
+        syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
+            TypeValue::expr(parse_custom_type_expr(m)?)
+        }
+        syn::Type::Reference(r) => TypeValue::Reference(parse_type_reference(r)?),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
+}
+fn parse_type_reference(r: syn::TypeReference) -> Result<ReferenceType> {
+    Ok(ReferenceType {
+        ty: Box::new(parse_type_value(*r.elem)?),
+        mutability: Some(r.mutability.is_some()),
+        lifetime: r.lifetime.map(|x| parse_ident(x.ident)),
+    })
 }
 fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
     Ok(ImplTraits {
@@ -88,7 +126,7 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
 
         FnArg::Typed(t) => FunctionParam {
             name: parse_pat(*t.pat)?,
-            ty: TypeValue::expr(parse_type(*t.ty)?),
+            ty: parse_type_value(*t.ty)?,
         },
     })
 }
@@ -101,10 +139,10 @@ fn parse_pat(p: syn::Pat) -> Result<Ident> {
     })
 }
 
-fn parse_return_type(o: ReturnType) -> Result<TypeExpr> {
+fn parse_return_type(o: ReturnType) -> Result<TypeValue> {
     Ok(match o {
-        ReturnType::Default => TypeExpr::unit(),
-        ReturnType::Type(_, t) => parse_type(*t)?,
+        ReturnType::Default => TypeValue::unit(),
+        ReturnType::Type(_, t) => parse_type_value(*t)?,
     })
 }
 fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<TypeExpr> {
@@ -146,7 +184,7 @@ fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
             .map(|x| parse_input(x))
             .try_collect()?,
         generics_params,
-        ret: TypeValue::expr(parse_return_type(f.sig.output)?),
+        ret: parse_return_type(f.sig.output)?,
         body: Expr::block(parse_block(*f.block)?).into(),
     })
 }
@@ -302,7 +340,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?),
         syn::Expr::Path(p) => Expr::path(parse_path(p.path)?),
-        syn::Expr::Reference(r) => Expr::Reference(parse_ref(r)?),
+        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
         syn::Expr::Struct(s) => Expr::value(Value::Struct(parse_struct_expr(s)?)),
 
@@ -316,6 +354,10 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
 fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
     Ok(match stmt {
         syn::Stmt::Local(l) => Statement::Let(Let {
+            mutability: match &l.pat {
+                syn::Pat::Ident(i) => Some(i.mutability.is_some()),
+                _ => None,
+            },
             name: parse_pat(l.pat)?,
             ty: None,
             value: parse_expr(*l.init.context("No value")?.expr)?,
@@ -375,7 +417,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
             name: parse_ident(t.ident),
             kind: DefKind::Type,
             ty: None,
-            value: DefValue::Type(parse_type(t.ty)?),
+            value: DefValue::Type(TypeExpr::value(parse_type_value(t.ty)?)),
             visibility: parse_vis(t.vis),
         })),
         _ => bail!("Does not support impl item {:?}", item),
@@ -387,8 +429,8 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
             .trait_
             .map(|x| parse_path(x.1))
             .transpose()?
-            .map(Pat::path),
-        self_ty: parse_type(*im.self_ty.clone())?,
+            .map(Locator::path),
+        self_ty: TypeExpr::value(parse_type_value(*im.self_ty.clone())?),
         items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
@@ -399,7 +441,7 @@ fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
             .map(parse_ident)
             .unwrap_or(Ident::new(format!("{}", i))),
 
-        value: TypeValue::Expr(parse_type(f.ty)?.into()),
+        value: parse_type_value(f.ty)?.into(),
     })
 }
 fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
@@ -586,14 +628,15 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 name: parse_ident(t.ident),
                 kind: DefKind::Type,
                 ty: None,
-                value: DefValue::Type(parse_type(*t.ty)?),
+                value: DefValue::Type(TypeExpr::value(parse_type_value(*t.ty)?)),
                 visibility,
             }))
         }
-        _ => bail!("Does not support item {:?} yet", item),
+        syn::Item::Mod(m) => Ok(Item::Module(parse_module(m)?)),
+        _ => bail!("Does not support item yet: {:?}", item),
     }
 }
-fn parse_ref(item: syn::ExprReference) -> Result<Reference> {
+fn parse_expr_reference(item: syn::ExprReference) -> Result<Reference> {
     Ok(Reference {
         referee: parse_expr(*item.expr)?.into(),
         mutable: Some(item.mutability.is_some()),

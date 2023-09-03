@@ -1,12 +1,19 @@
+use crate::common_derives;
+use crate::value::{ToJson, Value};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
 
-#[derive(Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub enum Pat {
-    Ident(Ident),
-    Path(Path),
+common_derives! {
+    no_debug
+    pub enum Locator {
+        Ident(Ident),
+        Path(Path),
+        ParameterPath(ParameterPath),
+    }
+
 }
-impl Pat {
+impl Locator {
     pub fn ident(ident: Ident) -> Self {
         Self::Ident(ident)
     }
@@ -17,35 +24,41 @@ impl Pat {
         Self::Path(path)
     }
 }
-impl Into<Path> for Pat {
+impl Into<Path> for Locator {
     fn into(self) -> Path {
         match self {
             Self::Ident(ident) => ident.into(),
             Self::Path(path) => path,
+            Self::ParameterPath(path) => panic!("cannot convert ParameterPath to Path: {:?}", path),
         }
     }
 }
-impl<'a> Into<Path> for &'a Pat {
+impl<'a> Into<Path> for &'a Locator {
     fn into(self) -> Path {
         match self {
-            Pat::Ident(ident) => ident.into(),
-            Pat::Path(path) => path.clone(),
+            Locator::Ident(ident) => ident.into(),
+            Locator::Path(path) => path.clone(),
+            Locator::ParameterPath(path) => {
+                panic!("cannot convert ParameterPath to Path: {:?}", path)
+            }
         }
     }
 }
-impl Display for Pat {
+impl Display for Locator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ident(ident) => Display::fmt(ident, f),
             Self::Path(path) => Display::fmt(path, f),
+            Self::ParameterPath(path) => Display::fmt(path, f),
         }
     }
 }
-impl Debug for Pat {
+impl Debug for Locator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ident(ident) => Debug::fmt(ident, f),
             Self::Path(path) => Debug::fmt(path, f),
+            Self::ParameterPath(path) => Debug::fmt(path, f),
         }
     }
 }
@@ -141,5 +154,66 @@ impl<'a> From<&'a Ident> for Path {
 impl<'a> From<&'a Path> for Path {
     fn from(path: &Path) -> Self {
         path.clone()
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct ParameterPathSegment {
+    pub ident: Ident,
+    pub args: Vec<Value>,
+}
+impl ParameterPathSegment {
+    pub fn new(ident: Ident, args: Vec<Value>) -> Self {
+        Self { ident, args }
+    }
+}
+impl Hash for ParameterPathSegment {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ident.hash(state);
+        if !self.args.is_empty() {
+            panic!(
+                "ParameterPathSegment::hash: args is not empty: {:?}",
+                self.args
+            );
+        }
+    }
+}
+impl PartialOrd for ParameterPathSegment {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.ident.cmp(&other.ident))
+    }
+}
+impl Ord for ParameterPathSegment {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ident.cmp(&other.ident)
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ParameterPath {
+    pub segments: Vec<ParameterPathSegment>,
+}
+
+impl Display for ParameterPath {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut first = true;
+        for seg in &self.segments {
+            if !first {
+                write!(f, "::")?;
+            }
+            first = false;
+            write!(f, "{}", seg.ident.name)?;
+            if !seg.args.is_empty() {
+                write!(f, "<")?;
+                let mut first = true;
+                for arg in &seg.args {
+                    if !first {
+                        write!(f, ", ")?;
+                    }
+                    first = false;
+                    write!(f, "{}", arg.to_json().expect("failed to format to json"))?;
+                }
+                write!(f, ">")?;
+            }
+        }
+        Ok(())
     }
 }

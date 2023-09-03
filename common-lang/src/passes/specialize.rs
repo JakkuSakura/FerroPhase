@@ -89,6 +89,7 @@ impl SpecializePass {
 
             let binding = Statement::Let(Let {
                 name,
+                mutability: Some(false),
                 ty: None,
                 value: Expr::value(value),
             });
@@ -105,7 +106,7 @@ impl SpecializePass {
         let mut ret = func.ret.clone();
         match &ret {
             TypeValue::Expr(expr) => match &**expr {
-                TypeExpr::Pat(Pat::Ident(ident))
+                TypeExpr::Pat(Locator::Ident(ident))
                     if func
                         .generics_params
                         .iter()
@@ -147,7 +148,7 @@ impl SpecializePass {
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         match &*invoke.func {
-            Expr::Pat(Pat::Ident(ident)) if ident.as_str() == "print" => {
+            Expr::Pat(Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke);
             }
             _ => {}

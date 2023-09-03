@@ -1,26 +1,41 @@
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt::Debug;
-use std::rc::Rc;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
 pub trait AnyBoxable: Any + Debug + Clone + PartialEq + Eq + 'static {}
 impl<T: Any + Debug + Clone + PartialEq + Eq + 'static> AnyBoxable for T {}
-pub struct AnyBox {
-    pub value: Box<dyn Any>,
-    debug: Rc<str>,
-    clone: fn(&dyn Any) -> Box<dyn Any>,
-    equals: fn(&dyn Any, &dyn Any) -> bool,
+pub struct AnyBoxVTable {
+    pub debug: fn(&dyn Any) -> String,
+    pub clone: fn(&dyn Any) -> Box<dyn Any>,
+    pub equals: fn(&dyn Any, &dyn Any) -> bool,
+    pub hash: fn(&dyn Any) -> u64,
 }
-impl AnyBox {
-    pub fn new<T: AnyBoxable>(t: T) -> Self {
+impl AnyBoxVTable {
+    pub fn new<T: AnyBoxable>() -> Self {
         Self {
-            debug: Rc::from(format!("{:?}", t)),
-            value: Box::new(t),
+            debug: |v| format!("{:?}", v.downcast_ref::<T>().unwrap()),
             clone: |v| Box::new(v.downcast_ref::<T>().unwrap().clone()),
             equals: |a, b| {
                 let a = a.downcast_ref::<T>().unwrap();
                 let b = b.downcast_ref::<T>().unwrap();
                 a == b
             },
+            hash: |_| 0,
+        }
+    }
+}
+
+pub struct AnyBox {
+    pub value: Box<dyn Any>,
+    vtable: Arc<AnyBoxVTable>,
+}
+impl AnyBox {
+    pub fn new<T: AnyBoxable>(t: T) -> Self {
+        Self {
+            value: Box::new(t),
+            vtable: Arc::new(AnyBoxVTable::new::<T>()),
         }
     }
 
@@ -42,26 +57,25 @@ impl AnyBox {
 impl Clone for AnyBox {
     fn clone(&self) -> Self {
         Self {
-            debug: self.debug.clone(),
-            value: (self.clone)(self.value.as_ref()),
-            clone: self.clone,
-            equals: self.equals,
+            value: (self.vtable.clone)(self.value.as_ref()),
+            vtable: self.vtable.clone(),
         }
     }
 }
+
 impl Debug for AnyBox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.debug)
+        f.write_str((self.vtable.debug)(self.value.as_ref()).as_str())
     }
 }
 impl Serialize for AnyBox {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.debug.serialize(serializer)
+        (self.vtable.debug)(self.value.as_ref()).serialize(serializer)
     }
 }
 impl PartialEq for AnyBox {
     fn eq(&self, other: &Self) -> bool {
-        (self.equals)(self.value.as_ref(), other.value.as_ref())
+        (self.vtable.equals)(self.value.as_ref(), other.value.as_ref())
     }
 }
 impl Eq for AnyBox {}
@@ -72,5 +86,10 @@ impl<'de> Deserialize<'de> for AnyBox {
             "Cannot deserialize AnyBox: {}",
             name
         )))
+    }
+}
+impl Hash for AnyBox {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.vtable.hash)(self.value.as_ref()).hash(state);
     }
 }
