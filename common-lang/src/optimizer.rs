@@ -232,6 +232,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             name: let_.name.clone(),
             value,
             ty: let_.ty,
+            mutability: let_.mutability,
         })
     }
     pub fn optimize_stmt(&self, stmt: Statement, ctx: &ArcScopedContext) -> Result<Statement> {
@@ -250,6 +251,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
                 let expr = self.optimize_expr(x.expr, ctx)?;
                 Ok(Statement::SideEffect(SideEffect { expr }))
             }
+            _ => bail!("Could not optimize {:?}", stmt),
         }
     }
 

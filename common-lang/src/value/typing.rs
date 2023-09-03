@@ -1,25 +1,30 @@
 use crate::ast::{AnyBox, AnyBoxable, Ident, Path, TypeExpr};
+use crate::common_derives;
 use crate::value::GenericParam;
 use common::*;
 use std::fmt::Debug;
+use std::hash::Hash;
 
-/// TypeValue is a solid type value
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum TypeValue {
-    Primitive(PrimitiveType),
-    NamedStruct(NamedStructType),
-    UnnamedStruct(UnnamedStructType),
-    Function(FunctionType),
-    ImplTraits(ImplTraits),
-    TypeBounds(TypeBounds),
-    Tuple(TupleType),
-    Vec(VecType),
-    Any(AnyType),
-    Unit(UnitType),
-    Nothing(NothingType),
-    Type(TypeType),
-    Expr(Box<TypeExpr>),
-    AnyBox(AnyBox),
+common_derives! {
+    /// TypeValue is a solid type value
+    pub enum TypeValue {
+        Primitive(PrimitiveType),
+        NamedStruct(NamedStructType),
+        UnnamedStruct(UnnamedStructType),
+        Function(FunctionType),
+        ImplTraits(ImplTraits),
+        TypeBounds(TypeBounds),
+        Tuple(TupleType),
+        Vec(VecType),
+        Any(AnyType),
+        Unit(UnitType),
+        Nothing(NothingType),
+        Type(TypeType),
+        Reference(ReferenceType),
+        Expr(Box<TypeExpr>),
+        AnyBox(AnyBox),
+    }
+
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {
@@ -43,6 +48,13 @@ impl TypeValue {
     pub fn ident(ident: Ident) -> TypeValue {
         TypeValue::expr(TypeExpr::ident(ident))
     }
+    pub fn reference(ty: TypeValue) -> Self {
+        TypeValue::Reference(ReferenceType {
+            ty: Box::new(ty),
+            mutability: None,
+            lifetime: None,
+        })
+    }
     pub fn any_box<T: AnyBoxable>(any: T) -> Self {
         Self::AnyBox(AnyBox::new(any))
     }
@@ -56,33 +68,40 @@ impl TypeValue {
         Self::TypeBounds(TypeBounds::new(expr))
     }
 }
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum IntType {
-    I64,
-    U64,
-    I32,
-    U32,
-    I16,
-    U16,
-    I8,
-    U8,
-    BigInt,
+
+common_derives! {
+    #[derive(Copy)]
+    pub enum IntType {
+        I64,
+        U64,
+        I32,
+        U32,
+        I16,
+        U16,
+        I8,
+        U8,
+        BigInt,
+    }
 }
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum DecimalType {
-    F64,
-    F32,
-    BigDecimal,
-    Decimal { precision: u32, scale: u32 },
+common_derives! {
+    #[derive(Copy)]
+    pub enum DecimalType {
+        F64,
+        F32,
+        BigDecimal,
+        Decimal { precision: u32, scale: u32 },
+    }
 }
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum PrimitiveType {
-    Int(IntType),
-    Decimal(DecimalType),
-    Bool,
-    Char,
-    String,
-    List,
+common_derives! {
+    #[derive(Copy)]
+    pub enum PrimitiveType {
+        Int(IntType),
+        Decimal(DecimalType),
+        Bool,
+        Char,
+        String,
+        List,
+    }
 }
 
 impl PrimitiveType {
@@ -97,45 +116,52 @@ impl PrimitiveType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct VecType {
-    pub ty: Box<TypeValue>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TupleType {
-    pub types: Vec<TypeValue>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FieldTypeValue {
-    pub name: Ident,
-    pub value: TypeValue,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct NamedStructType {
-    pub name: Ident,
-    pub fields: Vec<FieldTypeValue>,
+common_derives! {
+    pub struct VecType {
+        pub ty: Box<TypeValue>,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UnnamedStructType {
-    pub fields: Vec<FieldTypeValue>,
+common_derives! {
+    pub struct TupleType {
+        pub types: Vec<TypeValue>,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FunctionType {
-    pub params: Vec<TypeValue>,
-    pub generics_params: Vec<GenericParam>,
-    pub ret: Box<TypeValue>,
+common_derives! {
+    pub struct FieldTypeValue {
+        pub name: Ident,
+        pub value: TypeValue,
+    }
+}
+common_derives! {
+    pub struct NamedStructType {
+        pub name: Ident,
+        pub fields: Vec<FieldTypeValue>,
+    }
+}
+common_derives! {
+    pub struct UnnamedStructType {
+        pub fields: Vec<FieldTypeValue>,
+    }
+}
+common_derives! {
+    pub struct FunctionType {
+        pub params: Vec<TypeValue>,
+        pub generics_params: Vec<GenericParam>,
+        pub ret: Box<TypeValue>,
+    }
+}
+common_derives! {
+    pub struct ImplTraits {
+        pub bounds: TypeBounds,
+    }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ImplTraits {
-    pub bounds: TypeBounds,
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct TypeBounds {
-    pub bounds: Vec<TypeExpr>,
+common_derives! {
+    pub struct TypeBounds {
+        pub bounds: Vec<TypeExpr>,
+    }
 }
 impl TypeBounds {
     pub fn any() -> Self {
@@ -148,12 +174,22 @@ impl TypeBounds {
         TypeBounds { bounds: vec![expr] }
     }
 }
+macro_rules! plain_type {
+    ($name: ident) => {
+        common_derives! {
+            pub struct $name;
+        }
+    };
+}
+plain_type! { AnyType }
+plain_type! { UnitType }
+plain_type! { NothingType }
+plain_type! { TypeType }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct AnyType;
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UnitType;
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct NothingType;
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TypeType;
+common_derives! {
+    pub struct ReferenceType {
+        pub ty: Box<TypeValue>,
+        pub mutability: Option<bool>,
+        pub lifetime: Option<Ident>,
+    }
+}

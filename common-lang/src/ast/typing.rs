@@ -2,11 +2,12 @@ use crate::ast::*;
 use crate::ast::{Ident, Invoke};
 use crate::ops::*;
 use crate::value::*;
+use std::hash::{Hash, Hasher};
 
 /// TypeExpr is an expression that returns a type
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TypeExpr {
-    Pat(Pat),
+    Pat(Locator),
     BinOp(TypeBinOp),
     Invoke(Invoke),
     SelfType(SelfType),
@@ -15,10 +16,10 @@ pub enum TypeExpr {
 
 impl TypeExpr {
     pub fn path(path: Path) -> TypeExpr {
-        TypeExpr::Pat(Pat::path(path))
+        TypeExpr::Pat(Locator::path(path))
     }
     pub fn ident(ident: Ident) -> TypeExpr {
-        TypeExpr::Pat(Pat::ident(ident))
+        TypeExpr::Pat(Locator::ident(ident))
     }
     pub fn unit() -> TypeExpr {
         TypeExpr::value(TypeValue::unit())
@@ -32,10 +33,18 @@ impl TypeExpr {
     pub fn type_bound(expr: TypeExpr) -> TypeExpr {
         TypeExpr::value(TypeValue::type_bound(expr))
     }
-    pub fn as_pat(&self) -> Option<&Pat> {
+    pub fn as_locator(&self) -> Option<&Locator> {
         match self {
             TypeExpr::Pat(pat) => Some(pat),
             _ => None,
+        }
+    }
+}
+impl Hash for TypeExpr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            TypeExpr::Value(value) => value.hash(state),
+            _ => panic!("cannot hash type expr: {:?}", self),
         }
     }
 }

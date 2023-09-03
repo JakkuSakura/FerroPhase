@@ -1,3 +1,4 @@
+use crate::common_derives;
 use common::*;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -5,27 +6,29 @@ use std::path::PathBuf;
 mod anybox;
 mod expr;
 mod item;
-mod pat;
+mod locator;
 mod stmt;
 mod typing;
 
 pub use anybox::*;
 pub use expr::*;
 pub use item::*;
-pub use pat::*;
+pub use locator::*;
 pub use stmt::*;
 pub use typing::*;
 
-/// Tree is any syntax tree element
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Tree {
-    Item(Item),
-    Expr(Expr),
-    File(File),
+common_derives! {
+    /// Tree is any syntax tree element
+    pub enum Tree {
+        Item(Item),
+        Expr(Expr),
+        File(File),
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct File {
-    pub path: PathBuf,
-    pub module: Module,
+common_derives! {
+    pub struct File {
+        pub path: PathBuf,
+        pub module: Module,
+    }
 }
