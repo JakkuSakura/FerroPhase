@@ -7,7 +7,7 @@ use std::hash::{Hash, Hasher};
 /// TypeExpr is an expression that returns a type
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TypeExpr {
-    Pat(Locator),
+    Locator(Locator),
     BinOp(TypeBinOp),
     Invoke(Invoke),
     SelfType(SelfType),
@@ -16,10 +16,10 @@ pub enum TypeExpr {
 
 impl TypeExpr {
     pub fn path(path: Path) -> TypeExpr {
-        TypeExpr::Pat(Locator::path(path))
+        TypeExpr::Locator(Locator::path(path))
     }
     pub fn ident(ident: Ident) -> TypeExpr {
-        TypeExpr::Pat(Locator::ident(ident))
+        TypeExpr::Locator(Locator::ident(ident))
     }
     pub fn unit() -> TypeExpr {
         TypeExpr::value(TypeValue::unit())
@@ -35,7 +35,7 @@ impl TypeExpr {
     }
     pub fn as_locator(&self) -> Option<&Locator> {
         match self {
-            TypeExpr::Pat(pat) => Some(pat),
+            TypeExpr::Locator(pat) => Some(pat),
             _ => None,
         }
     }

@@ -1,8 +1,8 @@
 use crate::ast::{AnyBox, AnyBoxable, Ident, Path, TypeExpr};
 use crate::common_derives;
-use crate::value::GenericParam;
+use crate::value::*;
 use common::*;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
 common_derives! {
@@ -14,6 +14,7 @@ common_derives! {
         Function(FunctionType),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
+        Literal(LiteralType),
         Tuple(TupleType),
         Vec(VecType),
         Any(AnyType),
@@ -66,6 +67,14 @@ impl TypeValue {
     }
     pub fn type_bound(expr: TypeExpr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))
+    }
+}
+impl Display for TypeValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeValue::Literal(value) => Display::fmt(value, f),
+            _ => panic!("cannot display type value: {:?}", self),
+        }
     }
 }
 
@@ -191,5 +200,23 @@ common_derives! {
         pub ty: Box<TypeValue>,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
+    }
+}
+
+common_derives! {
+    pub struct LiteralType {
+        pub value: Box<Value>,
+    }
+}
+impl LiteralType {
+    pub fn new(value: Value) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+}
+impl Display for LiteralType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.value, f)
     }
 }
