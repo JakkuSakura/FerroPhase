@@ -59,7 +59,7 @@ impl RustPrinter {
         let ty = self.print_type_value(&field.value)?;
         Ok(quote!(pub #name: #ty ))
     }
-    pub fn print_struct_type(&self, s: &NamedStructType) -> Result<TokenStream> {
+    pub fn print_struct_type(&self, s: &StructType) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let fields: Vec<_> = s
             .fields
@@ -70,7 +70,7 @@ impl RustPrinter {
             #(#fields), *
         }))
     }
-    pub fn print_unnamed_struct_type(&self, s: &UnnamedStructType) -> Result<TokenStream> {
+    pub fn print_unnamed_struct_type(&self, s: &StructuralType) -> Result<TokenStream> {
         let fields: Vec<_> = s
             .fields
             .iter()
@@ -462,7 +462,7 @@ impl RustPrinter {
         Ok(quote!(#name: #value))
     }
     pub fn print_struct_value(&self, s: &StructValue) -> Result<TokenStream> {
-        let name = self.print_type_expr(&s.name)?;
+        let name = self.print_ident(&s.struct_.name);
         let kwargs: Vec<_> = s
             .fields
             .iter()
@@ -585,8 +585,8 @@ impl RustPrinter {
         match v {
             TypeValue::Function(f) => self.print_func_type(f),
             TypeValue::Primitive(p) => self.print_primitive_type(*p),
-            TypeValue::NamedStruct(s) => self.print_struct_type(s),
-            TypeValue::UnnamedStruct(s) => self.print_unnamed_struct_type(s),
+            TypeValue::Struct(s) => self.print_struct_type(s),
+            TypeValue::Structural(s) => self.print_unnamed_struct_type(s),
             TypeValue::Expr(e) => self.print_type_expr(e),
             TypeValue::ImplTraits(t) => self.print_impl_traits(t),
             TypeValue::TypeBounds(t) => self.print_type_bounds(t),

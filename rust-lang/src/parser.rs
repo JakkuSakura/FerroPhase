@@ -298,9 +298,9 @@ fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
         value: Value::expr(parse_expr(fv.expr)?.into()),
     })
 }
-pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructValue> {
-    Ok(StructValue {
-        name: TypeExpr::path(parse_path(s.path)?),
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
+    Ok(StructExpr {
+        name: TypeExpr::path(parse_path(s.path)?).into(),
         fields: s
             .fields
             .into_iter()
@@ -342,7 +342,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Path(p) => Expr::path(parse_path(p.path)?),
         syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
-        syn::Expr::Struct(s) => Expr::value(Value::Struct(parse_struct_expr(s)?)),
+        syn::Expr::Struct(s) => Expr::Struct(parse_struct_expr(s)?),
 
         raw => {
             warn!("RawExpr {:?}", raw);
@@ -469,8 +469,8 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
         path: Path::new(segments),
     })
 }
-pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
-    Ok(NamedStructType {
+pub fn parse_item_struct(s: syn::ItemStruct) -> Result<StructType> {
+    Ok(StructType {
         name: parse_ident(s.ident),
         fields: s
             .fields
@@ -480,14 +480,14 @@ pub fn parse_item_struct(s: syn::ItemStruct) -> Result<NamedStructType> {
             .try_collect()?,
     })
 }
-struct UnnamedStructTypeParser(UnnamedStructType);
+struct UnnamedStructTypeParser(StructuralType);
 impl syn::parse::Parse for UnnamedStructTypeParser {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         input.parse::<Token![struct]>()?;
 
         let fields: FieldsNamed = input.parse()?;
 
-        Ok(UnnamedStructTypeParser(UnnamedStructType {
+        Ok(UnnamedStructTypeParser(StructuralType {
             fields: fields
                 .named
                 .into_iter()
@@ -499,8 +499,8 @@ impl syn::parse::Parse for UnnamedStructTypeParser {
     }
 }
 enum TypeValueParser {
-    UnnamedStruct(UnnamedStructType),
-    NamedStruct(NamedStructType),
+    UnnamedStruct(StructuralType),
+    NamedStruct(StructType),
     Path(Path),
     // Ident(Ident),
 }
@@ -515,8 +515,8 @@ impl Into<TypeValue> for TypeValueParser {
             //     lhs: o.lhs.into(),
             //     rhs: o.rhs.into(),
             // })),
-            TypeValueParser::UnnamedStruct(s) => TypeValue::UnnamedStruct(s),
-            TypeValueParser::NamedStruct(s) => TypeValue::NamedStruct(s),
+            TypeValueParser::UnnamedStruct(s) => TypeValue::Structural(s),
+            TypeValueParser::NamedStruct(s) => TypeValue::Struct(s),
             TypeValueParser::Path(p) => TypeValue::path(p),
             // TypeValueParser::Ident(i) => TypeValue::ident(i),
         }
@@ -618,7 +618,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 name: struct_type.name.clone(),
                 kind: DefKind::Type,
                 ty: None,
-                value: DefValue::Type(TypeExpr::value(TypeValue::NamedStruct(struct_type))),
+                value: DefValue::Type(TypeExpr::value(TypeValue::Struct(struct_type))),
                 visibility,
             }))
         }
