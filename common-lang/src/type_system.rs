@@ -71,16 +71,7 @@ impl TypeSystem {
                     lit
                 )
             }
-            Value::Struct(_) => {}
-            Value::Function(_) => {}
-            Value::Tuple(_) => {}
-            Value::Expr(_) => {}
-            Value::Any(_) => {}
-            Value::Null(_) => {}
-            Value::Undefined(_) => {}
-            Value::BinOpKind(_) => {}
-            Value::UnOpKind(_) => {}
-            Value::Structural(_) => {}
+            _ => {}
         }
         Ok(())
     }
@@ -91,7 +82,7 @@ impl TypeSystem {
         ctx: &ArcScopedContext,
     ) -> Result<()> {
         match expr {
-            Expr::Pat(n) => {
+            Expr::Locator(n) => {
                 let expr = ctx
                     .get_expr(n)
                     .with_context(|| format!("Could not find {:?} in context", n))?;
@@ -260,7 +251,7 @@ impl TypeSystem {
         ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         match callee {
-            Expr::Pat(Locator::Ident(ident)) => match ident.as_str() {
+            Expr::Locator(Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(params.first().context("No param")?, ctx)
                 }
@@ -306,7 +297,7 @@ impl TypeSystem {
     }
     pub fn infer_expr(&self, expr: &Expr, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match expr {
-            Expr::Pat(n) => {
+            Expr::Locator(n) => {
                 let ty = ctx
                     .get_type(n)
                     .with_context(|| format!("Could not find {:?} in context", n))?;

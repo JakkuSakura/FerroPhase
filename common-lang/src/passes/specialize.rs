@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::context::ArcScopedContext;
-use crate::interpreter::OptimizeInterpreter;
+use crate::interpreter::Interpreter;
 use crate::passes::OptimizePass;
 use crate::type_system::TypeSystem;
 use crate::value::*;
@@ -11,14 +11,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub struct SpecializePass {
     spec_id: AtomicUsize,
     serializer: Rc<dyn Serializer>,
-    interpreter: OptimizeInterpreter,
+    interpreter: Interpreter,
     type_system: TypeSystem,
 }
 impl SpecializePass {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
-            interpreter: OptimizeInterpreter::new(serializer.clone()),
+            interpreter: Interpreter::new(serializer.clone()),
             type_system: TypeSystem::new(serializer.clone()),
             serializer,
         }
@@ -38,7 +38,7 @@ impl SpecializePass {
             .args
             .iter()
             .map(|x| match x {
-                Expr::Pat(v) => ctx
+                Expr::Locator(v) => ctx
                     .get_expr(v)
                     .with_context(|| format!("Couldn't find {:?} in context", v)),
 
@@ -119,11 +119,14 @@ impl SpecializePass {
             },
             _ => {}
         }
-        let new_func = FunctionValue {
+        let sig = FunctionSignature {
             name: Some(new_name.clone()),
-            params: new_params,
+            params: new_params.clone(),
             generics_params: vec![],
-            ret,
+            ret: ret.clone(),
+        };
+        let new_func = FunctionValue {
+            sig,
             body: new_body.into(),
         };
         trace!(
@@ -148,7 +151,7 @@ impl SpecializePass {
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         match &*invoke.func {
-            Expr::Pat(Locator::Ident(ident)) if ident.as_str() == "print" => {
+            Expr::Locator(Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke);
             }
             _ => {}
@@ -168,7 +171,7 @@ impl SpecializePass {
                 Item::Define(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => true,
                 Item::Define(d) => {
                     let func = match &d.value {
-                        DefValue::Function(f) => f,
+                        DefineValue::Function(f) => f,
                         _ => return true,
                     };
                     func.params.is_empty() && func.generics_params.is_empty()
@@ -180,11 +183,11 @@ impl SpecializePass {
             let func = ctx.get_function(specialized_name).unwrap();
             let define = Define {
                 name: func.name.clone().expect("No specialized name"),
-                kind: DefKind::Function,
+                kind: DefineKind::Function,
                 ty: Some(TypeValue::Function(
                     self.type_system.infer_function(&func, ctx)?,
                 )),
-                value: DefValue::Function(func),
+                value: DefineValue::Function(func),
                 visibility: Visibility::Public,
             };
             module.items.push(Item::Define(define));

@@ -7,10 +7,10 @@ use crate::*;
 use common::*;
 use std::rc::Rc;
 
-pub struct OptimizeInterpreter {
+pub struct Interpreter {
     pub opt: FoldOptimizer<InterpreterPass>,
 }
-impl OptimizeInterpreter {
+impl Interpreter {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         let pass = InterpreterPass::new(serializer.clone());
         Self {

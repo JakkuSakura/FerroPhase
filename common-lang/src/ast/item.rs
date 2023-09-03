@@ -1,18 +1,19 @@
 use crate::ast::*;
-use crate::value::{FunctionValue, TypeValue};
+use crate::value::*;
 use common::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
-use std::mem::discriminant;
+use std::hash::Hash;
 
-/// Item is an syntax tree node that "declares" a thing without returning a value
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum Item {
-    Module(Module),
-    Define(Define),
-    Import(Import),
-    Impl(Impl),
-    Expr(Expr),
-    Any(AnyBox),
+common_derives! {
+    /// Item is an syntax tree node that "declares" a thing without returning a value
+    pub enum Item {
+        Module(Module),
+        Define(Define),
+        Declare(Declare),
+        Import(Import),
+        Impl(Impl),
+        Expr(Expr),
+        Any(AnyBox),
+    }
 }
 
 impl Item {
@@ -49,37 +50,74 @@ impl Item {
             _ => None,
         }
     }
-}
-impl Hash for Item {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        discriminant(self).hash(state);
+    pub fn get_ident(&self) -> Option<&Ident> {
         match self {
-            Self::Module(module) => module.hash(state),
-            Self::Define(define) => define.hash(state),
-            Self::Import(import) => import.hash(state),
-            Self::Impl(impl_) => impl_.hash(state),
-            Self::Expr(expr) => expr.hash(state),
-            Self::Any(any) => any.hash(state),
+            Self::Define(define) => Some(&define.name),
+            Self::Declare(declare) => Some(&declare.name),
+            Self::Module(module) => Some(&module.name),
+            _ => None,
         }
     }
 }
-pub type ItemChunk = Vec<Item>;
 
+pub type ItemChunk = Vec<Item>;
+pub trait ItemChunkExt {
+    fn find_item(&self, name: &str) -> Option<&Item>;
+    fn list_impl_trait(&self, trait_ty: &str) -> Vec<&Impl>;
+    fn list_impl_type(&self, self_ty: &str) -> Vec<&Impl>;
+}
+impl ItemChunkExt for ItemChunk {
+    fn find_item(&self, name: &str) -> Option<&Item> {
+        self.iter().find(|item| {
+            if let Some(ident) = item.get_ident() {
+                ident.as_str() == name
+            } else {
+                false
+            }
+        })
+    }
+    fn list_impl_trait(&self, trait_ty: &str) -> Vec<&Impl> {
+        self.iter()
+            .filter_map(|item| match item {
+                Item::Impl(impl_) => {
+                    if let Some(trait_ty_) = &impl_.trait_ty {
+                        if trait_ty_.to_string() == trait_ty {
+                            Some(impl_)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect()
+    }
+    fn list_impl_type(&self, self_ty: &str) -> Vec<&Impl> {
+        self.iter()
+            .filter_map(|item| match item {
+                Item::Impl(impl_) if impl_.trait_ty.is_none() => {
+                    if let TypeExpr::Locator(Locator::Ident(ident)) = &impl_.self_ty {
+                        if ident.as_str() == self_ty {
+                            Some(impl_)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect()
+    }
+}
 common_derives! {
     pub struct Module {
         pub name: Ident,
         pub items: ItemChunk,
         pub visibility: Visibility,
-    }
-}
-impl Module {
-    pub fn find_item(&self, name: &str) -> Option<&Item> {
-        self.items.iter().find(|item| match item {
-            Item::Define(define) => define.name.as_str() == name,
-            Item::Module(module) => module.name.as_str() == name,
-            Item::Import(import) => import.path.to_string().as_str() == name,
-            _ => false,
-        })
     }
 }
 
@@ -122,37 +160,39 @@ common_derives! {
 
 common_derives! {
     #[derive(Copy)]
-    pub enum DefKind {
+    pub enum DefineKind {
         Unknown,
         Function,
         Type,
         Const,
+        Trait,
     }
 }
 
 common_derives! {
-    pub enum DefValue {
+    pub enum DefineValue {
         Function(FunctionValue),
         Type(TypeExpr),
         Const(Expr),
+        Trait(Trait),
     }
 }
-impl DefValue {
+impl DefineValue {
     pub fn as_function(&self) -> Option<&FunctionValue> {
         match self {
-            DefValue::Function(fn_) => Some(fn_),
+            DefineValue::Function(fn_) => Some(fn_),
             _ => None,
         }
     }
     pub fn as_type(&self) -> Option<&TypeExpr> {
         match self {
-            DefValue::Type(ty) => Some(ty),
+            DefineValue::Type(ty) => Some(ty),
             _ => None,
         }
     }
     pub fn as_const(&self) -> Option<&Expr> {
         match self {
-            DefValue::Const(expr) => Some(expr),
+            DefineValue::Const(expr) => Some(expr),
             _ => None,
         }
     }
@@ -161,9 +201,9 @@ impl DefValue {
 common_derives! {
     pub struct Define {
         pub name: Ident,
-        pub kind: DefKind,
+        pub kind: DefineKind,
         pub ty: Option<TypeValue>,
-        pub value: DefValue,
+        pub value: DefineValue,
         pub visibility: Visibility,
     }
 }
@@ -182,13 +222,25 @@ common_derives! {
         pub items: ItemChunk,
     }
 }
-impl Impl {
-    pub fn find_item(&self, name: &str) -> Option<&Item> {
-        self.items.iter().find(|item| match item {
-            Item::Define(define) => define.name.as_str() == name,
-            Item::Module(module) => module.name.as_str() == name,
-            Item::Import(import) => import.path.to_string().as_str() == name,
-            _ => false,
-        })
+
+common_derives! {
+    pub struct Trait {
+        pub name: Ident,
+        pub bounds: TypeBounds,
+        pub items: ItemChunk,
+    }
+}
+common_derives! {
+    pub enum DeclareKind {
+        Const { ty: TypeValue },
+        Type { bounds: TypeBounds },
+        Function { sig: FunctionSignature },
+
+    }
+}
+common_derives! {
+    pub struct Declare {
+        pub name: Ident,
+        pub kind: DeclareKind,
     }
 }

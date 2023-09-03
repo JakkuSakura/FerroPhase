@@ -40,7 +40,10 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
                         .args
                         .into_iter()
                         .map(|x| match x {
-                            syn::GenericArgument::Type(t) => Ok(parse_type_value(t)?),
+                            syn::GenericArgument::Type(t) => parse_type_value(t),
+                            syn::GenericArgument::Const(c) => {
+                                parse_expr(c).map(|x| TypeValue::value(Value::expr(x)))
+                            }
                             _ => bail!("Does not support path arguments: {:?}", x),
                         })
                         .try_collect()?,
@@ -51,6 +54,13 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
             })
             .try_collect()?,
     })
+}
+fn parse_locator(p: syn::Path) -> Result<Locator> {
+    if let Ok(path) = parse_path(p.clone()) {
+        return Ok(Locator::path(path));
+    }
+    let path = parse_parameter_path(p.clone())?;
+    return Ok(Locator::parameter_path(path));
 }
 
 fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
@@ -86,7 +96,7 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
                 "u8" => int(IntType::U8),
                 "f64" => float(DecimalType::F64),
                 "f32" => float(DecimalType::F32),
-                _ => TypeValue::path(parse_path(p.path)?),
+                _ => TypeValue::locator(parse_locator(p.path)?),
             }
         }
         syn::Type::ImplTrait(im) => TypeValue::ImplTraits(parse_impl_trait(im)?),
@@ -159,11 +169,8 @@ fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> Result<TypeBounds> {
         bounds: bs.into_iter().map(parse_type_param_bound).try_collect()?,
     })
 }
-
-fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
-    let name = parse_ident(f.sig.ident);
-    let generics_params = f
-        .sig
+fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
+    let generics_params = sig
         .generics
         .params
         .into_iter()
@@ -175,18 +182,49 @@ fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
             _ => bail!("Does not generic param {:?}", x),
         })
         .try_collect()?;
-    Ok(FunctionValue {
-        name: Some(name.clone()),
-        params: f
-            .sig
-            .inputs
-            .into_iter()
-            .map(|x| parse_input(x))
-            .try_collect()?,
+    Ok(FunctionSignature {
+        name: Some(parse_ident(sig.ident)),
+        params: sig.inputs.into_iter().map(parse_input).try_collect()?,
         generics_params,
-        ret: parse_return_type(f.sig.output)?,
+        ret: parse_return_type(sig.output)?,
+    })
+}
+fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
+    let sig = parse_fn_sig(f.sig)?;
+    Ok(FunctionValue {
+        sig,
         body: Expr::block(parse_block(*f.block)?).into(),
     })
+}
+pub fn parse_trait_item(f: syn::TraitItem) -> Result<Declare> {
+    match f {
+        syn::TraitItem::Fn(f) => {
+            let name = parse_ident(f.sig.ident.clone());
+            Ok(Declare {
+                name,
+                kind: DeclareKind::Function {
+                    sig: parse_fn_sig(f.sig)?,
+                },
+            })
+        }
+        syn::TraitItem::Type(t) => {
+            let name = parse_ident(t.ident);
+            let bounds = parse_type_param_bounds(t.bounds.into_iter().collect())?;
+            Ok(Declare {
+                name,
+                kind: DeclareKind::Type { bounds },
+            })
+        }
+        syn::TraitItem::Const(c) => {
+            let name = parse_ident(c.ident);
+            let ty = parse_type_value(c.ty)?;
+            Ok(Declare {
+                name,
+                kind: DeclareKind::Const { ty },
+            })
+        }
+        _ => bail!("Does not support trait item {:?}", f),
+    }
 }
 
 fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
@@ -247,6 +285,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
         syn::BinOp::Sub(_) => (BinOpKind::Sub, false),
+        syn::BinOp::Div(_) => (BinOpKind::Div, false),
         syn::BinOp::Gt(_) => (BinOpKind::Gt, false),
         syn::BinOp::Ge(_) => (BinOpKind::Ge, false),
         syn::BinOp::Le(_) => (BinOpKind::Le, false),
@@ -407,17 +446,17 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
             })?;
             Ok(Item::Define(Define {
                 name: expr.name.clone().unwrap(),
-                kind: DefKind::Function,
+                kind: DefineKind::Function,
                 ty: None,
-                value: DefValue::Function(expr),
+                value: DefineValue::Function(expr),
                 visibility: parse_vis(m.vis),
             }))
         }
         syn::ImplItem::Type(t) => Ok(Item::Define(Define {
             name: parse_ident(t.ident),
-            kind: DefKind::Type,
+            kind: DefineKind::Type,
             ty: None,
-            value: DefValue::Type(TypeExpr::value(parse_type_value(t.ty)?)),
+            value: DefineValue::Type(TypeExpr::value(parse_type_value(t.ty)?)),
             visibility: parse_vis(t.vis),
         })),
         _ => bail!("Does not support impl item {:?}", item),
@@ -590,6 +629,19 @@ fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<TypeExpr> {
     let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
     Ok(t.into())
 }
+fn parse_trait(t: syn::ItemTrait) -> Result<Trait> {
+    // TODO: generis params
+    let bounds = parse_type_param_bounds(t.supertraits.into_iter().collect())?;
+    Ok(Trait {
+        name: parse_ident(t.ident),
+        bounds,
+        items: t
+            .items
+            .into_iter()
+            .map(|x| parse_trait_item(x).map(Item::Declare))
+            .try_collect()?,
+    })
+}
 fn parse_item(item: syn::Item) -> Result<Item> {
     match item {
         syn::Item::Fn(f0) => {
@@ -597,9 +649,9 @@ fn parse_item(item: syn::Item) -> Result<Item> {
             let f = parse_fn(f0)?;
             let d = Define {
                 name: f.name.clone().unwrap(),
-                kind: DefKind::Function,
+                kind: DefineKind::Function,
                 ty: None,
-                value: DefValue::Function(f),
+                value: DefineValue::Function(f),
                 visibility,
             };
             Ok(Item::Define(d))
@@ -616,23 +668,35 @@ fn parse_item(item: syn::Item) -> Result<Item> {
             let struct_type = parse_item_struct(s)?;
             Ok(Item::Define(Define {
                 name: struct_type.name.clone(),
-                kind: DefKind::Type,
+                kind: DefineKind::Type,
                 ty: None,
-                value: DefValue::Type(TypeExpr::value(TypeValue::Struct(struct_type))),
+                value: DefineValue::Type(TypeExpr::value(TypeValue::Struct(struct_type))),
                 visibility,
             }))
         }
         syn::Item::Type(t) => {
             let visibility = parse_vis(t.vis.clone());
+            let ty = parse_type_value(*t.ty)?;
             Ok(Item::Define(Define {
                 name: parse_ident(t.ident),
-                kind: DefKind::Type,
+                kind: DefineKind::Type,
                 ty: None,
-                value: DefValue::Type(TypeExpr::value(parse_type_value(*t.ty)?)),
+                value: DefineValue::Type(TypeExpr::value(ty)),
                 visibility,
             }))
         }
         syn::Item::Mod(m) => Ok(Item::Module(parse_module(m)?)),
+        syn::Item::Trait(t) => {
+            let visibility = parse_vis(t.vis.clone());
+            let trait_ = parse_trait(t)?;
+            Ok(Item::Define(Define {
+                name: trait_.name.clone(),
+                kind: DefineKind::Trait,
+                ty: None,
+                value: DefineValue::Trait(trait_),
+                visibility,
+            }))
+        }
         _ => bail!("Does not support item yet: {:?}", item),
     }
 }
