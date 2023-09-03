@@ -56,7 +56,7 @@ fn test_parse_impl_for() -> Result<()> {
     assert_eq!(
         code,
         Item::Impl(Impl {
-            trait_ty: Some(Pat::Ident("Foo".into())),
+            trait_ty: Some(Locator::Ident("Foo".into())),
             self_ty: TypeExpr::ident("Bar".into()),
             items: vec![Item::Define(Define {
                 name: "foo".into(),

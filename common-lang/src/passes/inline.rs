@@ -43,7 +43,7 @@ impl InlinePass {
             Ok(Expr::Invoke(invoke))
         }
     }
-    pub fn try_get_pat(&self, ident: Pat, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn try_get_pat(&self, ident: Locator, ctx: &ArcScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::Pat(ident)),

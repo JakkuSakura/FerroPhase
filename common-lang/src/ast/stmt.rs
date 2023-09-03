@@ -1,10 +1,13 @@
 use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item};
+use crate::common_derives;
 use crate::value::TypeValue;
 use common::{Deserialize, Serialize};
+use std::hash::Hash;
+common_derives! {
+    pub struct SideEffect {
+        pub expr: Expr,
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct SideEffect {
-    pub expr: Expr,
 }
 impl SideEffect {
     pub fn new(expr: Expr) -> Self {
@@ -21,13 +24,15 @@ impl SideEffect {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum Statement {
-    Item(Box<Item>),
-    Let(Let),
-    SideEffect(SideEffect),
-    Expr(Expr),
-    Any(AnyBox),
+common_derives! {
+    pub enum Statement {
+        Item(Box<Item>),
+        Let(Let),
+        Assign(Assign),
+        SideEffect(SideEffect),
+        Expr(Expr),
+        Any(AnyBox),
+    }
 }
 
 impl Statement {
@@ -61,17 +66,20 @@ impl Statement {
 
 pub type StatementChunk = Vec<Statement>;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Let {
-    pub name: Ident,
-    pub ty: Option<TypeValue>,
-    pub value: Expr,
+common_derives! {
+    pub struct Let {
+        pub name: Ident,
+        pub mutability: Option<bool>,
+        pub ty: Option<TypeValue>,
+        pub value: Expr,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Assign {
-    pub target: Expr,
-    pub value: Expr,
+common_derives! {
+    pub struct Assign {
+        pub target: Expr,
+        pub value: Expr,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]

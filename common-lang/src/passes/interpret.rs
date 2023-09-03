@@ -359,7 +359,7 @@ impl InterpreterPass {
     }
     pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
-            Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx, true),
+            Expr::Pat(Locator::Ident(n)) => self.interpret_ident(n, ctx, true),
             Expr::Pat(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),
@@ -374,7 +374,7 @@ impl InterpreterPass {
     }
     pub fn interpret_expr_no_resolve(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
         match node {
-            Expr::Pat(Pat::Ident(n)) => self.interpret_ident(n, ctx, false),
+            Expr::Pat(Locator::Ident(n)) => self.interpret_ident(n, ctx, false),
             Expr::Pat(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),
@@ -422,7 +422,7 @@ impl InterpreterPass {
             }),
             Statement::SideEffect(n) => self.interpret_expr(&n.expr, ctx).map(|_| None),
             Statement::Item(_) => Ok(None),
-            Statement::Any(_) => bail!("Failed to interpret {:?}", node),
+            _ => bail!("Failed to interpret {:?}", node),
         }
     }
 

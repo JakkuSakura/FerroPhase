@@ -13,6 +13,17 @@ use crate::ast::Tree;
 
 use crate::value::{FunctionValue, TypeValue, Value};
 use std::rc::Rc;
+#[macro_export]
+macro_rules! common_derives {
+    (no_debug $($t:tt)*) => {
+        #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+        $($t)*
+    };
+    ($($t:tt)*) => {
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+        $($t)*
+    };
+}
 
 pub trait Serializer {
     fn serialize_tree(&self, node: &Tree) -> Result<String>;

@@ -1,9 +1,11 @@
 use crate::ast::*;
+use crate::common_derives;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{TypeBounds, TypeValue};
 use common::*;
 use serde_json::json;
 use std::fmt::Debug;
+use std::hash::{Hash, Hasher};
 
 pub trait ToJson {
     fn to_json(&self) -> Result<serde_json::Value>;
@@ -15,25 +17,60 @@ pub trait ToJson {
         Ok(serde_json::from_value(json)?)
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum Value {
-    Int(IntValue),
-    Bool(BoolValue),
-    Decimal(DecimalValue),
-    Char(CharValue),
-    String(StringValue),
-    List(ListValue),
-    Unit(UnitValue),
-    Null(NullValue),
-    Undefined(UndefinedValue),
-    Type(TypeValue),
-    Struct(StructValue),
-    Function(FunctionValue),
-    Tuple(TupleValue),
-    Expr(Box<Expr>),
-    BinOpKind(BinOpKind),
-    UnOpKind(UnOpKind),
-    Any(AnyBox),
+/// wrap struct declare with derive Debug, Clone, Serialize, Deserialize,
+/// PartialEq, Eq,
+/// Hash, PartialOrd, Ord
+macro_rules! plain_value {
+    ($(#[$attr:meta])* $name:ident) => {
+        $(#[$attr])*
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name;
+        impl ToJson for $name {
+            fn to_json(&self) -> Result<serde_json::Value> {
+                Ok(json!(null))
+            }
+        }
+    };
+
+    ($(#[$attr:meta])* $name:ident: $ty:ty) => {
+        $(#[$attr])*
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub struct $name {
+            pub value: $ty,
+        }
+        impl $name {
+            pub fn new(v: $ty) -> Self {
+                Self { value: v }
+            }
+        }
+        impl ToJson for $name {
+            fn to_json(&self) -> Result<serde_json::Value> {
+                Ok(json!(self.value))
+            }
+        }
+    };
+}
+
+common_derives! {
+    pub enum Value {
+        Int(IntValue),
+        Bool(BoolValue),
+        Decimal(DecimalValue),
+        Char(CharValue),
+        String(StringValue),
+        List(ListValue),
+        Unit(UnitValue),
+        Null(NullValue),
+        Undefined(UndefinedValue),
+        Type(TypeValue),
+        Struct(StructValue),
+        Function(FunctionValue),
+        Tuple(TupleValue),
+        Expr(Box<Expr>),
+        BinOpKind(BinOpKind),
+        UnOpKind(UnOpKind),
+        Any(AnyBox),
+    }
 }
 impl Value {
     pub fn bool(b: bool) -> Value {
@@ -83,36 +120,13 @@ impl ToJson for Value {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Ord, PartialOrd)]
-pub struct IntValue {
-    pub value: i64,
+plain_value! {
+    IntValue: i64
+}
+plain_value! {
+    BoolValue: bool
 }
 
-impl IntValue {
-    pub fn new(i: i64) -> Self {
-        Self { value: i }
-    }
-}
-impl ToJson for IntValue {
-    fn to_json(&self) -> Result<serde_json::Value> {
-        Ok(json!(self.value))
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Ord, PartialOrd)]
-pub struct BoolValue {
-    pub value: bool,
-}
-
-impl BoolValue {
-    pub fn new(i: bool) -> Self {
-        Self { value: i }
-    }
-}
-impl ToJson for BoolValue {
-    fn to_json(&self) -> Result<serde_json::Value> {
-        Ok(json!(self.value))
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecimalValue {
     pub value: f64,
@@ -134,6 +148,11 @@ impl Ord for DecimalValue {
         self.value.total_cmp(&other.value)
     }
 }
+impl Hash for DecimalValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.to_bits().hash(state);
+    }
+}
 impl DecimalValue {
     pub fn new(v: f64) -> Self {
         Self { value: v }
@@ -145,21 +164,11 @@ impl ToJson for DecimalValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CharValue {
-    pub value: char,
+plain_value! {
+    CharValue: char
 }
-impl CharValue {
-    pub fn new(v: char) -> Self {
-        Self { value: v }
-    }
-}
-impl ToJson for CharValue {
-    fn to_json(&self) -> Result<serde_json::Value> {
-        Ok(json!(self.value))
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct StringValue {
     pub value: String,
     pub owned: bool,
@@ -186,9 +195,10 @@ impl ToJson for StringValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ListValue {
-    pub values: Vec<Value>,
+common_derives! {
+    pub struct ListValue {
+        pub values: Vec<Value>,
+    }
 }
 impl ListValue {
     pub fn new(values: Vec<Value>) -> Self {
@@ -201,30 +211,11 @@ impl ToJson for ListValue {
         Ok(json!(values))
     }
 }
+plain_value!(UnitValue);
+plain_value!(NullValue);
+plain_value!(UndefinedValue);
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UnitValue;
-impl ToJson for UnitValue {
-    fn to_json(&self) -> Result<serde_json::Value> {
-        Ok(json!(null))
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct NullValue;
-impl ToJson for NullValue {
-    fn to_json(&self) -> Result<serde_json::Value> {
-        Ok(json!(null))
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct UndefinedValue;
-impl ToJson for UndefinedValue {
-    fn to_json(&self) -> Result<serde_json::Value> {
-        Ok(json!(null))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct FieldValue {
     pub name: Ident,
     pub value: Value,
@@ -235,10 +226,11 @@ impl FieldValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct StructValue {
-    pub name: TypeExpr, // either Ident or Struct
-    pub fields: Vec<FieldValue>,
+common_derives! {
+    pub struct StructValue {
+        pub name: TypeExpr, // either Ident or Struct
+        pub fields: Vec<FieldValue>,
+    }
 }
 impl StructValue {
     pub fn new(name: TypeExpr, fields: Vec<FieldValue>) -> Self {
@@ -254,32 +246,41 @@ impl ToJson for StructValue {
         Ok(json!(map))
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FunctionParam {
-    pub name: Ident,
-    pub ty: TypeValue,
+
+common_derives! {
+    pub struct FunctionParam {
+        pub name: Ident,
+        pub ty: TypeValue,
+    }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GenericParam {
-    pub name: Ident,
-    pub bounds: TypeBounds,
+
+common_derives! {
+    pub struct GenericParam {
+        pub name: Ident,
+        pub bounds: TypeBounds,
+    }
+
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FunctionValue {
-    pub name: Option<Ident>,
-    pub params: Vec<FunctionParam>,
-    pub generics_params: Vec<GenericParam>,
-    pub ret: TypeValue,
-    pub body: Box<Expr>,
+
+common_derives! {
+    pub struct FunctionValue {
+        pub name: Option<Ident>,
+        pub params: Vec<FunctionParam>,
+        pub generics_params: Vec<GenericParam>,
+        pub ret: TypeValue,
+        pub body: Box<Expr>,
+    }
+
 }
 impl FunctionValue {
     pub fn is_runtime_only(&self) -> bool {
         self.generics_params.is_empty()
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TupleValue {
-    pub values: Vec<Value>,
+common_derives! {
+    pub struct TupleValue {
+        pub values: Vec<Value>,
+    }
 }
 impl TupleValue {
     pub fn new(values: Vec<Value>) -> Self {

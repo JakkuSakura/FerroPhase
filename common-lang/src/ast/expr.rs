@@ -1,18 +1,20 @@
 use crate::ast::*;
 use crate::value::{UnitValue, Value};
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
+common_derives! {
+    /// Expr is an expression that returns a value
+    pub enum Expr {
+        Pat(Locator),
+        Value(Value),
+        Block(Block),
+        Cond(Cond),
+        Invoke(Invoke),
+        Select(Select),
+        Reference(Reference),
+        Any(AnyBox),
+    }
 
-/// Expr is an expression that returns a value
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum Expr {
-    Pat(Pat),
-    Value(Value),
-    Block(Block),
-    Cond(Cond),
-    Invoke(Invoke),
-    Select(Select),
-    Reference(Reference),
-    Any(AnyBox),
 }
 impl Expr {
     pub fn unit() -> Expr {
@@ -25,10 +27,10 @@ impl Expr {
         }
     }
     pub fn ident(name: Ident) -> Expr {
-        Expr::Pat(Pat::ident(name))
+        Expr::Pat(Locator::ident(name))
     }
     pub fn path(path: Path) -> Expr {
-        Expr::Pat(Pat::path(path))
+        Expr::Pat(Locator::path(path))
     }
     pub fn block(block: Block) -> Expr {
         if block.stmts.len() == 1 {
@@ -53,50 +55,60 @@ impl Expr {
         Self::Any(AnyBox::new(any))
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Invoke {
-    pub func: Box<Expr>,
-    pub args: Vec<Expr>,
+
+common_derives! {
+    pub struct Invoke {
+        pub func: Box<Expr>,
+        pub args: Vec<Expr>,
+    }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
-pub enum SelectType {
-    Unknown,
-    Field,
-    Method,
-    Function,
-    Const,
+common_derives! {
+    #[derive(Copy)]
+    pub enum SelectType {
+        Unknown,
+        Field,
+        Method,
+        Function,
+        Const,
+    }
+
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Select {
-    pub obj: Box<Expr>,
-    pub field: Ident,
-    pub select: SelectType,
+common_derives! {
+    pub struct Select {
+        pub obj: Box<Expr>,
+        pub field: Ident,
+        pub select: SelectType,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Reference {
-    pub referee: Box<Expr>,
-    pub mutable: Option<bool>,
+common_derives! {
+    pub struct Reference {
+        pub referee: Box<Expr>,
+        pub mutable: Option<bool>,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Cond {
-    pub cases: Vec<CondCase>,
-    pub if_style: bool,
+common_derives! {
+    pub struct Cond {
+        pub cases: Vec<CondCase>,
+        pub if_style: bool,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct CondCase {
-    pub cond: Expr,
-    pub body: Expr,
+common_derives! {
+    pub struct CondCase {
+        pub cond: Expr,
+        pub body: Expr,
+    }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum ControlFlow {
-    Continue,
-    Break(Option<Expr>),
-    Return(Option<Expr>),
-    Into,
-    IntoAndBreak(Option<Expr>),
+common_derives! {
+    pub enum ControlFlow {
+        Continue,
+        Break(Option<Expr>),
+        Return(Option<Expr>),
+        Into,
+        IntoAndBreak(Option<Expr>),
+    }
 }

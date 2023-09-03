@@ -259,7 +259,7 @@ impl TypeSystem {
         ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         match callee {
-            Expr::Pat(Pat::Ident(ident)) => match ident.as_str() {
+            Expr::Pat(Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(params.first().context("No param")?, ctx)
                 }
