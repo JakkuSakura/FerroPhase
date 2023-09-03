@@ -401,7 +401,6 @@ impl ToJson for StructuralValue {
     fn to_json(&self) -> Result<serde_json::Value> {
         let mut map = serde_json::Map::new();
         for field in &self.fields {
-            let value = field.value.to_json()?;
             map.insert(field.name.name.clone(), field.value.to_json()?);
         }
 
