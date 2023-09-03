@@ -12,6 +12,7 @@ pub enum TypeExpr {
     Invoke(Invoke),
     SelfType(SelfType),
     Value(TypeValue),
+    Expr(Box<Expr>),
 }
 
 impl TypeExpr {
@@ -36,6 +37,12 @@ impl TypeExpr {
     pub fn as_locator(&self) -> Option<&Locator> {
         match self {
             TypeExpr::Locator(pat) => Some(pat),
+            _ => None,
+        }
+    }
+    pub fn as_struct(&self) -> Option<&StructType> {
+        match self {
+            TypeExpr::Value(TypeValue::Struct(struct_)) => Some(struct_),
             _ => None,
         }
     }

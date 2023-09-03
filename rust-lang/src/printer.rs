@@ -29,27 +29,41 @@ impl RustPrinter {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
+    pub fn print_trait(&self, n: &Trait) -> Result<TokenStream> {
+        let name = self.print_ident(&n.name);
+        let bounds = self.print_type_bounds(&n.bounds)?;
+        Ok(quote!(
+            #name: #bounds
+        ))
+    }
     pub fn print_define(&self, def: &Define) -> Result<TokenStream> {
         let vis = def.visibility;
         let decl = &def.value;
 
         match decl {
-            DefValue::Function(n) => {
+            DefineValue::Function(n) => {
                 return self.print_function(n, vis);
             }
-            DefValue::Type(n) => {
+            DefineValue::Type(n) => {
                 let name = self.print_ident(&def.name);
                 let ty = self.print_type_expr(n)?;
                 return Ok(quote!(
                     type #name = t!{ #ty };
                 ));
             }
-            DefValue::Const(n) => {
+            DefineValue::Const(n) => {
                 let name = self.print_ident(&def.name);
                 let ty = self.print_type_value(&def.ty.as_ref().context("No type")?.clone())?;
                 let value = self.print_expr(n)?;
                 return Ok(quote!(
                     const #name: #ty = #value;
+                ));
+            }
+            DefineValue::Trait(n) => {
+                let name = self.print_ident(&def.name);
+                let ty = self.print_trait(n)?;
+                return Ok(quote!(
+                    trait #name #ty
                 ));
             }
         }
@@ -462,7 +476,17 @@ impl RustPrinter {
         Ok(quote!(#name: #value))
     }
     pub fn print_struct_value(&self, s: &StructValue) -> Result<TokenStream> {
-        let name = self.print_ident(&s.struct_.name);
+        let name = self.print_ident(&s.ty.name);
+        let kwargs: Vec<_> = s
+            .structural
+            .fields
+            .iter()
+            .map(|x| self.print_field_value(x))
+            .try_collect()?;
+        Ok(quote!(#name { #(#kwargs), * }))
+    }
+    pub fn print_struct_expr(&self, s: &StructExpr) -> Result<TokenStream> {
+        let name = self.print_type_expr(&s.name)?;
         let kwargs: Vec<_> = s
             .fields
             .iter()
@@ -531,7 +555,9 @@ impl RustPrinter {
         }
         bail!("Not supported {:?}", n)
     }
-
+    pub fn print_undefined(&self, _n: &UndefinedValue) -> Result<TokenStream> {
+        Ok(quote!(undefined))
+    }
     pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
         match v {
             Value::Function(f) => self.print_func_value(f),
@@ -547,6 +573,19 @@ impl RustPrinter {
             Value::Any(n) => self.print_any(n),
             Value::BinOpKind(op) => Ok(self.print_bin_op_kind(op)),
             Value::Expr(e) => self.print_expr(e),
+            Value::Undefined(u) => self.print_undefined(u),
+            Value::None(_) => Ok(quote!(None)),
+            Value::Some(s) => {
+                let s = self.print_value(&s.value)?;
+                Ok(quote!(Some(#s)))
+            }
+            Value::Option(o) => match o.value {
+                Some(ref v) => {
+                    let v = self.print_value(v)?;
+                    Ok(quote!(Some(#v)))
+                }
+                None => Ok(quote!(None)),
+            },
             _ => bail!("Not supported {:?}", v),
         }
     }
@@ -601,11 +640,31 @@ impl RustPrinter {
         let segments: Vec<_> = path.segments.iter().map(|x| self.print_ident(x)).collect();
         quote!(#(#segments)::*)
     }
+    fn print_parameter_path_segment(&self, segment: &ParameterPathSegment) -> Result<TokenStream> {
+        let ident = self.print_ident(&segment.ident);
+        if segment.args.is_empty() {
+            return Ok(ident);
+        }
+        let args: Vec<_> = segment
+            .args
+            .iter()
+            .map(|x| self.print_type_value(x))
+            .try_collect()?;
+        Ok(quote!(#ident::<#(#args), *>))
+    }
+    pub fn print_parameter_path(&self, path: &ParameterPath) -> Result<TokenStream> {
+        let segments: Vec<_> = path
+            .segments
+            .iter()
+            .map(|x| self.print_parameter_path_segment(x))
+            .try_collect()?;
+        Ok(quote!(#(#segments)::*))
+    }
     pub fn print_pat(&self, pat: &Locator) -> Result<TokenStream> {
         Ok(match pat {
             Locator::Ident(n) => self.print_ident(n),
             Locator::Path(n) => self.print_path(n),
-            _ => bail!("Unable to serialize {:?}", pat),
+            Locator::ParameterPath(n) => self.print_parameter_path(n)?,
         })
     }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
@@ -640,13 +699,15 @@ impl RustPrinter {
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Pat(Locator::Ident(n)) => Ok(self.print_ident(n)),
-            Expr::Pat(Locator::Path(n)) => Ok(self.print_path(n)),
+            Expr::Locator(Locator::Ident(n)) => Ok(self.print_ident(n)),
+            Expr::Locator(Locator::Path(n)) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),
             Expr::Cond(n) => self.print_cond(n),
             Expr::Block(n) => self.print_block(n),
+            Expr::Struct(n) => self.print_struct_expr(n),
+            Expr::Select(n) => self.print_select(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
