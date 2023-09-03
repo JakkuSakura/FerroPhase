@@ -1,4 +1,4 @@
-use crate::ast::{AnyBox, AnyBoxable, Ident, Path, TypeExpr};
+use crate::ast::{AnyBox, AnyBoxable, Ident, Locator, Path, TypeExpr};
 use crate::common_derives;
 use crate::value::*;
 use common::*;
@@ -14,7 +14,7 @@ common_derives! {
         Function(FunctionType),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
-        Literal(LiteralType),
+        Value(ValueType),
         Tuple(TupleType),
         Vec(VecType),
         Any(AnyType),
@@ -43,6 +43,12 @@ impl TypeValue {
             _ => TypeValue::Expr(Box::new(e)),
         }
     }
+    pub fn value(v: Value) -> Self {
+        match v {
+            Value::Expr(expr) => TypeValue::Expr(TypeExpr::Expr(expr).into()),
+            _ => TypeValue::Value(ValueType::new(v)),
+        }
+    }
     pub fn path(path: Path) -> TypeValue {
         TypeValue::expr(TypeExpr::path(path))
     }
@@ -65,14 +71,23 @@ impl TypeValue {
             bounds: TypeBounds::new(TypeExpr::ident(name)),
         })
     }
+    pub fn locator(locator: Locator) -> Self {
+        Self::expr(TypeExpr::Locator(locator))
+    }
     pub fn type_bound(expr: TypeExpr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))
+    }
+    pub fn as_struct(&self) -> Option<&StructType> {
+        match self {
+            TypeValue::Struct(s) => Some(s),
+            _ => None,
+        }
     }
 }
 impl Display for TypeValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeValue::Literal(value) => Display::fmt(value, f),
+            TypeValue::Value(value) => Display::fmt(value, f),
             _ => panic!("cannot display type value: {:?}", self),
         }
     }
@@ -204,18 +219,18 @@ common_derives! {
 }
 
 common_derives! {
-    pub struct LiteralType {
+    pub struct ValueType {
         pub value: Box<Value>,
     }
 }
-impl LiteralType {
+impl ValueType {
     pub fn new(value: Value) -> Self {
         Self {
             value: value.into(),
         }
     }
 }
-impl Display for LiteralType {
+impl Display for ValueType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.value, f)
     }

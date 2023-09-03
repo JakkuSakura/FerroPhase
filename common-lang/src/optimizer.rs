@@ -118,6 +118,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         // }
         Ok(Expr::Invoke(invoke))
     }
+
     pub fn optimize_expr(&self, mut expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let serialized = self.serializer.serialize_expr(&expr)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
@@ -125,8 +126,9 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         expr = self.pass.optimize_expr_pre(expr, ctx)?;
 
         expr = match expr {
-            Expr::Pat(_) => expr,
+            Expr::Locator(_) => expr,
             Expr::Value(_) => expr,
+            Expr::Struct(_) => expr,
             Expr::Block(x) => self.optimize_block(x, ctx)?,
             Expr::Cond(x) => self.optimize_cond(x, ctx)?,
             Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
@@ -328,7 +330,9 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
     pub fn optimize_def(&self, mut def: Define, ctx: &ArcScopedContext) -> Result<Define> {
         def.value = match def.value {
-            DefValue::Function(func) => self.optimize_func(func, ctx).map(DefValue::Function)?,
+            DefineValue::Function(func) => {
+                self.optimize_func(func, ctx).map(DefineValue::Function)?
+            }
             _ => def.value,
         };
         Ok(def)
@@ -336,7 +340,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     pub fn prescan_def(&self, def: &Define, ctx: &ArcScopedContext) -> Result<()> {
         let def = def.clone();
         match def.value.clone() {
-            DefValue::Function(f) => match def.name.as_str() {
+            DefineValue::Function(f) => match def.name.as_str() {
                 _ => {
                     debug!(
                         "Registering function {}",
