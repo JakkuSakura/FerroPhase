@@ -2,17 +2,18 @@ use crate::ast::*;
 use crate::ast::{Ident, Invoke};
 use crate::ops::*;
 use crate::value::*;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
-/// TypeExpr is an expression that returns a type
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub enum TypeExpr {
-    Locator(Locator),
-    BinOp(TypeBinOp),
-    Invoke(Invoke),
-    SelfType(SelfType),
-    Value(TypeValue),
-    Expr(Box<Expr>),
+common_derives! {
+    /// TypeExpr is an expression that returns a type
+    pub enum TypeExpr {
+        Locator(Locator),
+        BinOp(TypeBinOp),
+        Invoke(Invoke),
+        SelfType(SelfType),
+        Value(TypeValue),
+        Expr(Box<Expr>),
+    }
 }
 
 impl TypeExpr {
@@ -47,23 +48,16 @@ impl TypeExpr {
         }
     }
 }
-impl Hash for TypeExpr {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            TypeExpr::Value(value) => value.hash(state),
-            _ => panic!("cannot hash type expr: {:?}", self),
-        }
+common_derives! {
+    pub enum TypeBinOp {
+        Add(AddOp<TypeExpr>),
+        Sub(SubOp<TypeExpr>),
     }
-}
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub enum TypeBinOp {
-    Add(AddOp<TypeExpr>),
-    Sub(SubOp<TypeExpr>),
 }
-
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct SelfType {
-    pub reference: bool,
-    pub mutability: bool,
+common_derives! {
+    pub struct SelfType {
+        pub reference: bool,
+        pub mutability: bool,
+    }
 }
