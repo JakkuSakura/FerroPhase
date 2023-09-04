@@ -5,33 +5,33 @@ fn print(i: impl Display) {
 }
 fn main() {
     {
-        print(1i64 + 2i64);
+        print(1 + 2);
     };
     {
-        print(3f64 + 4f64);
+        print(3 + 4);
     };
 }
 pub fn add_0() -> i64 {
-    1i64 + 2i64
+    1 + 2
 }
 pub fn add_2() -> f64 {
-    3f64 + 4f64
+    3 + 4
 }
 pub fn do_op_4() {
     {
-        print(1i64 + 2i64);
+        print(1 + 2);
     };
     {
-        print(3f64 + 4f64);
+        print(3 + 4);
     };
 }
 pub fn print2_1() {
-    print(1i64 + 2i64);
+    print(1 + 2);
 }
 pub fn print2_3() {
-    print(3f64 + 4f64);
+    print(3 + 4);
 }
 
-// stdout: 3i64
-// stdout: 7f64
+// stdout: 3
+// stdout: 7
 // result: ()

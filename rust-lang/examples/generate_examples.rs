@@ -21,7 +21,7 @@ fn main() -> Result<()> {
         .map(|x| Ok::<_, Error>(x?.path()))
         .try_collect()?;
     dirs.sort();
-    let rust_serde = RustSerde::new(false);
+    let rust_serde = RustSerde::new();
     for file_in in dirs {
         let file_str = file_in.file_name().unwrap().to_string_lossy().to_string();
         if !file_str.contains("main_") || file_str.contains("_gen.rs") {
@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         info!("{} => {}", file_in.display(), file_out.display());
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
-        let node = rust_serde.deserialize(&file_content)?;
+        let node = rust_serde.deserialize_tree(&file_content)?;
         let ctx = Arc::new(ScopedContext::new());
         let optimizer = load_optimizer(Rc::new(rust_serde));
         let node = optimizer.optimize_tree(node, &ctx)?;

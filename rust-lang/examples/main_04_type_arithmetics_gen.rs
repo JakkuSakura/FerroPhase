@@ -9,11 +9,10 @@ type BarNamedStruct = t! { struct BarNamedStruct { pub c : Int , pub d : Int } }
 type FooPlusBar = t! { FooUnnamedStruct + BarNamedStruct };
 fn main() {
     FooPlusBar {
-        a: 1i64,
-        b: 2i64,
-        c: 3i64,
-        d: 4i64,
+        a: 1,
+        b: 2,
+        c: 3,
+        d: 4,
     };
 }
 
-// result: ()

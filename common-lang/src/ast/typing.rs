@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::ast::{Ident, Invoke};
 use crate::ops::*;
 use crate::value::*;
+use std::fmt::Display;
 use std::hash::Hash;
 
 common_derives! {
@@ -48,6 +49,19 @@ impl TypeExpr {
         }
     }
 }
+impl Display for TypeExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeExpr::Locator(locator) => Display::fmt(locator, f),
+            // TypeExpr::BinOp(bin_op) => Display::fmt(bin_op, f),
+            // TypeExpr::Invoke(invoke) => Display::fmt(invoke, f),
+            TypeExpr::SelfType(self_type) => Display::fmt(self_type, f),
+            // TypeExpr::Value(value) => Display::fmt(value, f),
+            // TypeExpr::Expr(expr) => Display::fmt(expr, f),
+            _ => panic!("cannot display type expr: {:?}", self),
+        }
+    }
+}
 common_derives! {
     pub enum TypeBinOp {
         Add(AddOp<TypeExpr>),
@@ -59,5 +73,16 @@ common_derives! {
     pub struct SelfType {
         pub reference: bool,
         pub mutability: bool,
+    }
+}
+impl Display for SelfType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.reference {
+            write!(f, "&")?;
+        }
+        if self.mutability {
+            write!(f, "mut ")?;
+        }
+        write!(f, "Self")
     }
 }
