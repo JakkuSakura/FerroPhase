@@ -83,6 +83,12 @@ impl TypeValue {
             _ => None,
         }
     }
+    pub fn unwrap_reference(&self) -> &TypeValue {
+        match self {
+            TypeValue::Reference(r) => &r.ty,
+            _ => self,
+        }
+    }
 }
 impl Display for TypeValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
