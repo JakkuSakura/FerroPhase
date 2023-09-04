@@ -113,7 +113,7 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
 fn parse_type_reference(r: syn::TypeReference) -> Result<ReferenceType> {
     Ok(ReferenceType {
         ty: Box::new(parse_type_value(*r.elem)?),
-        mutability: Some(r.mutability.is_some()),
+        mutability: r.mutability.map(|_| true),
         lifetime: r.lifetime.map(|x| parse_ident(x.ident)),
     })
 }
@@ -762,5 +762,8 @@ impl RustParser {
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
+    }
+    pub fn parse_type_value(&self, code: syn::Type) -> Result<TypeValue> {
+        parse_type_value(code)
     }
 }
