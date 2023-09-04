@@ -2,11 +2,11 @@ fn print(i: i64) {
     println!("{}", i)
 }
 fn main() {
-    print(1i64 + 1i64 + 2i64 + 3i64);
+    print(1 + 1 + 2 + 3);
 }
 pub fn inc_0() -> i64 {
-    1i64 + 1i64 + 2i64 + 3i64
+    1 + 1 + 2 + 3
 }
 
-// stdout: 7i64
+// stdout: 7
 // result: ()
