@@ -168,43 +168,25 @@ impl<'a> From<&'a Path> for Path {
         path.clone()
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct ParameterPathSegment {
-    pub ident: Ident,
-    pub args: Vec<TypeValue>,
+
+common_derives! {
+    pub struct ParameterPathSegment {
+        pub ident: Ident,
+        pub args: Vec<TypeValue>,
+    }
 }
 impl ParameterPathSegment {
     pub fn new(ident: Ident, args: Vec<TypeValue>) -> Self {
         Self { ident, args }
     }
 }
-impl Hash for ParameterPathSegment {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.ident.hash(state);
-        if !self.args.is_empty() {
-            panic!(
-                "ParameterPathSegment::hash: args is not empty: {:?}",
-                self.args
-            );
-        }
-    }
-}
-impl PartialOrd for ParameterPathSegment {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.ident.cmp(&other.ident))
-    }
-}
-impl Ord for ParameterPathSegment {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.ident.cmp(&other.ident)
-    }
-}
 
-/// ParameterPath is a specialized locator for paths like Foo::<T>::bar<U>
-/// it is equivalent to Invoke(Select(Invoke(Foo, T), bar), U)
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct ParameterPath {
-    pub segments: Vec<ParameterPathSegment>,
+common_derives! {
+    /// ParameterPath is a specialized locator for paths like Foo::<T>::bar<U>
+    /// it is equivalent to Invoke(Select(Invoke(Foo, T), bar), U)
+    pub struct ParameterPath {
+        pub segments: Vec<ParameterPathSegment>,
+    }
 }
 impl ParameterPath {
     pub fn last(&self) -> &ParameterPathSegment {
