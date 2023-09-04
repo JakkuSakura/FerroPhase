@@ -83,8 +83,11 @@ pub struct RustSerde {
     rustfmt: bool,
 }
 impl RustSerde {
-    pub fn new(rustfmt: bool) -> Self {
-        Self { rustfmt }
+    pub fn new() -> Self {
+        Self { rustfmt: false }
+    }
+    pub fn set_rustfmt(&mut self, rustfmt: bool) {
+        self.rustfmt = rustfmt;
     }
     pub fn maybe_rustfmt_token_stream(&self, code: &proc_macro2::TokenStream) -> Result<String> {
         self.maybe_rustfmt(&code.to_string())
@@ -161,9 +164,27 @@ impl Serializer for RustSerde {
     }
 }
 impl Deserializer for RustSerde {
-    fn deserialize(&self, code: &str) -> Result<Tree> {
+    fn deserialize_tree(&self, code: &str) -> Result<Tree> {
         let code: syn::File = parse_str(code)?;
         let path = PathBuf::from("__file__");
         RustParser::new().parse_file(path, code).map(Tree::File)
+    }
+
+    fn deserialize_expr(&self, code: &str) -> Result<Expr> {
+        let code: syn::Expr = parse_str(code)?;
+        RustParser::new().parse_expr(code)
+    }
+
+    fn deserialize_item(&self, code: &str) -> Result<Item> {
+        let code: syn::Item = parse_str(code)?;
+        RustParser::new().parse_item(code)
+    }
+
+    fn deserialize_file(&self, path: &std::path::Path) -> Result<File> {
+        RustParser::new().parse_file_recursively(path.to_owned())
+    }
+    fn deserialize_type(&self, code: &str) -> Result<TypeValue> {
+        let code: syn::Type = parse_str(code)?;
+        RustParser::new().parse_type_value(code)
     }
 }

@@ -116,6 +116,7 @@ pub struct Path {
 
 impl Path {
     pub fn new(segments: Vec<Ident>) -> Self {
+        debug_assert!(segments.len() > 0, "Path must have at least one segment");
         Self { segments }
     }
     pub fn try_into_ident(self) -> Option<Ident> {
@@ -134,6 +135,9 @@ impl Path {
         let mut segments = self.segments.clone();
         segments.push(ident);
         Self::new(segments)
+    }
+    pub fn last(&self) -> &Ident {
+        self.segments.last().unwrap()
     }
 }
 impl Display for Path {

@@ -98,7 +98,7 @@ impl ScopedContext {
             let (k, v) = key.pair();
             let value = s.serialize_value(v.value.as_ref().unwrap_or(&Value::undefined()))?;
             let ty = s.serialize_type(v.ty.as_ref().unwrap_or(&TypeValue::any()))?;
-            info!("{}::{}: val:{} ty:{}", path, k, value, ty)
+            println!("{}::{}: val:{} ty:{}", path, k, value, ty)
         }
         Ok(())
     }

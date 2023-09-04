@@ -5,7 +5,7 @@ use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use common_lang::ast::*;
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use common_lang::value::*;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::*;
 
 pub struct RustPrinter;
@@ -501,7 +501,7 @@ impl RustPrinter {
         }
     }
     pub fn print_int(&self, n: &IntValue) -> Result<TokenStream> {
-        let n = n.value;
+        let n = syn::LitInt::new(&n.value.to_string(), Span::call_site());
         Ok(quote!(#n))
     }
     pub fn print_bool(&self, n: &BoolValue) -> Result<TokenStream> {
@@ -509,7 +509,7 @@ impl RustPrinter {
         Ok(quote!(#n))
     }
     pub fn print_decimal(&self, n: &DecimalValue) -> Result<TokenStream> {
-        let n = n.value;
+        let n = syn::LitFloat::new(&n.value.to_string(), Span::call_site());
         Ok(quote!(#n))
     }
     pub fn print_char(&self, n: &CharValue) -> Result<TokenStream> {
