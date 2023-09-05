@@ -1,25 +1,25 @@
 use common::*;
 
-use common_lang::ast::{Expr, Module};
+use common_lang::ast::{Expr, File, Module, Tree};
 use common_lang::context::{ArcScopedContext, ScopedContext};
 use common_lang::optimizer::{load_optimizer, FoldOptimizer};
+use common_lang::passes::OptimizePass;
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;
 use rust_lang::RustSerde;
 use std::rc::Rc;
 use std::sync::Arc;
-use syn::spanned::Spanned;
 
 trait Optimizee {
-    fn optimize<P>(
+    fn optimize<P: OptimizePass>(
         self,
         optimizer: FoldOptimizer<P>,
         ctx: &ArcScopedContext,
     ) -> Result<TokenStream>;
 }
 impl Optimizee for Expr {
-    fn optimize<P>(
+    fn optimize<P: OptimizePass>(
         self,
         optimizer: FoldOptimizer<P>,
         ctx: &ArcScopedContext,
@@ -30,7 +30,7 @@ impl Optimizee for Expr {
     }
 }
 impl Optimizee for Module {
-    fn optimize<P>(
+    fn optimize<P: OptimizePass>(
         self,
         optimizer: FoldOptimizer<P>,
         ctx: &ArcScopedContext,
@@ -40,9 +40,20 @@ impl Optimizee for Module {
         Ok(node.into())
     }
 }
+impl Optimizee for File {
+    fn optimize<P: OptimizePass>(
+        self,
+        optimizer: FoldOptimizer<P>,
+        ctx: &ArcScopedContext,
+    ) -> Result<TokenStream> {
+        let node = optimizer.optimize_tree(Tree::File(self), ctx)?;
+        let node = RustPrinter.print_tree(&node)?;
+        Ok(node.into())
+    }
+}
 fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
     let ctx = Arc::new(ScopedContext::new());
-    let formatter = RustSerde::new(false);
+    let formatter = RustSerde::new();
     let optimizer = load_optimizer(Rc::new(formatter));
     let node = code.optimize(optimizer, &ctx)?;
 
@@ -51,9 +62,7 @@ fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
 #[proc_macro]
 pub fn specialize(input: TokenStream) -> TokenStream {
     let input: syn::File = syn::parse(input.into()).unwrap();
-    let input = RustParser::new()
-        .parse_file(input.span().source_file(), input)
-        .unwrap();
+    let input = RustParser::new().parse_file("".into(), input).unwrap();
     specialize_inner(input).unwrap().into()
 }
 
