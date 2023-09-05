@@ -3,10 +3,8 @@ pub extern crate alloc;
 extern crate core;
 
 pub use convert_case::{Case, Casing};
-pub use derivative::{self, Derivative};
 pub use eyre::{bail, ensure, eyre, Context as EyreContext, ContextCompat, Error, Result};
 pub use itertools::*;
-pub use lazy_static::*;
 pub use serde::{self, de::DeserializeOwned, Deserialize, Serialize};
 pub use std::{
     any::{type_name, Any},
