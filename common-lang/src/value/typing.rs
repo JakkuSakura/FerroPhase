@@ -1,11 +1,11 @@
 use crate::ast::{AnyBox, AnyBoxable, Ident, Locator, Path, TypeExpr};
-use crate::common_derives;
 use crate::value::*;
+use crate::{common_derives, common_enum};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
-common_derives! {
+common_enum! {
     /// TypeValue is a solid type value
     pub enum TypeValue {
         Primitive(PrimitiveType),

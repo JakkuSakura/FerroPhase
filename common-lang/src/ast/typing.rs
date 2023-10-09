@@ -1,11 +1,11 @@
 use crate::ast::*;
-use crate::ast::{Ident, Invoke};
+use crate::common_enum;
 use crate::ops::*;
 use crate::value::*;
 use std::fmt::Display;
 use std::hash::Hash;
 
-common_derives! {
+common_enum! {
     /// TypeExpr is an expression that returns a type
     pub enum TypeExpr {
         Locator(Locator),
