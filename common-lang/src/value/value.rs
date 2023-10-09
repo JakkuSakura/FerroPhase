@@ -1,7 +1,7 @@
 use crate::ast::*;
-use crate::common_derives;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{StructType, TypeBounds, TypeValue};
+use crate::{common_derives, common_enum};
 use common::*;
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
@@ -59,7 +59,7 @@ macro_rules! plain_value {
     };
 }
 
-common_derives! {
+common_enum! {
     pub enum Value {
         Int(IntValue),
         Bool(BoolValue),
