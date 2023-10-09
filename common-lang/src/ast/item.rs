@@ -1,8 +1,9 @@
 use crate::ast::*;
+use crate::common_enum;
 use crate::value::*;
 use std::hash::Hash;
 
-common_derives! {
+common_enum! {
     /// Item is an syntax tree node that "declares" a thing without returning a value
     pub enum Item {
         Module(Module),

@@ -10,3 +10,4 @@ common = { path = "../common" }
 serde = "1"
 dashmap = "5.4.0"
 serde_json = "1"
+derive-from-one = "0.1.0"

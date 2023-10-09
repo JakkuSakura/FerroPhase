@@ -13,6 +13,8 @@ use crate::ast::Tree;
 
 use crate::value::{FunctionValue, TypeValue, Value};
 use std::rc::Rc;
+/// A macro to generate a common set of derives for a struct.
+/// especially Clone, Debug, PartialEq, Eq, Hash
 #[macro_export]
 macro_rules! common_derives {
     (no_debug $($t:tt)*) => {
@@ -22,6 +24,22 @@ macro_rules! common_derives {
     ($($t:tt)*) => {
         #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
         $($t)*
+    };
+}
+/// A macro to generate a common enum with a set of common traits.
+/// especially From<Variant> for Enum
+#[macro_export]
+macro_rules! common_enum {
+    (
+        $(#[$attr:meta])*
+        pub enum $name:ident { $($t:tt)* }
+    ) => {
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, derive_from_one::FromOne)]
+        $(#[$attr])*
+        pub enum $name {
+            $($t)*
+        }
+
     };
 }
 

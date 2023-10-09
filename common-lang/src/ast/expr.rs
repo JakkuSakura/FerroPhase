@@ -1,7 +1,8 @@
 use crate::ast::*;
+use crate::common_enum;
 use crate::value::{FieldValue, UnitValue, Value};
 use std::hash::Hash;
-common_derives! {
+common_enum! {
     /// Expr is an expression that returns a value
     pub enum Expr {
         Locator(Locator),
