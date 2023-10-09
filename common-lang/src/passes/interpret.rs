@@ -480,7 +480,14 @@ impl InterpreterPass {
 
     pub fn interpret_let(&self, node: &Let, ctx: &ArcScopedContext) -> Result<Value> {
         let value = self.interpret_expr(&node.value, ctx)?;
-        ctx.insert_value(node.name.clone(), value.clone());
+        ctx.insert_value(
+            node.name
+                .clone()
+                .as_ident()
+                .context("Only supports ident")?
+                .as_str(),
+            value.clone(),
+        );
         Ok(value)
     }
 
