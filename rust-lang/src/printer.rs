@@ -168,8 +168,80 @@ impl RustPrinter {
         }
         Ok(quote!(#(#stmts) *))
     }
+    pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
+        match pat {
+            Pattern::Ident(ident) => Ok(self.print_ident(ident)),
+            Pattern::Tuple(tuple) => {
+                let tuple: Vec<_> = tuple
+                    .patterns
+                    .iter()
+                    .map(|x| self.print_pattern(x))
+                    .try_collect()?;
+                Ok(quote!(#(#tuple), *))
+            }
+            Pattern::TupleStruct(tuple) => {
+                let name = self.print_locator(&tuple.name)?;
+                let tuple: Vec<_> = tuple
+                    .patterns
+                    .iter()
+                    .map(|x| self.print_pattern(x))
+                    .try_collect()?;
+                Ok(quote!(#name(#(#tuple), *)))
+            }
+            Pattern::Struct(stru) => {
+                let name = self.print_ident(&stru.name);
+                let fields: Vec<_> = stru
+                    .fields
+                    .iter()
+                    .map(|x| {
+                        let name = self.print_ident(&x.name);
+                        let rename = if let Some(rename) = &x.rename {
+                            let rename = self.print_pattern(rename)?;
+                            quote!(#name: #rename)
+                        } else {
+                            quote!(#name)
+                        };
+                        Ok::<_, Error>(rename)
+                    })
+                    .try_collect()?;
+                Ok(quote!(#name { #(#fields), * }))
+            }
+            Pattern::Structural(stru) => {
+                let fields: Vec<_> = stru
+                    .fields
+                    .iter()
+                    .map(|x| {
+                        let name = self.print_ident(&x.name);
+                        let rename = if let Some(rename) = &x.rename {
+                            let rename = self.print_pattern(rename)?;
+                            quote!(#name: #rename)
+                        } else {
+                            quote!(#name)
+                        };
+                        Ok::<_, Error>(rename)
+                    })
+                    .try_collect()?;
+                Ok(quote!(struct { #(#fields), * }))
+            }
+            Pattern::Box(box_) => {
+                let pattern = self.print_pattern(&box_.pattern)?;
+                // yet this is not stable
+                Ok(quote!(box #pattern))
+            }
+            Pattern::Variant(variant) => {
+                let name = self.print_type_expr(&variant.name)?;
+                let pattern = if let Some(pattern) = &variant.pattern {
+                    let pattern = self.print_pattern(pattern)?;
+                    quote!(#pattern)
+                } else {
+                    quote!()
+                };
+                Ok(quote!(#name #pattern))
+            }
+        }
+    }
     pub fn print_let(&self, let_: &Let) -> Result<TokenStream> {
-        let name = self.print_ident(&let_.name);
+        let pat = self.print_pattern(&let_.name)?;
         let ty = if let Some(ty) = &let_.ty {
             let x = self.print_type_value(ty)?;
             quote!(: #x)
@@ -183,7 +255,7 @@ impl RustPrinter {
             quote!()
         };
         Ok(quote!(
-            let #mutable #name #ty = #value;
+            let #mutable #pat #ty = #value;
         ))
     }
     pub fn print_assign(&self, assign: &Assign) -> Result<TokenStream> {
@@ -669,7 +741,7 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#(#segments)::*))
     }
-    pub fn print_pat(&self, pat: &Locator) -> Result<TokenStream> {
+    pub fn print_locator(&self, pat: &Locator) -> Result<TokenStream> {
         Ok(match pat {
             Locator::Ident(n) => self.print_ident(n),
             Locator::Path(n) => self.print_path(n),
@@ -678,7 +750,7 @@ impl RustPrinter {
     }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
         match node {
-            TypeExpr::Locator(n) => self.print_pat(n),
+            TypeExpr::Locator(n) => self.print_locator(n),
             TypeExpr::Value(n) => self.print_type_value(n),
             TypeExpr::Invoke(n) => self.print_invoke_type(n),
             TypeExpr::BinOp(TypeBinOp::Add(add)) => {

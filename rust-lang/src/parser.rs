@@ -135,16 +135,23 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
         },
 
         FnArg::Typed(t) => FunctionParam {
-            name: parse_pat(*t.pat)?,
+            name: parse_pat(*t.pat)?.as_ident().context("No ident")?.clone(),
             ty: parse_type_value(*t.ty)?,
         },
     })
 }
 
-fn parse_pat(p: syn::Pat) -> Result<Ident> {
+fn parse_pat(p: syn::Pat) -> Result<Pattern> {
     Ok(match p {
-        syn::Pat::Ident(name) => parse_ident(name.ident),
-        syn::Pat::Wild(_) => Ident::new("_"),
+        syn::Pat::Ident(name) => parse_ident(name.ident).into(),
+        syn::Pat::Wild(_) => Ident::new("_").into(),
+        syn::Pat::TupleStruct(t) => Pattern::TupleStruct(PatternTupleStruct {
+            name: parse_locator(t.path)?,
+            patterns: t.elems.into_iter().map(parse_pat).try_collect()?,
+        }),
+        syn::Pat::Tuple(t) => Pattern::Tuple(PatternTuple {
+            patterns: t.elems.into_iter().map(parse_pat).try_collect()?,
+        }),
         _ => bail!("Pattern not supported {:?}", p),
     })
 }
