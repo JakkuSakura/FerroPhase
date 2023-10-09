@@ -1,4 +1,4 @@
-use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item};
+use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item, Pattern};
 use crate::common_derives;
 use crate::value::TypeValue;
 use std::hash::Hash;
@@ -70,7 +70,8 @@ pub type StatementChunk = Vec<Statement>;
 
 common_derives! {
     pub struct Let {
-        pub name: Ident,
+        pub name: Pattern,
+        // FIXME: consider moving mutability to Pattern?
         pub mutability: Option<bool>,
         pub ty: Option<TypeValue>,
         pub value: Expr,

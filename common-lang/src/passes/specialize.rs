@@ -88,7 +88,7 @@ impl SpecializePass {
             };
 
             let binding = Statement::Let(Let {
-                name,
+                name: name.into(),
                 mutability: Some(false),
                 ty: None,
                 value: Expr::value(value),

@@ -228,7 +228,10 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
     pub fn optimize_let(&self, let_: Let, ctx: &ArcScopedContext) -> Result<Let> {
         let value = self.optimize_expr(let_.value, ctx)?;
-        ctx.insert_expr(let_.name.clone(), value.clone());
+        ctx.insert_expr(
+            let_.name.as_ident().context("Only supports ident")?.clone(),
+            value.clone(),
+        );
 
         Ok(Let {
             name: let_.name.clone(),
