@@ -103,6 +103,13 @@ impl Ident {
         Self::new("__root__")
     }
 }
+impl Deref for Ident {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.name.as_str()
+    }
+}
 impl<T: Into<String>> From<T> for Ident {
     fn from(value: T) -> Self {
         Self::new(value)

@@ -16,11 +16,11 @@ use std::rc::Rc;
 #[macro_export]
 macro_rules! common_derives {
     (no_debug $($t:tt)*) => {
-        #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
         $($t)*
     };
     ($($t:tt)*) => {
-        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
         $($t)*
     };
 }
