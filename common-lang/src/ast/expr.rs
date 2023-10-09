@@ -1,6 +1,5 @@
 use crate::ast::*;
 use crate::value::{FieldValue, UnitValue, Value};
-use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 common_derives! {
     /// Expr is an expression that returns a value
