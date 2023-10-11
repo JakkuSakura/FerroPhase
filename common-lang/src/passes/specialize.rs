@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::context::ArcScopedContext;
 use crate::interpreter::Interpreter;
 use crate::passes::OptimizePass;
-use crate::type_system::TypeSystem;
+use crate::typing::TypeSystem;
 use crate::value::*;
 use crate::*;
 use common::*;

@@ -97,6 +97,7 @@ impl Display for TypeValue {
             TypeValue::Primitive(prim) => Display::fmt(prim, f),
             TypeValue::Expr(expr) => Display::fmt(expr, f),
             TypeValue::Reference(reference) => Display::fmt(reference, f),
+            TypeValue::Unit(_) => f.write_str("()"),
             _ => panic!("cannot display type value: {:?}", self),
         }
     }

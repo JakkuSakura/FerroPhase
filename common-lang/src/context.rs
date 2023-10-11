@@ -139,7 +139,7 @@ impl ScopedContext {
         access_local: bool,
     ) -> Option<ValueStorage> {
         let key = key.into();
-        debug!("get_storage in {} {}", self.path, key);
+        // debug!("get_storage in {} {}", self.path, key);
         if key.segments.is_empty() {
             return None;
         }

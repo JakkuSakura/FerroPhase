@@ -56,7 +56,7 @@ impl Display for TypeExpr {
             // TypeExpr::BinOp(bin_op) => Display::fmt(bin_op, f),
             // TypeExpr::Invoke(invoke) => Display::fmt(invoke, f),
             TypeExpr::SelfType(self_type) => Display::fmt(self_type, f),
-            // TypeExpr::Value(value) => Display::fmt(value, f),
+            TypeExpr::Value(value) => Display::fmt(value, f),
             // TypeExpr::Expr(expr) => Display::fmt(expr, f),
             _ => panic!("cannot display type expr: {:?}", self),
         }
