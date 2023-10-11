@@ -1,10 +1,11 @@
 pub mod ast;
 pub mod context;
+pub mod helper;
 pub mod interpreter;
 pub mod ops;
 pub mod optimizer;
 pub mod passes;
-pub mod type_system;
+pub mod typing;
 pub mod value;
 use ast::*;
 use common::*;

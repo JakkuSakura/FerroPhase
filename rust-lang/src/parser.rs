@@ -743,7 +743,11 @@ impl RustParser {
     }
     pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
         let builder = InlinerBuilder::new();
-        let module = builder.parse_and_inline_modules(&path)?;
+        let path = path.canonicalize()?;
+        info!("Parsing {}", path.display());
+        let module = builder
+            .parse_and_inline_modules(&path)
+            .with_context(|| format!("path: {}", path.display()))?;
         let (outputs, errors) = module.into_output_and_errors();
         let mut errors_str = String::new();
         for err in errors {
