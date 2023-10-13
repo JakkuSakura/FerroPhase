@@ -1,37 +1,16 @@
 use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item, Pattern};
 use crate::common_derives;
-use crate::value::TypeValue;
 use std::hash::Hash;
-common_derives! {
-    pub struct SideEffect {
-        pub expr: Expr,
-    }
-
-}
-impl SideEffect {
-    pub fn new(expr: Expr) -> Self {
-        match expr {
-            Expr::Block(block) => {
-                let mut block = block;
-                block.make_last_side_effect();
-                Self {
-                    expr: Expr::Block(block),
-                }
-            }
-            _ => Self { expr },
-        }
-    }
-}
 
 common_derives! {
     pub enum Statement {
         Item(Box<Item>),
-        Let(Let),
-        Assign(Assign),
+        Let(StatementLet),
+        Assign(StatementAssign),
         SideEffect(SideEffect),
-        ForEach(ForEach),
-        While(While),
-        Loop(Loop),
+        ForEach(StatementForEach),
+        While(StatementWhile),
+        Loop(StatementLoop),
         Expr(Expr),
         Any(AnyBox),
     }
@@ -67,26 +46,42 @@ impl Statement {
 }
 
 pub type StatementChunk = Vec<Statement>;
-
 common_derives! {
-    pub struct Let {
-        pub name: Pattern,
-        // FIXME: consider moving mutability to Pattern?
-        pub mutability: Option<bool>,
-        pub ty: Option<TypeValue>,
+    pub struct SideEffect {
+        pub expr: Expr,
+    }
+
+}
+impl SideEffect {
+    pub fn new(expr: Expr) -> Self {
+        match expr {
+            Expr::Block(block) => {
+                let mut block = block;
+                block.make_last_side_effect();
+                Self {
+                    expr: Expr::Block(block),
+                }
+            }
+            _ => Self { expr },
+        }
+    }
+}
+common_derives! {
+    pub struct StatementLet {
+        pub pat: Pattern,
         pub value: Expr,
     }
 }
 
 common_derives! {
-    pub struct Assign {
+    pub struct StatementAssign {
         pub target: Expr,
         pub value: Expr,
     }
 }
 
 common_derives! {
-    pub struct ForEach {
+    pub struct StatementForEach {
         pub variable: Ident,
         pub iterable: Expr,
         pub body: Block,
@@ -94,13 +89,13 @@ common_derives! {
 }
 
 common_derives! {
-    pub struct While {
+    pub struct StatementWhile {
         pub cond: Expr,
         pub body: Block,
     }
 }
 common_derives! {
-    pub struct Loop {
+    pub struct StatementLoop {
         pub body: Block,
     }
 }

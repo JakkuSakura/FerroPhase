@@ -1,20 +1,23 @@
 use crate::ast::{Ident, Locator, TypeExpr};
+use crate::value::TypeValue;
 use crate::{common_derives, common_enum};
 common_enum! {
     pub enum Pattern {
-        Ident(Ident),
+        Ident(PatternIdent),
         Tuple(PatternTuple),
         TupleStruct(PatternTupleStruct),
         Struct(PatternStruct),
         Structural(PatternStructural),
         Box(PatternBox),
         Variant(PatternVariant),
+        Type(PatternType),
+        Wildcard(PatternWildcard),
     }
 }
 impl Pattern {
     pub fn as_ident(&self) -> Option<&Ident> {
         match self {
-            Pattern::Ident(ident) => Some(ident),
+            Pattern::Ident(ident) => Some(&ident.ident),
             _ => None,
         }
     }
@@ -59,4 +62,23 @@ common_derives! {
         pub pattern: Option<Box<Pattern>>,
     }
 
+}
+common_derives! {
+    /// let x: T = expr;
+    /// where x: T is PatternType
+    pub struct PatternType {
+        pub pat: Box<Pattern>,
+        pub ty: TypeValue,
+    }
+}
+
+common_derives! {
+    /// pattern like `mut x`
+    pub struct PatternIdent {
+        pub ident: Ident,
+        pub mutability: Option<bool>,
+    }
+}
+common_derives! {
+    pub struct PatternWildcard {}
 }
