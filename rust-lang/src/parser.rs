@@ -141,10 +141,16 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
     })
 }
 
+fn parse_pat_ident(i: syn::PatIdent) -> Result<PatternIdent> {
+    Ok(PatternIdent {
+        ident: parse_ident(i.ident),
+        mutability: Some(i.mutability.is_some()),
+    })
+}
 fn parse_pat(p: syn::Pat) -> Result<Pattern> {
     Ok(match p {
-        syn::Pat::Ident(name) => parse_ident(name.ident).into(),
-        syn::Pat::Wild(_) => Ident::new("_").into(),
+        syn::Pat::Ident(ident) => parse_pat_ident(ident)?.into(),
+        syn::Pat::Wild(_) => Pattern::Wildcard(PatternWildcard {}),
         syn::Pat::TupleStruct(t) => Pattern::TupleStruct(PatternTupleStruct {
             name: parse_locator(t.path)?,
             patterns: t.elems.into_iter().map(parse_pat).try_collect()?,
@@ -152,7 +158,11 @@ fn parse_pat(p: syn::Pat) -> Result<Pattern> {
         syn::Pat::Tuple(t) => Pattern::Tuple(PatternTuple {
             patterns: t.elems.into_iter().map(parse_pat).try_collect()?,
         }),
-        _ => bail!("Pattern not supported {:?}", p),
+        syn::Pat::Type(p) => Pattern::Type(PatternType {
+            pat: parse_pat(*p.pat)?.into(),
+            ty: parse_type_value(*p.ty)?,
+        }),
+        _ => bail!("Pattern not supported {}: {:?}", p.to_token_stream(), p),
     })
 }
 
@@ -399,13 +409,8 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
 
 fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
     Ok(match stmt {
-        syn::Stmt::Local(l) => Statement::Let(Let {
-            mutability: match &l.pat {
-                syn::Pat::Ident(i) => Some(i.mutability.is_some()),
-                _ => None,
-            },
-            name: parse_pat(l.pat)?,
-            ty: None,
+        syn::Stmt::Local(l) => Statement::Let(StatementLet {
+            pat: parse_pat(l.pat)?,
             value: parse_expr(*l.init.context("No value")?.expr)?,
         }),
         syn::Stmt::Item(tm) => parse_item(tm).map(Statement::item)?,
