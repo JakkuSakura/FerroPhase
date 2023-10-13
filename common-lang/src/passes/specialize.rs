@@ -87,10 +87,11 @@ impl SpecializePass {
                 continue;
             };
 
-            let binding = Statement::Let(Let {
-                name: name.into(),
-                mutability: Some(false),
-                ty: None,
+            let binding = Statement::Let(StatementLet {
+                pat: Pattern::Ident(PatternIdent {
+                    ident: name,
+                    mutability: Some(false),
+                }),
                 value: Expr::value(value),
             });
             bindings.push(binding);

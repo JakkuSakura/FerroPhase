@@ -29,6 +29,15 @@ impl RustPrinter {
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
+    pub fn print_pat_ident(&self, i: &PatternIdent) -> Result<TokenStream> {
+        let mut_ = if i.mutability.unwrap_or_default() {
+            quote!(mut)
+        } else {
+            quote!()
+        };
+        let name = self.print_ident(&i.ident);
+        Ok(quote!(#mut_ #name))
+    }
     pub fn print_trait(&self, n: &Trait) -> Result<TokenStream> {
         let name = self.print_ident(&n.name);
         let bounds = self.print_type_bounds(&n.bounds)?;
@@ -170,7 +179,7 @@ impl RustPrinter {
     }
     pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
         match pat {
-            Pattern::Ident(ident) => Ok(self.print_ident(ident)),
+            Pattern::Ident(ident) => self.print_pat_ident(ident),
             Pattern::Tuple(tuple) => {
                 let tuple: Vec<_> = tuple
                     .patterns
@@ -238,34 +247,26 @@ impl RustPrinter {
                 };
                 Ok(quote!(#name #pattern))
             }
+            _ => todo!(),
         }
     }
-    pub fn print_let(&self, let_: &Let) -> Result<TokenStream> {
-        let pat = self.print_pattern(&let_.name)?;
-        let ty = if let Some(ty) = &let_.ty {
-            let x = self.print_type_value(ty)?;
-            quote!(: #x)
-        } else {
-            quote!()
-        };
+    pub fn print_let(&self, let_: &StatementLet) -> Result<TokenStream> {
+        let pat = self.print_pattern(&let_.pat)?;
+
         let value = self.print_expr(&let_.value)?;
-        let mutable = if let_.mutability.unwrap_or_default() {
-            quote!(mut)
-        } else {
-            quote!()
-        };
+
         Ok(quote!(
-            let #mutable #pat #ty = #value;
+            let #pat = #value;
         ))
     }
-    pub fn print_assign(&self, assign: &Assign) -> Result<TokenStream> {
+    pub fn print_assign(&self, assign: &StatementAssign) -> Result<TokenStream> {
         let target = self.print_expr(&assign.target)?;
         let value = self.print_expr(&assign.value)?;
         Ok(quote!(
             #target = #value;
         ))
     }
-    pub fn print_for_each(&self, for_each: &ForEach) -> Result<TokenStream> {
+    pub fn print_for_each(&self, for_each: &StatementForEach) -> Result<TokenStream> {
         let name = self.print_ident(&for_each.variable);
         let iter = self.print_expr(&for_each.iterable)?;
         let body = self.print_block(&for_each.body)?;
@@ -274,7 +275,7 @@ impl RustPrinter {
                 #body
         ))
     }
-    pub fn print_while(&self, while_: &While) -> Result<TokenStream> {
+    pub fn print_while(&self, while_: &StatementWhile) -> Result<TokenStream> {
         let cond = self.print_expr(&while_.cond)?;
         let body = self.print_block(&while_.body)?;
         Ok(quote!(
@@ -282,7 +283,7 @@ impl RustPrinter {
                 #body
         ))
     }
-    pub fn print_loop(&self, loop_: &Loop) -> Result<TokenStream> {
+    pub fn print_loop(&self, loop_: &StatementLoop) -> Result<TokenStream> {
         let body = self.print_block(&loop_.body)?;
         Ok(quote!(
             loop
