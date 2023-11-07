@@ -1,8 +1,11 @@
 use common::*;
 use common_lang::ast::*;
+use common_lang::register_threadlocal_serializer;
 use common_lang::value::{
     FunctionParam, FunctionSignature, FunctionValue, PrimitiveType, TypeValue,
 };
+use rust_lang::RustSerde;
+use std::rc::Rc;
 macro_rules! shll_parse_item {
     ($($tt:tt)*) => {{
         let code: syn::Item = syn::parse_quote!($($tt)*);
@@ -17,6 +20,7 @@ macro_rules! shll_parse_expr {
 }
 #[test]
 fn test_parse_fn() -> Result<()> {
+    register_threadlocal_serializer(Rc::new(RustSerde::new()));
     let code = shll_parse_item! {
         fn foo(a: i64) -> i64 {
             a + 1
@@ -50,6 +54,8 @@ fn test_parse_fn() -> Result<()> {
 }
 #[test]
 fn test_parse_impl_for() -> Result<()> {
+    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+
     let code = shll_parse_item! {
         impl Foo for Bar {
             fn foo(a: i64) -> i64 {
