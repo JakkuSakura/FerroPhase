@@ -1,6 +1,6 @@
 use crate::ast::{AnyBox, AnyBoxable, Ident, Locator, Path, TypeExpr};
 use crate::value::*;
-use crate::{common_derives, common_enum};
+use crate::{common_derives, common_enum, get_threadlocal_serializer};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
@@ -92,14 +92,8 @@ impl TypeValue {
 }
 impl Display for TypeValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeValue::Value(value) => Display::fmt(value, f),
-            TypeValue::Primitive(prim) => Display::fmt(prim, f),
-            TypeValue::Expr(expr) => Display::fmt(expr, f),
-            TypeValue::Reference(reference) => Display::fmt(reference, f),
-            TypeValue::Unit(_) => f.write_str("()"),
-            _ => panic!("cannot display type value: {:?}", self),
-        }
+        let s = get_threadlocal_serializer().serialize_type(self).unwrap();
+        f.write_str(&s)
     }
 }
 
@@ -178,14 +172,10 @@ impl PrimitiveType {
 }
 impl Display for PrimitiveType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PrimitiveType::Int(int) => Display::fmt(int, f),
-            PrimitiveType::Decimal(decimal) => Display::fmt(decimal, f),
-            PrimitiveType::Bool => write!(f, "bool"),
-            PrimitiveType::Char => write!(f, "char"),
-            PrimitiveType::String => write!(f, "string"),
-            PrimitiveType::List => write!(f, "list"),
-        }
+        let s = get_threadlocal_serializer()
+            .serialize_type(&TypeValue::Primitive(*self))
+            .unwrap();
+        f.write_str(&s)
     }
 }
 
@@ -268,19 +258,11 @@ common_derives! {
 }
 impl Display for ReferenceType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Some(lifetime) = &self.lifetime {
-            write!(f, "&{} ", lifetime)?;
-        } else {
-            write!(f, "&")?;
-        }
-        if let Some(mutability) = self.mutability {
-            if mutability {
-                write!(f, "mut ")?;
-            } else {
-                write!(f, "const ")?;
-            }
-        }
-        Display::fmt(&self.ty, f)
+        let s = get_threadlocal_serializer()
+            .serialize_type(&TypeValue::Reference(self.clone()))
+            .unwrap();
+
+        f.write_str(&s)
     }
 }
 
