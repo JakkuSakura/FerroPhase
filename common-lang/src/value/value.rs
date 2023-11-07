@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{StructType, TypeBounds, TypeValue};
-use crate::{common_derives, common_enum};
+use crate::{common_derives, common_enum, get_threadlocal_serializer};
 use common::*;
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
@@ -143,20 +143,8 @@ impl ToJson for Value {
 }
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Int(i) => Display::fmt(i, f),
-            Value::Bool(b) => Display::fmt(b, f),
-            Value::Decimal(d) => Display::fmt(d, f),
-            Value::Char(c) => Display::fmt(c, f),
-            Value::String(s) => Display::fmt(s, f),
-            Value::List(l) => Display::fmt(l, f),
-            Value::Unit(u) => Display::fmt(u, f),
-            Value::Null(n) => Display::fmt(n, f),
-            Value::Undefined(u) => Display::fmt(u, f),
-            Value::Struct(s) => Display::fmt(s, f),
-            Value::Tuple(t) => Display::fmt(t, f),
-            _ => panic!("cannot display value: {:?}", self),
-        }
+        let s = get_threadlocal_serializer().serialize_value(self).unwrap();
+        f.write_str(&s)
     }
 }
 
