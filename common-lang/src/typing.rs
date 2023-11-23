@@ -174,11 +174,14 @@ impl TypeSystem {
                     .map(|x| self.evaluate_type_value(x, &sub))
                     .try_collect()?;
                 let ret = self.evaluate_type_value(&f.ret, &sub)?;
-                Ok(TypeValue::Function(FunctionType {
-                    params,
-                    generics_params: f.generics_params.clone(),
-                    ret: Box::new(ret),
-                }))
+                Ok(TypeValue::Function(
+                    FunctionType {
+                        params,
+                        generics_params: f.generics_params.clone(),
+                        ret,
+                    }
+                    .into(),
+                ))
             }
             TypeValue::TypeBounds(b) => self.evaluate_type_bounds(b, ctx),
             TypeValue::ImplTraits(t) => self.evaluate_impl_traits(t, ctx),
@@ -263,7 +266,7 @@ impl TypeSystem {
 
         let callee = self.infer_expr(callee, ctx)?;
         match callee {
-            TypeValue::Function(f) => return Ok(*f.ret),
+            TypeValue::Function(f) => return Ok(f.ret),
             _ => {}
         }
 
@@ -272,21 +275,27 @@ impl TypeSystem {
     pub fn infer_ident(&self, ident: &Ident, ctx: &ArcScopedContext) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
-                return Ok(TypeValue::Function(FunctionType {
-                    generics_params: vec![GenericParam {
-                        name: Ident::new("T"),
-                        bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
-                    }],
-                    params: vec![TypeValue::ident("T".into()), TypeValue::ident("T".into())],
-                    ret: Box::new(TypeValue::bool()),
-                }));
+                return Ok(TypeValue::Function(
+                    FunctionType {
+                        generics_params: vec![GenericParam {
+                            name: Ident::new("T"),
+                            bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
+                        }],
+                        params: vec![TypeValue::ident("T".into()), TypeValue::ident("T".into())],
+                        ret: TypeValue::bool(),
+                    }
+                    .into(),
+                ));
             }
             "print" => {
-                return Ok(TypeValue::Function(FunctionType {
-                    params: vec![],
-                    generics_params: vec![],
-                    ret: Box::new(TypeValue::unit()),
-                }))
+                return Ok(TypeValue::Function(
+                    FunctionType {
+                        params: vec![],
+                        generics_params: vec![],
+                        ret: TypeValue::unit(),
+                    }
+                    .into(),
+                ))
             }
             _ => {}
         }
@@ -303,7 +312,7 @@ impl TypeSystem {
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return Ok(ty);
             }
-            Expr::Value(l) => match l {
+            Expr::Value(l) => match &**l {
                 Value::Int(_) => return Ok(TypeValue::Primitive(PrimitiveType::Int(IntType::I64))),
                 Value::Decimal(_) => {
                     return Ok(TypeValue::Primitive(PrimitiveType::Decimal(
@@ -318,13 +327,17 @@ impl TypeSystem {
                 Value::List(_) => return Ok(TypeValue::Primitive(PrimitiveType::List)),
                 _ => {}
             },
-            Expr::Invoke(invoke) => match &*invoke.func {
-                Expr::Value(Value::BinOpKind(kind)) if kind.is_bool() => {
-                    return Ok(TypeValue::Primitive(PrimitiveType::Bool))
-                }
-                Expr::Value(Value::BinOpKind(_)) => {
-                    return Ok(self.infer_expr(invoke.args.first().context("No param")?, ctx)?)
-                }
+            Expr::Invoke(invoke) => match &invoke.func {
+                Expr::Value(value) => match &**value {
+                    Value::BinOpKind(kind) if kind.is_bool() => {
+                        return Ok(TypeValue::Primitive(PrimitiveType::Bool))
+                    }
+                    Value::BinOpKind(_) => {
+                        return Ok(self.infer_expr(invoke.args.first().context("No param")?, ctx)?)
+                    }
+                    _ => {}
+                },
+
                 _ => {}
             },
             _ => {}
@@ -350,7 +363,7 @@ impl TypeSystem {
         Ok(FunctionType {
             params,
             generics_params: func.generics_params.clone(),
-            ret: Box::new(ret),
+            ret: ret,
         })
     }
 }

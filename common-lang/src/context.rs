@@ -192,7 +192,7 @@ impl ScopedContext {
         info!("try_get_value_from_expr {:?}", expr);
         let ret = match expr {
             Expr::Locator(ident) => self.get_value(ident),
-            Expr::Value(value) => Some(value.clone()),
+            Expr::Value(value) => Some(*value.clone()),
             _ => None,
         };
         info!("try_get_value_from_expr {:?} => {:?}", expr, ret);

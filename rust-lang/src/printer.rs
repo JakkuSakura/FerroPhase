@@ -127,35 +127,37 @@ impl RustPrinter {
         }
     }
     pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
-        match &*invoke.func {
-            Expr::Value(Value::BinOpKind(op)) => {
-                let op = self.print_bin_op_kind(op);
-                let args: Vec<_> = invoke
-                    .args
-                    .iter()
-                    .map(|x| self.print_expr(x))
-                    .try_collect()?;
-                let mut stream = quote!();
-                for (i, a) in args.into_iter().enumerate() {
-                    if i != 0 {
-                        stream = quote!(#stream #op);
+        match &invoke.func {
+            Expr::Value(value) => match &**value {
+                Value::BinOpKind(op) => {
+                    let op = self.print_bin_op_kind(op);
+                    let args: Vec<_> = invoke
+                        .args
+                        .iter()
+                        .map(|x| self.print_expr(x))
+                        .try_collect()?;
+                    let mut stream = quote!();
+                    for (i, a) in args.into_iter().enumerate() {
+                        if i != 0 {
+                            stream = quote!(#stream #op);
+                        }
+                        stream = quote!(#stream #a);
                     }
-                    stream = quote!(#stream #a);
+                    return Ok(stream);
                 }
-                return Ok(stream);
-            }
-            _ => {
-                let fun = self.print_expr(&invoke.func)?;
-                let args: Vec<_> = invoke
-                    .args
-                    .iter()
-                    .map(|x| self.print_expr(x))
-                    .try_collect()?;
-                Ok(quote!(
-                    #fun(#(#args), *)
-                ))
-            }
+                _ => {}
+            },
+            _ => {}
         }
+        let fun = self.print_expr(&invoke.func)?;
+        let args: Vec<_> = invoke
+            .args
+            .iter()
+            .map(|x| self.print_expr(x))
+            .try_collect()?;
+        Ok(quote!(
+            #fun(#(#args), *)
+        ))
     }
     pub fn print_invoke_type(&self, invoke: &Invoke) -> Result<TokenStream> {
         let fun = self.print_expr(&invoke.func)?;
@@ -371,32 +373,36 @@ impl RustPrinter {
         }
     }
     pub fn print_function(&self, func: &FunctionValue, vis: Visibility) -> Result<TokenStream> {
-        let name = if let Some(name) = &func.name {
+        let name = if let Some(name) = &func.sig.name {
             self.print_ident(name)
         } else {
             quote!()
         };
-        let ret_type = &func.ret;
+        let ret_type = &func.sig.ret;
         let ret = self.print_return_type(ret_type)?;
         let param_names: Vec<_> = func
+            .sig
             .params
             .iter()
             .map(|x| self.print_ident(&x.name))
             .collect();
         let param_types: Vec<_> = func
+            .sig
             .params
             .iter()
             .map(|x| self.print_type_value(&x.ty))
             .try_collect()?;
         let stmts = self.print_expr_optimized(&func.body)?;
         let gg;
-        if !func.generics_params.is_empty() {
+        if !func.sig.generics_params.is_empty() {
             let gt: Vec<_> = func
+                .sig
                 .generics_params
                 .iter()
                 .map(|x| self.print_ident(&x.name))
                 .collect();
             let gb: Vec<_> = func
+                .sig
                 .generics_params
                 .iter()
                 .map(|x| self.print_type_bounds(&x.bounds))
@@ -415,7 +421,7 @@ impl RustPrinter {
     pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
         let fun = self.print_expr(&node.func)?;
         let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
-        match &*node.func {
+        match &node.func {
             Expr::Select(select) => match select.select {
                 SelectType::Field => {
                     return Ok(quote!(
@@ -749,21 +755,28 @@ impl RustPrinter {
             Locator::ParameterPath(n) => self.print_parameter_path(n)?,
         })
     }
+    pub fn print_type_bin_op(&self, op: &TypeBinOp) -> Result<TokenStream> {
+        match op {
+            TypeBinOp::Add(add) => {
+                let left = self.print_type_expr(&add.lhs)?;
+                let right = self.print_type_expr(&add.rhs)?;
+                Ok(quote!(#left + #right))
+            }
+            TypeBinOp::Sub(sub) => {
+                let left = self.print_type_expr(&sub.lhs)?;
+                let right = self.print_type_expr(&sub.rhs)?;
+                Ok(quote!(#left - #right))
+            }
+            #[allow(unreachable_patterns)]
+            _ => bail!("Unable to serialize {:?}", op),
+        }
+    }
     pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
         match node {
             TypeExpr::Locator(n) => self.print_locator(n),
             TypeExpr::Value(n) => self.print_type_value(n),
             TypeExpr::Invoke(n) => self.print_invoke_type(n),
-            TypeExpr::BinOp(TypeBinOp::Add(add)) => {
-                let left = self.print_type_expr(&add.lhs)?;
-                let right = self.print_type_expr(&add.rhs)?;
-                Ok(quote!(#left + #right))
-            }
-            TypeExpr::BinOp(TypeBinOp::Sub(sub)) => {
-                let left = self.print_type_expr(&sub.lhs)?;
-                let right = self.print_type_expr(&sub.rhs)?;
-                Ok(quote!(#left - #right))
-            }
+            TypeExpr::BinOp(op) => self.print_type_bin_op(op),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -775,7 +788,7 @@ impl RustPrinter {
         match node {
             Expr::Cond(n) => self.print_cond(n),
             Expr::Block(n) => self.print_statement_chunk(&n.stmts),
-            Expr::Value(Value::Unit(_)) => Ok(quote!()),
+            Expr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
     }

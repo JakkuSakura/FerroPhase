@@ -43,6 +43,13 @@ impl Statement {
             *self = Self::Expr(expr.expr.clone());
         }
     }
+    pub fn is_unit(&self) -> bool {
+        match self {
+            Self::Expr(expr) => expr.is_unit(),
+            Self::SideEffect(expr) => expr.expr.is_unit(),
+            _ => false,
+        }
+    }
 }
 
 pub type StatementChunk = Vec<Statement>;
