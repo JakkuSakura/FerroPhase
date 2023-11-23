@@ -9,11 +9,11 @@ common_enum! {
     /// TypeExpr is an expression that returns a type
     pub enum TypeExpr {
         Locator(Locator),
-        BinOp(TypeBinOp),
-        Invoke(Invoke),
-        SelfType(SelfType),
-        Value(TypeValue),
-        Expr(Box<Expr>),
+        BinOp(Box<TypeBinOp>),
+        Invoke(Box<Invoke>),
+        SelfType(Box<SelfType>),
+        Value(Box<TypeValue>),
+        Expr(Expr),
     }
 }
 
@@ -30,7 +30,7 @@ impl TypeExpr {
     pub fn value(v: TypeValue) -> TypeExpr {
         match v {
             TypeValue::Expr(expr) => *expr,
-            _ => TypeExpr::Value(v),
+            _ => TypeExpr::Value(v.into()),
         }
     }
     pub fn type_bound(expr: TypeExpr) -> TypeExpr {
@@ -44,8 +44,14 @@ impl TypeExpr {
     }
     pub fn as_struct(&self) -> Option<&StructType> {
         match self {
-            TypeExpr::Value(TypeValue::Struct(struct_)) => Some(struct_),
+            TypeExpr::Value(v) => v.as_struct(),
             _ => None,
+        }
+    }
+    pub fn is_any(&self) -> bool {
+        match self {
+            TypeExpr::Value(v) => v.is_any(),
+            _ => false,
         }
     }
 }

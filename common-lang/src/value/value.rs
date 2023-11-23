@@ -78,7 +78,7 @@ common_enum! {
         Structural(StructuralValue),
         Function(FunctionValue),
         Tuple(TupleValue),
-        Expr(Box<Expr>),
+        Expr(Expr),
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),
         Any(AnyBox),
@@ -97,13 +97,19 @@ impl Value {
     pub fn unit() -> Value {
         Value::Unit(UnitValue)
     }
+    pub fn is_unit(&self) -> bool {
+        match self {
+            Value::Unit(_) => true,
+            _ => false,
+        }
+    }
     pub fn null() -> Value {
         Value::Null(NullValue)
     }
     pub fn expr(e: Expr) -> Self {
         match e {
-            Expr::Value(v) => v,
-            _ => Value::Expr(Box::new(e)),
+            Expr::Value(v) => *v,
+            _ => Value::Expr(e),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
@@ -436,7 +442,7 @@ common_derives! {
 common_derives! {
     pub struct FunctionValue {
         pub sig: FunctionSignature,
-        pub body: Box<Expr>,
+        pub body: Expr,
     }
 }
 impl FunctionValue {

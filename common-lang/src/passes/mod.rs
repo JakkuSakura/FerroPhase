@@ -67,7 +67,7 @@ pub trait OptimizePass {
         Ok(pat.clone())
     }
     fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
-        Ok(Expr::Invoke(invoke))
+        Ok(Expr::Invoke(invoke.into()))
     }
 }
 
@@ -187,6 +187,6 @@ impl OptimizePass for MultiplePass {
         for pass in self {
             return pass.optimize_bin_op(invoke, ctx);
         }
-        Ok(Expr::Invoke(invoke))
+        Ok(Expr::Invoke(invoke.into()))
     }
 }
