@@ -17,10 +17,11 @@ pub use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub use pretty_assertions::*;
 pub use thiserror::Error;
 pub use tracing::{debug, error, info, instrument, span, trace, warn, Level};
-// these are modules of the crate
 
+// these are modules of the crate
 mod log;
 
 // these are re-exports within the crate

@@ -11,6 +11,7 @@ common_enum! {
         Primitive(PrimitiveType),
         Struct(StructType),
         Structural(StructuralType),
+        Enum(EnumType),
         Function(FunctionType),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
@@ -203,6 +204,20 @@ common_derives! {
         pub fields: Vec<FieldTypeValue>,
     }
 }
+common_derives! {
+    pub struct EnumType {
+        pub name: Ident,
+        pub variants: Vec<EnumTypeVariant>,
+    }
+}
+
+common_derives! {
+    pub struct EnumTypeVariant {
+        pub name: Ident,
+        pub value: TypeValue,
+    }
+}
+
 common_derives! {
     pub struct StructuralType {
         pub fields: Vec<FieldTypeValue>,
