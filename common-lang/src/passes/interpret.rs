@@ -33,15 +33,19 @@ impl InterpreterPass {
     }
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
-        match &*node.func {
-            Expr::Value(Value::BinOpKind(kind)) => {
-                self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
-            }
-            Expr::Value(Value::UnOpKind(func)) => {
-                ensure!(node.args.len() == 1, "Expected 1 arg for {:?}", func);
-                let arg = self.interpret_expr(&node.args[0], ctx)?;
-                self.interpret_invoke_unop(func.clone(), arg, ctx)
-            }
+        match &node.func {
+            Expr::Value(value) => match &**value {
+                Value::BinOpKind(kind) => {
+                    self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
+                }
+                Value::UnOpKind(func) => {
+                    ensure!(node.args.len() == 1, "Expected 1 arg for {:?}", func);
+                    let arg = self.interpret_expr(&node.args[0], ctx)?;
+                    self.interpret_invoke_unop(func.clone(), arg, ctx)
+                }
+                _ => bail!("Could not invoke {:?}", node),
+            },
+
             Expr::Any(any) => {
                 if let Some(exp) = any.downcast_ref::<BuiltinFn>() {
                     let args = self.interpret_args(&node.args, ctx)?;
@@ -61,12 +65,15 @@ impl InterpreterPass {
                 )
             }
             Expr::Select(select) => match select.field.as_str() {
-                "to_string" => match &*select.obj {
-                    Expr::Value(Value::String(obj)) => {
-                        let mut obj = obj.clone();
-                        obj.owned = true;
-                        Ok(Value::String(obj))
-                    }
+                "to_string" => match &select.obj {
+                    Expr::Value(value) => match &**value {
+                        Value::String(obj) => {
+                            let mut obj = obj.clone();
+                            obj.owned = true;
+                            Ok(Value::String(obj))
+                        }
+                        _ => bail!("Expected string for {:?}", select),
+                    },
                     _ => bail!("Expected struct for {:?}", select),
                 },
                 x => bail!("Could not invoke {:?}", x),
@@ -528,7 +535,7 @@ impl OptimizePass for InterpreterPass {
     fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
         match item {
             Item::Define(def) if def.name.as_str() == "main" => match def.value {
-                DefineValue::Function(func) => Ok(Item::Expr(*func.body)),
+                DefineValue::Function(func) => Ok(Item::Expr(func.body)),
                 _ => bail!("main should be a function"),
             },
             _ => Ok(Item::Expr(Expr::unit())),

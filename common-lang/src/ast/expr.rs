@@ -6,26 +6,32 @@ common_enum! {
     /// Expr is an expression that returns a value
     pub enum Expr {
         Locator(Locator),
-        Value(Value),
+        Value(Box<Value>),
         Block(Block),
         Cond(Cond),
-        Invoke(Invoke),
-        Select(Select),
-        Struct(StructExpr),
-        Reference(Reference),
+        Invoke(Box<Invoke>),
+        Select(Box<Select>),
+        Struct(Box<StructExpr>),
+        Reference(Box<Reference>),
         Any(AnyBox),
     }
 
 }
 impl Expr {
     pub fn unit() -> Expr {
-        Expr::Value(Value::Unit(UnitValue))
+        Expr::Value(Value::Unit(UnitValue).into())
+    }
+    pub fn is_unit(&self) -> bool {
+        match self {
+            Expr::Value(value) => value.is_unit(),
+            _ => false,
+        }
     }
     pub fn value(v: Value) -> Expr {
         match v {
-            Value::Expr(expr) => *expr,
+            Value::Expr(expr) => expr,
             Value::Any(any) => Expr::Any(any),
-            _ => Expr::Value(v),
+            _ => Expr::Value(v.into()),
         }
     }
     pub fn ident(name: Ident) -> Expr {
@@ -60,7 +66,7 @@ impl Expr {
 
 common_derives! {
     pub struct Invoke {
-        pub func: Box<Expr>,
+        pub func: Expr,
         pub args: Vec<Expr>,
     }
 }
@@ -79,7 +85,7 @@ common_derives! {
 
 common_derives! {
     pub struct Select {
-        pub obj: Box<Expr>,
+        pub obj: Expr,
         pub field: Ident,
         pub select: SelectType,
     }
@@ -87,7 +93,7 @@ common_derives! {
 
 common_derives! {
     pub struct Reference {
-        pub referee: Box<Expr>,
+        pub referee: Expr,
         pub mutable: Option<bool>,
     }
 }

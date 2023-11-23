@@ -24,7 +24,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     }
 
     pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
-        let func = self.optimize_expr(*invoke.func.clone(), ctx)?;
+        let func = self.optimize_expr(invoke.func.clone(), ctx)?;
 
         invoke.args = invoke
             .args
@@ -43,27 +43,37 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             ControlFlow::Into => {
                 let looked_up = self.pass.try_evaluate_expr(&func, ctx)?;
                 match looked_up {
-                    Expr::Value(Value::Function(f)) => {
-                        let sub_ctx = ctx.child(
-                            f.name.clone().unwrap_or(Ident::new("__func__")),
-                            Visibility::Private,
-                            false,
-                        );
-                        for (i, arg) in invoke.args.iter().cloned().enumerate() {
-                            let param = f.params.get(i).with_context(|| {
-                                format!("Couldn't find {} parameter of {:?}", i, f)
-                            })?;
+                    Expr::Value(value) => match *value {
+                        Value::Function(f) => {
+                            let sub_ctx = ctx.child(
+                                f.name.clone().unwrap_or(Ident::new("__func__")),
+                                Visibility::Private,
+                                false,
+                            );
+                            for (i, arg) in invoke.args.iter().cloned().enumerate() {
+                                let param = f.params.get(i).with_context(|| {
+                                    format!("Couldn't find {} parameter of {:?}", i, f)
+                                })?;
 
-                            sub_ctx.insert_expr(param.name.clone(), arg);
+                                sub_ctx.insert_expr(param.name.clone(), arg);
+                            }
+
+                            let ret = self.optimize_invoking(invoke, f, &sub_ctx)?;
+
+                            return Ok(ret);
                         }
-
-                        let ret = self.optimize_invoking(invoke, f, &sub_ctx)?;
-
-                        return Ok(ret);
-                    }
-                    Expr::Value(Value::BinOpKind(_)) => {
-                        return self.pass.optimize_bin_op(invoke, ctx);
-                    }
+                        Value::BinOpKind(_) => {
+                            return self.pass.optimize_bin_op(invoke, ctx);
+                        }
+                        _ => {
+                            warn!(
+                                "Couldn't optimize {} due to {:?} not in context",
+                                self.serializer.serialize_invoke(&invoke)?,
+                                func
+                            );
+                            ctx.print_values(&*self.serializer)?;
+                        }
+                    },
                     _ => {
                         warn!(
                             "Couldn't optimize {} due to {:?} not in context",
@@ -78,7 +88,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             _ => bail!("Cannot handle control flow {:?}", control),
         }
 
-        let invoke = Expr::Invoke(invoke);
+        let invoke = Expr::Invoke(invoke.into());
         Ok(invoke)
     }
 
@@ -95,7 +105,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
         let func_body_serialized = self.serializer.serialize_expr(&func.body)?;
         debug!("Doing {} for {}", self.pass.name(), func_body_serialized);
-        func.body = self.optimize_expr(*func.body, ctx)?.into();
+        func.body = self.optimize_expr(func.body, ctx)?.into();
         let func_body_serialized2 = self.serializer.serialize_expr(&func.body)?;
         // if func_body_serialized != func_body_serialized2 {
         debug!(
@@ -116,7 +126,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             serialized2
         );
         // }
-        Ok(Expr::Invoke(invoke))
+        Ok(Expr::Invoke(invoke.into()))
     }
 
     pub fn optimize_expr(&self, mut expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
@@ -131,7 +141,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             Expr::Struct(_) => expr,
             Expr::Block(x) => self.optimize_block(x, ctx)?,
             Expr::Cond(x) => self.optimize_cond(x, ctx)?,
-            Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
+            Expr::Invoke(x) => self.optimize_invoke(*x, ctx)?,
             Expr::Any(x) => Expr::Any(x.clone()),
             _ => bail!("Could not optimize {:?}", expr),
         };
@@ -171,7 +181,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             .into_iter()
             .map(|x| self.optimize_item(x, &sub))
             .try_collect()?;
-        items.retain(|x| !matches!(x, Item::Expr(Expr::Value(Value::Unit(_)))));
+        items.retain(|x| !x.is_unit());
 
         let module = Module {
             name: m.name.clone(),
@@ -274,15 +284,16 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             .into_iter()
             .map(|x| self.optimize_stmt(x, &ctx))
             .try_collect()?;
-        stmts.retain(|x| !matches!(x, Statement::Expr(Expr::Value(Value::Unit(_)))));
-        stmts.retain(|x| {
-            !matches!(
-                x,
-                Statement::SideEffect(SideEffect {
-                    expr: Expr::Value(Value::Unit(_))
-                })
-            )
-        });
+        stmts.retain(|x| !x.is_unit());
+        // FIXME: is it correct to remove unit statements with side effects?
+        // stmts.retain(|x| {
+        //     !matches!(
+        //         x,
+        //         Statement::SideEffect(SideEffect {
+        //             expr: Expr::Value(Value::Unit(_))
+        //         })
+        //     )
+        // });
         b.stmts = stmts;
         Ok(Expr::block(b))
     }
@@ -322,7 +333,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         func: FunctionValue,
         ctx: &ArcScopedContext,
     ) -> Result<FunctionValue> {
-        let body = self.optimize_expr(*func.body, ctx)?;
+        let body = self.optimize_expr(func.body, ctx)?;
         Ok(FunctionValue {
             body: body.into(),
             ..func
