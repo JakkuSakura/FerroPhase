@@ -1,12 +1,20 @@
-use crate::ast::{Block, Expr, Invoke, Item, Module, Statement, Tree};
+use crate::ast::{Block, Expr, File, Invoke, Item, Module, Statement, Tree};
 use crate::value::{FunctionValue, TypeValue, Value};
 use common::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-
+#[allow(unused_variables)]
 pub trait Serializer {
-    fn serialize_tree(&self, node: &Tree) -> Result<String>;
-    fn serialize_expr(&self, node: &Expr) -> Result<String>;
+    fn serialize_tree(&self, node: &Tree) -> Result<String> {
+        match node {
+            Tree::Item(item) => self.serialize_item(item),
+            Tree::Expr(expr) => self.serialize_expr(expr),
+            Tree::File(file) => self.serialize_file(file),
+        }
+    }
+    fn serialize_expr(&self, node: &Expr) -> Result<String> {
+        bail!("not implemented: serialize_expr")
+    }
     fn serialize_args(&self, nodes: &[Expr]) -> Result<String> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
@@ -17,11 +25,24 @@ pub trait Serializer {
         }
         Ok(s)
     }
-    fn serialize_invoke(&self, node: &Invoke) -> Result<String>;
-    fn serialize_item(&self, node: &Item) -> Result<String>;
-    fn serialize_block(&self, node: &Block) -> Result<String>;
-    fn serialize_module(&self, node: &Module) -> Result<String>;
-    fn serialize_value(&self, node: &Value) -> Result<String>;
+    fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
+        bail!("not implemented: serialize_invoke")
+    }
+    fn serialize_item(&self, node: &Item) -> Result<String> {
+        bail!("not implemented: serialize_item")
+    }
+    fn serialize_block(&self, node: &Block) -> Result<String> {
+        bail!("not implemented: serialize_block")
+    }
+    fn serialize_file(&self, node: &File) -> Result<String> {
+        bail!("not implemented: serialize_file")
+    }
+    fn serialize_module(&self, node: &Module) -> Result<String> {
+        bail!("not implemented: serialize_module")
+    }
+    fn serialize_value(&self, node: &Value) -> Result<String> {
+        bail!("not implemented: serialize_value")
+    }
     fn serialize_values(&self, nodes: &[Value]) -> Result<String> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
@@ -32,9 +53,15 @@ pub trait Serializer {
         }
         Ok(s)
     }
-    fn serialize_type(&self, node: &TypeValue) -> Result<String>;
-    fn serialize_stmt(&self, node: &Statement) -> Result<String>;
-    fn serialize_function(&self, node: &FunctionValue) -> Result<String>;
+    fn serialize_type(&self, node: &TypeValue) -> Result<String> {
+        bail!("not implemented: serialize_type")
+    }
+    fn serialize_stmt(&self, node: &Statement) -> Result<String> {
+        bail!("not implemented: serialize_stmt")
+    }
+    fn serialize_function(&self, node: &FunctionValue) -> Result<String> {
+        bail!("not implemented: serialize_function")
+    }
 }
 
 thread_local! {
