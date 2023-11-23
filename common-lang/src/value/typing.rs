@@ -12,17 +12,17 @@ common_enum! {
         Struct(StructType),
         Structural(StructuralType),
         Enum(EnumType),
-        Function(FunctionType),
+        Function(Box<FunctionType>),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
-        Value(ValueType),
+        Value(Box<ValueType>),
         Tuple(TupleType),
-        Vec(VecType),
+        Vec(Box<VecType>),
         Any(AnyType),
         Unit(UnitType),
         Nothing(NothingType),
         Type(TypeType),
-        Reference(ReferenceType),
+        Reference(Box<ReferenceType>),
         Expr(Box<TypeExpr>),
         AnyBox(AnyBox),
     }
@@ -35,19 +35,22 @@ impl TypeValue {
     pub fn any() -> TypeValue {
         TypeValue::Any(AnyType)
     }
+    pub fn is_any(&self) -> bool {
+        matches!(self, TypeValue::Any(_))
+    }
     pub fn bool() -> TypeValue {
         TypeValue::Primitive(PrimitiveType::Bool)
     }
     pub fn expr(e: TypeExpr) -> Self {
         match e {
-            TypeExpr::Value(v) => v,
+            TypeExpr::Value(v) => *v,
             _ => TypeValue::Expr(Box::new(e)),
         }
     }
     pub fn value(v: Value) -> Self {
         match v {
             Value::Expr(expr) => TypeValue::Expr(TypeExpr::Expr(expr).into()),
-            _ => TypeValue::Value(ValueType::new(v)),
+            _ => TypeValue::Value(ValueType::new(v).into()),
         }
     }
     pub fn path(path: Path) -> TypeValue {
@@ -57,11 +60,14 @@ impl TypeValue {
         TypeValue::expr(TypeExpr::ident(ident))
     }
     pub fn reference(ty: TypeValue) -> Self {
-        TypeValue::Reference(ReferenceType {
-            ty: Box::new(ty),
-            mutability: None,
-            lifetime: None,
-        })
+        TypeValue::Reference(
+            ReferenceType {
+                ty: Box::new(ty),
+                mutability: None,
+                lifetime: None,
+            }
+            .into(),
+        )
     }
     pub fn any_box<T: AnyBoxable>(any: T) -> Self {
         Self::AnyBox(AnyBox::new(any))
@@ -182,7 +188,7 @@ impl Display for PrimitiveType {
 
 common_derives! {
     pub struct VecType {
-        pub ty: Box<TypeValue>,
+        pub ty: TypeValue,
     }
 }
 
@@ -227,7 +233,7 @@ common_derives! {
     pub struct FunctionType {
         pub params: Vec<TypeValue>,
         pub generics_params: Vec<GenericParam>,
-        pub ret: Box<TypeValue>,
+        pub ret: TypeValue,
     }
 }
 common_derives! {
@@ -246,7 +252,7 @@ impl TypeBounds {
         Self { bounds: vec![] }
     }
     pub fn new(expr: TypeExpr) -> Self {
-        if matches!(expr, TypeExpr::Value(TypeValue::Any(_))) {
+        if expr.is_any() {
             return TypeBounds::any();
         }
         TypeBounds { bounds: vec![expr] }
@@ -274,7 +280,7 @@ common_derives! {
 impl Display for ReferenceType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&TypeValue::Reference(self.clone()))
+            .serialize_type(&TypeValue::Reference(self.clone().into()))
             .unwrap();
 
         f.write_str(&s)
@@ -283,7 +289,7 @@ impl Display for ReferenceType {
 
 common_derives! {
     pub struct ValueType {
-        pub value: Box<Value>,
+        pub value: Value,
     }
 }
 impl ValueType {

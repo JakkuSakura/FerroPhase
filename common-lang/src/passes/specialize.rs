@@ -97,7 +97,7 @@ impl SpecializePass {
             bindings.push(binding);
         }
 
-        let new_body = Expr::block(Block::prepend(bindings, *func.body.clone()));
+        let new_body = Expr::block(Block::prepend(bindings, func.body.clone()));
         let new_name = Ident::new(format!(
             "{}_{}",
             name,
@@ -151,7 +151,7 @@ impl SpecializePass {
         func: &FunctionValue,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
-        match &*invoke.func {
+        match &invoke.func {
             Expr::Locator(Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke);
             }
@@ -186,7 +186,7 @@ impl SpecializePass {
                 name: func.name.clone().expect("No specialized name"),
                 kind: DefineKind::Function,
                 ty: Some(TypeValue::Function(
-                    self.type_system.infer_function(&func, ctx)?,
+                    self.type_system.infer_function(&func, ctx)?.into(),
                 )),
                 value: DefineValue::Function(func),
                 visibility: Visibility::Public,

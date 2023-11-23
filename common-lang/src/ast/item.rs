@@ -26,6 +26,16 @@ impl Item {
             _ => None,
         }
     }
+    pub fn is_unit(&self) -> bool {
+        if let Some(expr) = self.as_expr() {
+            if let Expr::Value(value) = expr {
+                if let Value::Unit(_) = value.as_ref() {
+                    return true;
+                }
+            }
+        }
+        false
+    }
     pub fn as_define(&self) -> Option<&Define> {
         match self {
             Self::Define(define) => Some(define),

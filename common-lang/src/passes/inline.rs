@@ -16,32 +16,35 @@ impl InlinePass {
 
     pub fn inline_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
-            Expr::Value(value) => self.inline_value(value, ctx).map(Expr::value),
-            Expr::Invoke(invoke) => self.inline_invoke(invoke, ctx),
+            Expr::Value(value) => self.inline_value(*value, ctx).map(Expr::value),
+            Expr::Invoke(invoke) => self.inline_invoke(*invoke, ctx),
             _ => Ok(expr),
         }
     }
     pub fn inline_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
         if invoke.args.is_empty() {
-            let fun = self.try_get_expr(*invoke.func.clone(), ctx)?;
+            let fun = self.try_get_expr(invoke.func.clone(), ctx)?;
             match fun {
-                Expr::Value(Value::Function(f)) => {
-                    if let Some(name) = &f.name {
-                        match name.as_str() {
-                            "print" => {
-                                invoke.func = Expr::ident(name.clone()).into();
-                                return Ok(Expr::Invoke(invoke));
+                Expr::Value(value) => match *value {
+                    Value::Function(f) => {
+                        if let Some(name) = &f.name {
+                            match name.as_str() {
+                                "print" => {
+                                    invoke.func = Expr::ident(name.clone()).into();
+                                    return Ok(Expr::Invoke(invoke.into()));
+                                }
+                                _ => {}
                             }
-                            _ => {}
                         }
+                        return Ok(f.body);
                     }
-                    Ok(*f.body)
-                }
-                _ => Ok(Expr::Invoke(invoke)),
+                    _ => {}
+                },
+                _ => {}
             }
-        } else {
-            Ok(Expr::Invoke(invoke))
         }
+
+        Ok(Expr::Invoke(invoke.into()))
     }
     pub fn try_get_pat(&self, ident: Locator, ctx: &ArcScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
@@ -58,7 +61,7 @@ impl InlinePass {
     }
     pub fn inline_value(&self, value: Value, ctx: &ArcScopedContext) -> Result<Value> {
         match value {
-            Value::Expr(expr) => self.inline_expr(*expr, ctx).map(Value::expr),
+            Value::Expr(expr) => self.inline_expr(expr, ctx).map(Value::expr),
             _ => Ok(value),
         }
     }

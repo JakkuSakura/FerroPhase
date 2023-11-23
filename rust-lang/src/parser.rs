@@ -65,16 +65,19 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
 
 fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
     let t = match t {
-        syn::Type::BareFn(f) => TypeValue::Function(FunctionType {
-            params: f
-                .inputs
-                .into_iter()
-                .map(|x| x.ty)
-                .map(parse_type_value)
-                .try_collect()?,
-            generics_params: vec![],
-            ret: parse_return_type(f.output)?.into(),
-        })
+        syn::Type::BareFn(f) => TypeValue::Function(
+            FunctionType {
+                params: f
+                    .inputs
+                    .into_iter()
+                    .map(|x| x.ty)
+                    .map(parse_type_value)
+                    .try_collect()?,
+                generics_params: vec![],
+                ret: parse_return_type(f.output)?.into(),
+            }
+            .into(),
+        )
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
@@ -105,7 +108,7 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
             TypeValue::expr(parse_custom_type_expr(m)?)
         }
-        syn::Type::Reference(r) => TypeValue::Reference(parse_type_reference(r)?),
+        syn::Type::Reference(r) => TypeValue::Reference(parse_type_reference(r)?.into()),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -127,10 +130,13 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
         FnArg::Receiver(rev) => FunctionParam {
             name: Ident::new("self"),
             ty: {
-                TypeValue::expr(TypeExpr::SelfType(SelfType {
-                    reference: rev.reference.is_some(),
-                    mutability: rev.mutability.is_some(),
-                }))
+                TypeValue::expr(TypeExpr::SelfType(
+                    SelfType {
+                        reference: rev.reference.is_some(),
+                        mutability: rev.mutability.is_some(),
+                    }
+                    .into(),
+                ))
             },
         },
 
@@ -255,11 +261,14 @@ fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
 }
 fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
     Ok(Invoke {
-        func: Expr::Select(Select {
-            obj: parse_expr(*call.receiver)?.into(),
-            field: parse_ident(call.method),
-            select: SelectType::Method,
-        })
+        func: Expr::Select(
+            Select {
+                obj: parse_expr(*call.receiver)?.into(),
+                field: parse_ident(call.method),
+                select: SelectType::Method,
+            }
+            .into(),
+        )
         .into(),
         args: call.args.into_iter().map(parse_expr).try_collect()?,
     })
@@ -318,11 +327,16 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     };
     if flatten {
         match &mut lhs {
-            Expr::Invoke(first_arg) => match &*first_arg.func {
-                Expr::Value(Value::BinOpKind(i)) if i == &op => {
-                    first_arg.args.push(rhs);
-                    return Ok(first_arg.clone());
-                }
+            Expr::Invoke(first_arg) => match &mut first_arg.func {
+                Expr::Value(value) => match &**value {
+                    Value::BinOpKind(i) => {
+                        if *i == op {
+                            first_arg.args.push(rhs);
+                            return Ok(*first_arg.clone());
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             },
             _ => {}
@@ -387,18 +401,18 @@ pub fn parse_unary(u: syn::ExprUnary) -> Result<Invoke> {
 }
 pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     Ok(match expr {
-        syn::Expr::Binary(b) => Expr::Invoke(parse_binary(b)?),
-        syn::Expr::Unary(u) => Expr::Invoke(parse_unary(u)?),
+        syn::Expr::Binary(b) => Expr::Invoke(parse_binary(b)?.into()),
+        syn::Expr::Unary(u) => Expr::Invoke(parse_unary(u)?.into()),
         syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
-        syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?),
+        syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?.into()),
         syn::Expr::If(i) => Expr::Cond(parse_if(i)?),
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
-        syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?),
+        syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?.into()),
         syn::Expr::Path(p) => Expr::path(parse_path(p.path)?),
-        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?),
+        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
-        syn::Expr::Struct(s) => Expr::Struct(parse_struct_expr(s)?),
+        syn::Expr::Struct(s) => Expr::Struct(parse_struct_expr(s)?.into()),
 
         raw => {
             warn!("RawExpr {:?}", raw);
@@ -631,8 +645,8 @@ impl syn::parse::Parse for TypeExprParser {
 impl Into<TypeExpr> for TypeExprParser {
     fn into(self) -> TypeExpr {
         match self {
-            TypeExprParser::Add(o) => TypeExpr::BinOp(TypeBinOp::Add(o)),
-            TypeExprParser::Sub(o) => TypeExpr::BinOp(TypeBinOp::Sub(o)),
+            TypeExprParser::Add(o) => TypeExpr::BinOp(TypeBinOp::Add(o).into()),
+            TypeExprParser::Sub(o) => TypeExpr::BinOp(TypeBinOp::Sub(o).into()),
             TypeExprParser::Value(v) => TypeExpr::value(v),
         }
     }

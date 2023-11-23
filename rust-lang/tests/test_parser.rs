@@ -1,3 +1,4 @@
+use common::assert_eq;
 use common::*;
 use common_lang::ast::*;
 use common_lang::register_threadlocal_serializer;
