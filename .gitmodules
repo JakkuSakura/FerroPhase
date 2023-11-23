@@ -1,0 +1,3 @@
+[submodule "oxc"]
+	path = oxc
+	url = https://github.com/qiujiangkun/oxc
