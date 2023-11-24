@@ -22,9 +22,9 @@ fn test_print_enum_declaration() {
     let s = printer.serialize_type(&TypeValue::Enum(def)).unwrap();
     assert_eq!(
         s,
-        r#"enum Test {
+        r#"declare const enum Test {
     A,
-    B,
+    B
 }
 "#
     );

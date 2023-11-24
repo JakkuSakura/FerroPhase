@@ -8,5 +8,7 @@ edition = "2021"
 [dependencies]
 common-lang = { path = "../common-lang" }
 common = { path = "../common" }
-#oxc = { version = "0.3" , features = ["codegen"] }
-oxc = { path = "../oxc/crates/oxc" , features = ["codegen"] }
+swc_ecma_ast = "0.110"
+swc_ecma_quote = "0.57"
+swc_ecma_codegen = "0.146"
+swc_ecma_parser = "0.141"
