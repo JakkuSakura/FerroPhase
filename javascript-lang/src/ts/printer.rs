@@ -1,85 +1,102 @@
-use common::{bail, Result};
+use common::{bail, Itertools, Result};
 use common_lang::ast::Ident;
 use common_lang::value::{EnumType, EnumTypeVariant, TypeValue};
 use common_lang::Serializer;
-use oxc::ast::ast::{BindingIdentifier, Modifiers, Program};
-use oxc::codegen::CodegenOptions;
-use oxc::span::{SourceType, Span};
+use std::cell::RefCell;
+use std::io::{Cursor, Write};
+use std::rc::Rc;
+use swc_ecma_ast::{Script, TsEnumDecl, TsEnumMemberId};
+use swc_ecma_codegen::text_writer::JsWriter;
+use swc_ecma_codegen::Emitter;
+use swc_ecma_quote::swc_common::sync::Lrc;
+use swc_ecma_quote::swc_common::{SourceMap, DUMMY_SP};
+#[derive(Clone)]
+struct SharedWriter {
+    wr: Rc<RefCell<Cursor<Vec<u8>>>>,
+}
+impl SharedWriter {
+    pub fn new() -> Self {
+        Self {
+            wr: Rc::new(RefCell::new(Cursor::new(Vec::new()))),
+        }
+    }
+    pub fn take_string(&self) -> String {
+        let vec = std::mem::take(self.wr.borrow_mut().get_mut());
+        String::from_utf8(vec).unwrap()
+    }
+}
+impl Write for SharedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.wr.borrow_mut().write(buf)
+    }
 
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.wr.borrow_mut().flush()
+    }
+}
 pub struct TsPrinter {
-    alloc: oxc::allocator::Allocator,
+    emitter: RefCell<Emitter<'static, JsWriter<'static, SharedWriter>, SourceMap>>,
+    writer: SharedWriter,
 }
 impl TsPrinter {
     pub fn new() -> Self {
+        let writer = SharedWriter::new();
+        let source_map = Lrc::new(SourceMap::default());
         Self {
-            alloc: Default::default(),
+            emitter: RefCell::new(Emitter {
+                cfg: Default::default(),
+                cm: source_map.clone(),
+                comments: None,
+                wr: JsWriter::new(source_map, "\n", writer.clone(), None),
+            }),
+            writer,
         }
     }
-    pub fn builder(&self) -> oxc::ast::AstBuilder {
-        oxc::ast::AstBuilder::new(&self.alloc)
+    pub fn to_ident(&self, name: &Ident) -> swc_ecma_ast::Ident {
+        swc_ecma_ast::Ident::new(name.name.as_str().into(), DUMMY_SP)
     }
-    pub fn codegen(&self) -> oxc::codegen::Codegen<false> {
-        oxc::codegen::Codegen::new(0, CodegenOptions::default())
-    }
-    pub fn source_type(&self) -> SourceType {
-        SourceType::default().with_typescript_definition(true)
-    }
-    pub fn to_program<'a>(&'a self, statement: oxc::ast::ast::Statement<'a>) -> Program<'a> {
-        let builder = self.builder();
-        let directives = builder.new_vec();
-        let mut body = builder.new_vec();
-        body.push(statement);
-        Program {
-            span: Default::default(),
-            source_type: self.source_type(),
-            directives,
-            hashbang: None,
-            body,
-        }
-    }
-    pub fn to_id(&self, name: &Ident) -> BindingIdentifier {
-        BindingIdentifier::new(Span::default(), name.name.as_str().into())
-    }
-    pub fn to_id_name(&self, name: &Ident) -> oxc::ast::ast::IdentifierName {
-        oxc::ast::ast::IdentifierName::new(Span::default(), self.to_id(name).name)
-    }
-    pub fn to_enum_member(&self, variant: &EnumTypeVariant) -> Result<oxc::ast::ast::TSEnumMember> {
-        let name = self.to_id_name(&variant.name);
-        let init = oxc::ast::ast::TSEnumMember {
-            span: Default::default(),
-            id: oxc::ast::ast::TSEnumMemberName::Identifier(name),
-            initializer: None,
-        };
 
-        Ok(init)
+    pub fn to_enum_member(&self, name: &EnumTypeVariant) -> Result<swc_ecma_ast::TsEnumMember> {
+        Ok(swc_ecma_ast::TsEnumMember {
+            span: Default::default(),
+            id: TsEnumMemberId::Ident(self.to_ident(&name.name)),
+            // TODO: deal with init
+            init: None,
+        })
     }
-    pub fn to_declaration(&self, def: &EnumType) -> Result<oxc::ast::ast::Declaration> {
-        let builder = self.builder();
-        let name = self.to_id(&def.name);
-        let mut members = builder.new_vec();
-        for variant in &def.variants {
-            let member = self.to_enum_member(variant)?;
-            members.push(member);
-        }
-        let decl =
-            builder.ts_enum_declaration(Span::default(), name, members, Modifiers::default());
-        Ok(decl)
+    pub fn to_enum(&self, decl: &EnumType) -> Result<TsEnumDecl> {
+        Ok(TsEnumDecl {
+            span: DUMMY_SP,
+            declare: true,
+            id: self.to_ident(&decl.name),
+            is_const: true,
+            members: decl
+                .variants
+                .iter()
+                .map(|x| self.to_enum_member(x))
+                .try_collect()?,
+        })
     }
-    pub fn print_statement<'a>(&'a self, statement: oxc::ast::ast::Statement<'a>) -> String {
-        let s = self.codegen().build(&self.to_program(statement));
-        s.replace("\t", "    ")
+    pub fn print_script(&self, script: &Script) -> Result<String> {
+        self.emitter.borrow_mut().emit_script(script)?;
+        Ok(self.writer.take_string())
     }
 }
-
 impl Serializer for TsPrinter {
     fn serialize_type(&self, node: &TypeValue) -> Result<String> {
         match node {
-            TypeValue::Enum(node) => {
-                let decl = self.to_declaration(node)?;
-                let s = self.print_statement(oxc::ast::ast::Statement::Declaration(decl));
-                Ok(s)
+            TypeValue::Enum(decl) => {
+                let decl = self.to_enum(decl)?;
+
+                self.print_script(&Script {
+                    span: Default::default(),
+                    body: vec![swc_ecma_ast::Stmt::Decl(swc_ecma_ast::Decl::TsEnum(
+                        decl.into(),
+                    ))],
+                    shebang: None,
+                })
             }
-            _ => bail!("not implemented: serialize_type: {:?}", node),
+            _ => bail!("Not implemented"),
         }
     }
 }
