@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::common_enum;
-use crate::value::{FieldValue, UnitValue, Value};
+use crate::value::{FieldValue, Value, ValueUnit};
 use std::hash::Hash;
 common_enum! {
     /// Expr is an expression that returns a value
@@ -21,7 +21,7 @@ common_enum! {
 }
 impl Expr {
     pub fn unit() -> Expr {
-        Expr::Value(Value::Unit(UnitValue).into())
+        Expr::Value(Value::Unit(ValueUnit).into())
     }
     pub fn is_unit(&self) -> bool {
         match self {

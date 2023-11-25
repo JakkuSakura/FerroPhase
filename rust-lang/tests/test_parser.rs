@@ -3,7 +3,7 @@ use common::*;
 use common_lang::ast::*;
 use common_lang::register_threadlocal_serializer;
 use common_lang::value::{
-    FunctionParam, FunctionSignature, FunctionValue, PrimitiveType, TypeValue,
+    FunctionParam, FunctionSignature, TypePrimitive, TypeValue, ValueFunction,
 };
 use rust_lang::RustSerde;
 use std::rc::Rc;
@@ -36,15 +36,15 @@ fn test_parse_fn() -> Result<()> {
             name: "foo".into(),
             kind: DefineKind::Function,
             ty: None,
-            value: DefineValue::Function(FunctionValue {
+            value: DefineValue::Function(ValueFunction {
                 sig: FunctionSignature {
                     name: Some("foo".into()),
                     params: vec![FunctionParam {
                         name: "a".into(),
-                        ty: TypeValue::Primitive(PrimitiveType::i64())
+                        ty: TypeValue::Primitive(TypePrimitive::i64())
                     }],
                     generics_params: vec![],
-                    ret: TypeValue::Primitive(PrimitiveType::i64())
+                    ret: TypeValue::Primitive(TypePrimitive::i64())
                 },
                 body: block.into(),
             }),

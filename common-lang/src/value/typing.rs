@@ -4,25 +4,25 @@ use crate::{common_derives, common_enum, get_threadlocal_serializer};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
-// TODO: use TypeXXX prefix for all types
+
 common_enum! {
     /// TypeValue is a solid type value
     pub enum TypeValue {
-        Primitive(PrimitiveType),
-        Struct(StructType),
-        Structural(StructuralType),
-        Enum(EnumType),
-        Function(Box<FunctionType>),
+        Primitive(TypePrimitive),
+        Struct(TypeStruct),
+        Structural(TypeStructural),
+        Enum(TypeEnum),
+        Function(Box<TypeFunction>),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
         Value(Box<ValueType>),
-        Tuple(TupleType),
-        Vec(Box<VecType>),
-        Any(AnyType),
-        Unit(UnitType),
-        Nothing(NothingType),
+        Tuple(TypeTuple),
+        Vec(Box<TypeVec>),
+        Any(TypeAny),
+        Unit(TypeUnit),
+        Nothing(TypeNothing),
         Type(TypeType),
-        Reference(Box<ReferenceType>),
+        Reference(Box<TypeReference>),
         Expr(Box<TypeExpr>),
         AnyBox(AnyBox),
     }
@@ -30,16 +30,16 @@ common_enum! {
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {
-        TypeValue::Unit(UnitType)
+        TypeValue::Unit(TypeUnit)
     }
     pub fn any() -> TypeValue {
-        TypeValue::Any(AnyType)
+        TypeValue::Any(TypeAny)
     }
     pub fn is_any(&self) -> bool {
         matches!(self, TypeValue::Any(_))
     }
     pub fn bool() -> TypeValue {
-        TypeValue::Primitive(PrimitiveType::Bool)
+        TypeValue::Primitive(TypePrimitive::Bool)
     }
     pub fn expr(e: TypeExpr) -> Self {
         match e {
@@ -61,7 +61,7 @@ impl TypeValue {
     }
     pub fn reference(ty: TypeValue) -> Self {
         TypeValue::Reference(
-            ReferenceType {
+            TypeReference {
                 ty: Box::new(ty),
                 mutability: None,
                 lifetime: None,
@@ -84,7 +84,7 @@ impl TypeValue {
     pub fn type_bound(expr: TypeExpr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))
     }
-    pub fn as_struct(&self) -> Option<&StructType> {
+    pub fn as_struct(&self) -> Option<&TypeStruct> {
         match self {
             TypeValue::Struct(s) => Some(s),
             _ => None,
@@ -156,7 +156,7 @@ impl Display for DecimalType {
 }
 common_derives! {
     #[derive(Copy)]
-    pub enum PrimitiveType {
+    pub enum TypePrimitive {
         Int(IntType),
         Decimal(DecimalType),
         Bool,
@@ -166,18 +166,18 @@ common_derives! {
     }
 }
 
-impl PrimitiveType {
-    pub fn i64() -> PrimitiveType {
-        PrimitiveType::Int(IntType::I64)
+impl TypePrimitive {
+    pub fn i64() -> TypePrimitive {
+        TypePrimitive::Int(IntType::I64)
     }
-    pub fn f64() -> PrimitiveType {
-        PrimitiveType::Decimal(DecimalType::F64)
+    pub fn f64() -> TypePrimitive {
+        TypePrimitive::Decimal(DecimalType::F64)
     }
-    pub fn bool() -> PrimitiveType {
-        PrimitiveType::Bool
+    pub fn bool() -> TypePrimitive {
+        TypePrimitive::Bool
     }
 }
-impl Display for PrimitiveType {
+impl Display for TypePrimitive {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
             .serialize_type(&TypeValue::Primitive(*self))
@@ -187,13 +187,13 @@ impl Display for PrimitiveType {
 }
 
 common_derives! {
-    pub struct VecType {
+    pub struct TypeVec {
         pub ty: TypeValue,
     }
 }
 
 common_derives! {
-    pub struct TupleType {
+    pub struct TypeTuple {
         pub types: Vec<TypeValue>,
     }
 }
@@ -205,13 +205,13 @@ common_derives! {
     }
 }
 common_derives! {
-    pub struct StructType {
+    pub struct TypeStruct {
         pub name: Ident,
         pub fields: Vec<FieldTypeValue>,
     }
 }
 common_derives! {
-    pub struct EnumType {
+    pub struct TypeEnum {
         pub name: Ident,
         pub variants: Vec<EnumTypeVariant>,
     }
@@ -225,12 +225,12 @@ common_derives! {
 }
 
 common_derives! {
-    pub struct StructuralType {
+    pub struct TypeStructural {
         pub fields: Vec<FieldTypeValue>,
     }
 }
 common_derives! {
-    pub struct FunctionType {
+    pub struct TypeFunction {
         pub params: Vec<TypeValue>,
         pub generics_params: Vec<GenericParam>,
         pub ret: TypeValue,
@@ -265,19 +265,19 @@ macro_rules! plain_type {
         }
     };
 }
-plain_type! { AnyType }
-plain_type! { UnitType }
-plain_type! { NothingType }
+plain_type! { TypeAny }
+plain_type! { TypeUnit }
+plain_type! { TypeNothing }
 plain_type! { TypeType }
 
 common_derives! {
-    pub struct ReferenceType {
+    pub struct TypeReference {
         pub ty: Box<TypeValue>,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
     }
 }
-impl Display for ReferenceType {
+impl Display for TypeReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
             .serialize_type(&TypeValue::Reference(self.clone().into()))

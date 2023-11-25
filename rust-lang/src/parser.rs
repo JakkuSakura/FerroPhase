@@ -6,7 +6,7 @@ use common_lang::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
 use syn::parse::ParseStream;
-use syn::{parse_quote, FieldsNamed, FnArg, Lit, ReturnType, Token, Fields};
+use syn::{parse_quote, Fields, FieldsNamed, FnArg, Lit, ReturnType, Token};
 use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -66,7 +66,7 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
 fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
     let t = match t {
         syn::Type::BareFn(f) => TypeValue::Function(
-            FunctionType {
+            TypeFunction {
                 params: f
                     .inputs
                     .into_iter()
@@ -82,10 +82,10 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
             fn int(ty: IntType) -> TypeValue {
-                TypeValue::Primitive(PrimitiveType::Int(ty))
+                TypeValue::Primitive(TypePrimitive::Int(ty))
             }
             fn float(ty: DecimalType) -> TypeValue {
-                TypeValue::Primitive(PrimitiveType::Decimal(ty))
+                TypeValue::Primitive(TypePrimitive::Decimal(ty))
             }
 
             match s.as_str() {
@@ -113,8 +113,8 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
     };
     Ok(t)
 }
-fn parse_type_reference(r: syn::TypeReference) -> Result<ReferenceType> {
-    Ok(ReferenceType {
+fn parse_type_reference(r: syn::TypeReference) -> Result<TypeReference> {
+    Ok(TypeReference {
         ty: Box::new(parse_type_value(*r.elem)?),
         mutability: r.mutability.map(|_| true),
         lifetime: r.lifetime.map(|x| parse_ident(x.ident)),
@@ -212,9 +212,9 @@ fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
         ret: parse_return_type(sig.output)?,
     })
 }
-fn parse_fn(f: syn::ItemFn) -> Result<FunctionValue> {
+fn parse_fn(f: syn::ItemFn) -> Result<ValueFunction> {
     let sig = parse_fn_sig(f.sig)?;
-    Ok(FunctionValue {
+    Ok(ValueFunction {
         sig,
         body: Expr::block(parse_block(*f.block)?).into(),
     })
@@ -284,8 +284,8 @@ fn parse_if(i: syn::ExprIf) -> Result<If> {
             let body = parse_expr(*else_body)?;
             match &body {
                 Expr::If(m) => {
-                        cases.extend(m.cases.clone());
-                        break 'else_check;
+                    cases.extend(m.cases.clone());
+                    break 'else_check;
                 }
                 _ => {}
             }
@@ -342,14 +342,14 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         args: vec![lhs, rhs],
     })
 }
-fn parse_tuple(t: syn::ExprTuple) -> Result<TupleValue> {
+fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
     let values = t
         .elems
         .into_iter()
         .map(parse_expr)
         .map(|x| x.map(Value::expr))
         .try_collect()?;
-    Ok(TupleValue { values })
+    Ok(ValueTuple { values })
 }
 fn parse_member(mem: syn::Member) -> Result<Ident> {
     Ok(match mem {
@@ -375,10 +375,10 @@ pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
 }
 pub fn parse_literal(lit: syn::Lit) -> Result<Value> {
     Ok(match lit {
-        Lit::Int(i) => Value::Int(IntValue::new(i.base10_parse()?)),
-        Lit::Float(i) => Value::Decimal(DecimalValue::new(i.base10_parse()?)),
-        Lit::Str(s) => Value::String(StringValue::new_ref(s.value())),
-        Lit::Bool(b) => Value::Bool(BoolValue::new(b.value)),
+        Lit::Int(i) => Value::Int(ValueInt::new(i.base10_parse()?)),
+        Lit::Float(i) => Value::Decimal(ValueDecimal::new(i.base10_parse()?)),
+        Lit::Str(s) => Value::String(ValueString::new_ref(s.value())),
+        Lit::Bool(b) => Value::Bool(ValueBool::new(b.value)),
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
@@ -529,8 +529,8 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
         path: Path::new(segments),
     })
 }
-pub fn parse_item_struct(s: syn::ItemStruct) -> Result<StructType> {
-    Ok(StructType {
+pub fn parse_item_struct(s: syn::ItemStruct) -> Result<TypeStruct> {
+    Ok(TypeStruct {
         name: parse_ident(s.ident),
         fields: s
             .fields
@@ -540,14 +540,14 @@ pub fn parse_item_struct(s: syn::ItemStruct) -> Result<StructType> {
             .try_collect()?,
     })
 }
-struct UnnamedStructTypeParser(StructuralType);
+struct UnnamedStructTypeParser(TypeStructural);
 impl syn::parse::Parse for UnnamedStructTypeParser {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         input.parse::<Token![struct]>()?;
 
         let fields: FieldsNamed = input.parse()?;
 
-        Ok(UnnamedStructTypeParser(StructuralType {
+        Ok(UnnamedStructTypeParser(TypeStructural {
             fields: fields
                 .named
                 .into_iter()
@@ -559,8 +559,8 @@ impl syn::parse::Parse for UnnamedStructTypeParser {
     }
 }
 enum TypeValueParser {
-    UnnamedStruct(StructuralType),
-    NamedStruct(StructType),
+    UnnamedStruct(TypeStructural),
+    NamedStruct(TypeStruct),
     Path(Path),
     // Ident(Ident),
 }
@@ -703,7 +703,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 .into_iter()
                 .map(|x| {
                     let name = parse_ident(x.ident);
-                    let ty =match x.fields {
+                    let ty = match x.fields {
                         Fields::Named(_) => bail!("Does not support named fields"),
                         Fields::Unnamed(_) => bail!("Does not support unnamed fields"),
                         Fields::Unit => {
@@ -718,7 +718,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 name: ident.clone(),
                 kind: DefineKind::Type,
                 ty: None,
-                value: DefineValue::Type(TypeExpr::value(TypeValue::Enum(EnumType {
+                value: DefineValue::Type(TypeExpr::value(TypeValue::Enum(TypeEnum {
                     name: ident.clone(),
                     variants,
                 }))),

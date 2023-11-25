@@ -1,5 +1,5 @@
 use crate::ast::{Block, Expr, File, Invoke, Item, Module, Statement, Tree};
-use crate::value::{FunctionValue, TypeValue, Value};
+use crate::value::{TypeValue, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -59,7 +59,7 @@ pub trait Serializer {
     fn serialize_stmt(&self, node: &Statement) -> Result<String> {
         bail!("not implemented: serialize_stmt")
     }
-    fn serialize_function(&self, node: &FunctionValue) -> Result<String> {
+    fn serialize_function(&self, node: &ValueFunction) -> Result<String> {
         bail!("not implemented: serialize_function")
     }
 }

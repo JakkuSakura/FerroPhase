@@ -1,6 +1,6 @@
 use common::{bail, Itertools, Result};
 use common_lang::ast::Ident;
-use common_lang::value::{EnumType, EnumTypeVariant, TypeValue};
+use common_lang::value::{EnumTypeVariant, TypeEnum, TypeValue};
 use common_lang::Serializer;
 use std::cell::RefCell;
 use std::io::{Cursor, Write};
@@ -64,7 +64,7 @@ impl TsPrinter {
             init: None,
         })
     }
-    pub fn to_enum(&self, decl: &EnumType) -> Result<TsEnumDecl> {
+    pub fn to_enum(&self, decl: &TypeEnum) -> Result<TsEnumDecl> {
         Ok(TsEnumDecl {
             span: DUMMY_SP,
             declare: true,
