@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::context::ArcScopedContext;
-use crate::value::FunctionValue;
+use crate::value::ValueFunction;
 use common::*;
 
 mod inline;
@@ -35,7 +35,7 @@ pub trait OptimizePass {
     fn optimize_invoke_pre(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         Ok(invoke)
@@ -43,7 +43,7 @@ pub trait OptimizePass {
     fn optimize_invoke_post(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         Ok(invoke)
@@ -113,7 +113,7 @@ impl OptimizePass for MultiplePass {
     fn optimize_invoke_pre(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         let mut invoke = invoke;
@@ -125,7 +125,7 @@ impl OptimizePass for MultiplePass {
     fn optimize_invoke_post(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         let mut invoke = invoke;

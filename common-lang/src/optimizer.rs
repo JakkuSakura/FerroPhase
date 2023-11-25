@@ -95,7 +95,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     pub fn optimize_invoking(
         &self,
         mut invoke: Invoke,
-        mut func: FunctionValue,
+        mut func: ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Expr> {
         let serialized = self.serializer.serialize_invoke(&invoke)?;
@@ -356,11 +356,11 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     }
     pub fn optimize_func(
         &self,
-        func: FunctionValue,
+        func: ValueFunction,
         ctx: &ArcScopedContext,
-    ) -> Result<FunctionValue> {
+    ) -> Result<ValueFunction> {
         let body = self.optimize_expr(func.body, ctx)?;
-        Ok(FunctionValue {
+        Ok(ValueFunction {
             body: body.into(),
             ..func
         })

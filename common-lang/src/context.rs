@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::value::{FunctionValue, TypeValue, Value};
+use crate::value::{TypeValue, Value, ValueFunction};
 use crate::Serializer;
 use common::*;
 use dashmap::DashMap;
@@ -68,7 +68,7 @@ impl ScopedContext {
     pub fn insert_value(&self, key: impl Into<Ident>, value: Value) {
         self.storages.entry(key.into()).or_default().value = Some(value);
     }
-    pub fn insert_function(&self, key: impl Into<Ident>, value: FunctionValue) {
+    pub fn insert_function(&self, key: impl Into<Ident>, value: ValueFunction) {
         self.insert_value(key.into(), Value::Function(value));
     }
     pub fn insert_expr(&self, key: impl Into<Ident>, value: Expr) {
@@ -102,11 +102,11 @@ impl ScopedContext {
         }
         Ok(())
     }
-    pub fn insert_specialized(&self, key: Ident, value: FunctionValue) {
+    pub fn insert_specialized(&self, key: Ident, value: ValueFunction) {
         self.insert_function(key.clone(), value);
         self.storages.get_mut(&key).unwrap().is_specialized = true;
     }
-    pub fn get_function(self: &ArcScopedContext, key: impl Into<Path>) -> Option<FunctionValue> {
+    pub fn get_function(self: &ArcScopedContext, key: impl Into<Path>) -> Option<ValueFunction> {
         let value = self.get_value(key)?;
         match value {
             Value::Function(func) => Some(func),
