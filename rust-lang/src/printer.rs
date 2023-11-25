@@ -9,6 +9,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::*;
 
 pub struct RustPrinter;
+
 impl RustPrinter {
     pub fn print_ident(&self, i: &Ident) -> TokenStream {
         match i.as_str() {
@@ -319,51 +320,51 @@ impl RustPrinter {
             #chunk
         }))
     }
-
-    pub fn print_cond(&self, cond: &Cond) -> Result<TokenStream> {
+    pub fn print_if(&self, cond: &If) -> Result<TokenStream> {
         let mut ts = vec![];
-        if cond.if_style {
-            for (i, c) in cond.cases.iter().enumerate() {
-                let node = &c.cond;
-                let co = self.print_expr(node)?;
-                let node = &c.body;
-                let ex = self.print_expr_optimized(node)?;
-                if i == 0 {
-                    ts.push(quote!(
+
+        for (i, c) in cond.cases.iter().enumerate() {
+            let node = &c.cond;
+            let co = self.print_expr(node)?;
+            let node = &c.body;
+            let ex = self.print_expr_optimized(node)?;
+            if i == 0 {
+                ts.push(quote!(
                         if #co {
                             #ex
                         }
                     ));
-                } else if i < cond.cases.len() - 1 {
-                    ts.push(quote!(
+            } else if i < cond.cases.len() - 1 {
+                ts.push(quote!(
                         else if #co {
                             #ex
                         }
                     ));
-                } else {
-                    ts.push(quote!(
+            } else {
+                ts.push(quote!(
                         else {
                             #ex
                         }
                     ));
-                }
             }
-            Ok(quote!(#(#ts)*))
-        } else {
-            for (_i, c) in cond.cases.iter().enumerate() {
-                let node = &c.cond;
-                let co = self.print_expr(node)?;
-                let node = &c.body;
-                let ex = self.print_expr_optimized(node)?;
-                ts.push(quote!(
+        }
+        Ok(quote!(#(#ts)*))
+    }
+    pub fn print_match(&self, m: &Match) -> Result<TokenStream> {
+        let mut ts = vec![];
+        for (_i, c) in m.cases.iter().enumerate() {
+            let node = &c.cond;
+            let co = self.print_expr(node)?;
+            let node = &c.body;
+            let ex = self.print_expr_optimized(node)?;
+            ts.push(quote!(
                     if #co => { #ex }
                 ))
-            }
-            Ok(quote!(match () {
+        }
+        Ok(quote!(match () {
                 () #(#ts)*
                 _ => {}
             }))
-        }
     }
     pub fn print_vis(&self, vis: Visibility) -> TokenStream {
         match vis {
@@ -426,7 +427,7 @@ impl RustPrinter {
                 SelectType::Field => {
                     return Ok(quote!(
                         (#fun)(#(#args), *)
-                    ))
+                    ));
                 }
                 _ => {}
             },
@@ -786,7 +787,8 @@ impl RustPrinter {
     }
     pub fn print_expr_optimized(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Cond(n) => self.print_cond(n),
+            Expr::Match(n) => self.print_match(n),
+            Expr::If(n) => self.print_if(n),
             Expr::Block(n) => self.print_statement_chunk(&n.stmts),
             Expr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
@@ -799,7 +801,8 @@ impl RustPrinter {
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),
-            Expr::Cond(n) => self.print_cond(n),
+            Expr::Match(n) => self.print_match(n),
+            Expr::If(n) => self.print_if(n),
             Expr::Block(n) => self.print_block(n),
             Expr::Struct(n) => self.print_struct_expr(n),
             Expr::Select(n) => self.print_select(n),

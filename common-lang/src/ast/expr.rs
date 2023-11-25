@@ -8,7 +8,8 @@ common_enum! {
         Locator(Locator),
         Value(Box<Value>),
         Block(Block),
-        Cond(Cond),
+        Match(Match),
+        If(If),
         Invoke(Box<Invoke>),
         Select(Box<Select>),
         Struct(Box<StructExpr>),
@@ -99,14 +100,19 @@ common_derives! {
 }
 
 common_derives! {
-    pub struct Cond {
-        pub cases: Vec<CondCase>,
-        pub if_style: bool,
+    pub struct Match {
+        pub cases: Vec<MatchCase>,
     }
 }
 
 common_derives! {
-    pub struct CondCase {
+    pub struct If {
+        pub cases: Vec<MatchCase>,
+    }
+}
+
+common_derives! {
+    pub struct MatchCase {
         pub cond: Expr,
         pub body: Expr,
     }
