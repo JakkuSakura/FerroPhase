@@ -8,6 +8,11 @@ common_enum! {
     pub enum Item {
         Module(Module),
         Define(Define),
+        DefStruct(DefStruct),
+        DefEnum(DefEnum),
+        DefType(DefType),
+        DefConst(DefConst),
+        DefFunction(DefFunction),
         Declare(Declare),
         Import(Import),
         Impl(Impl),
@@ -207,13 +212,49 @@ impl DefineValue {
         }
     }
 }
-
+// TODO: deprecated
 common_derives! {
     pub struct Define {
         pub name: Ident,
         pub kind: DefineKind,
         pub ty: Option<TypeValue>,
         pub value: DefineValue,
+        pub visibility: Visibility,
+    }
+}
+common_derives! {
+    pub struct DefStruct {
+        pub name: Ident,
+        pub value: StructType,
+        pub visibility: Visibility,
+    }
+}
+
+common_derives! {
+    pub struct DefEnum {
+        pub name: Ident,
+        pub value: EnumType,
+        pub visibility: Visibility,
+    }
+}
+common_derives! {
+    pub struct DefType {
+        pub name: Ident,
+        pub value: TypeValue,
+        pub visibility: Visibility,
+    }
+}
+common_derives! {
+    pub struct DefConst {
+        pub name: Ident,
+        pub value: Value,
+        pub visibility: Visibility,
+    }
+}
+common_derives! {
+    pub struct DefFunction {
+        pub name: Ident,
+        pub value: FunctionValue,
         pub visibility: Visibility,
     }
 }
