@@ -52,7 +52,6 @@ impl Statement {
     }
 }
 
-pub type StatementChunk = Vec<Statement>;
 common_derives! {
     pub struct SideEffect {
         pub expr: Expr,
