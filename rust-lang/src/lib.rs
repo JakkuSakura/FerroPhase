@@ -8,7 +8,7 @@ use common_lang::*;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
-use common_lang::value::{FunctionValue, TypeValue, Value};
+use common_lang::value::{TypeValue, Value, ValueFunction};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -157,7 +157,7 @@ impl Serializer for RustSerde {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_function(&self, node: &FunctionValue) -> Result<String> {
+    fn serialize_function(&self, node: &ValueFunction) -> Result<String> {
         RustPrinter
             .print_function(node, Visibility::Private)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))

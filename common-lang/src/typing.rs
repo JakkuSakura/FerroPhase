@@ -17,42 +17,42 @@ impl TypeSystem {
         match lit {
             Value::Int(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::Int(_))),
+                    matches!(ty, TypeValue::Primitive(TypePrimitive::Int(_))),
                     "Expected i64, got {:?}",
                     lit
                 )
             }
             Value::Bool(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::Bool)),
+                    matches!(ty, TypeValue::Primitive(TypePrimitive::Bool)),
                     "Expected bool, got {:?}",
                     lit
                 )
             }
             Value::Decimal(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::Decimal(_))),
+                    matches!(ty, TypeValue::Primitive(TypePrimitive::Decimal(_))),
                     "Expected f64, got {:?}",
                     lit
                 )
             }
             Value::Char(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::Char)),
+                    matches!(ty, TypeValue::Primitive(TypePrimitive::Char)),
                     "Expected char, got {:?}",
                     lit
                 )
             }
             Value::String(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::String)),
+                    matches!(ty, TypeValue::Primitive(TypePrimitive::String)),
                     "Expected string, got {:?}",
                     lit
                 )
             }
             Value::List(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(PrimitiveType::List)),
+                    matches!(ty, TypeValue::Primitive(TypePrimitive::List)),
                     "Expected list, got {:?}",
                     lit
                 )
@@ -143,7 +143,7 @@ impl TypeSystem {
                         })
                     })
                     .try_collect()?;
-                Ok(TypeValue::Struct(StructType {
+                Ok(TypeValue::Struct(TypeStruct {
                     name: n.name.clone(),
                     fields,
                 }))
@@ -160,7 +160,7 @@ impl TypeSystem {
                         })
                     })
                     .try_collect()?;
-                Ok(TypeValue::Structural(StructuralType { fields }))
+                Ok(TypeValue::Structural(TypeStructural { fields }))
             }
             TypeValue::Function(f) => {
                 let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
@@ -175,7 +175,7 @@ impl TypeSystem {
                     .try_collect()?;
                 let ret = self.evaluate_type_value(&f.ret, &sub)?;
                 Ok(TypeValue::Function(
-                    FunctionType {
+                    TypeFunction {
                         params,
                         generics_params: f.generics_params.clone(),
                         ret,
@@ -276,7 +276,7 @@ impl TypeSystem {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(TypeValue::Function(
-                    FunctionType {
+                    TypeFunction {
                         generics_params: vec![GenericParam {
                             name: Ident::new("T"),
                             bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
@@ -289,7 +289,7 @@ impl TypeSystem {
             }
             "print" => {
                 return Ok(TypeValue::Function(
-                    FunctionType {
+                    TypeFunction {
                         params: vec![],
                         generics_params: vec![],
                         ret: TypeValue::unit(),
@@ -313,24 +313,24 @@ impl TypeSystem {
                 return Ok(ty);
             }
             Expr::Value(l) => match &**l {
-                Value::Int(_) => return Ok(TypeValue::Primitive(PrimitiveType::Int(IntType::I64))),
+                Value::Int(_) => return Ok(TypeValue::Primitive(TypePrimitive::Int(IntType::I64))),
                 Value::Decimal(_) => {
-                    return Ok(TypeValue::Primitive(PrimitiveType::Decimal(
+                    return Ok(TypeValue::Primitive(TypePrimitive::Decimal(
                         DecimalType::F64,
                     )))
                 }
                 Value::Unit(_) => return Ok(TypeValue::unit()),
-                Value::Bool(_) => return Ok(TypeValue::Primitive(PrimitiveType::Bool)),
-                Value::String(_) => return Ok(TypeValue::Primitive(PrimitiveType::String)),
+                Value::Bool(_) => return Ok(TypeValue::Primitive(TypePrimitive::Bool)),
+                Value::String(_) => return Ok(TypeValue::Primitive(TypePrimitive::String)),
                 Value::Type(_) => return Ok(TypeValue::Type(TypeType)),
-                Value::Char(_) => return Ok(TypeValue::Primitive(PrimitiveType::Char)),
-                Value::List(_) => return Ok(TypeValue::Primitive(PrimitiveType::List)),
+                Value::Char(_) => return Ok(TypeValue::Primitive(TypePrimitive::Char)),
+                Value::List(_) => return Ok(TypeValue::Primitive(TypePrimitive::List)),
                 _ => {}
             },
             Expr::Invoke(invoke) => match &invoke.func {
                 Expr::Value(value) => match &**value {
                     Value::BinOpKind(kind) if kind.is_bool() => {
-                        return Ok(TypeValue::Primitive(PrimitiveType::Bool))
+                        return Ok(TypeValue::Primitive(TypePrimitive::Bool))
                     }
                     Value::BinOpKind(_) => {
                         return Ok(self.infer_expr(invoke.args.first().context("No param")?, ctx)?)
@@ -352,15 +352,15 @@ impl TypeSystem {
 
     pub fn infer_function(
         &self,
-        func: &FunctionValue,
+        func: &ValueFunction,
         _ctx: &ArcScopedContext,
-    ) -> Result<FunctionType> {
+    ) -> Result<TypeFunction> {
         let mut params = vec![];
         for p in &func.params {
             params.push(p.ty.clone());
         }
         let ret = func.ret.clone();
-        Ok(FunctionType {
+        Ok(TypeFunction {
             params,
             generics_params: func.generics_params.clone(),
             ret: ret,

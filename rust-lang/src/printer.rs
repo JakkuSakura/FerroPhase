@@ -83,7 +83,7 @@ impl RustPrinter {
         let ty = self.print_type_value(&field.value)?;
         Ok(quote!(pub #name: #ty ))
     }
-    pub fn print_struct_type(&self, s: &StructType) -> Result<TokenStream> {
+    pub fn print_struct_type(&self, s: &TypeStruct) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let fields: Vec<_> = s
             .fields
@@ -94,7 +94,7 @@ impl RustPrinter {
             #(#fields), *
         }))
     }
-    pub fn print_unnamed_struct_type(&self, s: &StructuralType) -> Result<TokenStream> {
+    pub fn print_unnamed_struct_type(&self, s: &TypeStructural) -> Result<TokenStream> {
         let fields: Vec<_> = s
             .fields
             .iter()
@@ -330,22 +330,22 @@ impl RustPrinter {
             let ex = self.print_expr_optimized(node)?;
             if i == 0 {
                 ts.push(quote!(
-                        if #co {
-                            #ex
-                        }
-                    ));
+                    if #co {
+                        #ex
+                    }
+                ));
             } else if i < cond.cases.len() - 1 {
                 ts.push(quote!(
-                        else if #co {
-                            #ex
-                        }
-                    ));
+                    else if #co {
+                        #ex
+                    }
+                ));
             } else {
                 ts.push(quote!(
-                        else {
-                            #ex
-                        }
-                    ));
+                    else {
+                        #ex
+                    }
+                ));
             }
         }
         Ok(quote!(#(#ts)*))
@@ -358,13 +358,13 @@ impl RustPrinter {
             let node = &c.body;
             let ex = self.print_expr_optimized(node)?;
             ts.push(quote!(
-                    if #co => { #ex }
-                ))
+                if #co => { #ex }
+            ))
         }
         Ok(quote!(match () {
-                () #(#ts)*
-                _ => {}
-            }))
+            () #(#ts)*
+            _ => {}
+        }))
     }
     pub fn print_vis(&self, vis: Visibility) -> TokenStream {
         match vis {
@@ -373,7 +373,7 @@ impl RustPrinter {
             Visibility::Inherited => quote!(),
         }
     }
-    pub fn print_function(&self, func: &FunctionValue, vis: Visibility) -> Result<TokenStream> {
+    pub fn print_function(&self, func: &ValueFunction, vis: Visibility) -> Result<TokenStream> {
         let name = if let Some(name) = &func.sig.name {
             self.print_ident(name)
         } else {
@@ -484,10 +484,10 @@ impl RustPrinter {
         let ty = self.print_type_value(&node)?;
         Ok(quote!(-> #ty))
     }
-    pub fn print_func_value(&self, fun: &FunctionValue) -> Result<TokenStream> {
+    pub fn print_func_value(&self, fun: &ValueFunction) -> Result<TokenStream> {
         self.print_function(fun, Visibility::Private)
     }
-    pub fn print_func_type(&self, fun: &FunctionType) -> Result<TokenStream> {
+    pub fn print_func_type(&self, fun: &TypeFunction) -> Result<TokenStream> {
         let args: Vec<_> = fun
             .params
             .iter()
@@ -555,7 +555,7 @@ impl RustPrinter {
         let value = self.print_value(&s.value)?;
         Ok(quote!(#name: #value))
     }
-    pub fn print_struct_value(&self, s: &StructValue) -> Result<TokenStream> {
+    pub fn print_struct_value(&self, s: &ValueStruct) -> Result<TokenStream> {
         let name = self.print_ident(&s.ty.name);
         let kwargs: Vec<_> = s
             .structural
@@ -580,23 +580,23 @@ impl RustPrinter {
             BuiltinFnName::Name(ref name) => Ok(self.print_ident(name)),
         }
     }
-    pub fn print_int(&self, n: &IntValue) -> Result<TokenStream> {
+    pub fn print_int(&self, n: &ValueInt) -> Result<TokenStream> {
         let n = syn::LitInt::new(&n.value.to_string(), Span::call_site());
         Ok(quote!(#n))
     }
-    pub fn print_bool(&self, n: &BoolValue) -> Result<TokenStream> {
+    pub fn print_bool(&self, n: &ValueBool) -> Result<TokenStream> {
         let n = n.value;
         Ok(quote!(#n))
     }
-    pub fn print_decimal(&self, n: &DecimalValue) -> Result<TokenStream> {
+    pub fn print_decimal(&self, n: &ValueDecimal) -> Result<TokenStream> {
         let n = syn::LitFloat::new(&n.value.to_string(), Span::call_site());
         Ok(quote!(#n))
     }
-    pub fn print_char(&self, n: &CharValue) -> Result<TokenStream> {
+    pub fn print_char(&self, n: &ValueChar) -> Result<TokenStream> {
         let n = n.value;
         Ok(quote!(#n))
     }
-    pub fn print_string(&self, n: &StringValue) -> Result<TokenStream> {
+    pub fn print_string(&self, n: &ValueString) -> Result<TokenStream> {
         let v = &n.value;
         return if n.owned {
             Ok(quote!(
@@ -612,11 +612,11 @@ impl RustPrinter {
         let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }
-    pub fn print_list_value(&self, n: &ListValue) -> Result<TokenStream> {
+    pub fn print_list_value(&self, n: &ValueList) -> Result<TokenStream> {
         let n: Vec<_> = n.values.iter().map(|x| self.print_value(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }
-    pub fn print_unit(&self, _n: &UnitValue) -> Result<TokenStream> {
+    pub fn print_unit(&self, _n: &ValueUnit) -> Result<TokenStream> {
         Ok(quote!(()))
     }
 
@@ -635,7 +635,7 @@ impl RustPrinter {
         }
         bail!("Not supported {:?}", n)
     }
-    pub fn print_undefined(&self, _n: &UndefinedValue) -> Result<TokenStream> {
+    pub fn print_undefined(&self, _n: &ValueUndefined) -> Result<TokenStream> {
         Ok(quote!(undefined))
     }
     pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
@@ -669,22 +669,22 @@ impl RustPrinter {
             _ => bail!("Not supported {:?}", v),
         }
     }
-    pub fn print_primitive_type(&self, ty: PrimitiveType) -> Result<TokenStream> {
+    pub fn print_primitive_type(&self, ty: TypePrimitive) -> Result<TokenStream> {
         match ty {
-            PrimitiveType::Int(IntType::I64) => Ok(quote!(i64)),
-            PrimitiveType::Int(IntType::U64) => Ok(quote!(u64)),
-            PrimitiveType::Int(IntType::I32) => Ok(quote!(i32)),
-            PrimitiveType::Int(IntType::U32) => Ok(quote!(u32)),
-            PrimitiveType::Int(IntType::I16) => Ok(quote!(i16)),
-            PrimitiveType::Int(IntType::U16) => Ok(quote!(u16)),
-            PrimitiveType::Int(IntType::I8) => Ok(quote!(i8)),
-            PrimitiveType::Int(IntType::U8) => Ok(quote!(u8)),
-            PrimitiveType::Decimal(DecimalType::F64) => Ok(quote!(f64)),
-            PrimitiveType::Decimal(DecimalType::F32) => Ok(quote!(f32)),
-            PrimitiveType::Bool => Ok(quote!(bool)),
-            PrimitiveType::String => Ok(quote!(String)),
-            PrimitiveType::Char => Ok(quote!(char)),
-            PrimitiveType::List => Ok(quote!(Vec)),
+            TypePrimitive::Int(IntType::I64) => Ok(quote!(i64)),
+            TypePrimitive::Int(IntType::U64) => Ok(quote!(u64)),
+            TypePrimitive::Int(IntType::I32) => Ok(quote!(i32)),
+            TypePrimitive::Int(IntType::U32) => Ok(quote!(u32)),
+            TypePrimitive::Int(IntType::I16) => Ok(quote!(i16)),
+            TypePrimitive::Int(IntType::U16) => Ok(quote!(u16)),
+            TypePrimitive::Int(IntType::I8) => Ok(quote!(i8)),
+            TypePrimitive::Int(IntType::U8) => Ok(quote!(u8)),
+            TypePrimitive::Decimal(DecimalType::F64) => Ok(quote!(f64)),
+            TypePrimitive::Decimal(DecimalType::F32) => Ok(quote!(f32)),
+            TypePrimitive::Bool => Ok(quote!(bool)),
+            TypePrimitive::String => Ok(quote!(String)),
+            TypePrimitive::Char => Ok(quote!(char)),
+            TypePrimitive::List => Ok(quote!(Vec)),
             _ => bail!("Not supported {:?}", ty),
         }
     }

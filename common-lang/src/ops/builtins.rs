@@ -211,6 +211,6 @@ pub fn builtin_some() -> BuiltinFn {
         if args.len() != 1 {
             bail!("Some expects 1 argument, got: {:?}", args)
         }
-        Ok(Value::Some(SomeValue::new(args[0].clone().into())))
+        Ok(Value::Some(ValueSome::new(args[0].clone().into())))
     })
 }

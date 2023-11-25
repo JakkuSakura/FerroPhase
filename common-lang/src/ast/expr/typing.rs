@@ -42,7 +42,7 @@ impl TypeExpr {
             _ => None,
         }
     }
-    pub fn as_struct(&self) -> Option<&StructType> {
+    pub fn as_struct(&self) -> Option<&TypeStruct> {
         match self {
             TypeExpr::Value(v) => v.as_struct(),
             _ => None,

@@ -31,7 +31,7 @@ impl SpecializePass {
     pub fn specialize_invoke_details(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         let args: Vec<_> = invoke
@@ -126,7 +126,7 @@ impl SpecializePass {
             generics_params: vec![],
             ret: ret.clone(),
         };
-        let new_func = FunctionValue {
+        let new_func = ValueFunction {
             sig,
             body: new_body.into(),
         };
@@ -148,7 +148,7 @@ impl SpecializePass {
     pub fn specialize_invoking(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         match &invoke.func {
@@ -215,7 +215,7 @@ impl OptimizePass for SpecializePass {
     fn optimize_invoke_post(
         &self,
         invoke: Invoke,
-        func: &FunctionValue,
+        func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         self.specialize_invoking(invoke, &func, ctx)

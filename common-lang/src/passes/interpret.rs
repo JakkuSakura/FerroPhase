@@ -100,12 +100,12 @@ impl InterpreterPass {
         let value = self.interpret_expr(&node.expr, ctx)?;
         match node.kind {
             UnOpKind::Neg => match value {
-                Value::Int(x) => Ok(Value::Int(IntValue::new(-x.value))),
-                Value::Decimal(x) => Ok(Value::Decimal(DecimalValue::new(-x.value))),
+                Value::Int(x) => Ok(Value::Int(ValueInt::new(-x.value))),
+                Value::Decimal(x) => Ok(Value::Decimal(ValueDecimal::new(-x.value))),
                 _ => bail!("Failed to interpret {:?}", node),
             },
             UnOpKind::Not => match value {
-                Value::Bool(x) => Ok(Value::Bool(BoolValue::new(!x.value))),
+                Value::Bool(x) => Ok(Value::Bool(ValueBool::new(!x.value))),
                 _ => bail!("Failed to interpret {:?}", node),
             },
             _ => bail!("Failed to interpret {:?}", node),
@@ -160,10 +160,10 @@ impl InterpreterPass {
             "print" if resolve => Ok(Value::any(builtin_print(self.serializer.clone()))),
             "true" => Ok(Value::bool(true)),
             "false" => Ok(Value::bool(false)),
-            "None" => Ok(Value::None(NoneValue)),
-            "null" => Ok(Value::Null(NullValue)),
-            "unit" => Ok(Value::Unit(UnitValue)),
-            "undefined" => Ok(Value::Undefined(UndefinedValue)),
+            "None" => Ok(Value::None(ValueNone)),
+            "null" => Ok(Value::Null(ValueNull)),
+            "unit" => Ok(Value::Unit(ValueUnit)),
+            "undefined" => Ok(Value::Undefined(ValueUndefined)),
             "Some" => Ok(Value::any(builtin_some())),
             _ => {
                 info!("Get value recursive {:?}", ident);
@@ -245,7 +245,7 @@ impl InterpreterPass {
         &self,
         node: &StructExpr,
         ctx: &ArcScopedContext,
-    ) -> Result<StructValue> {
+    ) -> Result<ValueStruct> {
         let struct_ = self
             .type_system
             .evaluate_type_expr(&node.name, ctx)?
@@ -262,16 +262,16 @@ impl InterpreterPass {
                 })
             })
             .try_collect()?;
-        Ok(StructValue {
+        Ok(ValueStruct {
             ty: struct_,
-            structural: StructuralValue { fields },
+            structural: ValueStructural { fields },
         })
     }
     pub fn interpret_struct_value(
         &self,
-        node: &StructValue,
+        node: &ValueStruct,
         ctx: &ArcScopedContext,
-    ) -> Result<StructValue> {
+    ) -> Result<ValueStruct> {
         let fields: Vec<_> = node
             .structural
             .fields
@@ -283,9 +283,9 @@ impl InterpreterPass {
                 })
             })
             .try_collect()?;
-        Ok(StructValue {
+        Ok(ValueStruct {
             ty: node.ty.clone(),
-            structural: StructuralValue { fields },
+            structural: ValueStructural { fields },
         })
     }
     pub fn interpret_select(&self, s: &Select, ctx: &ArcScopedContext) -> Result<Value> {
@@ -307,16 +307,16 @@ impl InterpreterPass {
     }
     pub fn interpret_tuple(
         &self,
-        node: &TupleValue,
+        node: &ValueTuple,
         ctx: &ArcScopedContext,
         resolve: bool,
-    ) -> Result<TupleValue> {
+    ) -> Result<ValueTuple> {
         let values: Vec<_> = node
             .values
             .iter()
             .map(|x| self.interpret_value(x, ctx, resolve))
             .try_collect()?;
-        Ok(TupleValue {
+        Ok(ValueTuple {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
@@ -333,9 +333,9 @@ impl InterpreterPass {
     }
     pub fn interpret_function_value(
         &self,
-        node: &FunctionValue,
+        node: &ValueFunction,
         ctx: &ArcScopedContext,
-    ) -> Result<FunctionValue> {
+    ) -> Result<ValueFunction> {
         let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
         for generic in &node.generics_params {
             let ty = self
@@ -360,7 +360,7 @@ impl InterpreterPass {
             ret: self.interpret_type(&node.ret, &sub)?,
         };
 
-        Ok(FunctionValue {
+        Ok(ValueFunction {
             sig,
             body: node.body.clone(),
         })
@@ -399,10 +399,10 @@ impl InterpreterPass {
             Value::Unit(_) => Ok(val.clone()),
             Value::Null(_) => Ok(val.clone()),
             Value::None(_) => Ok(val.clone()),
-            Value::Some(val) => Ok(Value::Some(SomeValue::new(
+            Value::Some(val) => Ok(Value::Some(ValueSome::new(
                 self.interpret_value(&val.value, ctx, resolve)?.into(),
             ))),
-            Value::Option(value) => Ok(Value::Option(OptionValue::new(
+            Value::Option(value) => Ok(Value::Option(ValueOption::new(
                 value
                     .value
                     .as_ref()
@@ -435,12 +435,12 @@ impl InterpreterPass {
     ) -> Result<Value> {
         match op {
             UnOpKind::Neg => match arg {
-                Value::Int(val) => Ok(Value::Int(IntValue::new(-val.value))),
-                Value::Decimal(val) => Ok(Value::Decimal(DecimalValue::new(-val.value))),
+                Value::Int(val) => Ok(Value::Int(ValueInt::new(-val.value))),
+                Value::Decimal(val) => Ok(Value::Decimal(ValueDecimal::new(-val.value))),
                 _ => bail!("Failed to interpret {:?}", op),
             },
             UnOpKind::Not => match arg {
-                Value::Bool(val) => Ok(Value::Bool(BoolValue::new(!val.value))),
+                Value::Bool(val) => Ok(Value::Bool(ValueBool::new(!val.value))),
                 _ => bail!("Failed to interpret {:?}", op),
             },
             _ => bail!("Could not process {:?}", op),
