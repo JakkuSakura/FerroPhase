@@ -4,7 +4,7 @@ use crate::{common_derives, common_enum, get_threadlocal_serializer};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
-
+// TODO: use TypeXXX prefix for all types
 common_enum! {
     /// TypeValue is a solid type value
     pub enum TypeValue {
