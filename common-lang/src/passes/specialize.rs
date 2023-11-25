@@ -169,36 +169,30 @@ impl SpecializePass {
             .items
             .into_iter()
             .filter(|x| match x {
-                Item::Define(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => true,
-                Item::Define(d) => {
-                    let func = match &d.value {
-                        DefineValue::Function(f) => f,
-                        _ => return true,
-                    };
-                    func.params.is_empty() && func.generics_params.is_empty()
+                Item::DefFunction(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => {
+                    true
+                }
+                Item::DefFunction(func) => {
+                    func.value.params.is_empty() && func.value.generics_params.is_empty()
                 }
                 _ => true,
             })
             .collect();
         for specialized_name in ctx.list_specialized().into_iter().sorted() {
             let func = ctx.get_function(specialized_name).unwrap();
-            let define = Define {
+            let define = DefFunction {
                 name: func.name.clone().expect("No specialized name"),
-                kind: DefineKind::Function,
-                ty: Some(TypeValue::Function(
-                    self.type_system.infer_function(&func, ctx)?.into(),
-                )),
-                value: DefineValue::Function(func),
+                ty: Some(self.type_system.infer_function(&func, ctx)?.into()),
+                value: func,
                 visibility: Visibility::Public,
             };
-            module.items.push(Item::Define(define));
+            module.items.push(Item::DefFunction(define));
         }
 
         Ok(module)
     }
     pub fn specialize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         match item {
-            Item::Define(_) => Ok(item),
             Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module),
             _ => Ok(item),
         }

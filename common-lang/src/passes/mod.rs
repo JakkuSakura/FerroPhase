@@ -11,6 +11,7 @@ pub use inline::*;
 pub use interpret::*;
 pub use specialize::*;
 
+// TODO: merge pre and post to simplify the pass
 #[allow(unused_variables)]
 pub trait OptimizePass {
     fn name(&self) -> &str;

@@ -7,12 +7,12 @@ common_enum! {
     /// Item is an syntax tree node that "declares" a thing without returning a value
     pub enum Item {
         Module(Module),
-        Define(Define),
         DefStruct(DefStruct),
         DefEnum(DefEnum),
         DefType(DefType),
         DefConst(DefConst),
         DefFunction(DefFunction),
+        DefTrait(DefTrait),
         Declare(Declare),
         Import(Import),
         Impl(Impl),
@@ -41,12 +41,7 @@ impl Item {
         }
         false
     }
-    pub fn as_define(&self) -> Option<&Define> {
-        match self {
-            Self::Define(define) => Some(define),
-            _ => None,
-        }
-    }
+
     pub fn as_module(&self) -> Option<&Module> {
         match self {
             Self::Module(module) => Some(module),
@@ -67,7 +62,11 @@ impl Item {
     }
     pub fn get_ident(&self) -> Option<&Ident> {
         match self {
-            Self::Define(define) => Some(&define.name),
+            Self::DefFunction(define) => Some(&define.name),
+            Self::DefStruct(define) => Some(&define.name),
+            Self::DefEnum(define) => Some(&define.name),
+            Self::DefType(define) => Some(&define.name),
+            Self::DefConst(define) => Some(&define.name),
             Self::Declare(declare) => Some(&declare.name),
             Self::Module(module) => Some(&module.name),
             _ => None,
@@ -157,44 +156,6 @@ common_derives! {
 }
 
 common_derives! {
-    pub enum DefineValue {
-        Function(ValueFunction),
-        Type(TypeExpr),
-        Const(Expr),
-        Trait(Trait),
-    }
-}
-impl DefineValue {
-    pub fn as_function(&self) -> Option<&ValueFunction> {
-        match self {
-            DefineValue::Function(fn_) => Some(fn_),
-            _ => None,
-        }
-    }
-    pub fn as_type(&self) -> Option<&TypeExpr> {
-        match self {
-            DefineValue::Type(ty) => Some(ty),
-            _ => None,
-        }
-    }
-    pub fn as_const(&self) -> Option<&Expr> {
-        match self {
-            DefineValue::Const(expr) => Some(expr),
-            _ => None,
-        }
-    }
-}
-// TODO: deprecated
-common_derives! {
-    pub struct Define {
-        pub name: Ident,
-        pub kind: DefineKind,
-        pub ty: Option<TypeValue>,
-        pub value: DefineValue,
-        pub visibility: Visibility,
-    }
-}
-common_derives! {
     pub struct DefStruct {
         pub name: Ident,
         pub value: TypeStruct,
@@ -219,6 +180,7 @@ common_derives! {
 common_derives! {
     pub struct DefConst {
         pub name: Ident,
+        pub ty: Option<TypeValue>,
         pub value: Value,
         pub visibility: Visibility,
     }
@@ -226,11 +188,19 @@ common_derives! {
 common_derives! {
     pub struct DefFunction {
         pub name: Ident,
+        pub ty: Option<TypeFunction>,
         pub value: ValueFunction,
         pub visibility: Visibility,
     }
 }
-
+common_derives! {
+    pub struct DefTrait {
+        pub name: Ident,
+        pub bounds: TypeBounds,
+        pub items: ItemChunk,
+        pub visibility: Visibility,
+    }
+}
 common_derives! {
     pub struct Import {
         pub visibility: Visibility,
@@ -246,13 +216,6 @@ common_derives! {
     }
 }
 
-common_derives! {
-    pub struct Trait {
-        pub name: Ident,
-        pub bounds: TypeBounds,
-        pub items: ItemChunk,
-    }
-}
 common_derives! {
     pub enum DeclareKind {
         Const { ty: TypeValue },
