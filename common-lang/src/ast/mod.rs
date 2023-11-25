@@ -9,7 +9,6 @@ mod item;
 mod locator;
 mod pattern;
 mod stmt;
-mod typing;
 
 pub use anybox::*;
 pub use expr::*;
@@ -17,7 +16,6 @@ pub use item::*;
 pub use locator::*;
 pub use pattern::*;
 pub use stmt::*;
-pub use typing::*;
 
 common_derives! {
     /// Tree is any syntax tree element
