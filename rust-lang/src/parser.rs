@@ -465,19 +465,16 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
-            Ok(Item::Define(Define {
+            Ok(Item::DefFunction(DefFunction {
                 name: expr.name.clone().unwrap(),
-                kind: DefineKind::Function,
                 ty: None,
-                value: DefineValue::Function(expr),
+                value: expr,
                 visibility: parse_vis(m.vis),
             }))
         }
-        syn::ImplItem::Type(t) => Ok(Item::Define(Define {
+        syn::ImplItem::Type(t) => Ok(Item::DefType(DefType {
             name: parse_ident(t.ident),
-            kind: DefineKind::Type,
-            ty: None,
-            value: DefineValue::Type(TypeExpr::value(parse_type_value(t.ty)?)),
+            value: parse_type_value(t.ty)?,
             visibility: parse_vis(t.vis),
         })),
         _ => bail!("Does not support impl item {:?}", item),
@@ -650,10 +647,11 @@ fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<TypeExpr> {
     let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
     Ok(t.into())
 }
-fn parse_trait(t: syn::ItemTrait) -> Result<Trait> {
+fn parse_trait(t: syn::ItemTrait) -> Result<DefTrait> {
     // TODO: generis params
     let bounds = parse_type_param_bounds(t.supertraits.into_iter().collect())?;
-    Ok(Trait {
+    let vis = parse_vis(t.vis);
+    Ok(DefTrait {
         name: parse_ident(t.ident),
         bounds,
         items: t
@@ -661,6 +659,7 @@ fn parse_trait(t: syn::ItemTrait) -> Result<Trait> {
             .into_iter()
             .map(|x| parse_trait_item(x).map(Item::Declare))
             .try_collect()?,
+        visibility: vis,
     })
 }
 fn parse_item(item: syn::Item) -> Result<Item> {
@@ -668,14 +667,13 @@ fn parse_item(item: syn::Item) -> Result<Item> {
         syn::Item::Fn(f0) => {
             let visibility = parse_vis(f0.vis.clone());
             let f = parse_fn(f0)?;
-            let d = Define {
+            let d = DefFunction {
                 name: f.name.clone().unwrap(),
-                kind: DefineKind::Function,
                 ty: None,
-                value: DefineValue::Function(f),
+                value: f,
                 visibility,
             };
-            Ok(Item::Define(d))
+            Ok(Item::DefFunction(d))
         }
         syn::Item::Impl(im) => Ok(Item::Impl(parse_impl(im)?)),
         syn::Item::Use(u) => Ok(match parse_use(u) {
@@ -687,11 +685,9 @@ fn parse_item(item: syn::Item) -> Result<Item> {
             let visibility = parse_vis(s.vis.clone());
 
             let struct_type = parse_item_struct(s)?;
-            Ok(Item::Define(Define {
+            Ok(Item::DefStruct(DefStruct {
                 name: struct_type.name.clone(),
-                kind: DefineKind::Type,
-                ty: None,
-                value: DefineValue::Type(TypeExpr::value(TypeValue::Struct(struct_type))),
+                value: struct_type,
                 visibility,
             }))
         }
@@ -714,39 +710,28 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                     Ok(EnumTypeVariant { name, value: ty })
                 })
                 .try_collect()?;
-            Ok(Item::Define(Define {
+            Ok(Item::DefEnum(DefEnum {
                 name: ident.clone(),
-                kind: DefineKind::Type,
-                ty: None,
-                value: DefineValue::Type(TypeExpr::value(TypeValue::Enum(TypeEnum {
+                value: TypeEnum {
                     name: ident.clone(),
                     variants,
-                }))),
+                },
                 visibility,
             }))
         }
         syn::Item::Type(t) => {
             let visibility = parse_vis(t.vis.clone());
             let ty = parse_type_value(*t.ty)?;
-            Ok(Item::Define(Define {
+            Ok(Item::DefType(DefType {
                 name: parse_ident(t.ident),
-                kind: DefineKind::Type,
-                ty: None,
-                value: DefineValue::Type(TypeExpr::value(ty)),
+                value: ty,
                 visibility,
             }))
         }
         syn::Item::Mod(m) => Ok(Item::Module(parse_module(m)?)),
         syn::Item::Trait(t) => {
-            let visibility = parse_vis(t.vis.clone());
             let trait_ = parse_trait(t)?;
-            Ok(Item::Define(Define {
-                name: trait_.name.clone(),
-                kind: DefineKind::Trait,
-                ty: None,
-                value: DefineValue::Trait(trait_),
-                visibility,
-            }))
+            Ok(Item::DefTrait(trait_))
         }
         _ => bail!("Does not support item yet: {:?}", item),
     }
