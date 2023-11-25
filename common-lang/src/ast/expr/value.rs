@@ -4,6 +4,7 @@ use crate::value::{FieldValue, UnitValue, Value};
 use std::hash::Hash;
 common_enum! {
     /// Expr is an expression that returns a value
+    /// aka ValueExpr
     pub enum Expr {
         Locator(Locator),
         Value(Box<Value>),
