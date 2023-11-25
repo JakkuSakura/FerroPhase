@@ -158,14 +158,14 @@ common_derives! {
 
 common_derives! {
     pub enum DefineValue {
-        Function(FunctionValue),
+        Function(ValueFunction),
         Type(TypeExpr),
         Const(Expr),
         Trait(Trait),
     }
 }
 impl DefineValue {
-    pub fn as_function(&self) -> Option<&FunctionValue> {
+    pub fn as_function(&self) -> Option<&ValueFunction> {
         match self {
             DefineValue::Function(fn_) => Some(fn_),
             _ => None,
@@ -197,7 +197,7 @@ common_derives! {
 common_derives! {
     pub struct DefStruct {
         pub name: Ident,
-        pub value: StructType,
+        pub value: TypeStruct,
         pub visibility: Visibility,
     }
 }
@@ -205,7 +205,7 @@ common_derives! {
 common_derives! {
     pub struct DefEnum {
         pub name: Ident,
-        pub value: EnumType,
+        pub value: TypeEnum,
         pub visibility: Visibility,
     }
 }
@@ -226,7 +226,7 @@ common_derives! {
 common_derives! {
     pub struct DefFunction {
         pub name: Ident,
-        pub value: FunctionValue,
+        pub value: ValueFunction,
         pub visibility: Visibility,
     }
 }
