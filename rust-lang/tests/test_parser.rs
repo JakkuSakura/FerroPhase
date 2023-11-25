@@ -32,11 +32,10 @@ fn test_parse_fn() -> Result<()> {
     };
     assert_eq!(
         code,
-        Item::Define(Define {
+        Item::DefFunction(DefFunction {
             name: "foo".into(),
-            kind: DefineKind::Function,
             ty: None,
-            value: DefineValue::Function(ValueFunction {
+            value: ValueFunction {
                 sig: FunctionSignature {
                     name: Some("foo".into()),
                     params: vec![FunctionParam {
@@ -47,7 +46,7 @@ fn test_parse_fn() -> Result<()> {
                     ret: TypeValue::Primitive(TypePrimitive::i64())
                 },
                 body: block.into(),
-            }),
+            },
             visibility: Visibility::Private,
         })
     );

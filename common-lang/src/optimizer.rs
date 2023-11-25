@@ -194,7 +194,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     }
     fn prescan_item(&self, item: &Item, ctx: &ArcScopedContext) -> Result<()> {
         match item {
-            Item::Define(x) => self.prescan_def(x, ctx),
+            Item::DefFunction(x) => self.prescan_def_function(x, ctx),
             Item::Module(x) => self.prescan_module(x, ctx),
             _ => Ok(()),
         }
@@ -213,7 +213,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         item = self.pass.optimize_item_pre(item, ctx)?;
 
         item = match item {
-            Item::Define(x) => self.optimize_def(x, ctx).map(Item::Define)?,
+            Item::DefFunction(x) => self.optimize_def_function(x, ctx).map(Item::DefFunction)?,
             Item::Import(x) => self.optimize_import(x, ctx).map(Item::Import)?,
             Item::Module(x) => self.optimize_module(x, ctx, true).map(Item::Module)?,
             Item::Expr(x) => {
@@ -366,30 +366,27 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         })
     }
 
-    pub fn optimize_def(&self, mut def: Define, ctx: &ArcScopedContext) -> Result<Define> {
-        def.value = match def.value {
-            DefineValue::Function(func) => {
-                self.optimize_func(func, ctx).map(DefineValue::Function)?
-            }
-            _ => def.value,
-        };
+    pub fn optimize_def_function(
+        &self,
+        mut def: DefFunction,
+        ctx: &ArcScopedContext,
+    ) -> Result<DefFunction> {
+        def.value = self.optimize_func(def.value, ctx)?;
+
         Ok(def)
     }
-    pub fn prescan_def(&self, def: &Define, ctx: &ArcScopedContext) -> Result<()> {
+    pub fn prescan_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
         let def = def.clone();
-        match def.value.clone() {
-            DefineValue::Function(f) => match def.name.as_str() {
-                _ => {
-                    debug!(
-                        "Registering function {}",
-                        self.serializer.serialize_function(&f)?,
-                    );
+        match def.name.as_str() {
+            _ => {
+                debug!(
+                    "Registering function {}",
+                    self.serializer.serialize_function(&def.value)?,
+                );
 
-                    ctx.insert_function(def.name.clone(), f.clone());
-                    Ok(())
-                }
-            },
-            _ => Ok(()),
+                ctx.insert_function(def.name.clone(), def.value.clone());
+                Ok(())
+            }
         }
     }
     pub fn optimize_tree(&self, node: Tree, ctx: &ArcScopedContext) -> Result<Tree> {

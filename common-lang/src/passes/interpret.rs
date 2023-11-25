@@ -200,39 +200,43 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_def(&self, def: &Define, ctx: &ArcScopedContext) -> Result<()> {
-        match &def.value {
-            DefineValue::Function(n) => {
-                if def.name == Ident::new("main") {
-                    self.interpret_expr(&n.body, ctx).map(|_| ())
-                } else {
-                    let name = &def.name;
-                    ctx.insert_function(name.clone(), n.clone());
-                    Ok(())
-                }
-            }
-            DefineValue::Type(n) => {
-                ctx.insert_type(
-                    def.name.clone(),
-                    TypeValue::any_box(LazyValue {
-                        ctx: ctx.clone(),
-                        expr: n.clone(),
-                    }),
-                );
-                Ok(())
-            }
-            DefineValue::Const(n) => {
-                ctx.insert_value(
-                    def.name.clone(),
-                    Value::any(LazyValue {
-                        ctx: ctx.clone(),
-                        expr: n.clone(),
-                    }),
-                );
-                Ok(())
-            }
-            _ => bail!("Failed to interpret {:?}", def),
+    pub fn interpret_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
+        if def.name == Ident::new("main") {
+            self.interpret_expr(&def.value.body, ctx).map(|_| ())
+        } else {
+            let name = &def.name;
+            ctx.insert_function(name.clone(), def.value.clone());
+            Ok(())
         }
+    }
+    pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &ArcScopedContext) -> Result<()> {
+        ctx.insert_type(def.name.clone(), TypeValue::Struct(def.value.clone()));
+        Ok(())
+    }
+    pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &ArcScopedContext) -> Result<()> {
+        ctx.insert_type(def.name.clone(), TypeValue::Enum(def.value.clone()));
+        Ok(())
+    }
+    pub fn interpret_def_type(&self, def: &DefType, ctx: &ArcScopedContext) -> Result<()> {
+        ctx.insert_type(
+            def.name.clone(),
+            // TODO: inspect this lazy value
+            TypeValue::any_box(LazyValue {
+                ctx: ctx.clone(),
+                expr: def.value.clone(),
+            }),
+        );
+        Ok(())
+    }
+    pub fn interpret_def_const(&self, def: &DefConst, ctx: &ArcScopedContext) -> Result<()> {
+        ctx.insert_value(
+            def.name.clone(),
+            Value::any(LazyValue {
+                ctx: ctx.clone(),
+                expr: def.value.clone(),
+            }),
+        );
+        Ok(())
     }
     pub fn interpret_args(&self, node: &[Expr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
@@ -477,7 +481,11 @@ impl InterpreterPass {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
             Item::Module(n) => self.interpret_module(n, ctx),
-            Item::Define(n) => self.interpret_def(n, ctx).map(|_| Value::unit()),
+            Item::DefFunction(n) => self.interpret_def_function(n, ctx).map(|_| Value::unit()),
+            Item::DefStruct(n) => self.interpret_def_struct(n, ctx).map(|_| Value::unit()),
+            Item::DefEnum(n) => self.interpret_def_enum(n, ctx).map(|_| Value::unit()),
+            Item::DefType(n) => self.interpret_def_type(n, ctx).map(|_| Value::unit()),
+            Item::DefConst(n) => self.interpret_def_const(n, ctx).map(|_| Value::unit()),
             Item::Import(n) => self.interpret_import(n, ctx).map(|_| Value::unit()),
 
             Item::Any(n) => Ok(Value::Any(n.clone())),
@@ -534,10 +542,7 @@ impl OptimizePass for InterpreterPass {
     }
     fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
         match item {
-            Item::Define(def) if def.name.as_str() == "main" => match def.value {
-                DefineValue::Function(func) => Ok(Item::Expr(func.body)),
-                _ => bail!("main should be a function"),
-            },
+            Item::DefFunction(def) if def.name.as_str() == "main" => Ok(Item::Expr(def.value.body)),
             _ => Ok(Item::Expr(Expr::unit())),
         }
     }
