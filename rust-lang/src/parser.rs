@@ -6,7 +6,7 @@ use common_lang::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
 use syn::parse::ParseStream;
-use syn::{parse_quote, FieldsNamed, FnArg, Lit, ReturnType, Token};
+use syn::{parse_quote, FieldsNamed, FnArg, Lit, ReturnType, Token, Fields};
 use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -697,6 +697,36 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                 kind: DefineKind::Type,
                 ty: None,
                 value: DefineValue::Type(TypeExpr::value(TypeValue::Struct(struct_type))),
+                visibility,
+            }))
+        }
+        syn::Item::Enum(e) => {
+            let visibility = parse_vis(e.vis.clone());
+            let ident = parse_ident(e.ident.clone());
+            let variants = e
+                .variants
+                .into_iter()
+                .map(|x| {
+                    let name = parse_ident(x.ident);
+                    let ty =match x.fields {
+                        Fields::Named(_) => bail!("Does not support named fields"),
+                        Fields::Unnamed(_) => bail!("Does not support unnamed fields"),
+                        Fields::Unit => {
+                            // be int or string
+                            TypeValue::any()
+                        }
+                    };
+                    Ok(EnumTypeVariant { name, value: ty })
+                })
+                .try_collect()?;
+            Ok(Item::Define(Define {
+                name: ident.clone(),
+                kind: DefineKind::Type,
+                ty: None,
+                value: DefineValue::Type(TypeExpr::value(TypeValue::Enum(EnumType {
+                    name: ident.clone(),
+                    variants,
+                }))),
                 visibility,
             }))
         }
