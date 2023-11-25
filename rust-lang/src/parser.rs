@@ -274,8 +274,8 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
     })
 }
 
-fn parse_if(i: syn::ExprIf) -> Result<Cond> {
-    let mut cases = vec![CondCase {
+fn parse_if(i: syn::ExprIf) -> Result<If> {
+    let mut cases = vec![MatchCase {
         cond: parse_expr(*i.cond)?,
         body: Expr::block(parse_block(i.then_branch)?).into(),
     }];
@@ -283,26 +283,21 @@ fn parse_if(i: syn::ExprIf) -> Result<Cond> {
         'else_check: {
             let body = parse_expr(*else_body)?;
             match &body {
-                Expr::Cond(m) => {
-                    if m.if_style {
+                Expr::If(m) => {
                         cases.extend(m.cases.clone());
                         break 'else_check;
-                    }
                 }
                 _ => {}
             }
 
-            cases.push(CondCase {
+            cases.push(MatchCase {
                 cond: Expr::value(Value::bool(true)),
                 body,
             });
         };
     }
 
-    Ok(Cond {
-        cases,
-        if_style: true,
-    })
+    Ok(If { cases })
 }
 fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
     let mut lhs = parse_expr(*b.left)?;
@@ -405,7 +400,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Unary(u) => Expr::Invoke(parse_unary(u)?.into()),
         syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
         syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?.into()),
-        syn::Expr::If(i) => Expr::Cond(parse_if(i)?),
+        syn::Expr::If(i) => Expr::If(parse_if(i)?),
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?.into()),

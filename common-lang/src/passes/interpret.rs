@@ -111,7 +111,7 @@ impl InterpreterPass {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_cond(&self, node: &Cond, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_cond(&self, node: &Match, ctx: &ArcScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;
             match interpret {
@@ -459,7 +459,7 @@ impl InterpreterPass {
                 .with_context(|| format!("could not find {:?} in context", n)),
             Expr::Value(n) => self.interpret_value(n, ctx, resolve),
             Expr::Block(n) => self.interpret_block(n, ctx),
-            Expr::Cond(c) => self.interpret_cond(c, ctx),
+            Expr::Match(c) => self.interpret_cond(c, ctx),
             Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
             Expr::Any(n) => Ok(Value::Any(n.clone())),
             Expr::Select(s) => self.interpret_select(s, ctx),

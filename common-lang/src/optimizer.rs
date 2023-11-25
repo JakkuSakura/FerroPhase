@@ -140,7 +140,8 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             Expr::Value(_) => expr,
             Expr::Struct(_) => expr,
             Expr::Block(x) => self.optimize_block(x, ctx)?,
-            Expr::Cond(x) => self.optimize_cond(x, ctx)?,
+            Expr::Match(x) => self.optimize_cond(x, ctx)?,
+            Expr::If(x) => self.optimize_if(x, ctx)?,
             Expr::Invoke(x) => self.optimize_invoke(*x, ctx)?,
             Expr::Any(x) => Expr::Any(x.clone()),
             _ => bail!("Could not optimize {:?}", expr),
@@ -297,7 +298,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         b.stmts = stmts;
         Ok(Expr::block(b))
     }
-    pub fn optimize_cond(&self, b: Cond, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_cond(&self, b: Match, ctx: &ArcScopedContext) -> Result<Expr> {
         let mut cases = vec![];
         for case in b.cases {
             let cond = self.optimize_expr(case.cond, ctx)?;
@@ -311,11 +312,11 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
                 ControlFlow::Return(_) => break,
                 ControlFlow::Into => {
                     let body = self.optimize_expr(case.body, ctx)?;
-                    cases.push(CondCase { cond, body });
+                    cases.push(MatchCase { cond, body });
                 }
                 ControlFlow::IntoAndBreak(_) => {
                     let body = self.optimize_expr(case.body, ctx)?;
-                    cases.push(CondCase { cond, body });
+                    cases.push(MatchCase { cond, body });
                     break;
                 }
             }
@@ -323,10 +324,35 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         if cases.len() == 1 {
             return Ok(cases.into_iter().next().unwrap().body);
         }
-        Ok(Expr::Cond(Cond {
-            cases,
-            if_style: b.if_style,
-        }))
+        Ok(Expr::Match(Match { cases }))
+    }
+    pub fn optimize_if(&self, b: If, ctx: &ArcScopedContext) -> Result<Expr> {
+        let mut cases = vec![];
+        for case in b.cases {
+            let cond = self.optimize_expr(case.cond, ctx)?;
+            let do_continue = self
+                .pass
+                .evaluate_condition(cond.clone(), ctx)?
+                .unwrap_or(ControlFlow::Into);
+            match do_continue {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break(_) => break,
+                ControlFlow::Return(_) => break,
+                ControlFlow::Into => {
+                    let body = self.optimize_expr(case.body, ctx)?;
+                    cases.push(MatchCase { cond, body });
+                }
+                ControlFlow::IntoAndBreak(_) => {
+                    let body = self.optimize_expr(case.body, ctx)?;
+                    cases.push(MatchCase { cond, body });
+                    break;
+                }
+            }
+        }
+        if cases.len() == 1 {
+            return Ok(cases.into_iter().next().unwrap().body);
+        }
+        Ok(Expr::If(If { cases }))
     }
     pub fn optimize_func(
         &self,
