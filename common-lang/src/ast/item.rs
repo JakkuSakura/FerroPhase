@@ -41,7 +41,42 @@ impl Item {
         }
         false
     }
-
+    pub fn as_function(&self) -> Option<&DefFunction> {
+        match self {
+            Self::DefFunction(define) => Some(define),
+            _ => None,
+        }
+    }
+    pub fn as_struct(&self) -> Option<&DefStruct> {
+        match self {
+            Self::DefStruct(define) => Some(define),
+            _ => None,
+        }
+    }
+    pub fn as_enum(&self) -> Option<&DefEnum> {
+        match self {
+            Self::DefEnum(define) => Some(define),
+            _ => None,
+        }
+    }
+    pub fn as_type(&self) -> Option<&DefType> {
+        match self {
+            Self::DefType(define) => Some(define),
+            _ => None,
+        }
+    }
+    pub fn as_const(&self) -> Option<&DefConst> {
+        match self {
+            Self::DefConst(define) => Some(define),
+            _ => None,
+        }
+    }
+    pub fn as_trait(&self) -> Option<&DefTrait> {
+        match self {
+            Self::DefTrait(define) => Some(define),
+            _ => None,
+        }
+    }
     pub fn as_module(&self) -> Option<&Module> {
         match self {
             Self::Module(module) => Some(module),
