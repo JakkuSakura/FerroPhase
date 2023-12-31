@@ -1,4 +1,5 @@
-use crate::common_derives;
+use crate::common_enum;
+use crate::common_struct;
 use common::*;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -17,7 +18,7 @@ pub use locator::*;
 pub use pattern::*;
 pub use stmt::*;
 
-common_derives! {
+common_enum! {
     /// Tree is any syntax tree element
     pub enum Tree {
         Item(Item),
@@ -26,7 +27,7 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct File {
         pub path: PathBuf,
         pub module: Module,

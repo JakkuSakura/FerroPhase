@@ -1,13 +1,13 @@
 mod typing;
 mod value;
 use crate::ast::Statement;
-use crate::common_derives;
+use crate::common_struct;
 pub use typing::*;
 pub use value::*;
 
 pub type StatementChunk = Vec<Statement>;
 
-common_derives! {
+common_struct! {
     pub struct Block {
         pub stmts: StatementChunk,
     }

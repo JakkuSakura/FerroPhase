@@ -1,6 +1,5 @@
 use crate::ast::*;
 use crate::common_enum;
-use crate::ops::*;
 use crate::value::*;
 use std::fmt::Display;
 use std::hash::Hash;
@@ -68,14 +67,21 @@ impl Display for TypeExpr {
         }
     }
 }
-common_derives! {
+
+common_enum! {
     pub enum TypeBinOp {
-        Add(AddOp<TypeExpr>),
-        Sub(SubOp<TypeExpr>),
+        Add {
+            left: TypeExpr,
+            right: TypeExpr,
+        },
+        Sub {
+            left: TypeExpr,
+            right: TypeExpr,
+        },
     }
 
 }
-common_derives! {
+common_struct! {
     pub struct SelfType {
         pub reference: bool,
         pub mutability: bool,

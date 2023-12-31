@@ -1,10 +1,11 @@
-use crate::common_derives;
+use crate::common_enum;
+use crate::common_struct;
 use crate::value::TypeValue;
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
-common_derives! {
+common_enum! {
     no_debug
     pub enum Locator {
         Ident(Ident),
@@ -180,7 +181,7 @@ impl<'a> From<&'a Path> for Path {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct ParameterPathSegment {
         pub ident: Ident,
         pub args: Vec<TypeValue>,
@@ -192,7 +193,7 @@ impl ParameterPathSegment {
     }
 }
 
-common_derives! {
+common_struct! {
     /// ParameterPath is a specialized locator for paths like Foo::<T>::bar<U>
     /// it is equivalent to Invoke(Select(Invoke(Foo, T), bar), U)
     pub struct ParameterPath {

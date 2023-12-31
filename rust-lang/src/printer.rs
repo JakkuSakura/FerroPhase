@@ -768,14 +768,14 @@ impl RustPrinter {
     }
     pub fn print_type_bin_op(&self, op: &TypeBinOp) -> Result<TokenStream> {
         match op {
-            TypeBinOp::Add(add) => {
-                let left = self.print_type_expr(&add.lhs)?;
-                let right = self.print_type_expr(&add.rhs)?;
+            TypeBinOp::Add { left, right } => {
+                let left = self.print_type_expr(&left)?;
+                let right = self.print_type_expr(&right)?;
                 Ok(quote!(#left + #right))
             }
-            TypeBinOp::Sub(sub) => {
-                let left = self.print_type_expr(&sub.lhs)?;
-                let right = self.print_type_expr(&sub.rhs)?;
+            TypeBinOp::Sub { left, right } => {
+                let left = self.print_type_expr(&left)?;
+                let right = self.print_type_expr(&right)?;
                 Ok(quote!(#left - #right))
             }
             #[allow(unreachable_patterns)]
