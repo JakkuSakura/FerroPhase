@@ -1,7 +1,7 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
 use common_lang::ast::*;
-use common_lang::ops::{AddOp, BinOpKind, SubOp, UnOpKind};
+use common_lang::ops::{BinOpKind, UnOpKind};
 use common_lang::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
@@ -602,8 +602,8 @@ impl syn::parse::Parse for TypeValueParser {
 }
 
 enum TypeExprParser {
-    Add(AddOp<TypeExpr>),
-    Sub(SubOp<TypeExpr>),
+    Add { left: TypeExpr, right: TypeExpr },
+    Sub { left: TypeExpr, right: TypeExpr },
     Value(TypeValue),
 }
 impl syn::parse::Parse for TypeExprParser {
@@ -616,17 +616,17 @@ impl syn::parse::Parse for TypeExprParser {
             if input.peek(Token![+]) {
                 input.parse::<Token![+]>()?;
                 let rhs = input.parse::<TypeValueParser>()?.into();
-                lhs = TypeExprParser::Add(AddOp {
-                    lhs: Box::new(lhs.into()),
-                    rhs: TypeExpr::value(rhs).into(),
-                });
+                lhs = TypeExprParser::Add {
+                    left: lhs.into(),
+                    right: TypeExpr::value(rhs).into(),
+                };
             } else if input.peek(Token![-]) {
                 input.parse::<Token![-]>()?;
                 let rhs = input.parse::<TypeValueParser>()?.into();
-                lhs = TypeExprParser::Sub(SubOp {
-                    lhs: Box::new(lhs.into()),
-                    rhs: TypeExpr::value(rhs).into(),
-                });
+                lhs = TypeExprParser::Sub {
+                    left: lhs.into(),
+                    right: TypeExpr::value(rhs).into(),
+                };
             } else {
                 return Err(input.error("Expected + or -"));
             }
@@ -637,8 +637,12 @@ impl syn::parse::Parse for TypeExprParser {
 impl Into<TypeExpr> for TypeExprParser {
     fn into(self) -> TypeExpr {
         match self {
-            TypeExprParser::Add(o) => TypeExpr::BinOp(TypeBinOp::Add(o).into()),
-            TypeExprParser::Sub(o) => TypeExpr::BinOp(TypeBinOp::Sub(o).into()),
+            TypeExprParser::Add { left, right } => {
+                TypeExpr::BinOp(TypeBinOp::Add { left, right }.into())
+            }
+            TypeExprParser::Sub { left, right } => {
+                TypeExpr::BinOp(TypeBinOp::Sub { left, right }.into())
+            }
             TypeExprParser::Value(v) => TypeExpr::value(v),
         }
     }

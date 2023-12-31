@@ -100,9 +100,9 @@ impl TypeSystem {
         ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         match op {
-            TypeBinOp::Add(a) => {
-                let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
-                let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
+            TypeBinOp::Add { left, right } => {
+                let lhs = self.evaluate_type_expr(&left, ctx)?;
+                let rhs = self.evaluate_type_expr(&right, ctx)?;
                 match (lhs, rhs) {
                     (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
                         l.bounds.bounds.extend(r.bounds.bounds);
@@ -112,9 +112,9 @@ impl TypeSystem {
                 }
                 bail!("Could not evaluate type value op {:?}", op)
             }
-            TypeBinOp::Sub(a) => {
-                let lhs = self.evaluate_type_expr(&a.lhs, ctx)?;
-                let rhs = self.evaluate_type_expr(&a.rhs, ctx)?;
+            TypeBinOp::Sub { left, right } => {
+                let lhs = self.evaluate_type_expr(&left, ctx)?;
+                let rhs = self.evaluate_type_expr(&right, ctx)?;
                 match (lhs, rhs) {
                     // (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
                     //     for r in r.bounds.bounds {
@@ -322,7 +322,7 @@ impl TypeSystem {
                 Value::Unit(_) => return Ok(TypeValue::unit()),
                 Value::Bool(_) => return Ok(TypeValue::Primitive(TypePrimitive::Bool)),
                 Value::String(_) => return Ok(TypeValue::Primitive(TypePrimitive::String)),
-                Value::Type(_) => return Ok(TypeValue::Type(TypeType)),
+                Value::Type(_) => return Ok(TypeValue::Type(TypeType {})),
                 Value::Char(_) => return Ok(TypeValue::Primitive(TypePrimitive::Char)),
                 Value::List(_) => return Ok(TypeValue::Primitive(TypePrimitive::List)),
                 _ => {}
