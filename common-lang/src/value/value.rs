@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{TypeBounds, TypeStruct, TypeValue};
-use crate::{common_derives, common_enum, get_threadlocal_serializer};
+use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use common::*;
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
@@ -239,7 +239,7 @@ impl Display for ValueString {
         write!(f, "{}", self.value)
     }
 }
-common_derives! {
+common_struct! {
     pub struct ValueList {
         pub values: Vec<Value>,
     }
@@ -295,7 +295,7 @@ impl ToJson for ValueNone {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct ValueSome {
         pub value: Box<Value>,
     }
@@ -312,7 +312,7 @@ impl ToJson for ValueSome {
         self.value.to_json()
     }
 }
-common_derives! {
+common_struct! {
     pub struct ValueOption {
         pub value: Option<Box<Value>>,
     }
@@ -344,7 +344,7 @@ impl FieldValue {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct ValueStruct {
         pub ty: TypeStruct,
         pub structural: ValueStructural
@@ -378,7 +378,7 @@ impl Display for ValueStruct {
         write!(f, "}}")
     }
 }
-common_derives! {
+common_struct! {
     pub struct ValueStructural {
         pub fields: Vec<FieldValue>,
     }
@@ -416,21 +416,21 @@ impl Display for ValueStructural {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct FunctionParam {
         pub name: Ident,
         pub ty: TypeValue,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct GenericParam {
         pub name: Ident,
         pub bounds: TypeBounds,
     }
 
 }
-common_derives! {
+common_struct! {
     pub struct FunctionSignature {
         pub name: Option<Ident>,
         pub params: Vec<FunctionParam>,
@@ -439,7 +439,7 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct ValueFunction {
         pub sig: FunctionSignature,
         pub body: Expr,
@@ -462,7 +462,7 @@ impl DerefMut for ValueFunction {
         &mut self.sig
     }
 }
-common_derives! {
+common_struct! {
     pub struct ValueTuple {
         pub values: Vec<Value>,
     }

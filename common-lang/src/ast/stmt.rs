@@ -1,8 +1,9 @@
 use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item, Pattern};
-use crate::common_derives;
+use crate::common_enum;
+use crate::common_struct;
 use std::hash::Hash;
 
-common_derives! {
+common_enum! {
     pub enum Statement {
         Item(Box<Item>),
         Let(StatementLet),
@@ -52,7 +53,7 @@ impl Statement {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct SideEffect {
         pub expr: Expr,
     }
@@ -72,21 +73,21 @@ impl SideEffect {
         }
     }
 }
-common_derives! {
+common_struct! {
     pub struct StatementLet {
         pub pat: Pattern,
         pub value: Expr,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct StatementAssign {
         pub target: Expr,
         pub value: Expr,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct StatementForEach {
         pub variable: Ident,
         pub iterable: Expr,
@@ -94,13 +95,13 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct StatementWhile {
         pub cond: Expr,
         pub body: Block,
     }
 }
-common_derives! {
+common_struct! {
     pub struct StatementLoop {
         pub body: Block,
     }

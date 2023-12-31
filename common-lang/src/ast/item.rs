@@ -162,7 +162,7 @@ impl ItemChunkExt for ItemChunk {
             .collect()
     }
 }
-common_derives! {
+common_struct! {
     pub struct Module {
         pub name: Ident,
         pub items: ItemChunk,
@@ -170,7 +170,9 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_enum! {
+    /// Visibility is a label to an item
+    /// The exact semantic is dependent on the language and context
     #[derive(Copy)]
     pub enum Visibility {
         Public,
@@ -179,18 +181,7 @@ common_derives! {
     }
 }
 
-common_derives! {
-    #[derive(Copy)]
-    pub enum DefineKind {
-        Unknown,
-        Function,
-        Type,
-        Const,
-        Trait,
-    }
-}
-
-common_derives! {
+common_struct! {
     pub struct DefStruct {
         pub name: Ident,
         pub value: TypeStruct,
@@ -198,21 +189,21 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct DefEnum {
         pub name: Ident,
         pub value: TypeEnum,
         pub visibility: Visibility,
     }
 }
-common_derives! {
+common_struct! {
     pub struct DefType {
         pub name: Ident,
         pub value: TypeValue,
         pub visibility: Visibility,
     }
 }
-common_derives! {
+common_struct! {
     pub struct DefConst {
         pub name: Ident,
         pub ty: Option<TypeValue>,
@@ -220,7 +211,7 @@ common_derives! {
         pub visibility: Visibility,
     }
 }
-common_derives! {
+common_struct! {
     pub struct DefFunction {
         pub name: Ident,
         pub ty: Option<TypeFunction>,
@@ -228,7 +219,7 @@ common_derives! {
         pub visibility: Visibility,
     }
 }
-common_derives! {
+common_struct! {
     pub struct DefTrait {
         pub name: Ident,
         pub bounds: TypeBounds,
@@ -236,14 +227,14 @@ common_derives! {
         pub visibility: Visibility,
     }
 }
-common_derives! {
+common_struct! {
     pub struct Import {
         pub visibility: Visibility,
         pub path: Path,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct Impl {
         pub trait_ty: Option<Locator>,
         pub self_ty: TypeExpr,
@@ -251,7 +242,7 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_enum! {
     pub enum DeclareKind {
         Const { ty: TypeValue },
         Type { bounds: TypeBounds },
@@ -259,7 +250,7 @@ common_derives! {
 
     }
 }
-common_derives! {
+common_struct! {
     pub struct Declare {
         pub name: Ident,
         pub kind: DeclareKind,

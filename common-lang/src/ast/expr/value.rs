@@ -66,15 +66,14 @@ impl Expr {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct Invoke {
         pub func: Expr,
         pub args: Vec<Expr>,
     }
 }
 
-common_derives! {
-    #[derive(Copy)]
+common_enum! {
     pub enum SelectType {
         Unknown,
         Field,
@@ -85,7 +84,7 @@ common_derives! {
 
 }
 
-common_derives! {
+common_struct! {
     pub struct Select {
         pub obj: Expr,
         pub field: Ident,
@@ -93,32 +92,32 @@ common_derives! {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct Reference {
         pub referee: Expr,
         pub mutable: Option<bool>,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct Match {
         pub cases: Vec<MatchCase>,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct If {
         pub cases: Vec<MatchCase>,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct MatchCase {
         pub cond: Expr,
         pub body: Expr,
     }
 }
-common_derives! {
+common_enum! {
     pub enum ControlFlow {
         Continue,
         Break(Option<Expr>),
@@ -127,7 +126,7 @@ common_derives! {
         IntoAndBreak(Option<Expr>),
     }
 }
-common_derives! {
+common_struct! {
     pub struct StructExpr {
         pub name: Box<TypeExpr>,
         pub fields: Vec<FieldValue>,
