@@ -96,21 +96,7 @@ impl InterpreterPass {
         }
         Ok(Value::unit())
     }
-    pub fn interpret_un_op(&self, node: &UnOp<Expr>, ctx: &ArcScopedContext) -> Result<Value> {
-        let value = self.interpret_expr(&node.expr, ctx)?;
-        match node.kind {
-            UnOpKind::Neg => match value {
-                Value::Int(x) => Ok(Value::Int(ValueInt::new(-x.value))),
-                Value::Decimal(x) => Ok(Value::Decimal(ValueDecimal::new(-x.value))),
-                _ => bail!("Failed to interpret {:?}", node),
-            },
-            UnOpKind::Not => match value {
-                Value::Bool(x) => Ok(Value::Bool(ValueBool::new(!x.value))),
-                _ => bail!("Failed to interpret {:?}", node),
-            },
-            _ => bail!("Failed to interpret {:?}", node),
-        }
-    }
+
     pub fn interpret_cond(&self, node: &Match, ctx: &ArcScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;

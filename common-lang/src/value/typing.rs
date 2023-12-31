@@ -1,6 +1,6 @@
 use crate::ast::{AnyBox, AnyBoxable, Ident, Locator, Path, TypeExpr};
 use crate::value::*;
-use crate::{common_derives, common_enum, get_threadlocal_serializer};
+use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
@@ -30,10 +30,10 @@ common_enum! {
 }
 impl TypeValue {
     pub fn unit() -> TypeValue {
-        TypeValue::Unit(TypeUnit)
+        TypeValue::Unit(TypeUnit {})
     }
     pub fn any() -> TypeValue {
-        TypeValue::Any(TypeAny)
+        TypeValue::Any(TypeAny {})
     }
     pub fn is_any(&self) -> bool {
         matches!(self, TypeValue::Any(_))
@@ -104,7 +104,7 @@ impl Display for TypeValue {
     }
 }
 
-common_derives! {
+common_enum! {
     #[derive(Copy)]
     pub enum IntType {
         I64,
@@ -133,7 +133,7 @@ impl Display for IntType {
         }
     }
 }
-common_derives! {
+common_enum! {
     #[derive(Copy)]
     pub enum DecimalType {
         F64,
@@ -154,7 +154,7 @@ impl Display for DecimalType {
         }
     }
 }
-common_derives! {
+common_enum! {
     #[derive(Copy)]
     pub enum TypePrimitive {
         Int(IntType),
@@ -186,63 +186,63 @@ impl Display for TypePrimitive {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct TypeVec {
         pub ty: TypeValue,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct TypeTuple {
         pub types: Vec<TypeValue>,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct FieldTypeValue {
         pub name: Ident,
         pub value: TypeValue,
     }
 }
-common_derives! {
+common_struct! {
     pub struct TypeStruct {
         pub name: Ident,
         pub fields: Vec<FieldTypeValue>,
     }
 }
-common_derives! {
+common_struct! {
     pub struct TypeEnum {
         pub name: Ident,
         pub variants: Vec<EnumTypeVariant>,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct EnumTypeVariant {
         pub name: Ident,
         pub value: TypeValue,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct TypeStructural {
         pub fields: Vec<FieldTypeValue>,
     }
 }
-common_derives! {
+common_struct! {
     pub struct TypeFunction {
         pub params: Vec<TypeValue>,
         pub generics_params: Vec<GenericParam>,
         pub ret: TypeValue,
     }
 }
-common_derives! {
+common_struct! {
     pub struct ImplTraits {
         pub bounds: TypeBounds,
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct TypeBounds {
         pub bounds: Vec<TypeExpr>,
     }
@@ -260,8 +260,8 @@ impl TypeBounds {
 }
 macro_rules! plain_type {
     ($name: ident) => {
-        common_derives! {
-            pub struct $name;
+        common_struct! {
+            pub struct $name {}
         }
     };
 }
@@ -270,7 +270,7 @@ plain_type! { TypeUnit }
 plain_type! { TypeNothing }
 plain_type! { TypeType }
 
-common_derives! {
+common_struct! {
     pub struct TypeReference {
         pub ty: Box<TypeValue>,
         pub mutability: Option<bool>,
@@ -287,7 +287,7 @@ impl Display for TypeReference {
     }
 }
 
-common_derives! {
+common_struct! {
     pub struct ValueType {
         pub value: Value,
     }
