@@ -128,7 +128,7 @@ common_enum! {
 }
 common_struct! {
     pub struct StructExpr {
-        pub name: Box<TypeExpr>,
+        pub name: TypeExpr,
         pub fields: Vec<FieldValue>,
     }
 }
