@@ -2,7 +2,33 @@
 
 common-lang contains mainly AST of SHLL
 
-## TODO
+## Boxing
+According to oxc and syn
 
-- [x] Refactor boxing method: from oxc project
+1.
+```rust
+   enum Expression {
+       Variant(Box<Struct>)
+   }
+   struct Struct {
+       expression: Expression
+   }
+```
+2.
+```rust
+   enum Expression {
+       Variant(Struct)
+   }
+   struct Struct {
+       expression: Box<Expression>
+   }
+```
+
+1. has better performance and egonomics
+
+So the rules are:
+1. Box will only appear in enum
+2. Use enum directly without considering Box
+3. Make sure enum is thin enough to pass around
+
 
