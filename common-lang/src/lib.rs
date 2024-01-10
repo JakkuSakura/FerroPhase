@@ -50,7 +50,7 @@ macro_rules! common_struct {
 #[macro_export]
 macro_rules! common_enum {
     (
-    no_debug
+        no_debug
         $(#[$attr:meta])*
         pub enum $name:ident { $($t:tt)* }
     ) => {
