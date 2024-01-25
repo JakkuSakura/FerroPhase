@@ -78,6 +78,7 @@ common_enum! {
         Some(ValueSome),
         Option(ValueOption),
         Undefined(ValueUndefined),
+        Escaped(ValueEscaped),
         Type(TypeValue),
         Struct(ValueStruct),
         Structural(ValueStructural),
@@ -312,14 +313,53 @@ impl DerefMut for ValueBytes {
         &mut self.value
     }
 }
-plain_value!(ValuePointer: i64);
-
+common_enum! {
+    #[derive(Copy, PartialOrd, Ord)]
+    pub enum ValuePointerKind {
+        Unspecified,
+        Managed,
+        Escaped,
+    }
+}
+common_struct! {
+    #[derive(Copy, PartialOrd, Ord)]
+    pub struct ValuePointer {
+        pub value: i64,
+        pub kind: ValuePointerKind,
+    }
+}
+impl ValuePointer {
+    pub fn new(value: i64) -> Self {
+        Self {
+            value,
+            kind: ValuePointerKind::Unspecified,
+        }
+    }
+    pub fn managed(value: i64) -> Self {
+        Self {
+            value,
+            kind: ValuePointerKind::Managed,
+        }
+    }
+    pub fn escaped(value: *const u8) -> Self {
+        Self {
+            value: value as _,
+            kind: ValuePointerKind::Escaped,
+        }
+    }
+}
+impl Display for ValuePointer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ptr({})", self.value)
+    }
+}
 impl Add<ValueOffset> for ValuePointer {
     type Output = Self;
 
     fn add(self, rhs: ValueOffset) -> Self::Output {
         Self {
             value: self.value + rhs.value,
+            kind: self.kind,
         }
     }
 }
@@ -338,6 +378,7 @@ impl Sub<ValueOffset> for ValuePointer {
     fn sub(self, rhs: ValueOffset) -> Self::Output {
         Self {
             value: self.value - rhs.value,
+            kind: self.kind,
         }
     }
 }
@@ -367,13 +408,14 @@ impl Add<ValuePointer> for ValueOffset {
     fn add(self, rhs: ValuePointer) -> Self::Output {
         ValuePointer {
             value: self.value + rhs.value,
+            kind: rhs.kind,
         }
     }
 }
 impl Mul<ValueInt> for ValueOffset {
     type Output = Self;
 
-    fn mul(self, rhs: ValueOffset) -> Self::Output {
+    fn mul(self, rhs: ValueInt) -> Self::Output {
         Self {
             value: self.value * rhs.value,
         }
@@ -393,6 +435,23 @@ impl ToJson for ValueNull {
     }
 }
 plain_value!(ValueUndefined);
+
+common_struct! {
+    pub struct ValueEscaped {
+        pub ptr: i64,
+        pub size: i64,
+        pub align: i64
+    }
+}
+impl ValueEscaped {
+    pub unsafe fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.size as _) }
+    }
+    pub unsafe fn as_slice_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.size as _) }
+    }
+}
+
 impl ToJson for ValueUndefined {
     fn to_json(&self) -> Result<serde_json::Value> {
         Ok(json!(null))
