@@ -386,6 +386,7 @@ impl InterpreterPass {
             Value::Char(_) => Ok(val.clone()),
             Value::String(_) => Ok(val.clone()),
             Value::List(_) => Ok(val.clone()),
+            Value::Bytes(_) => Ok(val.clone()),
             Value::Unit(_) => Ok(val.clone()),
             Value::Null(_) => Ok(val.clone()),
             Value::None(_) => Ok(val.clone()),
