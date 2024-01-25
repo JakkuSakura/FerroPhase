@@ -1,4 +1,4 @@
-use crate::value::Value;
+use crate::value::{Value, ValuePointer};
 
 pub struct VmValue {
     pub value: Value,
@@ -21,9 +21,24 @@ impl VmValue {
             _ => None,
         }
     }
-    pub fn as_ptr(&self) -> Option<*const u8> {
+
+    pub unsafe fn as_object<T>(&self) -> Option<&T> {
         match &self.value {
-            Value::Bytes(bytes) => Some(bytes.as_ptr()),
+            Value::Bytes(object) => Some(std::mem::transmute(&**object)),
+            Value::Escaped(object) => Some(std::mem::transmute(object.as_ptr())),
+            _ => None,
+        }
+    }
+    pub unsafe fn as_object_mut<T>(&mut self) -> Option<&mut T> {
+        match &mut self.value {
+            Value::Bytes(object) => Some(std::mem::transmute(&mut **object)),
+            Value::Escaped(object) => Some(std::mem::transmute(object.as_mut_ptr())),
+            _ => None,
+        }
+    }
+    pub fn as_ptr(&self) -> Option<ValuePointer> {
+        match &self.value {
+            Value::Pointer(ptr) => Some(*ptr),
             _ => None,
         }
     }
