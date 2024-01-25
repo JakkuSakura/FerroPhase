@@ -380,16 +380,6 @@ impl InterpreterPass {
 
                 bail!("Failed to interpret {:?}", val)
             }
-            Value::Int(_) => Ok(val.clone()),
-            Value::Bool(_) => Ok(val.clone()),
-            Value::Decimal(_) => Ok(val.clone()),
-            Value::Char(_) => Ok(val.clone()),
-            Value::String(_) => Ok(val.clone()),
-            Value::List(_) => Ok(val.clone()),
-            Value::Bytes(_) => Ok(val.clone()),
-            Value::Unit(_) => Ok(val.clone()),
-            Value::Null(_) => Ok(val.clone()),
-            Value::None(_) => Ok(val.clone()),
             Value::Some(val) => Ok(Value::Some(ValueSome::new(
                 self.interpret_value(&val.value, ctx, resolve)?.into(),
             ))),
@@ -400,12 +390,10 @@ impl InterpreterPass {
                     .map(|x| self.interpret_value(&x, ctx, resolve))
                     .transpose()?,
             ))),
-            Value::Undefined(_) => Ok(val.clone()),
             Value::BinOpKind(x) if resolve => self
                 .interpret_bin_op_kind(x.clone(), ctx)
                 .map(|x| Value::any(x)),
-            Value::BinOpKind(_) => Ok(val.clone()),
-            Value::UnOpKind(_) => Ok(val.clone()),
+            _ => Ok(val.clone()),
         }
     }
     pub fn interpret_invoke_binop(
