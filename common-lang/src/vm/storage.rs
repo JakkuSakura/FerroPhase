@@ -30,21 +30,11 @@ impl VmStorage {
         ptr
     }
     pub fn alloc_escaped(&mut self, size: usize) -> Ptr {
-        // TODO: use proper alignment
-        unsafe {
-            let layout = std::alloc::Layout::from_size_align(size, DEFAULT_ALIGN).unwrap();
-            let ptr = std::alloc::alloc_zeroed(layout);
-            let ptr = ValuePointer::escaped(ptr);
-            self.memory.insert(
-                ptr,
-                VmValue::new(Value::Escaped(ValueEscaped {
-                    ptr: ptr.value,
-                    size: size as _,
-                    align: DEFAULT_ALIGN as _,
-                })),
-            );
-            ptr
-        }
+        let escaped = ValueEscaped::new(size as _, DEFAULT_ALIGN as _);
+        let ptr = escaped.ptr;
+        self.memory
+            .insert(escaped.ptr, VmValue::new(Value::Escaped(escaped)));
+        ptr
     }
     pub fn alloc_bytes(&mut self, size: usize) -> Ptr {
         let ptr = self.alloc_ptr();
@@ -57,18 +47,29 @@ impl VmStorage {
         let old = self.memory.remove(&ptr);
         match old {
             Some(VmValue {
-                value: Value::Escaped(size),
-                ..
-            }) => unsafe {
-                let layout =
-                    std::alloc::Layout::from_size_align(size.size as _, DEFAULT_ALIGN).unwrap();
-                std::alloc::dealloc(ptr.value as *mut u8, layout);
-            },
+                value: Value::Escaped(escaped),
+            }) => {
+                warn!("dealloc escaped but did not drop: ptr={}", escaped.ptr);
+            }
             Some(_) => {}
             None => {
                 warn!("dealloc: invalid ptr={}", ptr);
+            }
+        }
+    }
+    pub fn drop<T>(&mut self, ptr: Ptr) {
+        let old = self.memory.remove(&ptr);
+        match old {
+            Some(VmValue {
+                value: Value::Escaped(mut escaped),
+            }) => unsafe {
+                escaped.drop_in_place::<T>();
+            },
+            None => {
+                warn!("drop: invalid ptr={}", ptr);
                 return;
             }
+            _ => {}
         }
     }
     pub fn get(&self, ptr: Ptr) -> Option<&VmValue> {
@@ -91,6 +92,8 @@ impl VmStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::size_of;
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn test_alloc_dealloc() {
@@ -121,5 +124,49 @@ mod tests {
         assert_eq!(storage.get(ptr).unwrap().as_slice().unwrap().len(), 10);
         storage.dealloc(ptr);
         assert!(storage.get(ptr).is_none());
+    }
+    #[test]
+    fn test_box_with_escaped_slice() {
+        let mut storage = VmStorage::new();
+        static DROP: AtomicBool = AtomicBool::new(false);
+        // Assume an opaque type T, allocate it on heap
+        #[derive(Debug)]
+        #[repr(C)]
+        struct Obj {
+            a: i64,
+            b: i64,
+            c: i64,
+            d: i64,
+        }
+        impl Drop for Obj {
+            fn drop(&mut self) {
+                DROP.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        // Box::new(t)
+        let ptr = storage.alloc_escaped(size_of::<Obj>());
+        // write to the object
+        unsafe {
+            let t = storage
+                .get_mut(ptr)
+                .unwrap()
+                .as_object_mut::<Obj>()
+                .unwrap();
+            t.a = 1;
+            t.b = 2;
+            t.c = 3;
+            t.d = 4;
+        }
+        // read from the object
+        unsafe {
+            let t = storage.get(ptr).unwrap().as_object::<Obj>().unwrap();
+            assert_eq!(t.a, 1);
+            assert_eq!(t.b, 2);
+            assert_eq!(t.c, 3);
+            assert_eq!(t.d, 4);
+        }
+        // drop(t)
+        storage.drop::<Obj>(ptr);
+        assert!(DROP.load(std::sync::atomic::Ordering::Relaxed));
     }
 }

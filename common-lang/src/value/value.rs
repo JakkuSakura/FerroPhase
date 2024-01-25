@@ -347,6 +347,12 @@ impl ValuePointer {
             kind: ValuePointerKind::Escaped,
         }
     }
+    pub fn as_ptr(&self) -> *const u8 {
+        self.value as _
+    }
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.value as _
+    }
 }
 impl Display for ValuePointer {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -438,17 +444,46 @@ plain_value!(ValueUndefined);
 
 common_struct! {
     pub struct ValueEscaped {
-        pub ptr: i64,
+        pub ptr: ValuePointer,
         pub size: i64,
-        pub align: i64
+        pub align: i64,
+        _priv: ()
     }
 }
 impl ValueEscaped {
+    pub fn new(size: i64, align: i64) -> Self {
+        let layout = std::alloc::Layout::from_size_align(size as _, align as _).unwrap();
+        let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        Self {
+            ptr: ValuePointer::escaped(ptr),
+            size,
+            align,
+            _priv: (),
+        }
+    }
+    fn as_layout(&self) -> std::alloc::Layout {
+        std::alloc::Layout::from_size_align(self.size as _, self.align as _).unwrap()
+    }
     pub unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.size as _) }
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size as _) }
     }
     pub unsafe fn as_slice_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.size as _) }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_mut_ptr(), self.size as _) }
+    }
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr.as_ptr()
+    }
+    pub fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.ptr.as_mut_ptr()
+    }
+    pub unsafe fn drop_in_place<T>(&mut self) {
+        std::ptr::drop_in_place(self.as_mut_ptr() as *mut T);
+    }
+}
+impl Drop for ValueEscaped {
+    fn drop(&mut self) {
+        let layout = self.as_layout();
+        unsafe { std::alloc::dealloc(self.ptr.as_mut_ptr(), layout) }
     }
 }
 
