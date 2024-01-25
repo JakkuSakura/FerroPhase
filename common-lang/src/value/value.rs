@@ -2,10 +2,12 @@ use crate::ast::*;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::{TypeBounds, TypeStruct, TypeValue};
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
+use bytes::BytesMut;
 use common::*;
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::ops::{Add, Mul, Sub};
 
 pub trait ToJson {
     fn to_json(&self) -> Result<serde_json::Value>;
@@ -67,6 +69,9 @@ common_enum! {
         Char(ValueChar),
         String(ValueString),
         List(ValueList),
+        Bytes(ValueBytes),
+        Pointer(ValuePointer),
+        Offset(ValueOffset),
         Unit(ValueUnit),
         Null(ValueNull),
         None(ValueNone),
@@ -267,6 +272,111 @@ impl Display for ValueList {
             write!(f, "{}", value)?;
         }
         write!(f, "]")
+    }
+}
+
+common_struct! {
+    pub struct ValueBytes {
+        pub value: BytesMut,
+    }
+}
+impl ValueBytes {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            value: BytesMut::with_capacity(capacity),
+        }
+    }
+    pub fn zeroed(len: usize) -> Self {
+        Self {
+            value: BytesMut::zeroed(len),
+        }
+    }
+    pub fn new(value: BytesMut) -> Self {
+        Self { value }
+    }
+}
+impl<T: Into<BytesMut>> From<T> for ValueBytes {
+    fn from(values: T) -> Self {
+        Self::new(values.into())
+    }
+}
+impl Deref for ValueBytes {
+    type Target = BytesMut;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+impl DerefMut for ValueBytes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+plain_value!(ValuePointer: i64);
+
+impl Add<ValueOffset> for ValuePointer {
+    type Output = Self;
+
+    fn add(self, rhs: ValueOffset) -> Self::Output {
+        Self {
+            value: self.value + rhs.value,
+        }
+    }
+}
+impl Sub<ValuePointer> for ValuePointer {
+    type Output = ValueOffset;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        ValueOffset {
+            value: self.value - rhs.value,
+        }
+    }
+}
+impl Sub<ValueOffset> for ValuePointer {
+    type Output = Self;
+
+    fn sub(self, rhs: ValueOffset) -> Self::Output {
+        Self {
+            value: self.value - rhs.value,
+        }
+    }
+}
+plain_value!(ValueOffset: i64);
+
+impl Add<ValueOffset> for ValueOffset {
+    type Output = Self;
+
+    fn add(self, rhs: ValueOffset) -> Self::Output {
+        Self {
+            value: self.value + rhs.value,
+        }
+    }
+}
+impl Sub<ValueOffset> for ValueOffset {
+    type Output = Self;
+
+    fn sub(self, rhs: ValueOffset) -> Self::Output {
+        Self {
+            value: self.value - rhs.value,
+        }
+    }
+}
+impl Add<ValuePointer> for ValueOffset {
+    type Output = ValuePointer;
+
+    fn add(self, rhs: ValuePointer) -> Self::Output {
+        ValuePointer {
+            value: self.value + rhs.value,
+        }
+    }
+}
+impl Mul<ValueInt> for ValueOffset {
+    type Output = Self;
+
+    fn mul(self, rhs: ValueOffset) -> Self::Output {
+        Self {
+            value: self.value * rhs.value,
+        }
     }
 }
 plain_value!(ValueUnit);
