@@ -10,12 +10,14 @@ impl VmValue {
     pub fn as_slice(&self) -> Option<&[u8]> {
         match &self.value {
             Value::Bytes(bytes) => Some(bytes),
+            Value::Escaped(escaped) => unsafe { Some(escaped.as_slice()) },
             _ => None,
         }
     }
     pub fn as_slice_mut(&mut self) -> Option<&mut [u8]> {
         match &mut self.value {
             Value::Bytes(bytes) => Some(bytes),
+            Value::Escaped(escaped) => unsafe { Some(escaped.as_slice_mut()) },
             _ => None,
         }
     }
