@@ -9,15 +9,11 @@ pub mod passes;
 mod serialize;
 pub mod typing;
 pub mod value;
+pub mod vm;
 
-use ast::*;
-use common::*;
 pub use deserialize::*;
 pub use serialize::*;
 
-use crate::ast::Tree;
-
-use crate::value::TypeValue;
 use std::rc::Rc;
 /// A macro to generate a common set of derives for a struct.
 /// especially Clone, Debug, PartialEq, Eq, Hash
