@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod context;
+mod deserialize;
 pub mod helper;
 pub mod interpreter;
 pub mod ops;
@@ -11,6 +12,7 @@ pub mod value;
 
 use ast::*;
 use common::*;
+pub use deserialize::*;
 pub use serialize::*;
 
 use crate::ast::Tree;
@@ -72,12 +74,4 @@ macro_rules! common_enum {
             pub enum $name { $($t)* }
         );
     };
-}
-
-pub trait Deserializer {
-    fn deserialize_tree(&self, code: &str) -> Result<Tree>;
-    fn deserialize_expr(&self, code: &str) -> Result<Expr>;
-    fn deserialize_item(&self, code: &str) -> Result<Item>;
-    fn deserialize_file(&self, path: &std::path::Path) -> Result<File>;
-    fn deserialize_type(&self, code: &str) -> Result<TypeValue>;
 }
