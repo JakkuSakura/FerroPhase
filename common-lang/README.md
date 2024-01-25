@@ -31,4 +31,8 @@ So the rules are:
 2. Use enum directly without considering Box
 3. Make sure enum is thin enough to pass around
 
+## TODO
+1. [ ] support unsafe and pointers via virtual machine
+2. [ ] evaluate kinda complex rust std types
+
 

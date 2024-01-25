@@ -7,6 +7,4 @@ members = [
     "rust-macro",
     "javascript-lang"
 ]
-exclude = [
-    "oxc"
-]
+exclude = []
