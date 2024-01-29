@@ -1,8 +1,9 @@
-use crate::ast::*;
 use crate::context::{ArcScopedContext, LazyValue};
+use crate::expr::*;
 use crate::ops::*;
 use crate::passes::OptimizePass;
-use crate::typing::TypeSystem;
+use crate::ty::system::TypeSystem;
+use crate::ty::TypeValue;
 use crate::value::*;
 use crate::Serializer;
 use common::*;
@@ -54,7 +55,7 @@ impl InterpreterPass {
                     bail!("Could not invoke {:?}", node)
                 }
             }
-            Expr::Locator(Locator::Ident(ident)) => {
+            Expr::Locator(crate::id::Locator::Ident(ident)) => {
                 let func = self.interpret_ident(ident, ctx, true)?;
                 self.interpret_invoke(
                     &Invoke {
@@ -85,7 +86,11 @@ impl InterpreterPass {
         Ok(())
     }
     pub fn interpret_block(&self, node: &Block, ctx: &ArcScopedContext) -> Result<Value> {
-        let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
+        let ctx = ctx.child(
+            crate::id::Ident::new("__block__"),
+            Visibility::Private,
+            true,
+        );
         for (i, stmt) in node.stmts.iter().enumerate() {
             let ret = self.interpret_stmt(&stmt, &ctx)?;
             if let Some(ret) = ret {
@@ -129,7 +134,7 @@ impl InterpreterPass {
     }
     pub fn interpret_ident(
         &self,
-        ident: &Ident,
+        ident: &crate::id::Ident,
         ctx: &ArcScopedContext,
         resolve: bool,
     ) -> Result<Value> {
@@ -187,7 +192,7 @@ impl InterpreterPass {
     }
 
     pub fn interpret_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
-        if def.name == Ident::new("main") {
+        if def.name == crate::id::Ident::new("main") {
             self.interpret_expr(&def.value.body, ctx).map(|_| ())
         } else {
             let name = &def.name;
@@ -326,7 +331,11 @@ impl InterpreterPass {
         node: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<ValueFunction> {
-        let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
+        let sub = ctx.child(
+            crate::id::Ident::new("__func__"),
+            Visibility::Private,
+            false,
+        );
         for generic in &node.generics_params {
             let ty = self
                 .type_system
@@ -432,7 +441,7 @@ impl InterpreterPass {
         resolve: bool,
     ) -> Result<Value> {
         match node {
-            Expr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
+            Expr::Locator(crate::id::Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
             Expr::Locator(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),

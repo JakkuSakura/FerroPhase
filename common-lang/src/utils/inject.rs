@@ -1,6 +1,5 @@
-use crate::ast::Ident;
 use crate::context::ArcScopedContext;
-use crate::value::TypeValue;
+use crate::ty::TypeValue;
 use common::*;
 
 pub struct Injector {}
@@ -8,7 +7,7 @@ impl Injector {
     pub fn new() -> Self {
         Self {}
     }
-    pub fn pick(&self, arg_ty: &TypeValue, ctx: &ArcScopedContext) -> Option<Ident> {
+    pub fn pick(&self, arg_ty: &TypeValue, ctx: &ArcScopedContext) -> Option<crate::id::Ident> {
         let mut candidates = vec![];
         for ident in ctx.list_values() {
             let Some(value_type) = ctx.get_type(&ident) else {
@@ -46,7 +45,11 @@ impl Injector {
         }
         candidates.into_iter().next()
     }
-    pub fn pick_args(&self, args: &[TypeValue], ctx: &ArcScopedContext) -> Result<Vec<Ident>> {
+    pub fn pick_args(
+        &self,
+        args: &[TypeValue],
+        ctx: &ArcScopedContext,
+    ) -> Result<Vec<crate::id::Ident>> {
         args.iter()
             .map(|arg| {
                 self.pick(arg, ctx)

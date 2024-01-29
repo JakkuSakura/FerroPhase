@@ -1,5 +1,6 @@
-use crate::ast::{Ident, Locator, TypeExpr};
-use crate::value::TypeValue;
+use crate::expr::TypeExpr;
+use crate::id::{Ident, Locator};
+use crate::ty::TypeValue;
 use crate::{common_enum, common_struct};
 common_enum! {
     pub enum Pattern {
@@ -15,7 +16,7 @@ common_enum! {
     }
 }
 impl Pattern {
-    pub fn as_ident(&self) -> Option<&Ident> {
+    pub fn as_ident(&self) -> Option<&crate::id::Ident> {
         match self {
             Pattern::Ident(ident) => Some(&ident.ident),
             _ => None,

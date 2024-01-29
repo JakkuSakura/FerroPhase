@@ -1,5 +1,5 @@
-use crate::ast::*;
 use crate::context::ArcScopedContext;
+use crate::expr::*;
 use crate::passes::*;
 use crate::value::*;
 use crate::*;
@@ -46,7 +46,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
                     Expr::Value(value) => match *value {
                         Value::Function(f) => {
                             let sub_ctx = ctx.child(
-                                f.name.clone().unwrap_or(Ident::new("__func__")),
+                                f.name.clone().unwrap_or(crate::id::Ident::new("__func__")),
                                 Visibility::Private,
                                 false,
                             );
@@ -276,7 +276,11 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         }
     }
     pub fn optimize_block(&self, mut b: Block, ctx: &ArcScopedContext) -> Result<Expr> {
-        let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
+        let ctx = ctx.child(
+            crate::id::Ident::new("__block__"),
+            Visibility::Private,
+            true,
+        );
         b.stmts
             .iter()
             .try_for_each(|x| self.prescan_stmt(x, &ctx))?;

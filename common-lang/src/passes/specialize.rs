@@ -1,8 +1,10 @@
-use crate::ast::*;
 use crate::context::ArcScopedContext;
+use crate::expr::*;
 use crate::interpreter::Interpreter;
 use crate::passes::OptimizePass;
-use crate::typing::TypeSystem;
+use crate::pat::{Pattern, PatternIdent};
+use crate::ty::system::TypeSystem;
+use crate::ty::TypeValue;
 use crate::value::*;
 use crate::*;
 use common::*;
@@ -98,7 +100,7 @@ impl SpecializePass {
         }
 
         let new_body = Expr::block(Block::prepend(bindings, func.body.clone()));
-        let new_name = Ident::new(format!(
+        let new_name = crate::id::Ident::new(format!(
             "{}_{}",
             name,
             self.spec_id.fetch_add(1, Ordering::Relaxed)
@@ -107,7 +109,7 @@ impl SpecializePass {
         let mut ret = func.ret.clone();
         match &ret {
             TypeValue::Expr(expr) => match &**expr {
-                TypeExpr::Locator(Locator::Ident(ident))
+                TypeExpr::Locator(crate::id::Locator::Ident(ident))
                     if func
                         .generics_params
                         .iter()
@@ -152,7 +154,7 @@ impl SpecializePass {
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
         match &invoke.func {
-            Expr::Locator(Locator::Ident(ident)) if ident.as_str() == "print" => {
+            Expr::Locator(crate::id::Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke);
             }
             _ => {}

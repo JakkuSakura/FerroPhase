@@ -1,7 +1,11 @@
-use crate::ast::*;
-use crate::common_enum;
+use crate::expr::*;
+use crate::expr::{Block, Statement};
+use crate::id::{Ident, Locator};
+use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::{FieldValue, Value, ValueUnit};
+use crate::{common_enum, common_struct};
 use std::hash::Hash;
+
 common_enum! {
     /// Expr is an expression that returns a value
     /// aka ValueExpr
@@ -36,11 +40,11 @@ impl Expr {
             _ => Expr::Value(v.into()),
         }
     }
-    pub fn ident(name: Ident) -> Expr {
-        Expr::Locator(Locator::ident(name))
+    pub fn ident(name: crate::id::Ident) -> Expr {
+        Expr::Locator(crate::id::Locator::ident(name))
     }
-    pub fn path(path: Path) -> Expr {
-        Expr::Locator(Locator::path(path))
+    pub fn path(path: crate::id::Path) -> Expr {
+        Expr::Locator(crate::id::Locator::path(path))
     }
     pub fn block(block: Block) -> Expr {
         if block.stmts.len() == 1 {
@@ -62,7 +66,7 @@ impl Expr {
         Expr::Block(block)
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
+        Self::Any(crate::utils::anybox::AnyBox::new(any))
     }
 }
 
