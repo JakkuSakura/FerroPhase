@@ -1,7 +1,7 @@
 use common::*;
 
-use common_lang::ast::{Expr, File, Module, Tree};
 use common_lang::context::{ArcScopedContext, ScopedContext};
+use common_lang::expr::{Expr, File, Module, Tree};
 use common_lang::optimizer::{load_optimizer, FoldOptimizer};
 use common_lang::passes::OptimizePass;
 use proc_macro::TokenStream;

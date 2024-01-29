@@ -1,5 +1,5 @@
-use crate::ast::*;
 use crate::context::ArcScopedContext;
+use crate::expr::*;
 use crate::passes::OptimizePass;
 use crate::value::Value;
 use crate::Serializer;
@@ -46,7 +46,7 @@ impl InlinePass {
 
         Ok(Expr::Invoke(invoke.into()))
     }
-    pub fn try_get_pat(&self, ident: Locator, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn try_get_pat(&self, ident: crate::id::Locator, ctx: &ArcScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::Locator(ident)),

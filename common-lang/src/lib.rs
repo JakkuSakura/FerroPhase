@@ -2,14 +2,18 @@ extern crate core;
 
 pub mod ast;
 pub mod context;
+pub mod cst;
 mod deserialize;
-pub mod helper;
+pub mod expr;
+pub mod id;
 pub mod interpreter;
 pub mod ops;
 pub mod optimizer;
 pub mod passes;
+pub mod pat;
 mod serialize;
-pub mod typing;
+pub mod ty;
+pub mod utils;
 pub mod value;
 pub mod vm;
 

@@ -34,7 +34,7 @@ So the rules are:
 ## TODO
 1. [ ] support unsafe and pointers via virtual machine
 2. [ ] evaluate kinda complex rust std types
-3. [ ] new code structure:
+3. [x] new code structure:
     ```text
     id/{path, id, hash} -> refers to other expr/value/ty nodes
     expr/{if, for, etc} -> AST nodes that generates an typed value, living in lifted code universe

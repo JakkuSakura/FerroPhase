@@ -1,5 +1,5 @@
 use common::assert_eq;
-use common_lang::ast::*;
+use common_lang::expr::*;
 use common_lang::value::{EnumTypeVariant, TypeEnum, TypeUnit, TypeValue};
 use common_lang::Serializer;
 use javascript_lang::ts::printer::TsPrinter;
@@ -7,14 +7,14 @@ use javascript_lang::ts::printer::TsPrinter;
 fn test_print_enum_declaration() {
     let printer = TsPrinter::new();
     let def = TypeEnum {
-        name: Ident::new("Test"),
+        name: crate::id::Ident::new("Test"),
         variants: vec![
             EnumTypeVariant {
-                name: Ident::new("A"),
+                name: crate::id::Ident::new("A"),
                 value: TypeValue::Unit(TypeUnit),
             },
             EnumTypeVariant {
-                name: Ident::new("B"),
+                name: crate::id::Ident::new("B"),
                 value: TypeValue::Unit(TypeUnit),
             },
         ],

@@ -1,5 +1,7 @@
-use crate::ast::*;
-use crate::value::{TypeValue, Value, ValueFunction};
+use crate::expr::{Expr, Visibility};
+use crate::id::{Ident, Path};
+use crate::ty::TypeValue;
+use crate::value::{Value, ValueFunction};
 use crate::Serializer;
 use common::*;
 use dashmap::DashMap;

@@ -1,6 +1,6 @@
 use common::{bail, Itertools, Result};
-use common_lang::ast::Ident;
-use common_lang::value::{EnumTypeVariant, TypeEnum, TypeValue};
+use common_lang::id::Ident;
+use common_lang::ty::{EnumTypeVariant, TypeEnum, TypeValue};
 use common_lang::Serializer;
 use std::cell::RefCell;
 use std::io::{Cursor, Write};
@@ -10,6 +10,7 @@ use swc_ecma_codegen::text_writer::JsWriter;
 use swc_ecma_codegen::Emitter;
 use swc_ecma_quote::swc_common::sync::Lrc;
 use swc_ecma_quote::swc_common::{SourceMap, DUMMY_SP};
+
 #[derive(Clone)]
 struct SharedWriter {
     wr: Rc<RefCell<Cursor<Vec<u8>>>>,
