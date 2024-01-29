@@ -34,5 +34,15 @@ So the rules are:
 ## TODO
 1. [ ] support unsafe and pointers via virtual machine
 2. [ ] evaluate kinda complex rust std types
-
+3. [ ] new code structure:
+    ```text
+    id/{path, id, hash} -> refers to other expr/value/ty nodes
+    expr/{if, for, etc} -> AST nodes that generates an typed value, living in lifted code universe
+    expr/ty -> special AST node that generates type
+    value/{struct, enum, etc} -> value living in memory universe
+    value/ty -> type in memory
+    ty/{int, float, etc} -> type living in type universe
+    ```
+4. [ ] use ids, instead of `Box<T>`
+5. [ ] query-driven system like rustc
 
