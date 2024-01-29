@@ -1,6 +1,7 @@
-use crate::ast::*;
 use crate::common_enum;
-use crate::value::*;
+use crate::expr::*;
+use crate::id::Locator;
+use crate::ty::{TypeStruct, TypeValue};
 use std::fmt::Display;
 use std::hash::Hash;
 
@@ -17,10 +18,10 @@ common_enum! {
 }
 
 impl TypeExpr {
-    pub fn path(path: Path) -> TypeExpr {
+    pub fn path(path: crate::id::Path) -> TypeExpr {
         TypeExpr::Locator(Locator::path(path))
     }
-    pub fn ident(ident: Ident) -> TypeExpr {
+    pub fn ident(ident: crate::id::Ident) -> TypeExpr {
         TypeExpr::Locator(Locator::ident(ident))
     }
     pub fn unit() -> TypeExpr {

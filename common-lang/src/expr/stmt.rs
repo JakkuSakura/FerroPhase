@@ -1,6 +1,9 @@
-use crate::ast::{AnyBox, AnyBoxable, Block, Expr, Ident, Item, Pattern};
 use crate::common_enum;
 use crate::common_struct;
+use crate::expr::{Expr, Item};
+use crate::id::Ident;
+use crate::pat::Pattern;
+use crate::utils::anybox::{AnyBox, AnyBoxable};
 use std::hash::Hash;
 
 common_enum! {
@@ -19,7 +22,7 @@ common_enum! {
 
 impl Statement {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
+        Self::Any(crate::utils::anybox::AnyBox::new(any))
     }
     pub fn item(item: Item) -> Self {
         Self::Item(Box::new(item))
@@ -104,5 +107,35 @@ common_struct! {
 common_struct! {
     pub struct StatementLoop {
         pub body: Block,
+    }
+}
+
+pub type StatementChunk = Vec<Statement>;
+
+common_struct! {
+    pub struct Block {
+        pub stmts: StatementChunk,
+    }
+}
+impl Block {
+    pub fn new(stmts: StatementChunk) -> Self {
+        Self { stmts }
+    }
+    pub fn prepend(lhs: StatementChunk, rhs: Expr) -> Self {
+        let mut stmts = lhs;
+        match rhs {
+            Expr::Block(block) => {
+                stmts.extend(block.stmts);
+            }
+            _ => {
+                stmts.push(Statement::Expr(rhs));
+            }
+        }
+        Self::new(stmts)
+    }
+    pub fn make_last_side_effect(&mut self) {
+        if let Some(last) = self.stmts.last_mut() {
+            last.try_make_stmt();
+        }
     }
 }

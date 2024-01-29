@@ -3,12 +3,13 @@ pub mod printer;
 pub mod rustfmt;
 
 use common::Result;
-use common_lang::ast::{Tree, *};
+use common_lang::expr::{Tree, *};
 use common_lang::*;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
-use common_lang::value::{TypeValue, Value, ValueFunction};
+use common_lang::ty::TypeValue;
+use common_lang::value::{Value, ValueFunction};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::PathBuf;

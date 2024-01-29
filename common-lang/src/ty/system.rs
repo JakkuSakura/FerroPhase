@@ -1,5 +1,9 @@
-use crate::ast::*;
 use crate::context::ArcScopedContext;
+use crate::expr::*;
+use crate::ty::{
+    DecimalType, FieldTypeValue, ImplTraits, IntType, TypeBounds, TypeFunction, TypePrimitive,
+    TypeStruct, TypeStructural, TypeType, TypeValue,
+};
 use crate::value::*;
 use crate::Serializer;
 use common::*;
@@ -163,7 +167,11 @@ impl TypeSystem {
                 Ok(TypeValue::Structural(TypeStructural { fields }))
             }
             TypeValue::Function(f) => {
-                let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
+                let sub = ctx.child(
+                    crate::id::Ident::new("__func__"),
+                    Visibility::Private,
+                    false,
+                );
                 for g in &f.generics_params {
                     let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
                     sub.insert_type(g.name.clone(), constrain);
@@ -254,7 +262,7 @@ impl TypeSystem {
         ctx: &ArcScopedContext,
     ) -> Result<TypeValue> {
         match callee {
-            Expr::Locator(Locator::Ident(ident)) => match ident.as_str() {
+            Expr::Locator(crate::id::Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(params.first().context("No param")?, ctx)
                 }
@@ -272,13 +280,17 @@ impl TypeSystem {
 
         bail!("Could not infer type call {:?}", callee)
     }
-    pub fn infer_ident(&self, ident: &Ident, ctx: &ArcScopedContext) -> Result<TypeValue> {
+    pub fn infer_ident(
+        &self,
+        ident: &crate::id::Ident,
+        ctx: &ArcScopedContext,
+    ) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(TypeValue::Function(
                     TypeFunction {
                         generics_params: vec![GenericParam {
-                            name: Ident::new("T"),
+                            name: crate::id::Ident::new("T"),
                             bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
                         }],
                         params: vec![TypeValue::ident("T".into()), TypeValue::ident("T".into())],

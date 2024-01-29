@@ -1,6 +1,8 @@
-use crate::ast::*;
+use crate::expr::*;
+use crate::id::Ident;
 use crate::ops::{BinOpKind, UnOpKind};
-use crate::value::{TypeBounds, TypeStruct, TypeValue};
+use crate::ty::{TypeBounds, TypeStruct, TypeValue};
+use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use bytes::BytesMut;
 use common::*;
@@ -119,7 +121,7 @@ impl Value {
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
+        Self::Any(crate::utils::anybox::AnyBox::new(any))
     }
     pub fn undefined() -> Self {
         Self::Undefined(ValueUndefined)
@@ -539,11 +541,11 @@ impl ToJson for ValueOption {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct FieldValue {
-    pub name: Ident,
+    pub name: crate::id::Ident,
     pub value: Value,
 }
 impl FieldValue {
-    pub fn new(name: Ident, value: Value) -> Self {
+    pub fn new(name: crate::id::Ident, value: Value) -> Self {
         Self { name, value }
     }
 }
@@ -591,7 +593,7 @@ impl ValueStructural {
     pub fn new(fields: Vec<FieldValue>) -> Self {
         Self { fields }
     }
-    pub fn get_field(&self, name: &Ident) -> Option<&FieldValue> {
+    pub fn get_field(&self, name: &crate::id::Ident) -> Option<&FieldValue> {
         self.fields.iter().find(|x| &x.name == name)
     }
 }

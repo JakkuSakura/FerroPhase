@@ -1,6 +1,9 @@
-use crate::ast::*;
-use crate::common_enum;
+use crate::expr::{Expr, TypeExpr};
+use crate::id::{Ident, Locator, Path};
+use crate::ty::*;
+use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::*;
+use crate::{common_enum, common_struct};
 use std::hash::Hash;
 
 common_enum! {
@@ -23,7 +26,7 @@ common_enum! {
 
 impl Item {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
+        Self::Any(crate::utils::anybox::AnyBox::new(any))
     }
     pub fn as_expr(&self) -> Option<&Expr> {
         match self {
@@ -95,7 +98,7 @@ impl Item {
             _ => None,
         }
     }
-    pub fn get_ident(&self) -> Option<&Ident> {
+    pub fn get_ident(&self) -> Option<&crate::id::Ident> {
         match self {
             Self::DefFunction(define) => Some(&define.name),
             Self::DefStruct(define) => Some(&define.name),
@@ -147,7 +150,7 @@ impl ItemChunkExt for ItemChunk {
         self.iter()
             .filter_map(|item| match item {
                 Item::Impl(impl_) if impl_.trait_ty.is_none() => {
-                    if let TypeExpr::Locator(Locator::Ident(ident)) = &impl_.self_ty {
+                    if let TypeExpr::Locator(crate::id::Locator::Ident(ident)) = &impl_.self_ty {
                         if ident.as_str() == self_ty {
                             Some(impl_)
                         } else {

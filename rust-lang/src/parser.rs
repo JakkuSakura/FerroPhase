@@ -1,7 +1,15 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
-use common_lang::ast::*;
+use common_lang::expr::*;
+use common_lang::id::{ParameterPath, ParameterPathSegment};
 use common_lang::ops::{BinOpKind, UnOpKind};
+use common_lang::pat::{
+    Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
+};
+use common_lang::ty::{
+    DecimalType, EnumTypeVariant, FieldTypeValue, ImplTraits, IntType, TypeBounds, TypeEnum,
+    TypeFunction, TypePrimitive, TypeReference, TypeStruct, TypeStructural, TypeValue,
+};
 use common_lang::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
@@ -9,11 +17,11 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, Fields, FieldsNamed, FnArg, Lit, ReturnType, Token};
 use syn_inline_mod::InlinerBuilder;
 
-pub fn parse_ident(i: syn::Ident) -> Ident {
-    Ident::new(i.to_string())
+pub fn parse_ident(i: syn::Ident) -> crate::id::Ident {
+    crate::id::Ident::new(i.to_string())
 }
-pub fn parse_path(p: syn::Path) -> Result<Path> {
-    Ok(Path {
+pub fn parse_path(p: syn::Path) -> Result<crate::id::Path> {
+    Ok(crate::id::Path {
         segments: p
             .segments
             .into_iter()
@@ -55,12 +63,12 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
             .try_collect()?,
     })
 }
-fn parse_locator(p: syn::Path) -> Result<Locator> {
+fn parse_locator(p: syn::Path) -> Result<crate::id::Locator> {
     if let Ok(path) = parse_path(p.clone()) {
-        return Ok(Locator::path(path));
+        return Ok(crate::id::Locator::path(path));
     }
     let path = parse_parameter_path(p.clone())?;
-    return Ok(Locator::parameter_path(path));
+    return Ok(crate::id::Locator::parameter_path(path));
 }
 
 fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
@@ -128,7 +136,7 @@ fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
 fn parse_input(i: FnArg) -> Result<FunctionParam> {
     Ok(match i {
         FnArg::Receiver(rev) => FunctionParam {
-            name: Ident::new("self"),
+            name: crate::id::Ident::new("self"),
             ty: {
                 TypeValue::expr(TypeExpr::SelfType(
                     SelfType {
@@ -351,7 +359,7 @@ fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
         .try_collect()?;
     Ok(ValueTuple { values })
 }
-fn parse_member(mem: syn::Member) -> Result<Ident> {
+fn parse_member(mem: syn::Member) -> Result<crate::id::Ident> {
     Ok(match mem {
         syn::Member::Named(n) => parse_ident(n),
         syn::Member::Unnamed(_) => bail!("Does not support unnmaed field yet {:?}", mem),
@@ -411,7 +419,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
 
         raw => {
             warn!("RawExpr {:?}", raw);
-            Expr::Any(AnyBox::new(RawExpr { raw }))
+            Expr::Any(crate::utils::anybox::AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     })
 }
@@ -486,7 +494,7 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
             .trait_
             .map(|x| parse_path(x.1))
             .transpose()?
-            .map(Locator::path),
+            .map(crate::id::Locator::path),
         self_ty: TypeExpr::value(parse_type_value(*im.self_ty.clone())?),
         items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
@@ -496,7 +504,7 @@ fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
         name: f
             .ident
             .map(parse_ident)
-            .unwrap_or(Ident::new(format!("{}", i))),
+            .unwrap_or(crate::id::Ident::new(format!("{}", i))),
 
         value: parse_type_value(f.ty)?.into(),
     })
@@ -515,7 +523,7 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
                 break;
             }
             syn::UseTree::Glob(_) => {
-                segments.push(Ident::new("*"));
+                segments.push(crate::id::Ident::new("*"));
                 break;
             }
             _ => return Err(RawUse { raw: u }.into()),
@@ -523,7 +531,7 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
     }
     Ok(Import {
         visibility: parse_vis(u.vis),
-        path: Path::new(segments),
+        path: crate::id::Path::new(segments),
     })
 }
 pub fn parse_item_struct(s: syn::ItemStruct) -> Result<TypeStruct> {
@@ -558,7 +566,7 @@ impl syn::parse::Parse for UnnamedStructTypeParser {
 enum TypeValueParser {
     UnnamedStruct(TypeStructural),
     NamedStruct(TypeStruct),
-    Path(Path),
+    Path(crate::id::Path),
     // Ident(Ident),
 }
 impl Into<TypeValue> for TypeValueParser {
@@ -682,7 +690,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
         syn::Item::Impl(im) => Ok(Item::Impl(parse_impl(im)?)),
         syn::Item::Use(u) => Ok(match parse_use(u) {
             Ok(i) => Item::Import(i),
-            Err(r) => Item::Any(AnyBox::new(r)),
+            Err(r) => Item::Any(crate::utils::anybox::AnyBox::new(r)),
         }),
         syn::Item::Macro(m) => Ok(Item::any(RawItemMacro { raw: m })),
         syn::Item::Struct(s) => {
@@ -749,7 +757,7 @@ fn parse_expr_reference(item: syn::ExprReference) -> Result<Reference> {
 
 pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
     let module = Module {
-        name: Ident::new("__file__"),
+        name: crate::id::Ident::new("__file__"),
         items: file.items.into_iter().map(parse_item).try_collect()?,
         visibility: Visibility::Public,
     };

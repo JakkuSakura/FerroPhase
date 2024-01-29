@@ -1,4 +1,3 @@
-use crate::ast::Ident;
 use crate::context::ArcScopedContext;
 use crate::ops::BinOpKind;
 use crate::value::*;
@@ -10,7 +9,7 @@ use std::rc::Rc;
 #[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum BuiltinFnName {
     BinOpKind(BinOpKind),
-    Name(Ident),
+    Name(crate::id::Ident),
 }
 impl Display for BuiltinFnName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -44,7 +43,7 @@ impl BuiltinFn {
         }
     }
     pub fn new_with_ident(
-        name: Ident,
+        name: crate::id::Ident,
         f: impl Fn(&[Value], &ArcScopedContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
