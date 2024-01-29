@@ -1,6 +1,6 @@
 use common::assert_eq;
 use common::*;
-use common_lang::ast::*;
+use common_lang::expr::*;
 use common_lang::register_threadlocal_serializer;
 use common_lang::value::{
     FunctionParam, FunctionSignature, TypePrimitive, TypeValue, ValueFunction,
@@ -66,7 +66,7 @@ fn test_parse_impl_for() -> Result<()> {
     assert_eq!(
         code,
         Item::Impl(Impl {
-            trait_ty: Some(Locator::Ident("Foo".into())),
+            trait_ty: Some(crate::id::Locator::Ident("Foo".into())),
             self_ty: TypeExpr::ident("Bar".into()),
             items: vec![shll_parse_item! {
                 fn foo(a: i64) -> i64 {

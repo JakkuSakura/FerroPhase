@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display, Formatter};
 pub mod builtins;
 
-use crate::ast::Ident;
 use crate::common_enum;
+use crate::id::Ident;
 pub use builtins::*;
 
 common_enum! {

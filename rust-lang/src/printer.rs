@@ -2,8 +2,11 @@ use common::Result;
 use common::*;
 
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
-use common_lang::ast::*;
+use common_lang::expr::*;
+use common_lang::id::{ParameterPath, ParameterPathSegment};
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
+use common_lang::pat::{Pattern, PatternIdent};
+use common_lang::ty::*;
 use common_lang::value::*;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
@@ -11,7 +14,7 @@ use quote::*;
 pub struct RustPrinter;
 
 impl RustPrinter {
-    pub fn print_ident(&self, i: &Ident) -> TokenStream {
+    pub fn print_ident(&self, i: &crate::id::Ident) -> TokenStream {
         match i.as_str() {
             "+" => quote!(+),
             "*" => quote!(*),
@@ -630,7 +633,7 @@ impl RustPrinter {
         Ok(quote!(()))
     }
 
-    pub fn print_any(&self, n: &AnyBox) -> Result<TokenStream> {
+    pub fn print_any(&self, n: &crate::utils::anybox::AnyBox) -> Result<TokenStream> {
         if let Some(n) = n.downcast_ref::<RawExprMacro>() {
             return Ok(n.raw.to_token_stream());
         }
@@ -735,7 +738,7 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_path(&self, path: &Path) -> TokenStream {
+    pub fn print_path(&self, path: &crate::id::Path) -> TokenStream {
         let segments: Vec<_> = path.segments.iter().map(|x| self.print_ident(x)).collect();
         quote!(#(#segments)::*)
     }
@@ -759,11 +762,11 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#(#segments)::*))
     }
-    pub fn print_locator(&self, pat: &Locator) -> Result<TokenStream> {
+    pub fn print_locator(&self, pat: &crate::id::Locator) -> Result<TokenStream> {
         Ok(match pat {
-            Locator::Ident(n) => self.print_ident(n),
-            Locator::Path(n) => self.print_path(n),
-            Locator::ParameterPath(n) => self.print_parameter_path(n)?,
+            crate::id::Locator::Ident(n) => self.print_ident(n),
+            crate::id::Locator::Path(n) => self.print_path(n),
+            crate::id::Locator::ParameterPath(n) => self.print_parameter_path(n)?,
         })
     }
     pub fn print_type_bin_op(&self, op: &TypeBinOp) -> Result<TokenStream> {
@@ -806,8 +809,8 @@ impl RustPrinter {
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Locator(Locator::Ident(n)) => Ok(self.print_ident(n)),
-            Expr::Locator(Locator::Path(n)) => Ok(self.print_path(n)),
+            Expr::Locator(crate::id::Locator::Ident(n)) => Ok(self.print_ident(n)),
+            Expr::Locator(crate::id::Locator::Path(n)) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),
