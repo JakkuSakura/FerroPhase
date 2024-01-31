@@ -5,7 +5,7 @@ pub mod rustfmt;
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
 use common::Result;
-use common_lang::ast::{File, Tree};
+use common_lang::ast::{File, Item, Module, Tree, Visibility};
 use common_lang::expr::*;
 use common_lang::ty::TypeValue;
 use common_lang::value::{Value, ValueFunction};

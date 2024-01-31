@@ -1,6 +1,7 @@
-use crate::ast::{File, Tree};
+use crate::ast::{DefFunction, File, Import, Item, Module, Tree, Visibility};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
+use crate::id::Ident;
 use crate::passes::*;
 use crate::value::*;
 use crate::*;
@@ -48,7 +49,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
                     Expr::Value(value) => match *value {
                         Value::Function(f) => {
                             let sub_ctx = ctx.child(
-                                f.name.clone().unwrap_or(crate::id::Ident::new("__func__")),
+                                f.name.clone().unwrap_or(Ident::new("__func__")),
                                 Visibility::Private,
                                 false,
                             );
