@@ -1,5 +1,6 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
+use common_lang::ast::File;
 use common_lang::expr::*;
 use common_lang::id::{ParameterPath, ParameterPathSegment};
 use common_lang::ops::{BinOpKind, UnOpKind};
