@@ -1,6 +1,7 @@
 use common::*;
 use std::fmt::Debug;
 
+mod arena;
 mod stmt;
 mod typing;
 mod value;
@@ -25,6 +26,7 @@ common_enum! {
         Match(Match),
         If(If),
         Invoke(Box<Invoke>),
+        Invoke2(Invoke2),
         Select(Box<Select>),
         Struct(Box<StructExpr>),
         Reference(Box<Reference>),
