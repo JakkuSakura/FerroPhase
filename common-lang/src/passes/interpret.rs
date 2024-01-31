@@ -1,4 +1,6 @@
-use crate::ast::Tree;
+use crate::ast::{
+    DefConst, DefEnum, DefFunction, DefStruct, DefType, Import, Item, Module, Tree, Visibility,
+};
 use crate::context::{ArcScopedContext, LazyValue};
 use crate::expr::*;
 use crate::ops::*;

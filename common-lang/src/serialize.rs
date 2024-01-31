@@ -1,5 +1,5 @@
-use crate::ast::{File, Tree};
-use crate::expr::{Block, Expr, Invoke, Item, Module, Statement};
+use crate::ast::{File, Item, Module, Tree};
+use crate::expr::{Block, Expr, Invoke, Statement};
 use crate::ty::TypeValue;
 use crate::value::{Value, ValueFunction};
 use common::*;

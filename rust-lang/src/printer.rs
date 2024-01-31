@@ -2,7 +2,7 @@ use common::Result;
 use common::*;
 
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
-use common_lang::ast::Tree;
+use common_lang::ast::*;
 use common_lang::expr::*;
 use common_lang::id::{ParameterPath, ParameterPathSegment};
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};

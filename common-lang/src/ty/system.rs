@@ -1,3 +1,4 @@
+use crate::ast::Visibility;
 use crate::context::ArcScopedContext;
 use crate::expr::*;
 use crate::ty::{
