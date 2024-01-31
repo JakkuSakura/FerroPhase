@@ -828,6 +828,7 @@ dependencies = [
  "common-lang",
  "proc-macro2",
  "quote",
+ "rustc",
  "serde",
  "syn 2.0.31",
  "syn-inline-mod",
@@ -845,6 +846,10 @@ dependencies = [
  "rust-lang",
  "syn 2.0.31",
 ]
+
+[[package]]
+name = "rustc"
+version = "0.1.0"
 
 [[package]]
 name = "rustc-demangle"
