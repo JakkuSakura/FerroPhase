@@ -340,13 +340,15 @@ impl TypeSystem {
                 Value::List(_) => return Ok(TypeValue::Primitive(TypePrimitive::List)),
                 _ => {}
             },
-            Expr::Invoke(invoke) => match &invoke.func {
-                Expr::Value(value) => match &**value {
+            Expr::Invoke(invoke) => match invoke.func.get() {
+                Expr::Value(value) => match *value {
                     Value::BinOpKind(kind) if kind.is_bool() => {
                         return Ok(TypeValue::Primitive(TypePrimitive::Bool))
                     }
                     Value::BinOpKind(_) => {
-                        return Ok(self.infer_expr(invoke.args.first().context("No param")?, ctx)?)
+                        return Ok(
+                            self.infer_expr(&invoke.args.first().context("No param")?.get(), ctx)?
+                        )
                     }
                     _ => {}
                 },

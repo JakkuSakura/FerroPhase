@@ -6,6 +6,7 @@ use crate::passes::*;
 use crate::value::*;
 use crate::*;
 use common::*;
+use std::mem::take;
 use std::rc::Rc;
 
 pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer<MultiplePass> {
@@ -27,17 +28,14 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
     }
 
     pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
-        let func = self.optimize_expr(invoke.func.clone(), ctx)?;
+        let func = self.optimize_expr(invoke.func.into(), ctx)?;
+        let args = take(&mut invoke.args);
+        for arg in args {
+            let expr = self.optimize_expr(arg.into(), ctx)?;
+            let arg = self.pass.try_evaluate_expr(&expr, ctx)?;
+            invoke.args.push(arg.into());
+        }
 
-        invoke.args = invoke
-            .args
-            .clone()
-            .into_iter()
-            .map(|x| {
-                let expr = self.optimize_expr(x, ctx)?;
-                self.pass.try_evaluate_expr(&expr, ctx)
-            })
-            .try_collect()?;
         let control = self
             .pass
             .evaluate_invoke(invoke.clone(), ctx)?
@@ -53,12 +51,12 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
                                 Visibility::Private,
                                 false,
                             );
-                            for (i, arg) in invoke.args.iter().cloned().enumerate() {
+                            for (i, arg) in invoke.args.clone().into_iter().enumerate() {
                                 let param = f.params.get(i).with_context(|| {
                                     format!("Couldn't find {} parameter of {:?}", i, f)
                                 })?;
 
-                                sub_ctx.insert_expr(param.name.clone(), arg);
+                                sub_ctx.insert_expr(param.name.clone(), arg.into());
                             }
 
                             let ret = self.optimize_invoking(invoke, f, &sub_ctx)?;
@@ -145,7 +143,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             Expr::Block(x) => self.optimize_block(x, ctx)?,
             Expr::Match(x) => self.optimize_cond(x, ctx)?,
             Expr::If(x) => self.optimize_if(x, ctx)?,
-            Expr::Invoke(x) => self.optimize_invoke(*x, ctx)?,
+            Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
             Expr::Any(x) => Expr::Any(x.clone()),
             _ => bail!("Could not optimize {:?}", expr),
         };
