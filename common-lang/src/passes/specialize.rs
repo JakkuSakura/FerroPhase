@@ -8,6 +8,7 @@ use crate::ty::TypeValue;
 use crate::value::*;
 use crate::*;
 use common::*;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct SpecializePass {
