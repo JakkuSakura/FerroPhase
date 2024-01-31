@@ -10,7 +10,12 @@ common_struct! {
         pub args: Vec<Expr>,
     }
 }
-
+common_struct! {
+    pub struct Invoke2 {
+        pub func: ExprId,
+        pub args: Vec<ExprId>,
+    }
+}
 common_enum! {
     pub enum SelectType {
         Unknown,
