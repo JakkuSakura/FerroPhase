@@ -14,3 +14,8 @@ quote = "1"
 proc-macro2 = "1"
 serde = "1"
 syn-inline-mod = "0.6.0"
+rustc = { path = "rustc", optional = true }
+
+[features]
+default = ["rustc"]
+rustc = ["dep:rustc"]
