@@ -1,9 +1,11 @@
+use crate::ast::{File, Tree};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
 use crate::passes::*;
 use crate::value::*;
 use crate::*;
 use common::*;
+use std::rc::Rc;
 
 pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer<MultiplePass> {
     let passes: MultiplePass = vec![

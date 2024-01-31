@@ -1,3 +1,4 @@
+use crate::ast::Tree;
 use crate::context::ArcScopedContext;
 use crate::expr::*;
 use crate::optimizer::FoldOptimizer;

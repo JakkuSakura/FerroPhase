@@ -1,7 +1,7 @@
-use crate::common_enum;
 use crate::expr::*;
 use crate::id::Locator;
 use crate::ty::{TypeStruct, TypeValue};
+use crate::{common_enum, common_struct};
 use std::fmt::Display;
 use std::hash::Hash;
 

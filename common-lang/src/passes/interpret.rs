@@ -1,3 +1,4 @@
+use crate::ast::Tree;
 use crate::context::{ArcScopedContext, LazyValue};
 use crate::expr::*;
 use crate::ops::*;
