@@ -1,4 +1,5 @@
-use crate::expr::{Expr, Visibility};
+use crate::ast::Visibility;
+use crate::expr::Expr;
 use crate::id::{Ident, Path};
 use crate::ty::TypeValue;
 use crate::value::{Value, ValueFunction};
