@@ -4,6 +4,7 @@ members = [
     "common",
     "common-lang",
     "rust-lang",
+    "rust-lang/rustc",
     "rust-macro",
     "javascript-lang"
 ]
