@@ -7,6 +7,7 @@ mod inline;
 mod interpret;
 mod specialize;
 
+use crate::ast::{Item, Module};
 pub use inline::*;
 pub use interpret::*;
 pub use specialize::*;

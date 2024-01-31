@@ -1,3 +1,4 @@
+use crate::ast::{DefFunction, Import, Item, Module, Visibility};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
 use crate::interpreter::Interpreter;
