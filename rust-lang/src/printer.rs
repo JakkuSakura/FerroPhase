@@ -142,14 +142,14 @@ impl RustPrinter {
         }
     }
     pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
-        match &invoke.func {
-            Expr::Value(value) => match &**value {
+        match invoke.func.get() {
+            Expr::Value(value) => match &*value {
                 Value::BinOpKind(op) => {
                     let op = self.print_bin_op_kind(op);
                     let args: Vec<_> = invoke
                         .args
                         .iter()
-                        .map(|x| self.print_expr(x))
+                        .map(|x| self.print_expr(&x.get()))
                         .try_collect()?;
                     let mut stream = quote!();
                     for (i, a) in args.into_iter().enumerate() {
@@ -164,22 +164,22 @@ impl RustPrinter {
             },
             _ => {}
         }
-        let fun = self.print_expr(&invoke.func)?;
+        let fun = self.print_expr(&invoke.func.get())?;
         let args: Vec<_> = invoke
             .args
             .iter()
-            .map(|x| self.print_expr(x))
+            .map(|x| self.print_expr(&x.get()))
             .try_collect()?;
         Ok(quote!(
             #fun(#(#args), *)
         ))
     }
     pub fn print_invoke_type(&self, invoke: &Invoke) -> Result<TokenStream> {
-        let fun = self.print_expr(&invoke.func)?;
+        let fun = self.print_expr(&invoke.func.get())?;
         let args: Vec<_> = invoke
             .args
             .iter()
-            .map(|x| self.print_expr(x))
+            .map(|x| self.print_expr(&x.get()))
             .try_collect()?;
         Ok(quote!(
             #fun::<#(#args), *>
@@ -434,9 +434,13 @@ impl RustPrinter {
         ));
     }
     pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
-        let fun = self.print_expr(&node.func)?;
-        let args: Vec<_> = node.args.iter().map(|x| self.print_expr(x)).try_collect()?;
-        match &node.func {
+        let fun = self.print_expr(&node.func.get())?;
+        let args: Vec<_> = node
+            .args
+            .iter()
+            .map(|x| self.print_expr(&x.get()))
+            .try_collect()?;
+        match &node.func.get() {
             Expr::Select(select) => match select.select {
                 SelectType::Field => {
                     return Ok(quote!(

@@ -3,6 +3,7 @@ use crate::ast::{
 };
 use crate::context::{ArcScopedContext, LazyValue};
 use crate::expr::*;
+use crate::id::Locator;
 use crate::ops::*;
 use crate::passes::OptimizePass;
 use crate::ty::system::TypeSystem;
@@ -37,14 +38,14 @@ impl InterpreterPass {
     }
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
-        match &node.func {
-            Expr::Value(value) => match &**value {
+        match node.func.get() {
+            Expr::Value(value) => match *value {
                 Value::BinOpKind(kind) => {
                     self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
                 }
                 Value::UnOpKind(func) => {
                     ensure!(node.args.len() == 1, "Expected 1 arg for {:?}", func);
-                    let arg = self.interpret_expr(&node.args[0], ctx)?;
+                    let arg = self.interpret_expr(&node.args[0].get(), ctx)?;
                     self.interpret_invoke_unop(func.clone(), arg, ctx)
                 }
                 _ => bail!("Could not invoke {:?}", node),
@@ -58,8 +59,8 @@ impl InterpreterPass {
                     bail!("Could not invoke {:?}", node)
                 }
             }
-            Expr::Locator(crate::id::Locator::Ident(ident)) => {
-                let func = self.interpret_ident(ident, ctx, true)?;
+            Expr::Locator(Locator::Ident(ident)) => {
+                let func = self.interpret_ident(&ident, ctx, true)?;
                 self.interpret_invoke(
                     &Invoke {
                         func: Expr::value(func).into(),
@@ -232,10 +233,10 @@ impl InterpreterPass {
         );
         Ok(())
     }
-    pub fn interpret_args(&self, node: &[Expr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
+    pub fn interpret_args(&self, node: &[AExpr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
             .iter()
-            .map(|x| self.try_evaluate_expr(x, ctx).map(Value::expr))
+            .map(|x| self.try_evaluate_expr(&x.get(), ctx).map(Value::expr))
             .try_collect()?;
         Ok(args)
     }
@@ -411,7 +412,7 @@ impl InterpreterPass {
     pub fn interpret_invoke_binop(
         &self,
         op: BinOpKind,
-        args: &[Expr],
+        args: &[AExpr],
         ctx: &ArcScopedContext,
     ) -> Result<Value> {
         let builtin_fn = self.interpret_bin_op_kind(op, ctx)?;
