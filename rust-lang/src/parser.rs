@@ -5,7 +5,7 @@ use common_lang::ast::{
     Item, Module, Visibility,
 };
 use common_lang::expr::*;
-use common_lang::id::{ParameterPath, ParameterPathSegment};
+use common_lang::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use common_lang::ops::{BinOpKind, UnOpKind};
 use common_lang::pat::{
     Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
@@ -21,11 +21,11 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, Fields, FieldsNamed, FnArg, Lit, ReturnType, Token};
 use syn_inline_mod::InlinerBuilder;
 
-pub fn parse_ident(i: syn::Ident) -> crate::id::Ident {
-    crate::id::Ident::new(i.to_string())
+pub fn parse_ident(i: syn::Ident) -> Ident {
+    Ident::new(i.to_string())
 }
-pub fn parse_path(p: syn::Path) -> Result<crate::id::Path> {
-    Ok(crate::id::Path {
+pub fn parse_path(p: syn::Path) -> Result<Path> {
+    Ok(Path {
         segments: p
             .segments
             .into_iter()
@@ -67,12 +67,12 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
             .try_collect()?,
     })
 }
-fn parse_locator(p: syn::Path) -> Result<crate::id::Locator> {
+fn parse_locator(p: syn::Path) -> Result<Locator> {
     if let Ok(path) = parse_path(p.clone()) {
-        return Ok(crate::id::Locator::path(path));
+        return Ok(Locator::path(path));
     }
     let path = parse_parameter_path(p.clone())?;
-    return Ok(crate::id::Locator::parameter_path(path));
+    return Ok(Locator::parameter_path(path));
 }
 
 fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
@@ -140,7 +140,7 @@ fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
 fn parse_input(i: FnArg) -> Result<FunctionParam> {
     Ok(match i {
         FnArg::Receiver(rev) => FunctionParam {
-            name: crate::id::Ident::new("self"),
+            name: Ident::new("self"),
             ty: {
                 TypeValue::expr(TypeExpr::SelfType(
                     SelfType {
@@ -196,7 +196,7 @@ fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<TypeExpr> {
             let path = parse_path(t.path)?;
             Ok(TypeExpr::path(path))
         }
-        _ => bail!("Does not support liftimes {:?}", b),
+        _ => bail!("Does not support lifetimes {:?}", b),
     }
 }
 fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> Result<TypeBounds> {
@@ -364,7 +364,7 @@ fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
         .try_collect()?;
     Ok(ValueTuple { values })
 }
-fn parse_member(mem: syn::Member) -> Result<crate::id::Ident> {
+fn parse_member(mem: syn::Member) -> Result<Ident> {
     Ok(match mem {
         syn::Member::Named(n) => parse_ident(n),
         syn::Member::Unnamed(_) => bail!("Does not support unnmaed field yet {:?}", mem),
@@ -500,7 +500,7 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
             .trait_
             .map(|x| parse_path(x.1))
             .transpose()?
-            .map(crate::id::Locator::path),
+            .map(Locator::path),
         self_ty: TypeExpr::value(parse_type_value(*im.self_ty.clone())?),
         items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
@@ -510,7 +510,7 @@ fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
         name: f
             .ident
             .map(parse_ident)
-            .unwrap_or(crate::id::Ident::new(format!("{}", i))),
+            .unwrap_or(Ident::new(format!("{}", i))),
 
         value: parse_type_value(f.ty)?.into(),
     })
@@ -529,7 +529,7 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
                 break;
             }
             syn::UseTree::Glob(_) => {
-                segments.push(crate::id::Ident::new("*"));
+                segments.push(Ident::new("*"));
                 break;
             }
             _ => return Err(RawUse { raw: u }.into()),
@@ -537,7 +537,7 @@ fn parse_use(u: syn::ItemUse) -> Result<Import, RawUse> {
     }
     Ok(Import {
         visibility: parse_vis(u.vis),
-        path: crate::id::Path::new(segments),
+        path: Path::new(segments),
     })
 }
 pub fn parse_item_struct(s: syn::ItemStruct) -> Result<TypeStruct> {
@@ -572,7 +572,7 @@ impl syn::parse::Parse for UnnamedStructTypeParser {
 enum TypeValueParser {
     UnnamedStruct(TypeStructural),
     NamedStruct(TypeStruct),
-    Path(crate::id::Path),
+    Path(Path),
     // Ident(Ident),
 }
 impl Into<TypeValue> for TypeValueParser {
@@ -763,7 +763,7 @@ fn parse_expr_reference(item: syn::ExprReference) -> Result<Reference> {
 
 pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
     let module = Module {
-        name: crate::id::Ident::new("__file__"),
+        name: Ident::new("__file__"),
         items: file.items.into_iter().map(parse_item).try_collect()?,
         visibility: Visibility::Public,
     };
