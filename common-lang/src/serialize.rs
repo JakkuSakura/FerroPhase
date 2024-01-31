@@ -1,5 +1,5 @@
 use crate::ast::{File, Item, Module, Tree};
-use crate::expr::{Block, Expr, Invoke, Statement};
+use crate::expr::{AExpr, Block, Expr, Invoke, Statement};
 use crate::ty::TypeValue;
 use crate::value::{Value, ValueFunction};
 use common::*;
@@ -27,6 +27,13 @@ pub trait Serializer {
             s.push_str(&self.serialize_expr(node)?);
         }
         Ok(s)
+    }
+    fn serialize_args_arena(&self, nodes: &[AExpr]) -> Result<String> {
+        let mut v = vec![];
+        for node in nodes.iter() {
+            v.push(node.get());
+        }
+        self.serialize_args(&v)
     }
     fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
         bail!("not implemented: serialize_invoke")

@@ -63,10 +63,10 @@ impl Value {
     pub fn null() -> Value {
         Value::Null(ValueNull)
     }
-    pub fn expr(e: Expr) -> Self {
-        match e {
+    pub fn expr(e: impl Into<Expr>) -> Self {
+        match e.into() {
             Expr::Value(v) => *v,
-            _ => Value::Expr(e),
+            e => Value::Expr(e),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {

@@ -1,6 +1,7 @@
 use crate::ast::{DefFunction, Import, Item, Module, Visibility};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
+use crate::id::Locator;
 use crate::interpreter::Interpreter;
 use crate::passes::OptimizePass;
 use crate::pat::{Pattern, PatternIdent};
@@ -38,21 +39,21 @@ impl SpecializePass {
         func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
-        let args: Vec<_> = invoke
-            .args
-            .iter()
-            .map(|x| match x {
+        let mut args: Vec<AExpr> = vec![];
+        for arg in invoke.args.iter() {
+            let x = match arg.get() {
                 Expr::Locator(v) => ctx
-                    .get_expr(v)
-                    .with_context(|| format!("Couldn't find {:?} in context", v)),
+                    .get_expr(&v)
+                    .with_context(|| format!("Couldn't find {:?} in context", v))?,
+                x => x,
+            };
+            args.push(x.into())
+        }
 
-                _ => Ok(x.clone()),
-            })
-            .try_collect()?;
         debug!(
             "Specializing Invoke {} with {} [{}]",
             self.serializer.serialize_function(&func)?,
-            self.serializer.serialize_args(&args)?,
+            self.serializer.serialize_args_arena(&args)?,
             ctx.list_values()
                 .into_iter()
                 .map(|x| x.to_string())
@@ -62,10 +63,10 @@ impl SpecializePass {
         let mut new_params: Vec<FunctionParam> = vec![];
         let mut new_args: Vec<Expr> = vec![];
         for (param, arg) in zip_eq(func.params.iter(), args.iter()) {
-            match self.interpreter.interpret_expr(arg.clone(), ctx) {
+            match self.interpreter.interpret_expr(arg.get(), ctx) {
                 Err(err) => {
                     warn!("Cannot evaluate arg {} {:?}: {:?}", param.name, arg, err);
-                    new_args.push(arg.clone());
+                    new_args.push(arg.get());
                     new_params.push(param.clone());
                 }
                 Ok(_) => {}
@@ -75,7 +76,7 @@ impl SpecializePass {
             warn!(
                 "Couldn't specialize Invoke {} with {}",
                 self.serializer.serialize_function(&func)?,
-                self.serializer.serialize_args(&args)?,
+                self.serializer.serialize_args_arena(&args)?,
             );
             ctx.print_values(&*self.serializer)?;
             return Ok(invoke);
@@ -137,7 +138,7 @@ impl SpecializePass {
         trace!(
             "Specialized function {} with {} => {}",
             name,
-            self.serializer.serialize_args(&args)?,
+            self.serializer.serialize_args_arena(&args)?,
             self.serializer.serialize_function(&new_func)?
         );
 
@@ -155,8 +156,8 @@ impl SpecializePass {
         func: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Invoke> {
-        match &invoke.func {
-            Expr::Locator(crate::id::Locator::Ident(ident)) if ident.as_str() == "print" => {
+        match invoke.func.get() {
+            Expr::Locator(Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke);
             }
             _ => {}
