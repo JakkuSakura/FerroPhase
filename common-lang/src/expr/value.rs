@@ -1,3 +1,4 @@
+use crate::expr::arena::AExpr;
 use crate::expr::*;
 use crate::id::Ident;
 use crate::value::FieldValue;
@@ -6,16 +7,11 @@ use std::hash::Hash;
 
 common_struct! {
     pub struct Invoke {
-        pub func: Expr,
-        pub args: Vec<Expr>,
+        pub func: AExpr,
+        pub args: Vec<AExpr>,
     }
 }
-common_struct! {
-    pub struct Invoke2 {
-        pub func: ExprId,
-        pub args: Vec<ExprId>,
-    }
-}
+
 common_enum! {
     pub enum SelectType {
         Unknown,

@@ -54,7 +54,7 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
                         .map(|x| match x {
                             syn::GenericArgument::Type(t) => parse_type_value(t),
                             syn::GenericArgument::Const(c) => {
-                                parse_expr(c).map(|x| TypeValue::value(Value::expr(x)))
+                                parse_expr(c).map(|x| TypeValue::value(Value::expr(x.get())))
                             }
                             _ => bail!("Does not support path arguments: {:?}", x),
                         })
@@ -288,13 +288,13 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
 
 fn parse_if(i: syn::ExprIf) -> Result<If> {
     let mut cases = vec![MatchCase {
-        cond: parse_expr(*i.cond)?,
+        cond: parse_expr(*i.cond)?.get(),
         body: Expr::block(parse_block(i.then_branch)?).into(),
     }];
     if let Some((_, else_body)) = i.else_branch {
         'else_check: {
-            let body = parse_expr(*else_body)?;
-            match &body {
+            let body = parse_expr(*else_body)?.get();
+            match body {
                 Expr::If(m) => {
                     cases.extend(m.cases.clone());
                     break 'else_check;
@@ -312,7 +312,7 @@ fn parse_if(i: syn::ExprIf) -> Result<If> {
     Ok(If { cases })
 }
 fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
-    let mut lhs = parse_expr(*b.left)?;
+    let lhs = parse_expr(*b.left)?;
     let rhs = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
@@ -333,13 +333,14 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         _ => bail!("Op not supported {:?}", b.op),
     };
     if flatten {
+        let mut lhs = lhs.get();
         match &mut lhs {
-            Expr::Invoke(first_arg) => match &mut first_arg.func {
-                Expr::Value(value) => match &**value {
+            Expr::Invoke(first_arg) => match first_arg.func.get() {
+                Expr::Value(value) => match &*value {
                     Value::BinOpKind(i) => {
                         if *i == op {
                             first_arg.args.push(rhs);
-                            return Ok(*first_arg.clone());
+                            return Ok(first_arg.clone());
                         }
                     }
                     _ => {}
@@ -372,7 +373,7 @@ fn parse_member(mem: syn::Member) -> Result<crate::id::Ident> {
 fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
     Ok(FieldValue {
         name: parse_member(fv.member)?,
-        value: Value::expr(parse_expr(fv.expr)?.into()),
+        value: Value::expr(parse_expr(fv.expr)?),
     })
 }
 pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
@@ -406,8 +407,8 @@ pub fn parse_unary(u: syn::ExprUnary) -> Result<Invoke> {
         args: vec![expr],
     })
 }
-pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
-    Ok(match expr {
+pub fn parse_expr(expr: syn::Expr) -> Result<AExpr> {
+    let expr = match expr {
         syn::Expr::Binary(b) => Expr::Invoke(parse_binary(b)?.into()),
         syn::Expr::Unary(u) => Expr::Invoke(parse_unary(u)?.into()),
         syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
@@ -425,18 +426,19 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
             warn!("RawExpr {:?}", raw);
             Expr::Any(crate::utils::anybox::AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
-    })
+    };
+    Ok(expr.into())
 }
 
 fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
     Ok(match stmt {
         syn::Stmt::Local(l) => Statement::Let(StatementLet {
             pat: parse_pat(l.pat)?,
-            value: parse_expr(*l.init.context("No value")?.expr)?,
+            value: parse_expr(*l.init.context("No value")?.expr)?.into(),
         }),
         syn::Stmt::Item(tm) => parse_item(tm).map(Statement::item)?,
         syn::Stmt::Expr(e, semicolon) => {
-            Statement::maybe_stmt_expr(parse_expr(e)?, semicolon.is_some())
+            Statement::maybe_stmt_expr(parse_expr(e)?.into(), semicolon.is_some())
         }
         syn::Stmt::Macro(raw) => Statement::any(RawStmtMacro { raw }),
     })
@@ -810,7 +812,7 @@ impl RustParser {
         Ok(file)
     }
     pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
-        parse_expr(code)
+        parse_expr(code).map(|x| x.get())
     }
     pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
         parse_item(code)

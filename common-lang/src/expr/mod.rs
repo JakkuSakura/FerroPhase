@@ -10,6 +10,7 @@ use crate::common_enum;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::{Value, ValueUnit};
+pub use arena::*;
 pub use stmt::*;
 pub use typing::*;
 pub use value::*;
@@ -25,8 +26,7 @@ common_enum! {
         Block(Block),
         Match(Match),
         If(If),
-        Invoke(Box<Invoke>),
-        Invoke2(Invoke2),
+        Invoke(Invoke),
         Select(Box<Select>),
         Struct(Box<StructExpr>),
         Reference(Box<Reference>),
@@ -34,6 +34,7 @@ common_enum! {
     }
 
 }
+
 impl Expr {
     pub fn unit() -> Expr {
         Expr::Value(Value::Unit(ValueUnit).into())

@@ -17,13 +17,13 @@ impl InlinePass {
     pub fn inline_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
             Expr::Value(value) => self.inline_value(*value, ctx).map(Expr::value),
-            Expr::Invoke(invoke) => self.inline_invoke(*invoke, ctx),
+            Expr::Invoke(invoke) => self.inline_invoke(invoke, ctx),
             _ => Ok(expr),
         }
     }
     pub fn inline_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
         if invoke.args.is_empty() {
-            let fun = self.try_get_expr(invoke.func.clone(), ctx)?;
+            let fun = self.try_get_expr(invoke.func.into(), ctx)?;
             match fun {
                 Expr::Value(value) => match *value {
                     Value::Function(f) => {
