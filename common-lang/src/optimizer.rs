@@ -9,21 +9,24 @@ use common::*;
 use std::mem::take;
 use std::rc::Rc;
 
-pub fn load_optimizer(serializer: Rc<dyn Serializer>) -> FoldOptimizer<MultiplePass> {
-    let passes: MultiplePass = vec![
+pub fn load_optimizers(serializer: Rc<dyn Serializer>) -> Vec<FoldOptimizer> {
+    let optimizers: Vec<Box<dyn OptimizePass>> = vec![
         Box::new(SpecializePass::new(serializer.clone())),
         Box::new(InlinePass::new(serializer.clone())),
     ];
 
-    FoldOptimizer::new(serializer.clone(), passes)
+    optimizers
+        .into_iter()
+        .map(|x| FoldOptimizer::new(serializer.clone(), x))
+        .collect()
 }
 
-pub struct FoldOptimizer<Pass: OptimizePass> {
+pub struct FoldOptimizer {
     serializer: Rc<dyn Serializer>,
-    pub pass: Pass,
+    pub(crate) pass: Box<dyn OptimizePass>,
 }
-impl<Pass: OptimizePass> FoldOptimizer<Pass> {
-    pub fn new(serializer: Rc<dyn Serializer>, pass: Pass) -> Self {
+impl FoldOptimizer {
+    pub fn new(serializer: Rc<dyn Serializer>, pass: Box<dyn OptimizePass>) -> Self {
         Self { serializer, pass }
     }
 
@@ -42,8 +45,8 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             .unwrap_or(ControlFlow::Continue);
         match control {
             ControlFlow::Into => {
-                let looked_up = self.pass.try_evaluate_expr(&func, ctx)?;
-                match looked_up {
+                // FIXME: optimize out this clone
+                match func.clone() {
                     Expr::Value(value) => match *value {
                         Value::Function(f) => {
                             let sub_ctx = ctx.child(
@@ -95,59 +98,48 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
     pub fn optimize_invoking(
         &self,
-        mut invoke: Invoke,
-        mut func: ValueFunction,
+        invoke: Invoke,
+        func: ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<Expr> {
-        let serialized = self.serializer.serialize_invoke(&invoke)?;
-        debug!("Doing {} for {}", self.pass.name(), serialized);
+        debug!("Doing {} for {} invoking", self.pass.name(), invoke);
 
-        invoke = self.pass.optimize_invoke_pre(invoke.clone(), &func, ctx)?;
-
-        let func_body_serialized = self.serializer.serialize_expr(&func.body)?;
-        debug!("Doing {} for {}", self.pass.name(), func_body_serialized);
-        func.body = self.optimize_expr(func.body, ctx)?.into();
-        let func_body_serialized2 = self.serializer.serialize_expr(&func.body)?;
+        // let func_body_serialized = self.serializer.serialize_expr(&func.body)?;
+        // debug!("Doing {} for {}", self.pass.name(), func_body_serialized);
+        // func.body = self.optimize_expr(func.body, ctx)?.into();
+        // let func_body_serialized2 = self.serializer.serialize_expr(&func.body)?;
         // if func_body_serialized != func_body_serialized2 {
-        debug!(
-            "Done {} for {} => {}",
-            self.pass.name(),
-            func_body_serialized,
-            func_body_serialized2
-        );
+        // debug!(
+        //     "Done {} for {} => {}",
+        //     self.pass.name(),
+        //     func_body_serialized,
+        //     func_body_serialized2
+        // );
         // }
-        invoke = self.pass.optimize_invoke_post(invoke.clone(), &func, ctx)?;
+        let expr = self.pass.optimize_invoke(invoke.clone(), &func, ctx)?;
 
-        let serialized2 = self.serializer.serialize_invoke(&invoke)?;
         // if serialized != serialized2 {
         debug!(
-            "Done {} for {} => {}",
+            "Done {} for {} invoking => {}",
             self.pass.name(),
-            serialized,
-            serialized2
+            invoke,
+            expr
         );
         // }
-        Ok(Expr::Invoke(invoke.into()))
+        Ok(expr)
     }
 
     pub fn optimize_expr(&self, mut expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let serialized = self.serializer.serialize_expr(&expr)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
-        expr = self.pass.optimize_expr_pre(expr, ctx)?;
-
         expr = match expr {
-            Expr::Locator(_) => expr,
-            Expr::Value(_) => expr,
-            Expr::Struct(_) => expr,
             Expr::Block(x) => self.optimize_block(x, ctx)?,
             Expr::Match(x) => self.optimize_cond(x, ctx)?,
             Expr::If(x) => self.optimize_if(x, ctx)?,
             Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
-            Expr::Any(x) => Expr::Any(x.clone()),
-            _ => bail!("Could not optimize {:?}", expr),
+            _ => self.pass.optimize_expr(expr, ctx)?,
         };
-        expr = self.pass.optimize_expr_post(expr, ctx)?;
 
         let serialized2 = self.serializer.serialize_expr(&expr)?;
         // if serialized != serialized2 {
@@ -167,30 +159,28 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
 
     pub fn optimize_module(
         &self,
-        m: Module,
+        mut module: Module,
         ctx: &ArcScopedContext,
         with_submodule: bool,
     ) -> Result<Module> {
         let sub = if with_submodule {
-            ctx.child(m.name.clone(), m.visibility, false)
+            ctx.child(module.name.clone(), module.visibility, false)
         } else {
             ctx.clone()
         };
-        m.items.iter().try_for_each(|x| self.prescan_item(x, ctx))?;
-        let m = self.pass.optimize_module_pre(m, ctx)?;
-        let mut items: Vec<_> = m
+        module
+            .items
+            .iter()
+            .try_for_each(|x| self.prescan_item(x, ctx))?;
+
+        module.items = module
             .items
             .into_iter()
             .map(|x| self.optimize_item(x, &sub))
             .try_collect()?;
-        items.retain(|x| !x.is_unit());
+        module.items.retain(|x| !x.is_unit());
 
-        let module = Module {
-            name: m.name.clone(),
-            items,
-            visibility: m.visibility,
-        };
-        let module = self.pass.optimize_module_post(module, ctx)?;
+        let module = self.pass.optimize_module(module, ctx)?;
         Ok(module)
     }
     fn prescan_item(&self, item: &Item, ctx: &ArcScopedContext) -> Result<()> {
@@ -211,10 +201,8 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         let serialized = self.serializer.serialize_item(&item)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
-        item = self.pass.optimize_item_pre(item, ctx)?;
-
         item = match item {
-            Item::DefFunction(x) => self.optimize_def_function(x, ctx).map(Item::DefFunction)?,
+            // Item::DefFunction(x) => self.optimize_def_function(x, ctx).map(Item::DefFunction)?,
             Item::Import(x) => self.optimize_import(x, ctx).map(Item::Import)?,
             Item::Module(x) => self.optimize_module(x, ctx, true).map(Item::Module)?,
             Item::Expr(x) => {
@@ -224,7 +212,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
             _ => item,
         };
 
-        item = self.pass.optimize_item_post(item, ctx)?;
+        item = self.pass.optimize_item(item, ctx)?;
 
         let serialized2 = self.serializer.serialize_item(&item)?;
         // if serialized != serialized2 {
@@ -277,11 +265,7 @@ impl<Pass: OptimizePass> FoldOptimizer<Pass> {
         }
     }
     pub fn optimize_block(&self, mut b: Block, ctx: &ArcScopedContext) -> Result<Expr> {
-        let ctx = ctx.child(
-            crate::id::Ident::new("__block__"),
-            Visibility::Private,
-            true,
-        );
+        let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         b.stmts
             .iter()
             .try_for_each(|x| self.prescan_stmt(x, &ctx))?;

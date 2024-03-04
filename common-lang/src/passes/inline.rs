@@ -71,7 +71,7 @@ impl OptimizePass for InlinePass {
     fn name(&self) -> &str {
         "inline"
     }
-    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         self.inline_expr(expr, ctx)
     }
 }

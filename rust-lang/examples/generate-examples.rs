@@ -2,7 +2,7 @@ use common::*;
 
 use common_lang::context::ScopedContext;
 use common_lang::interpreter::Interpreter;
-use common_lang::optimizer::load_optimizer;
+use common_lang::optimizer::load_optimizers;
 use common_lang::{Deserializer, Serializer};
 use rust_lang::printer::RustPrinter;
 use rust_lang::rustfmt::format_code;
@@ -33,10 +33,12 @@ fn main() -> Result<()> {
         info!("{} => {}", file_in.display(), file_out.display());
         let mut file_out = File::create(file_out)?;
         let file_content = std::fs::read_to_string(file_in)?;
-        let node = rust_serde.deserialize_tree(&file_content)?;
+        let mut node = rust_serde.deserialize_tree(&file_content)?;
         let ctx = Arc::new(ScopedContext::new());
-        let optimizer = load_optimizer(Rc::new(rust_serde));
-        let node = optimizer.optimize_tree(node, &ctx)?;
+        let optimizers = load_optimizers(Rc::new(rust_serde));
+        for optimizer in optimizers {
+            node = optimizer.optimize_tree(node, &ctx)?;
+        }
         let code = rust_serde.serialize_tree(&node)?;
         writeln!(&mut file_out, "{}", code)?;
         let code = format_code(&code)?;

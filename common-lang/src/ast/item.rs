@@ -34,6 +34,9 @@ impl Item {
             _ => None,
         }
     }
+    pub fn unit() -> Self {
+        Self::Expr(Expr::Value(Value::unit().into()))
+    }
     pub fn is_unit(&self) -> bool {
         if let Some(expr) = self.as_expr() {
             if let Expr::Value(value) = expr {
