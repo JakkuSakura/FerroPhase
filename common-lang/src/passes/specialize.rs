@@ -208,18 +208,19 @@ impl OptimizePass for SpecializePass {
         "specialize"
     }
 
-    fn optimize_item_post(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
+    fn optimize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         self.specialize_item(item, ctx)
     }
-    fn optimize_invoke_post(
+    fn optimize_invoke(
         &self,
         invoke: Invoke,
         func: &ValueFunction,
         ctx: &ArcScopedContext,
-    ) -> Result<Invoke> {
+    ) -> Result<Expr> {
         self.specialize_invoking(invoke, &func, ctx)
+            .map(|x| x.into())
     }
-    fn optimize_module_post(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+    fn optimize_module(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
         self.specialize_module(module, ctx)
     }
 

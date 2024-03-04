@@ -5,7 +5,10 @@ fn print(i: impl Display) {
 }
 type Int = t! { i64 };
 type FooUnnamedStruct = t! { struct { pub a : Int , pub b : Int } };
-type BarNamedStruct = t! { struct BarNamedStruct { pub c : Int , pub d : Int } };
+struct BarNamedStruct {
+    pub c: Int,
+    pub d: Int,
+}
 type FooPlusBar = t! { FooUnnamedStruct + BarNamedStruct };
 fn main() {
     FooPlusBar {
@@ -16,3 +19,4 @@ fn main() {
     };
 }
 
+// result: ()

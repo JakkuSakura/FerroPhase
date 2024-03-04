@@ -2,7 +2,8 @@ use crate::expr::arena::AExpr;
 use crate::expr::*;
 use crate::id::Ident;
 use crate::value::FieldValue;
-use crate::{common_enum, common_struct};
+use crate::{common_enum, common_struct, get_threadlocal_serializer};
+use std::fmt::Display;
 use std::hash::Hash;
 
 common_struct! {
@@ -11,7 +12,13 @@ common_struct! {
         pub args: Vec<AExpr>,
     }
 }
+impl Display for Invoke {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = get_threadlocal_serializer().serialize_invoke(self).unwrap();
 
+        f.write_str(&s)
+    }
+}
 common_enum! {
     pub enum SelectType {
         Unknown,

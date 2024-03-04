@@ -3,7 +3,7 @@ use crate::ast::{
 };
 use crate::context::{ArcScopedContext, LazyValue};
 use crate::expr::*;
-use crate::id::Locator;
+use crate::id::{Ident, Locator};
 use crate::ops::*;
 use crate::passes::OptimizePass;
 use crate::ty::system::TypeSystem;
@@ -48,7 +48,7 @@ impl InterpreterPass {
                     let arg = self.interpret_expr(&node.args[0].get(), ctx)?;
                     self.interpret_invoke_unop(func.clone(), arg, ctx)
                 }
-                _ => bail!("Could not invoke {:?}", node),
+                _ => bail!("Could not invoke {}", node),
             },
 
             Expr::Any(any) => {
@@ -90,11 +90,7 @@ impl InterpreterPass {
         Ok(())
     }
     pub fn interpret_block(&self, node: &Block, ctx: &ArcScopedContext) -> Result<Value> {
-        let ctx = ctx.child(
-            crate::id::Ident::new("__block__"),
-            Visibility::Private,
-            true,
-        );
+        let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         for (i, stmt) in node.stmts.iter().enumerate() {
             let ret = self.interpret_stmt(&stmt, &ctx)?;
             if let Some(ret) = ret {
@@ -138,7 +134,7 @@ impl InterpreterPass {
     }
     pub fn interpret_ident(
         &self,
-        ident: &crate::id::Ident,
+        ident: &Ident,
         ctx: &ArcScopedContext,
         resolve: bool,
     ) -> Result<Value> {
@@ -196,7 +192,7 @@ impl InterpreterPass {
     }
 
     pub fn interpret_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
-        if def.name == crate::id::Ident::new("main") {
+        if def.name == Ident::new("main") {
             self.interpret_expr(&def.value.body, ctx).map(|_| ())
         } else {
             let name = &def.name;
@@ -335,11 +331,7 @@ impl InterpreterPass {
         node: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<ValueFunction> {
-        let sub = ctx.child(
-            crate::id::Ident::new("__func__"),
-            Visibility::Private,
-            false,
-        );
+        let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
         for generic in &node.generics_params {
             let ty = self
                 .type_system
@@ -445,7 +437,7 @@ impl InterpreterPass {
         resolve: bool,
     ) -> Result<Value> {
         match node {
-            Expr::Locator(crate::id::Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
+            Expr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
             Expr::Locator(n) => ctx
                 .get_value_recursive(n)
                 .with_context(|| format!("could not find {:?} in context", n)),
@@ -524,16 +516,15 @@ impl OptimizePass for InterpreterPass {
     fn name(&self) -> &str {
         "interpreter"
     }
-    fn optimize_expr_post(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         Ok(Expr::value(value))
     }
-    fn optimize_item_pre(&self, item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
-        match item {
-            Item::DefFunction(def) if def.name.as_str() == "main" => Ok(Item::Expr(def.value.body)),
-            _ => Ok(Item::Expr(Expr::unit())),
-        }
+
+    fn optimize_item(&self, _item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
+        Ok(Item::unit())
     }
+
     fn evaluate_condition(
         &self,
         expr: Expr,
@@ -558,6 +549,15 @@ impl OptimizePass for InterpreterPass {
     ) -> Result<Option<ControlFlow>> {
         Ok(Some(ControlFlow::Into))
     }
+    fn optimize_invoke(
+        &self,
+        _invoke: Invoke,
+        func: &ValueFunction,
+        ctx: &ArcScopedContext,
+    ) -> Result<Expr> {
+        self.interpret_expr(&func.body, ctx).map(Expr::value)
+    }
+
     fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let value = ctx.try_get_value_from_expr(pat).with_context(|| {
             format!(
@@ -571,6 +571,10 @@ impl OptimizePass for InterpreterPass {
         })?;
         Ok(Expr::value(value))
     }
+    // fn optimize_module(&self, mut module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+    //     module.items.retain(|x| x.is_unit());
+    //     Ok(module)
+    // }
     fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
         let value = self.interpret_invoke(&invoke, ctx)?;
         Ok(Expr::value(value))
