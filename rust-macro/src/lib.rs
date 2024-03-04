@@ -13,40 +13,24 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 trait Optimizee {
-    fn optimize<P: OptimizePass>(
-        self,
-        optimizer: FoldOptimizer<P>,
-        ctx: &ArcScopedContext,
-    ) -> Result<TokenStream>;
+    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream>;
 }
 impl Optimizee for Expr {
-    fn optimize<P: OptimizePass>(
-        self,
-        optimizer: FoldOptimizer<P>,
-        ctx: &ArcScopedContext,
-    ) -> Result<TokenStream> {
+    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream> {
         let node = optimizer.optimize_expr(self, ctx)?;
         let node = RustPrinter.print_expr(&node)?;
         Ok(node.into())
     }
 }
 impl Optimizee for Module {
-    fn optimize<P: OptimizePass>(
-        self,
-        optimizer: FoldOptimizer<P>,
-        ctx: &ArcScopedContext,
-    ) -> Result<TokenStream> {
+    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream> {
         let node = optimizer.optimize_module(self, ctx, true)?;
         let node = RustPrinter.print_module(&node)?;
         Ok(node.into())
     }
 }
 impl Optimizee for File {
-    fn optimize<P: OptimizePass>(
-        self,
-        optimizer: FoldOptimizer<P>,
-        ctx: &ArcScopedContext,
-    ) -> Result<TokenStream> {
+    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream> {
         let node = optimizer.optimize_tree(Tree::File(self), ctx)?;
         let node = RustPrinter.print_tree(&node)?;
         Ok(node.into())

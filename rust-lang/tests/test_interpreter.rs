@@ -8,7 +8,7 @@ use common_lang::value::Value;
 use rust_lang::{shll_parse_expr, shll_parse_value, RustSerde};
 use std::rc::Rc;
 
-fn interpret_shell_expr(expr: Expr) -> Result<Value> {
+fn interpret_shll_expr(expr: Expr) -> Result<Value> {
     let interpreter = Interpreter::new(Rc::new(RustSerde::new()));
     let ctx = ScopedContext::new().into_shared();
     interpreter.interpret_expr(expr, &ctx)
@@ -21,7 +21,7 @@ fn test_eval_arithmetics() -> Result<()> {
     let code = shll_parse_expr! {
         1 + 2 * 3
     };
-    let value = interpret_shell_expr(code)?;
+    let value = interpret_shll_expr(code)?;
     let expected = shll_parse_value!(7);
     assert_eq!(value, expected);
     Ok(())
@@ -38,7 +38,7 @@ fn test_eval_function_call() -> Result<()> {
             foo(1, 2)
         }
     };
-    let value = interpret_shell_expr(code)?;
+    let value = interpret_shll_expr(code)?;
     let expected = shll_parse_value!(3);
     assert_eq!(value, expected);
     Ok(())

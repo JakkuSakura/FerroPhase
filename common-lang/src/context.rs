@@ -3,7 +3,6 @@ use crate::expr::Expr;
 use crate::id::{Ident, Path};
 use crate::ty::TypeValue;
 use crate::value::{Value, ValueFunction};
-use crate::Serializer;
 use common::*;
 use dashmap::DashMap;
 use std::fmt::{Debug, Formatter};
@@ -48,6 +47,7 @@ impl ScopedContext {
     pub fn into_shared(self) -> ArcScopedContext {
         Arc::new(self)
     }
+
     pub fn child(
         self: &ArcScopedContext,
         name: Ident,
@@ -96,16 +96,16 @@ impl ScopedContext {
         );
         values
     }
-    pub fn print_values(&self, s: &dyn Serializer) -> Result<()> {
+    pub fn print_values(&self) -> Result<()> {
         if let Some(parent) = &self.parent {
-            parent.print_values(s)?;
+            parent.print_values()?;
         }
-        let path = &self.path;
+
         for key in self.storages.iter() {
             let (k, v) = key.pair();
-            let value = s.serialize_value(v.value.as_ref().unwrap_or(&Value::undefined()))?;
-            let ty = s.serialize_type(v.ty.as_ref().unwrap_or(&TypeValue::any()))?;
-            println!("{}::{}: val:{} ty:{}", path, k, value, ty)
+            let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
+            let ty = v.ty.as_ref().unwrap_or(&TypeValue::ANY);
+            println!("{}::{}: val:{} ty:{}", self.path, k, value, ty)
         }
         Ok(())
     }
@@ -196,7 +196,7 @@ impl ScopedContext {
             .collect()
     }
     pub fn try_get_value_from_expr(self: &ArcScopedContext, expr: &Expr) -> Option<Value> {
-        info!("try_get_value_from_expr {}", expr);
+        // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
             Expr::Locator(ident) => self.get_value(ident),
             Expr::Value(value) => Some(*value.clone()),
