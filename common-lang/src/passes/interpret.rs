@@ -158,17 +158,13 @@ impl InterpreterPass {
             "Some" => Ok(Value::any(builtin_some())),
             _ => {
                 info!("Get value recursive {:?}", ident);
-                ctx.print_values(&*self.serializer)?;
+                ctx.print_values()?;
                 ctx.get_value_recursive(ident)
                     .with_context(|| format!("could not find {:?} in context", ident.name))
             }
         };
     }
-    pub fn interpret_bin_op_kind(
-        &self,
-        op: BinOpKind,
-        _ctx: &ArcScopedContext,
-    ) -> Result<BuiltinFn> {
+    pub fn lookup_bin_op_kind(&self, op: BinOpKind) -> Result<BuiltinFn> {
         match op {
             BinOpKind::Add => Ok(builtin_add()),
             BinOpKind::Sub => Ok(builtin_sub()),
@@ -395,9 +391,9 @@ impl InterpreterPass {
                     .map(|x| self.interpret_value(&x, ctx, resolve))
                     .transpose()?,
             ))),
-            Value::BinOpKind(x) if resolve => self
-                .interpret_bin_op_kind(x.clone(), ctx)
-                .map(|x| Value::any(x)),
+            Value::BinOpKind(x) if resolve => {
+                self.lookup_bin_op_kind(x.clone()).map(|x| Value::any(x))
+            }
             _ => Ok(val.clone()),
         }
     }
@@ -407,7 +403,7 @@ impl InterpreterPass {
         args: &[AExpr],
         ctx: &ArcScopedContext,
     ) -> Result<Value> {
-        let builtin_fn = self.interpret_bin_op_kind(op, ctx)?;
+        let builtin_fn = self.lookup_bin_op_kind(op)?;
         let args = self.interpret_args(args, ctx)?;
         builtin_fn.invoke(&args, ctx)
     }
@@ -525,37 +521,41 @@ impl OptimizePass for InterpreterPass {
         Ok(Item::unit())
     }
 
-    fn evaluate_condition(
-        &self,
-        expr: Expr,
-        ctx: &ArcScopedContext,
-    ) -> Result<Option<ControlFlow>> {
+    fn evaluate_condition(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<ControlFlow> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         match value {
             Value::Bool(b) => {
                 if b.value {
-                    Ok(Some(ControlFlow::IntoAndBreak(None)))
+                    Ok(ControlFlow::IntoAndBreak(None))
                 } else {
-                    Ok(Some(ControlFlow::Continue))
+                    Ok(ControlFlow::Continue)
                 }
             }
             _ => bail!("Failed to interpret {:?} => {:?}", expr, value),
         }
     }
-    fn evaluate_invoke(
-        &self,
-        _invoke: Invoke,
-        _ctx: &ArcScopedContext,
-    ) -> Result<Option<ControlFlow>> {
-        Ok(Some(ControlFlow::Into))
+    fn evaluate_invoke(&self, _invoke: Invoke, _ctx: &ArcScopedContext) -> Result<ControlFlow> {
+        Ok(ControlFlow::Into)
     }
     fn optimize_invoke(
         &self,
-        _invoke: Invoke,
-        func: &ValueFunction,
+        invoke: Invoke,
+        func: &Value,
         ctx: &ArcScopedContext,
     ) -> Result<Expr> {
-        self.interpret_expr(&func.body, ctx).map(Expr::value)
+        match func {
+            Value::Function(func) => self.interpret_expr(&func.body, ctx).map(Expr::value),
+            Value::BinOpKind(kind) => self
+                .interpret_invoke_binop(kind.clone(), &invoke.args, ctx)
+                .map(Expr::value),
+            Value::UnOpKind(func) => {
+                ensure!(invoke.args.len() == 1, "Expected 1 arg for {:?}", func);
+                let arg = self.interpret_expr(&invoke.args[0].get(), ctx)?;
+                self.interpret_invoke_unop(func.clone(), arg, ctx)
+                    .map(Expr::value)
+            }
+            _ => bail!("Could not invoke {:?}", func),
+        }
     }
 
     fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
@@ -569,14 +569,6 @@ impl OptimizePass for InterpreterPass {
                     .collect::<Vec<_>>()
             )
         })?;
-        Ok(Expr::value(value))
-    }
-    // fn optimize_module(&self, mut module: Module, ctx: &ArcScopedContext) -> Result<Module> {
-    //     module.items.retain(|x| x.is_unit());
-    //     Ok(module)
-    // }
-    fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
-        let value = self.interpret_invoke(&invoke, ctx)?;
         Ok(Expr::value(value))
     }
 }

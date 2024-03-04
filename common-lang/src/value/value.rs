@@ -3,7 +3,7 @@ use crate::id::Ident;
 use crate::ty::{TypeBounds, TypeStruct, TypeValue};
 use crate::utils::to_json::ToJson;
 use crate::value::Value;
-use crate::{common_enum, common_struct};
+use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use bytes::BytesMut;
 use common::*;
 use serde_json::json;
@@ -556,6 +556,14 @@ impl Deref for ValueFunction {
 impl DerefMut for ValueFunction {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.sig
+    }
+}
+impl Display for ValueFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = get_threadlocal_serializer()
+            .serialize_function(self)
+            .unwrap();
+        f.write_str(&s)
     }
 }
 common_struct! {

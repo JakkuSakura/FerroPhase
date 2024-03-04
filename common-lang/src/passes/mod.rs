@@ -1,6 +1,5 @@
 use crate::context::ArcScopedContext;
 use crate::expr::*;
-use crate::value::ValueFunction;
 use common::*;
 
 mod inline;
@@ -8,6 +7,7 @@ mod interpret;
 mod specialize;
 
 use crate::ast::{Item, Module};
+use crate::value::Value;
 pub use inline::*;
 pub use interpret::*;
 pub use specialize::*;
@@ -20,6 +20,9 @@ pub trait OptimizePass {
         Ok(item)
     }
 
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+        Ok(pat.clone())
+    }
     fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         Ok(expr)
     }
@@ -27,35 +30,19 @@ pub trait OptimizePass {
     fn optimize_module(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
         Ok(module)
     }
-
+    fn evaluate_invoke(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<ControlFlow> {
+        Ok(ControlFlow::Continue)
+    }
     fn optimize_invoke(
         &self,
         invoke: Invoke,
-        func: &ValueFunction,
+        func: &Value,
         ctx: &ArcScopedContext,
     ) -> Result<Expr> {
         Ok(invoke.into())
     }
-    fn evaluate_condition(
-        &self,
-        expr: Expr,
-        ctx: &ArcScopedContext,
-    ) -> Result<Option<ControlFlow>> {
-        Ok(None)
-    }
-    fn evaluate_invoke(
-        &self,
-        invoke: Invoke,
-        ctx: &ArcScopedContext,
-    ) -> Result<Option<ControlFlow>> {
-        Ok(None)
-    }
-
-    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
-        Ok(pat.clone())
-    }
-    fn optimize_bin_op(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
-        Ok(Expr::Invoke(invoke.into()))
+    fn evaluate_condition(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<ControlFlow> {
+        Ok(ControlFlow::Into)
     }
 }
 
