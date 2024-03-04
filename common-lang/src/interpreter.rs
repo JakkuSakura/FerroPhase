@@ -1,4 +1,4 @@
-use crate::ast::{Item, ItemChunkExt, Module, Tree};
+use crate::ast::{Item, Module, Tree};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
 use crate::optimizer::FoldOptimizer;
@@ -24,21 +24,8 @@ impl Interpreter {
             _ => bail!("Failed to extract Value from {}", node),
         }
     }
-    fn extract_module(&self, node: Module) -> Result<Value> {
-        match node.items.len() {
-            0 => Ok(Value::unit()),
-            _ => {
-                let main_function = node
-                    .items
-                    .find_item("main")
-                    .ok_or_else(|| eyre!("Failed to find main function in module {:?}", node))?;
-                if let Item::DefFunction(main_function) = main_function {
-                    self.extract_expr(main_function.value.body.clone())
-                } else {
-                    bail!("Failed to find main function in module {:?}", node)
-                }
-            }
-        }
+    fn extract_module(&self, _node: Module) -> Result<Value> {
+        Ok(Value::unit())
     }
     fn extract_item(&self, node: Item) -> Result<Value> {
         match node {
