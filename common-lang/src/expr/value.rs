@@ -13,7 +13,7 @@ common_struct! {
     }
 }
 impl Display for Invoke {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_invoke(self).unwrap();
 
         f.write_str(&s)

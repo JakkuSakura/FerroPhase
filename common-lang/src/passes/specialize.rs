@@ -1,7 +1,7 @@
 use crate::ast::{DefFunction, Import, Item, Module, Visibility};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
-use crate::id::Locator;
+use crate::id::{Ident, Locator};
 use crate::interpreter::Interpreter;
 use crate::passes::OptimizePass;
 use crate::pat::{Pattern, PatternIdent};
@@ -38,7 +38,7 @@ impl SpecializePass {
         invoke: Invoke,
         func: &ValueFunction,
         ctx: &ArcScopedContext,
-    ) -> Result<Invoke> {
+    ) -> Result<Expr> {
         let mut args: Vec<AExpr> = vec![];
         for arg in invoke.args.iter() {
             let x = match arg.get() {
@@ -52,7 +52,7 @@ impl SpecializePass {
 
         debug!(
             "Specializing Invoke {} with {} [{}]",
-            self.serializer.serialize_function(&func)?,
+            func,
             self.serializer.serialize_args_arena(&args)?,
             ctx.list_values()
                 .into_iter()
@@ -78,19 +78,18 @@ impl SpecializePass {
                 self.serializer.serialize_function(&func)?,
                 self.serializer.serialize_args_arena(&args)?,
             );
-            ctx.print_values(&*self.serializer)?;
-            return Ok(invoke);
+            ctx.print_values()?;
+            return Ok(invoke.into());
         }
         let mut bindings = vec![];
         for name in ctx.list_values() {
             let value = ctx.get_value(&name).unwrap();
 
             if matches!(value, Value::Function(_)) {
+                warn!("Skipping function {}", name);
                 continue;
             }
-            let Some(name) = name.try_into_ident() else {
-                continue;
-            };
+            let name = name.last().clone();
 
             let binding = Statement::Let(StatementLet {
                 pat: Pattern::Ident(PatternIdent {
@@ -103,7 +102,7 @@ impl SpecializePass {
         }
 
         let new_body = Expr::block(Block::prepend(bindings, func.body.clone()));
-        let new_name = crate::id::Ident::new(format!(
+        let new_name = Ident::new(format!(
             "{}_{}",
             name,
             self.spec_id.fetch_add(1, Ordering::Relaxed)
@@ -112,7 +111,7 @@ impl SpecializePass {
         let mut ret = func.ret.clone();
         match &ret {
             TypeValue::Expr(expr) => match &**expr {
-                TypeExpr::Locator(crate::id::Locator::Ident(ident))
+                TypeExpr::Locator(Locator::Ident(ident))
                     if func
                         .generics_params
                         .iter()
@@ -142,23 +141,40 @@ impl SpecializePass {
             self.serializer.serialize_function(&new_func)?
         );
 
-        ctx.root()
-            .insert_specialized(new_name.clone().into(), new_func);
-        return Ok(Invoke {
-            func: Expr::ident(new_name).into(),
-            args: Default::default(),
-        });
+        // ctx.root()
+        //     .insert_specialized(new_name.clone().into(), new_func);
+        // return Ok(Invoke {
+        //     func: Expr::ident(new_name).into(),
+        //     args: Default::default(),
+        // });
+        return Ok(Block::new(vec![
+            Item::DefFunction(DefFunction {
+                name: new_name.clone(),
+                ty: None,
+                value: new_func,
+                visibility: Visibility::Private,
+            })
+            .into(),
+            Statement::Expr(
+                Invoke {
+                    func: Expr::ident(new_name).into(),
+                    args: Default::default(),
+                }
+                .into(),
+            ),
+        ])
+        .into());
     }
 
-    pub fn specialize_invoking(
+    pub fn specialize_invoke_func(
         &self,
         invoke: Invoke,
         func: &ValueFunction,
         ctx: &ArcScopedContext,
-    ) -> Result<Invoke> {
+    ) -> Result<Expr> {
         match invoke.func.get() {
             Expr::Locator(Locator::Ident(ident)) if ident.as_str() == "print" => {
-                return Ok(invoke);
+                return Ok(invoke.into());
             }
             _ => {}
         }
@@ -211,32 +227,6 @@ impl OptimizePass for SpecializePass {
     fn optimize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         self.specialize_item(item, ctx)
     }
-    fn optimize_invoke(
-        &self,
-        invoke: Invoke,
-        func: &ValueFunction,
-        ctx: &ArcScopedContext,
-    ) -> Result<Expr> {
-        self.specialize_invoking(invoke, &func, ctx)
-            .map(|x| x.into())
-    }
-    fn optimize_module(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
-        self.specialize_module(module, ctx)
-    }
-
-    fn evaluate_condition(
-        &self,
-        expr: Expr,
-        ctx: &ArcScopedContext,
-    ) -> Result<Option<ControlFlow>> {
-        match self.interpreter.opt.pass.evaluate_condition(expr, ctx) {
-            Ok(ok) => Ok(ok),
-            Err(err) => {
-                warn!("Cannot evaluate condition: {}", err);
-                Ok(None)
-            }
-        }
-    }
 
     fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match ctx.try_get_value_from_expr(pat) {
@@ -244,11 +234,44 @@ impl OptimizePass for SpecializePass {
             None => Ok(pat.clone()),
         }
     }
-    fn evaluate_invoke(
+    fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+        match ctx.try_get_value_from_expr(&expr) {
+            Some(value) => Ok(Expr::value(value)),
+            None => Ok(expr),
+        }
+    }
+    fn optimize_module(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+        self.specialize_module(module, ctx)
+    }
+
+    fn evaluate_invoke(&self, _invoke: Invoke, _ctx: &ArcScopedContext) -> Result<ControlFlow> {
+        Ok(ControlFlow::Into)
+    }
+    fn optimize_invoke(
         &self,
-        _invoke: Invoke,
-        _ctx: &ArcScopedContext,
-    ) -> Result<Option<ControlFlow>> {
-        Ok(Some(ControlFlow::Into))
+        invoke: Invoke,
+        func: &Value,
+        ctx: &ArcScopedContext,
+    ) -> Result<Expr> {
+        match func {
+            Value::Function(func) => self
+                .specialize_invoke_func(invoke, func, ctx)
+                .map(|x| x.into()),
+
+            _ => {
+                if let Ok(v) = self
+                    .interpreter
+                    .opt
+                    .pass
+                    .optimize_invoke(invoke.clone(), func, ctx)
+                {
+                    return Ok(v);
+                }
+                Ok(invoke.into())
+            }
+        }
+    }
+    fn evaluate_condition(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<ControlFlow> {
+        self.interpreter.opt.pass.evaluate_condition(expr, ctx)
     }
 }

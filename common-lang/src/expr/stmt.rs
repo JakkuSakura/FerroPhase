@@ -20,7 +20,11 @@ common_enum! {
         Any(AnyBox),
     }
 }
-
+impl From<Item> for Statement {
+    fn from(item: Item) -> Self {
+        Self::Item(Box::new(item))
+    }
+}
 impl Statement {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))

@@ -17,31 +17,32 @@ impl InlinePass {
     pub fn inline_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         match expr {
             Expr::Value(value) => self.inline_value(*value, ctx).map(Expr::value),
-            Expr::Invoke(invoke) => self.inline_invoke(invoke, ctx),
             _ => Ok(expr),
         }
     }
-    pub fn inline_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
-        if invoke.args.is_empty() {
-            let fun = self.try_get_expr(invoke.func.into(), ctx)?;
-            match fun {
-                Expr::Value(value) => match *value {
-                    Value::Function(f) => {
-                        if let Some(name) = &f.name {
-                            match name.as_str() {
-                                "print" => {
-                                    invoke.func = Expr::ident(name.clone()).into();
-                                    return Ok(Expr::Invoke(invoke.into()));
-                                }
-                                _ => {}
-                            }
+    pub fn inline_invoke(
+        &self,
+        mut invoke: Invoke,
+        func: &Value,
+        _ctx: &ArcScopedContext,
+    ) -> Result<Expr> {
+        match func {
+            Value::Function(func) => {
+                if let Some(name) = &func.name {
+                    match name.as_str() {
+                        "print" => {
+                            invoke.func = Expr::ident(name.clone()).into();
+                            return Ok(Expr::Invoke(invoke.into()));
                         }
-                        return Ok(f.body);
-                    }
-                    _ => {}
-                },
-                _ => {}
+                        _ if invoke.args.is_empty() => return Ok(func.body.clone()),
+                        _ => {}
+                    };
+                }
             }
+            Value::BinOpKind(kind) => {
+                warn!("TODO: inline binop {:?}", kind);
+            }
+            _ => {}
         }
 
         Ok(Expr::Invoke(invoke.into()))
@@ -70,6 +71,21 @@ impl InlinePass {
 impl OptimizePass for InlinePass {
     fn name(&self) -> &str {
         "inline"
+    }
+    fn evaluate_invoke(&self, invoke: Invoke, _ctx: &ArcScopedContext) -> Result<ControlFlow> {
+        if invoke.args.is_empty() {
+            Ok(ControlFlow::Into)
+        } else {
+            Ok(ControlFlow::Continue)
+        }
+    }
+    fn optimize_invoke(
+        &self,
+        invoke: Invoke,
+        func: &Value,
+        ctx: &ArcScopedContext,
+    ) -> Result<Expr> {
+        self.inline_invoke(invoke, func, ctx)
     }
     fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         self.inline_expr(expr, ctx)

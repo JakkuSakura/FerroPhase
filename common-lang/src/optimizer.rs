@@ -39,10 +39,7 @@ impl FoldOptimizer {
             invoke.args.push(arg.into());
         }
 
-        let control = self
-            .pass
-            .evaluate_invoke(invoke.clone(), ctx)?
-            .unwrap_or(ControlFlow::Continue);
+        let control = self.pass.evaluate_invoke(invoke.clone(), ctx)?;
         match control {
             ControlFlow::Into => {
                 // FIXME: optimize out this clone
@@ -62,29 +59,34 @@ impl FoldOptimizer {
                                 sub_ctx.insert_expr(param.name.clone(), arg.into());
                             }
 
-                            let ret = self.optimize_invoking(invoke, f, &sub_ctx)?;
+                            debug!("Doing {} for {} invoking", self.pass.name(), invoke);
+
+                            let ret = self.pass.optimize_invoke(
+                                invoke.clone(),
+                                &Value::Function(f),
+                                &sub_ctx,
+                            )?;
+
+                            debug!(
+                                "Done {} for {} invoking => {}",
+                                self.pass.name(),
+                                invoke,
+                                ret
+                            );
 
                             return Ok(ret);
                         }
-                        Value::BinOpKind(_) => {
-                            return self.pass.optimize_bin_op(invoke, ctx);
-                        }
-                        _ => {
-                            warn!(
-                                "Couldn't optimize {} due to {:?} not in context",
-                                self.serializer.serialize_invoke(&invoke)?,
-                                func
-                            );
-                            ctx.print_values(&*self.serializer)?;
+                        value => {
+                            let ret = self.pass.optimize_invoke(invoke, &value, ctx)?;
+                            return Ok(ret);
                         }
                     },
                     _ => {
                         warn!(
-                            "Couldn't optimize {} due to {:?} not in context",
-                            self.serializer.serialize_invoke(&invoke)?,
-                            func
+                            "Couldn't optimize {} due to {} not in context",
+                            invoke, func
                         );
-                        ctx.print_values(&*self.serializer)?;
+                        ctx.print_values()?;
                     }
                 }
             }
@@ -96,60 +98,20 @@ impl FoldOptimizer {
         Ok(invoke)
     }
 
-    pub fn optimize_invoking(
-        &self,
-        invoke: Invoke,
-        func: ValueFunction,
-        ctx: &ArcScopedContext,
-    ) -> Result<Expr> {
-        debug!("Doing {} for {} invoking", self.pass.name(), invoke);
-
-        // let func_body_serialized = self.serializer.serialize_expr(&func.body)?;
-        // debug!("Doing {} for {}", self.pass.name(), func_body_serialized);
-        // func.body = self.optimize_expr(func.body, ctx)?.into();
-        // let func_body_serialized2 = self.serializer.serialize_expr(&func.body)?;
-        // if func_body_serialized != func_body_serialized2 {
-        // debug!(
-        //     "Done {} for {} => {}",
-        //     self.pass.name(),
-        //     func_body_serialized,
-        //     func_body_serialized2
-        // );
-        // }
-        let expr = self.pass.optimize_invoke(invoke.clone(), &func, ctx)?;
-
-        // if serialized != serialized2 {
-        debug!(
-            "Done {} for {} invoking => {}",
-            self.pass.name(),
-            invoke,
-            expr
-        );
-        // }
-        Ok(expr)
-    }
-
     pub fn optimize_expr(&self, mut expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
         let serialized = self.serializer.serialize_expr(&expr)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
         expr = match expr {
             Expr::Block(x) => self.optimize_block(x, ctx)?,
-            Expr::Match(x) => self.optimize_cond(x, ctx)?,
+            Expr::Match(x) => self.optimize_match(x, ctx)?,
             Expr::If(x) => self.optimize_if(x, ctx)?,
             Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
             _ => self.pass.optimize_expr(expr, ctx)?,
         };
 
-        let serialized2 = self.serializer.serialize_expr(&expr)?;
-        // if serialized != serialized2 {
-        debug!(
-            "Done {} for {} => {}",
-            self.pass.name(),
-            serialized,
-            serialized2
-        );
-        // }
+        debug!("Done {} for {} => {}", self.pass.name(), serialized, expr);
+
         Ok(expr)
     }
 
@@ -269,6 +231,7 @@ impl FoldOptimizer {
         b.stmts
             .iter()
             .try_for_each(|x| self.prescan_stmt(x, &ctx))?;
+
         let mut stmts: Vec<_> = b
             .stmts
             .into_iter()
@@ -287,14 +250,11 @@ impl FoldOptimizer {
         b.stmts = stmts;
         Ok(Expr::block(b))
     }
-    pub fn optimize_cond(&self, b: Match, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_match(&self, b: Match, ctx: &ArcScopedContext) -> Result<Expr> {
         let mut cases = vec![];
         for case in b.cases {
             let cond = self.optimize_expr(case.cond, ctx)?;
-            let do_continue = self
-                .pass
-                .evaluate_condition(cond.clone(), ctx)?
-                .unwrap_or(ControlFlow::Into);
+            let do_continue = self.pass.evaluate_condition(cond.clone(), ctx)?;
             match do_continue {
                 ControlFlow::Continue => continue,
                 ControlFlow::Break(_) => break,
@@ -315,33 +275,15 @@ impl FoldOptimizer {
         }
         Ok(Expr::Match(Match { cases }))
     }
-    pub fn optimize_if(&self, b: If, ctx: &ArcScopedContext) -> Result<Expr> {
-        let mut cases = vec![];
-        for case in b.cases {
-            let cond = self.optimize_expr(case.cond, ctx)?;
-            let do_continue = self
-                .pass
-                .evaluate_condition(cond.clone(), ctx)?
-                .unwrap_or(ControlFlow::Into);
-            match do_continue {
-                ControlFlow::Continue => continue,
-                ControlFlow::Break(_) => break,
-                ControlFlow::Return(_) => break,
-                ControlFlow::Into => {
-                    let body = self.optimize_expr(case.body, ctx)?;
-                    cases.push(MatchCase { cond, body });
-                }
-                ControlFlow::IntoAndBreak(_) => {
-                    let body = self.optimize_expr(case.body, ctx)?;
-                    cases.push(MatchCase { cond, body });
-                    break;
-                }
-            }
+    pub fn optimize_if(&self, if_: If, ctx: &ArcScopedContext) -> Result<Expr> {
+        let match_ = Match { cases: if_.cases };
+        let expr = self.optimize_match(match_, ctx)?;
+        if let Expr::Match(match_) = expr {
+            return Ok(Expr::If(If {
+                cases: match_.cases,
+            }));
         }
-        if cases.len() == 1 {
-            return Ok(cases.into_iter().next().unwrap().body);
-        }
-        Ok(Expr::If(If { cases }))
+        Ok(expr)
     }
     pub fn optimize_func(
         &self,
