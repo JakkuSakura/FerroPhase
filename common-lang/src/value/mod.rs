@@ -63,6 +63,7 @@ impl Value {
     pub fn null() -> Value {
         Value::Null(ValueNull)
     }
+    pub const NULL: Value = Value::Null(ValueNull);
     pub fn expr(e: impl Into<Expr>) -> Self {
         match e.into() {
             Expr::Value(v) => *v,
@@ -72,9 +73,10 @@ impl Value {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
-    pub fn undefined() -> Self {
+    pub const fn undefined() -> Self {
         Self::Undefined(ValueUndefined)
     }
+    pub const UNDEFINED: Self = Self::Undefined(ValueUndefined);
     pub fn as_structural(&self) -> Option<&ValueStructural> {
         match self {
             Value::Struct(s) => Some(&s.structural),

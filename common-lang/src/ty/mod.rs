@@ -33,12 +33,15 @@ common_enum! {
 
 }
 impl TypeValue {
-    pub fn unit() -> TypeValue {
+    pub const fn unit() -> TypeValue {
         TypeValue::Unit(TypeUnit {})
     }
-    pub fn any() -> TypeValue {
+    pub const UNIT: TypeValue = TypeValue::Unit(TypeUnit {});
+    pub const fn any() -> TypeValue {
         TypeValue::Any(TypeAny {})
     }
+    pub const ANY: TypeValue = TypeValue::Any(TypeAny {});
+
     pub fn is_any(&self) -> bool {
         matches!(self, TypeValue::Any(_))
     }

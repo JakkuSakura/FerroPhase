@@ -1,7 +1,7 @@
 use crate::expr::{Expr, ExprId};
 use crate::utils::arena::{Arena, ArenaMeta};
 use serde::{Deserialize, Serialize, Serializer};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::rc::Rc;
 
 impl ArenaMeta for Expr {
@@ -61,9 +61,9 @@ impl From<Expr> for AExpr {
         Self::new(expr)
     }
 }
-impl Into<Expr> for AExpr {
-    fn into(self) -> Expr {
-        self.get()
+impl From<AExpr> for Expr {
+    fn from(value: AExpr) -> Self {
+        value.get()
     }
 }
 impl Serialize for AExpr {
@@ -91,6 +91,12 @@ impl PartialEq for AExpr {
 impl Eq for AExpr {}
 impl Debug for AExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get().fmt(f)
+        Debug::fmt(&self.get(), f)
+    }
+}
+
+impl Display for AExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.get(), f)
     }
 }
