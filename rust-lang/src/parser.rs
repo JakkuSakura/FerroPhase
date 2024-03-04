@@ -811,6 +811,9 @@ impl RustParser {
         let file = self.parse_file(path, outputs)?;
         Ok(file)
     }
+    pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
+        parse_expr(code).map(|x| Value::expr(x.get()))
+    }
     pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
         parse_expr(code).map(|x| x.get())
     }

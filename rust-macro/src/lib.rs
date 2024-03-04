@@ -3,7 +3,7 @@ use common::*;
 use common_lang::ast::{File, Module, Tree};
 use common_lang::context::{ArcScopedContext, ScopedContext};
 use common_lang::expr::Expr;
-use common_lang::optimizer::{load_optimizer, FoldOptimizer};
+use common_lang::optimizer::{load_optimizers, FoldOptimizer};
 use common_lang::passes::OptimizePass;
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
@@ -55,7 +55,7 @@ impl Optimizee for File {
 fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
     let ctx = Arc::new(ScopedContext::new());
     let formatter = RustSerde::new();
-    let optimizer = load_optimizer(Rc::new(formatter));
+    let optimizer = load_optimizers(Rc::new(formatter));
     let node = code.optimize(optimizer, &ctx)?;
 
     Ok(node.into())

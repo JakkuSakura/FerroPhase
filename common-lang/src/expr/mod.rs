@@ -1,15 +1,15 @@
 use common::*;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 
 mod arena;
 mod stmt;
 mod typing;
 mod value;
 
-use crate::common_enum;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::{Value, ValueUnit};
+use crate::{common_enum, get_threadlocal_serializer};
 pub use arena::*;
 pub use stmt::*;
 pub use typing::*;
@@ -79,5 +79,11 @@ impl Expr {
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
+    }
+}
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = get_threadlocal_serializer().serialize_expr(self).unwrap();
+        f.write_str(&s)
     }
 }
