@@ -24,8 +24,7 @@ pub struct ScopedContext {
     buffer: Mutex<Vec<String>>,
     #[allow(dead_code)]
     visibility: Visibility,
-    #[allow(dead_code)]
-    access_parent: bool,
+    access_parent_locals: bool,
 }
 
 // TODO: rename to ScopedContext
@@ -41,7 +40,7 @@ impl ScopedContext {
             childs: Default::default(),
             buffer: Mutex::new(vec![]),
             visibility: Visibility::Public,
-            access_parent: false,
+            access_parent_locals: false,
         }
     }
     pub fn into_shared(self) -> ArcScopedContext {
@@ -52,7 +51,7 @@ impl ScopedContext {
         self: &ArcScopedContext,
         name: Ident,
         visibility: Visibility,
-        access_parent: bool,
+        access_parent_locals: bool,
     ) -> ArcScopedContext {
         let child = Arc::new(ScopedContext {
             parent: Some(self.clone()),
@@ -62,7 +61,7 @@ impl ScopedContext {
             childs: Default::default(),
             buffer: Mutex::new(vec![]),
             visibility,
-            access_parent,
+            access_parent_locals,
         });
         self.childs.insert(name, child.clone());
         child
@@ -100,12 +99,15 @@ impl ScopedContext {
         if let Some(parent) = &self.parent {
             parent.print_values()?;
         }
-
+        self.print_local_values()
+    }
+    pub fn print_local_values(&self) -> Result<()> {
+        debug!("Values in {}", self.path);
         for key in self.storages.iter() {
             let (k, v) = key.pair();
             let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
             let ty = v.ty.as_ref().unwrap_or(&TypeValue::ANY);
-            println!("{}::{}: val:{} ty:{}", self.path, k, value, ty)
+            debug!("{}: val:{} ty:{}", k, value, ty)
         }
         Ok(())
     }
@@ -146,18 +148,26 @@ impl ScopedContext {
         access_local: bool,
     ) -> Option<ValueStorage> {
         let key = key.into();
-        // debug!("get_storage in {} {}", self.path, key);
+        debug!(
+            "get_storage in {} {} access_local={}",
+            self.path, key, access_local
+        );
+        self.print_local_values().unwrap();
         if key.segments.is_empty() {
             return None;
         }
         if key.segments.len() == 1 {
-            if access_local {
-                let value = self.storages.get(&key.segments[0]);
-                if let Some(value) = value {
-                    return Some(value.value().clone());
-                }
+            // TODO: when calling function, use context of its own
+            // if access_local {
+            let value = self.storages.get(&key.segments[0]);
+            if let Some(value) = value {
+                return Some(value.value().clone());
             }
-            return self.parent.as_ref()?.get_storage(key, self.access_parent);
+            // }
+            return self
+                .parent
+                .as_ref()?
+                .get_storage(key, self.access_parent_locals);
         }
 
         let (paths, key) = key.segments.split_at(key.segments.len() - 1);
@@ -195,6 +205,7 @@ impl ScopedContext {
             .map(|x| x.key().clone())
             .collect()
     }
+    // TODO: integrate it to optimizers
     pub fn try_get_value_from_expr(self: &ArcScopedContext, expr: &Expr) -> Option<Value> {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
