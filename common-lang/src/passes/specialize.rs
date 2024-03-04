@@ -134,7 +134,7 @@ impl SpecializePass {
             sig,
             body: new_body.into(),
         };
-        trace!(
+        debug!(
             "Specialized function {} with {} => {}",
             name,
             self.serializer.serialize_args_arena(&args)?,
@@ -147,23 +147,27 @@ impl SpecializePass {
         //     func: Expr::ident(new_name).into(),
         //     args: Default::default(),
         // });
-        return Ok(Block::new(vec![
-            Item::DefFunction(DefFunction {
-                name: new_name.clone(),
-                ty: None,
-                value: new_func,
-                visibility: Visibility::Private,
-            })
-            .into(),
-            Statement::Expr(
-                Invoke {
-                    func: Expr::ident(new_name).into(),
-                    args: Default::default(),
-                }
+        if invoke.args.is_empty() {
+            Ok(new_func.body)
+        } else {
+            Ok(Block::new(vec![
+                Item::DefFunction(DefFunction {
+                    name: new_name.clone(),
+                    ty: None,
+                    value: new_func,
+                    visibility: Visibility::Private,
+                })
                 .into(),
-            ),
-        ])
-        .into());
+                Statement::Expr(
+                    Invoke {
+                        func: Expr::ident(new_name).into(),
+                        args: Default::default(),
+                    }
+                    .into(),
+                ),
+            ])
+            .into())
+        }
     }
 
     pub fn specialize_invoke_func(
@@ -190,9 +194,7 @@ impl SpecializePass {
             .items
             .into_iter()
             .filter(|x| match x {
-                Item::DefFunction(d) if d.name.as_str() == "main" || d.name.as_str() == "print" => {
-                    true
-                }
+                Item::DefFunction(d) if d.name.as_str() == "print" => true,
                 Item::DefFunction(func) => {
                     func.value.params.is_empty() && func.value.generics_params.is_empty()
                 }
@@ -215,6 +217,7 @@ impl SpecializePass {
     pub fn specialize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
         match item {
             Item::Module(x) => self.specialize_module(x, ctx).map(Item::Module),
+
             _ => Ok(item),
         }
     }

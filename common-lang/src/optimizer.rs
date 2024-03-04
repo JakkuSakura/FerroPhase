@@ -45,7 +45,9 @@ impl FoldOptimizer {
                 // FIXME: optimize out this clone
                 match func.clone() {
                     Expr::Value(value) => match *value {
-                        Value::Function(f) => {
+                        Value::Function(mut f) => {
+                            // TODO: when calling function, use context of its own, instead of use current context
+
                             let sub_ctx = ctx.child(
                                 f.name.clone().unwrap_or(Ident::new("__func__")),
                                 Visibility::Private,
@@ -58,8 +60,10 @@ impl FoldOptimizer {
 
                                 sub_ctx.insert_expr(param.name.clone(), arg.into());
                             }
+                            debug!("Doing {} for {} invoking 1", self.pass.name(), invoke);
+                            f.body = self.optimize_expr(f.body, &sub_ctx)?;
 
-                            debug!("Doing {} for {} invoking", self.pass.name(), invoke);
+                            debug!("Doing {} for {} invoking 2", self.pass.name(), invoke);
 
                             let ret = self.pass.optimize_invoke(
                                 invoke.clone(),
@@ -103,6 +107,11 @@ impl FoldOptimizer {
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
         expr = match expr {
+            Expr::Locator(val) => {
+                info!("Looking for {}", val);
+                ctx.get_expr(&val)
+                    .with_context(|| format!("Couldn't find {}", val))?
+            }
             Expr::Block(x) => self.optimize_block(x, ctx)?,
             Expr::Match(x) => self.optimize_match(x, ctx)?,
             Expr::If(x) => self.optimize_if(x, ctx)?,
@@ -223,6 +232,7 @@ impl FoldOptimizer {
     fn prescan_stmt(&self, stmt: &Statement, ctx: &ArcScopedContext) -> Result<()> {
         match stmt {
             Statement::Item(x) => self.prescan_item(&**x, ctx),
+
             _ => Ok(()),
         }
     }

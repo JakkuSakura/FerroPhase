@@ -188,13 +188,9 @@ impl InterpreterPass {
     }
 
     pub fn interpret_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
-        if def.name == Ident::new("main") {
-            self.interpret_expr(&def.value.body, ctx).map(|_| ())
-        } else {
-            let name = &def.name;
-            ctx.insert_function(name.clone(), def.value.clone());
-            Ok(())
-        }
+        let name = &def.name;
+        ctx.insert_function(name.clone(), def.value.clone());
+        Ok(())
     }
     pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &ArcScopedContext) -> Result<()> {
         ctx.insert_type(def.name.clone(), TypeValue::Struct(def.value.clone()));
@@ -327,7 +323,7 @@ impl InterpreterPass {
         node: &ValueFunction,
         ctx: &ArcScopedContext,
     ) -> Result<ValueFunction> {
-        let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
+        let sub = ctx.child(Ident::new("__func__"), Visibility::Private, true);
         for generic in &node.generics_params {
             let ty = self
                 .type_system
