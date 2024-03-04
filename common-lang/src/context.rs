@@ -29,6 +29,7 @@ pub struct ScopedContext {
     access_parent: bool,
 }
 
+// TODO: rename to ScopedContext
 pub type ArcScopedContext = Arc<ScopedContext>;
 
 impl ScopedContext {
@@ -43,6 +44,9 @@ impl ScopedContext {
             visibility: Visibility::Public,
             access_parent: false,
         }
+    }
+    pub fn into_shared(self) -> ArcScopedContext {
+        Arc::new(self)
     }
     pub fn child(
         self: &ArcScopedContext,
@@ -192,13 +196,17 @@ impl ScopedContext {
             .collect()
     }
     pub fn try_get_value_from_expr(self: &ArcScopedContext, expr: &Expr) -> Option<Value> {
-        info!("try_get_value_from_expr {:?}", expr);
+        info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
             Expr::Locator(ident) => self.get_value(ident),
             Expr::Value(value) => Some(*value.clone()),
             _ => None,
         };
-        info!("try_get_value_from_expr {:?} => {:?}", expr, ret);
+        info!(
+            "try_get_value_from_expr {} => {}",
+            expr,
+            ret.as_ref().map(|x| x.to_string()).unwrap_or_default()
+        );
         ret
     }
     pub fn get_value_recursive(self: &ArcScopedContext, key: impl Into<Path>) -> Option<Value> {

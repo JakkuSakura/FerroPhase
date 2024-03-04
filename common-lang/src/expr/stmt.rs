@@ -23,7 +23,7 @@ common_enum! {
 
 impl Statement {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(crate::utils::anybox::AnyBox::new(any))
+        Self::Any(AnyBox::new(any))
     }
     pub fn item(item: Item) -> Self {
         Self::Item(Box::new(item))
@@ -52,6 +52,7 @@ impl Statement {
         match self {
             Self::Expr(expr) => expr.is_unit(),
             Self::SideEffect(expr) => expr.expr.is_unit(),
+            Self::Item(item) => item.is_unit(),
             _ => false,
         }
     }

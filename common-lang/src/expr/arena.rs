@@ -1,6 +1,7 @@
 use crate::expr::{Expr, ExprId};
 use crate::utils::arena::{Arena, ArenaMeta};
 use serde::{Deserialize, Serialize, Serializer};
+use std::fmt::Debug;
 use std::rc::Rc;
 
 impl ArenaMeta for Expr {
@@ -36,14 +37,16 @@ impl ExprArena {
         EXPR_ARENA.with(|arena| arena.clone())
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Hash)]
 pub struct AExpr {
     id: ExprId,
+    _marker: std::marker::PhantomData<(Expr, Rc<ExprArena>)>,
 }
 impl AExpr {
     pub fn new(id: Expr) -> Self {
         Self {
             id: ExprArena::get_thread_local().alloc(id),
+            _marker: std::marker::PhantomData,
         }
     }
     pub fn id(&self) -> ExprId {
@@ -78,5 +81,16 @@ impl<'de> Deserialize<'de> for AExpr {
     {
         let expr: Expr = Deserialize::deserialize(deserializer)?;
         Ok(Self::new(expr))
+    }
+}
+impl PartialEq for AExpr {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+impl Eq for AExpr {}
+impl Debug for AExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.get().fmt(f)
     }
 }

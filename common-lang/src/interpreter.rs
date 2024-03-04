@@ -1,4 +1,4 @@
-use crate::ast::{Item, Module, Tree};
+use crate::ast::{Item, ItemChunkExt, Module, Tree};
 use crate::context::ArcScopedContext;
 use crate::expr::*;
 use crate::optimizer::FoldOptimizer;
@@ -9,26 +9,35 @@ use common::*;
 use std::rc::Rc;
 
 pub struct Interpreter {
-    pub opt: FoldOptimizer<InterpreterPass>,
+    pub opt: FoldOptimizer,
 }
 impl Interpreter {
     pub fn new(serializer: Rc<dyn Serializer>) -> Self {
         let pass = InterpreterPass::new(serializer.clone());
         Self {
-            opt: FoldOptimizer::new(serializer, pass),
+            opt: FoldOptimizer::new(serializer, Box::new(pass)),
         }
     }
     fn extract_expr(&self, node: Expr) -> Result<Value> {
         match node {
             Expr::Value(value) => Ok(*value),
-            _ => bail!("Failed to extract Value from {:?}", node),
+            _ => bail!("Failed to extract Value from {}", node),
         }
     }
     fn extract_module(&self, node: Module) -> Result<Value> {
         match node.items.len() {
             0 => Ok(Value::unit()),
-            1 => self.extract_item(node.items.into_iter().next().unwrap()),
-            _ => bail!("Failed to extract Value from {:?}", node),
+            _ => {
+                let main_function = node
+                    .items
+                    .find_item("main")
+                    .ok_or_else(|| eyre!("Failed to find main function in module {:?}", node))?;
+                if let Item::DefFunction(main_function) = main_function {
+                    self.extract_expr(main_function.value.body.clone())
+                } else {
+                    bail!("Failed to find main function in module {:?}", node)
+                }
+            }
         }
     }
     fn extract_item(&self, node: Item) -> Result<Value> {

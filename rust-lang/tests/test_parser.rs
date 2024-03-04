@@ -1,24 +1,14 @@
 use common::assert_eq;
 use common::*;
+use common_lang::ast::{DefFunction, Impl, Item, Visibility};
 use common_lang::expr::*;
+use common_lang::id::Locator;
 use common_lang::register_threadlocal_serializer;
-use common_lang::value::{
-    FunctionParam, FunctionSignature, TypePrimitive, TypeValue, ValueFunction,
-};
-use rust_lang::RustSerde;
+use common_lang::ty::{TypePrimitive, TypeValue};
+use common_lang::value::{FunctionParam, FunctionSignature, ValueFunction};
+use rust_lang::{shll_parse_expr, shll_parse_item, RustSerde};
 use std::rc::Rc;
-macro_rules! shll_parse_item {
-    ($($tt:tt)*) => {{
-        let code: syn::Item = syn::parse_quote!($($tt)*);
-        rust_lang::parser::RustParser::new().parse_item(code)?
-    }};
-}
-macro_rules! shll_parse_expr {
-    ($($tt:tt)*) => {{
-        let code: syn::Expr = syn::parse_quote!($($tt)*);
-        rust_lang::parser::RustParser::new().parse_expr(code)?
-    }};
-}
+
 #[test]
 fn test_parse_fn() -> Result<()> {
     register_threadlocal_serializer(Rc::new(RustSerde::new()));
@@ -66,7 +56,7 @@ fn test_parse_impl_for() -> Result<()> {
     assert_eq!(
         code,
         Item::Impl(Impl {
-            trait_ty: Some(crate::id::Locator::Ident("Foo".into())),
+            trait_ty: Some(Locator::Ident("Foo".into())),
             self_ty: TypeExpr::ident("Bar".into()),
             items: vec![shll_parse_item! {
                 fn foo(a: i64) -> i64 {

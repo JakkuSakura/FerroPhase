@@ -4,14 +4,7 @@ fn print(i: impl Display) {
     println!("{}", i)
 }
 fn main() {
-    print(1 + 2);
-}
-pub fn add_0() -> i64 {
-    1 + 2
-}
-pub fn do_op_1() {
-    print(1 + 2);
+    do_op(1, 2, 3, 4, add);
 }
 
-// stdout: 3
 // result: ()
