@@ -43,3 +43,25 @@ fn test_eval_function_call() -> Result<()> {
     assert_eq!(value, expected);
     Ok(())
 }
+
+#[test]
+fn test_eval_function_call_with_main() -> Result<()> {
+    setup_logs(LogLevel::Debug)?;
+    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+
+    let code = shll_parse_expr! {
+        {
+            fn foo(a: i64, b: i64) -> i64 {
+                a + b
+            }
+            fn main() -> i64 {
+                foo(1, 2)
+            }
+            main()
+        }
+    };
+    let value = interpret_shll_expr(code)?;
+    let expected = shll_parse_value!(3);
+    assert_eq!(value, expected);
+    Ok(())
+}
