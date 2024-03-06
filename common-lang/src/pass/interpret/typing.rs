@@ -7,7 +7,8 @@ use crate::value::{
     DecimalType, FieldTypeValue, GenericParam, ImplTraits, IntType, TypeBounds, TypeFunction,
     TypePrimitive, TypeStruct, TypeStructural, TypeType, TypeValue, Value, ValueFunction,
 };
-use common::{bail, ensure, ContextCompat, Error, Itertools, Result};
+use common::{bail, ensure, ContextCompat, Error, Result};
+use itertools::Itertools;
 
 impl InterpreterPass {
     pub fn type_check_value(&self, lit: &Value, ty: &TypeValue) -> Result<()> {

@@ -5,10 +5,12 @@ use crate::value::{TypeBounds, TypeStruct, TypeValue, Value};
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use bytes::BytesMut;
 use common::*;
+use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Deref, DerefMut, Mul, Sub};
 
 /// wrap struct declare with derive Debug, Clone, Serialize, Deserialize,
 /// PartialEq, Eq,

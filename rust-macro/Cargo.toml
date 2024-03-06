@@ -13,5 +13,5 @@ syn = "2"
 quote = "1"
 proc-macro2 = "1"
 rust-lang = { path = "../rust-lang" }
-common = { path = "../common" }
+common = { workspace = true }
 common-lang = { path = "../common-lang" }

@@ -2,7 +2,6 @@ use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::{Value, ValueUnit};
 use crate::{common_enum, get_threadlocal_serializer};
-use common::*;
 use std::fmt::{Debug, Display, Formatter};
 
 mod arena;
