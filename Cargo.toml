@@ -1,11 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "common",
     "common-lang",
     "rust-lang",
-    "rust-lang/rustc",
     "rust-macro",
     "javascript-lang"
 ]
 exclude = []
+
+[workspace.dependencies]
+common = { git = "https://github.com/JakkuSakura/common-rs" }

@@ -7,6 +7,7 @@ use crate::pat::{Pattern, PatternIdent};
 use crate::value::*;
 use crate::*;
 use common::*;
+use itertools::{zip_eq, Itertools};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

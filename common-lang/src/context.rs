@@ -4,6 +4,8 @@ use crate::id::{Ident, Path};
 use crate::value::{TypeValue, Value, ValueFunction};
 use common::*;
 use dashmap::DashMap;
+use itertools::Itertools;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
 
 #[derive(Clone, Default)]
