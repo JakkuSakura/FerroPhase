@@ -6,17 +6,17 @@ use common_lang::interpreter::Interpreter;
 use common_lang::register_threadlocal_serializer;
 use common_lang::value::Value;
 use rust_lang::{shll_parse_expr, shll_parse_value, RustSerde};
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn interpret_shll_expr(expr: Expr) -> Result<Value> {
-    let interpreter = Interpreter::new(Rc::new(RustSerde::new()));
+    let interpreter = Interpreter::new(Arc::new(RustSerde::new()));
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)
 }
 
 #[test]
 fn test_eval_arithmetics() -> Result<()> {
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_expr! {
         1 + 2 * 3
@@ -28,7 +28,7 @@ fn test_eval_arithmetics() -> Result<()> {
 }
 #[test]
 fn test_eval_function_call() -> Result<()> {
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_expr! {
         {
@@ -47,7 +47,7 @@ fn test_eval_function_call() -> Result<()> {
 #[test]
 fn test_eval_function_call_with_main() -> Result<()> {
     setup_logs(LogLevel::Debug)?;
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_expr! {
         {

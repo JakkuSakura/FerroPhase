@@ -1,23 +1,15 @@
 use crate::ast::Visibility;
 use crate::context::SharedScopedContext;
-use crate::expr::*;
-use crate::ty::{
-    DecimalType, FieldTypeValue, ImplTraits, IntType, TypeBounds, TypeFunction, TypePrimitive,
-    TypeStruct, TypeStructural, TypeType, TypeValue,
+use crate::expr::Expr;
+use crate::pass::InterpreterPass;
+use crate::utils::conv::TryConv;
+use crate::value::{
+    DecimalType, FieldTypeValue, GenericParam, ImplTraits, IntType, TypeBounds, TypeFunction,
+    TypePrimitive, TypeStruct, TypeStructural, TypeType, TypeValue, Value, ValueFunction,
 };
-use crate::value::*;
-use crate::Serializer;
-use common::*;
-use std::rc::Rc;
+use common::{bail, ensure, ContextCompat, Error, Itertools, Result};
 
-pub struct TypeSystem {
-    serializer: Rc<dyn Serializer>,
-}
-
-impl TypeSystem {
-    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
-        Self { serializer }
-    }
+impl InterpreterPass {
     pub fn type_check_value(&self, lit: &Value, ty: &TypeValue) -> Result<()> {
         match lit {
             Value::Int(_) => {
@@ -89,7 +81,7 @@ impl TypeSystem {
         match expr {
             Expr::Locator(n) => {
                 let expr = ctx
-                    .get_expr(n)
+                    .get_expr(n.to_path())
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return self.type_check_expr_against_value(&expr, type_value, ctx);
             }
@@ -99,47 +91,18 @@ impl TypeSystem {
         }
         Ok(())
     }
-    pub fn evaluate_type_value_op(
-        &self,
-        op: &TypeBinOp,
-        ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
-        match op {
-            TypeBinOp::Add { left, right } => {
-                let lhs = self.evaluate_type_expr(&left, ctx)?;
-                let rhs = self.evaluate_type_expr(&right, ctx)?;
-                match (lhs, rhs) {
-                    (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
-                        l.bounds.bounds.extend(r.bounds.bounds);
-                        return Ok(TypeValue::ImplTraits(l));
-                    }
-                    _ => {}
-                }
-                bail!("Could not evaluate type value op {:?}", op)
-            }
-            TypeBinOp::Sub { left, right } => {
-                let lhs = self.evaluate_type_expr(&left, ctx)?;
-                let rhs = self.evaluate_type_expr(&right, ctx)?;
-                match (lhs, rhs) {
-                    // (TypeValue::ImplTraits(mut l), TypeValue::ImplTraits(r)) => {
-                    //     for r in r.bounds.bounds {
-                    //         l.bounds.bounds.retain(|x| x.name != r.name);
-                    //     }
-                    //     return Ok(TypeValue::ImplTraits(l));
-                    // }
-                    _ => {}
-                }
-                bail!("Could not evaluate type value op {:?}", op)
-            }
-        }
-    }
+
     pub fn evaluate_type_value(
         &self,
         ty: &TypeValue,
         ctx: &SharedScopedContext,
     ) -> Result<TypeValue> {
         match ty {
-            TypeValue::Expr(expr) => self.evaluate_type_expr(expr, ctx),
+            TypeValue::Expr(expr) => {
+                let value = self.interpret_expr(expr, ctx)?;
+                let ty = value.try_conv()?;
+                return Ok(ty);
+            }
             TypeValue::Struct(n) => {
                 let fields = n
                     .fields
@@ -152,10 +115,10 @@ impl TypeSystem {
                         })
                     })
                     .try_collect()?;
-                Ok(TypeValue::Struct(TypeStruct {
+                return Ok(TypeValue::Struct(TypeStruct {
                     name: n.name.clone(),
                     fields,
-                }))
+                }));
             }
             TypeValue::Structural(n) => {
                 let fields = n
@@ -169,7 +132,7 @@ impl TypeSystem {
                         })
                     })
                     .try_collect()?;
-                Ok(TypeValue::Structural(TypeStructural { fields }))
+                return Ok(TypeValue::Structural(TypeStructural { fields }));
             }
             TypeValue::Function(f) => {
                 let sub = ctx.child(
@@ -179,7 +142,7 @@ impl TypeSystem {
                 );
                 for g in &f.generics_params {
                     let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
-                    sub.insert_type_with_ctx(g.name.clone(), constrain);
+                    sub.insert_value_with_ctx(g.name.clone(), constrain.into());
                 }
                 let params = f
                     .params
@@ -187,17 +150,17 @@ impl TypeSystem {
                     .map(|x| self.evaluate_type_value(x, &sub))
                     .try_collect()?;
                 let ret = self.evaluate_type_value(&f.ret, &sub)?;
-                Ok(TypeValue::Function(
+                return Ok(TypeValue::Function(
                     TypeFunction {
                         params,
                         generics_params: f.generics_params.clone(),
                         ret,
                     }
                     .into(),
-                ))
+                ));
             }
-            TypeValue::TypeBounds(b) => self.evaluate_type_bounds(b, ctx),
-            TypeValue::ImplTraits(t) => self.evaluate_impl_traits(t, ctx),
+            TypeValue::TypeBounds(b) => return self.evaluate_type_bounds(b, ctx),
+            TypeValue::ImplTraits(t) => return self.evaluate_impl_traits(t, ctx),
             _ => Ok(ty.clone()),
         }
     }
@@ -212,27 +175,7 @@ impl TypeSystem {
             _ => Ok(traits),
         }
     }
-    pub fn evaluate_type_expr(
-        &self,
-        ty: &TypeExpr,
-        ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
-        match ty {
-            TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
-            TypeExpr::Locator(i) => {
-                match i.to_string().as_str() {
-                    "Add" => return Ok(TypeValue::impl_trait("Add".into())),
-                    _ => {}
-                }
-                let ty = ctx
-                    .get_type(i)
-                    .with_context(|| format!("Could not find type {:?}", i))?;
-                Ok(ty)
-            }
-            TypeExpr::BinOp(o) => self.evaluate_type_value_op(o, ctx),
-            _ => bail!("Could not evaluate type value {:?}", ty),
-        }
-    }
+
     pub fn evaluate_type_bounds(
         &self,
         bounds: &TypeBounds,
@@ -241,26 +184,22 @@ impl TypeSystem {
         let bounds: Vec<_> = bounds
             .bounds
             .iter()
-            .map(|x| self.evaluate_type_expr(x, ctx))
+            .map(|x| self.interpret_expr(x, ctx))
             .try_collect()?;
         if bounds.is_empty() {
             return Ok(TypeValue::any());
         }
         if bounds.len() == 1 {
-            return Ok(bounds.first().unwrap().clone());
+            return bounds.first().unwrap().clone().try_conv();
         }
 
         bail!("failed to evaluate type bounds: {:?}", bounds)
         // Ok(TypeValue::TypeBounds(TypeBounds { bounds }))
     }
 
-    pub fn type_check_expr(
-        &self,
-        expr: &Expr,
-        ty: &TypeExpr,
-        ctx: &SharedScopedContext,
-    ) -> Result<()> {
-        let tv = self.evaluate_type_expr(ty, ctx)?;
+    pub fn type_check_expr(&self, expr: &Expr, ty: &Expr, ctx: &SharedScopedContext) -> Result<()> {
+        let tv = self.interpret_expr(ty, ctx)?.try_conv()?;
+
         self.type_check_expr_against_value(expr, &tv, ctx)
     }
 
@@ -300,7 +239,7 @@ impl TypeSystem {
                     TypeFunction {
                         generics_params: vec![GenericParam {
                             name: crate::id::Ident::new("T"),
-                            bounds: TypeBounds::new(TypeExpr::value(TypeValue::any())),
+                            bounds: TypeBounds::new(Expr::value(TypeValue::any().into())),
                         }],
                         params: vec![TypeValue::ident("T".into()), TypeValue::ident("T".into())],
                         ret: TypeValue::bool(),
@@ -329,7 +268,7 @@ impl TypeSystem {
         match expr {
             Expr::Locator(n) => {
                 let ty = ctx
-                    .get_type(n)
+                    .get_type(n.to_path())
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return Ok(ty);
             }
@@ -386,7 +325,7 @@ impl TypeSystem {
         Ok(TypeFunction {
             params,
             generics_params: func.generics_params.clone(),
-            ret: ret,
+            ret,
         })
     }
 }

@@ -8,32 +8,41 @@ use crate::printer::RustPrinter;
 use common::Result;
 use common_lang::ast::{File, Item, Module, Tree, Visibility};
 use common_lang::expr::*;
-use common_lang::ty::TypeValue;
-use common_lang::value::{Value, ValueFunction};
+use common_lang::value::{TypeValue, Value, ValueFunction};
 use common_lang::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::PathBuf;
 use syn::parse_str;
-
+macro_rules! unsafe_impl_send_sync {
+    ($t: ty) => {
+        unsafe impl Send for $t {}
+        unsafe impl Sync for $t {}
+    };
+}
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawExprMacro {
     pub raw: syn::ExprMacro,
 }
 
+unsafe_impl_send_sync!(RawExprMacro);
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawItemMacro {
     pub raw: syn::ItemMacro,
 }
+unsafe_impl_send_sync!(RawItemMacro);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawStmtMacro {
     pub raw: syn::StmtMacro,
 }
+unsafe_impl_send_sync!(RawStmtMacro);
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawType {
     pub raw: syn::TypePath,
 }
+unsafe_impl_send_sync!(RawType);
 
 impl Serialize for RawType {
     fn serialize<S>(&self, _serializer: S) -> std::result::Result<S::Ok, S::Error>
@@ -55,21 +64,24 @@ impl<'de> Deserialize<'de> for RawType {
 pub struct RawUse {
     pub raw: syn::ItemUse,
 }
-
+unsafe_impl_send_sync!(RawUse);
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawImplTrait {
     pub raw: syn::TypeImplTrait,
 }
+unsafe_impl_send_sync!(RawImplTrait);
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RawExpr {
     pub raw: syn::Expr,
 }
+unsafe_impl_send_sync!(RawExpr);
 
 #[derive(Debug, Clone)]
 pub struct RawTokenSteam {
     pub raw: proc_macro2::TokenStream,
 }
+unsafe_impl_send_sync!(RawTokenSteam);
 impl PartialEq for RawTokenSteam {
     fn eq(&self, other: &Self) -> bool {
         self.raw.to_string() == other.raw.to_string()

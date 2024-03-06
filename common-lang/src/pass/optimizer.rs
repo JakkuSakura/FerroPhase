@@ -2,14 +2,14 @@ use crate::ast::{DefFunction, File, Import, Item, Module, Tree, Visibility};
 use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::id::Ident;
-use crate::passes::*;
+use crate::pass::{InlinePass, OptimizePass, SpecializePass};
 use crate::value::*;
 use crate::*;
 use common::*;
 use std::mem::take;
-use std::rc::Rc;
+use std::sync::Arc;
 
-pub fn load_optimizers(serializer: Rc<dyn Serializer>) -> Vec<FoldOptimizer> {
+pub fn load_optimizers(serializer: Arc<dyn Serializer>) -> Vec<FoldOptimizer> {
     let optimizers: Vec<Box<dyn OptimizePass>> = vec![
         Box::new(SpecializePass::new(serializer.clone())),
         Box::new(InlinePass::new(serializer.clone())),
@@ -22,11 +22,11 @@ pub fn load_optimizers(serializer: Rc<dyn Serializer>) -> Vec<FoldOptimizer> {
 }
 
 pub struct FoldOptimizer {
-    serializer: Rc<dyn Serializer>,
+    serializer: Arc<dyn Serializer>,
     pub(crate) pass: Box<dyn OptimizePass>,
 }
 impl FoldOptimizer {
-    pub fn new(serializer: Rc<dyn Serializer>, pass: Box<dyn OptimizePass>) -> Self {
+    pub fn new(serializer: Arc<dyn Serializer>, pass: Box<dyn OptimizePass>) -> Self {
         Self { serializer, pass }
     }
 
@@ -110,7 +110,7 @@ impl FoldOptimizer {
         expr = match expr {
             Expr::Locator(val) => {
                 info!("Looking for {}", val);
-                ctx.get_expr(&val)
+                ctx.get_expr(val.to_path())
                     .with_context(|| format!("Couldn't find {}", val))?
             }
             Expr::Block(x) => self.optimize_block(x, ctx)?,
