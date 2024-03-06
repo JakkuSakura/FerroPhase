@@ -1,20 +1,19 @@
 use common::assert_eq;
 use common::*;
-use common_lang::context::ScopedContext;
+use common_lang::context::SharedScopedContext;
 use common_lang::expr::*;
-use common_lang::optimizer::FoldOptimizer;
-use common_lang::passes::SpecializePass;
+use common_lang::pass::{FoldOptimizer, SpecializePass};
 use common_lang::register_threadlocal_serializer;
 use rust_lang::{shll_parse_expr, RustSerde};
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn specialize_shll_expr(mut expr: Expr) -> Result<Expr> {
-    let serializer = Rc::new(RustSerde::new());
+    let serializer = Arc::new(RustSerde::new());
     let optimizer = FoldOptimizer::new(
         serializer.clone(),
         Box::new(SpecializePass::new(serializer.clone())),
     );
-    let ctx = ScopedContext::new().into_shared();
+    let ctx = SharedScopedContext::new();
     expr = optimizer.optimize_expr(expr, &ctx)?;
 
     Ok(expr)
@@ -22,7 +21,7 @@ fn specialize_shll_expr(mut expr: Expr) -> Result<Expr> {
 
 #[test]
 fn test_specialize_arithmetics() -> Result<()> {
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_expr! {
         1 + 2 * 3
@@ -34,9 +33,7 @@ fn test_specialize_arithmetics() -> Result<()> {
 }
 #[test]
 fn test_specialize_function_call() -> Result<()> {
-    setup_logs(LogLevel::Debug)?;
-
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_expr! {{
         fn foo(a: i64, b: i64) -> i64 {
@@ -53,7 +50,7 @@ fn test_specialize_function_call() -> Result<()> {
             fn foo_0() -> i64 {
                 let a = 1;
                 let b = 2;
-                a + b
+                3
             }
             foo_0()
         }
@@ -63,9 +60,7 @@ fn test_specialize_function_call() -> Result<()> {
 }
 #[test]
 fn test_specialize_function_call_in_main() -> Result<()> {
-    setup_logs(LogLevel::Debug)?;
-
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_expr! {{
         fn foo(a: i64, b: i64) -> i64 {
