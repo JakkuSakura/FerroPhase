@@ -1,4 +1,4 @@
-use crate::context::ArcScopedContext;
+use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::passes::OptimizePass;
 use crate::value::Value;
@@ -14,7 +14,7 @@ impl InlinePass {
         Self { serializer }
     }
 
-    pub fn inline_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn inline_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         match expr {
             Expr::Value(value) => self.inline_value(*value, ctx).map(Expr::value),
             _ => Ok(expr),
@@ -24,7 +24,7 @@ impl InlinePass {
         &self,
         mut invoke: Invoke,
         func: &Value,
-        _ctx: &ArcScopedContext,
+        _ctx: &SharedScopedContext,
     ) -> Result<Expr> {
         match func {
             Value::Function(func) => {
@@ -47,20 +47,24 @@ impl InlinePass {
 
         Ok(Expr::Invoke(invoke.into()))
     }
-    pub fn try_get_pat(&self, ident: crate::id::Locator, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn try_get_pat(
+        &self,
+        ident: crate::id::Locator,
+        ctx: &SharedScopedContext,
+    ) -> Result<Expr> {
         match ctx.get_expr(ident.clone()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::Locator(ident)),
         }
     }
 
-    pub fn try_get_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn try_get_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         match expr {
             Expr::Locator(ident) => self.try_get_pat(ident, ctx),
             _ => Ok(expr),
         }
     }
-    pub fn inline_value(&self, value: Value, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn inline_value(&self, value: Value, ctx: &SharedScopedContext) -> Result<Value> {
         match value {
             Value::Expr(expr) => self.inline_expr(expr, ctx).map(Value::expr),
             _ => Ok(value),
@@ -72,7 +76,7 @@ impl OptimizePass for InlinePass {
     fn name(&self) -> &str {
         "inline"
     }
-    fn evaluate_invoke(&self, invoke: Invoke, _ctx: &ArcScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(&self, invoke: Invoke, _ctx: &SharedScopedContext) -> Result<ControlFlow> {
         if invoke.args.is_empty() {
             Ok(ControlFlow::Into)
         } else {
@@ -83,11 +87,11 @@ impl OptimizePass for InlinePass {
         &self,
         invoke: Invoke,
         func: &Value,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<Expr> {
         self.inline_invoke(invoke, func, ctx)
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         self.inline_expr(expr, ctx)
     }
 }
