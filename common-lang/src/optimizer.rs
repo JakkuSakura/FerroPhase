@@ -330,6 +330,10 @@ impl FoldOptimizer {
             }
         }
     }
+    pub fn optimize_file(&self, mut file: File, ctx: &ArcScopedContext) -> Result<File> {
+        file.module = self.optimize_module(file.module, ctx, false)?;
+        Ok(file)
+    }
     pub fn optimize_tree(&self, node: Tree, ctx: &ArcScopedContext) -> Result<Tree> {
         match node {
             Tree::Item(item) => {
@@ -341,11 +345,8 @@ impl FoldOptimizer {
                 Ok(Tree::Expr(expr))
             }
             Tree::File(file) => {
-                let module = self.optimize_module(file.module, ctx, false)?;
-                Ok(Tree::File(File {
-                    path: file.path,
-                    module,
-                }))
+                let file = self.optimize_file(file, ctx)?;
+                Ok(Tree::File(file))
             }
         }
     }

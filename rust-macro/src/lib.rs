@@ -1,10 +1,9 @@
 use common::*;
 
-use common_lang::ast::{File, Module, Tree};
+use common_lang::ast::{File, Module};
 use common_lang::context::{ArcScopedContext, ScopedContext};
 use common_lang::expr::Expr;
 use common_lang::optimizer::{load_optimizers, FoldOptimizer};
-use common_lang::passes::OptimizePass;
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;
@@ -13,26 +12,47 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 trait Optimizee {
-    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream>;
+    fn optimize(self, optimizer: Vec<FoldOptimizer>, ctx: &ArcScopedContext)
+        -> Result<TokenStream>;
 }
 impl Optimizee for Expr {
-    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream> {
-        let node = optimizer.optimize_expr(self, ctx)?;
-        let node = RustPrinter.print_expr(&node)?;
+    fn optimize(
+        mut self,
+        optimizer: Vec<FoldOptimizer>,
+        ctx: &ArcScopedContext,
+    ) -> Result<TokenStream> {
+        for opt in optimizer {
+            self = opt.optimize_expr(self, ctx)?;
+        }
+
+        let node = RustPrinter.print_expr(&self)?;
         Ok(node.into())
     }
 }
 impl Optimizee for Module {
-    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream> {
-        let node = optimizer.optimize_module(self, ctx, true)?;
-        let node = RustPrinter.print_module(&node)?;
+    fn optimize(
+        mut self,
+        optimizer: Vec<FoldOptimizer>,
+        ctx: &ArcScopedContext,
+    ) -> Result<TokenStream> {
+        for opt in optimizer {
+            self = opt.optimize_module(self, ctx, true)?;
+        }
+
+        let node = RustPrinter.print_module(&self)?;
         Ok(node.into())
     }
 }
 impl Optimizee for File {
-    fn optimize(self, optimizer: FoldOptimizer, ctx: &ArcScopedContext) -> Result<TokenStream> {
-        let node = optimizer.optimize_tree(Tree::File(self), ctx)?;
-        let node = RustPrinter.print_tree(&node)?;
+    fn optimize(
+        mut self,
+        optimizer: Vec<FoldOptimizer>,
+        ctx: &ArcScopedContext,
+    ) -> Result<TokenStream> {
+        for opt in optimizer {
+            self = opt.optimize_file(self, ctx)?;
+        }
+        let node = RustPrinter.print_file(&self)?;
         Ok(node.into())
     }
 }
