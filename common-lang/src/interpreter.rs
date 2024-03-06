@@ -1,18 +1,17 @@
 use crate::ast::{Item, Module, Tree};
 use crate::context::SharedScopedContext;
 use crate::expr::*;
-use crate::optimizer::FoldOptimizer;
-use crate::passes::InterpreterPass;
+use crate::pass::{FoldOptimizer, InterpreterPass};
 use crate::value::*;
 use crate::*;
 use common::*;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Interpreter {
     pub opt: FoldOptimizer,
 }
 impl Interpreter {
-    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
         let pass = InterpreterPass::new(serializer.clone());
         Self {
             opt: FoldOptimizer::new(serializer, Box::new(pass)),

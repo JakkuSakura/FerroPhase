@@ -8,6 +8,7 @@ common_enum! {
     no_debug
     pub enum Locator {
         Ident(Ident),
+        #[try_into(ignore)]
         Path(Path),
         ParameterPath(ParameterPath),
     }
@@ -23,6 +24,13 @@ impl Locator {
         }
         Self::Path(path)
     }
+    pub fn to_path(&self) -> Path {
+        match self {
+            Self::Ident(ident) => ident.into(),
+            Self::Path(path) => path.clone(),
+            _ => unreachable!(),
+        }
+    }
     pub fn parameter_path(path: ParameterPath) -> Self {
         // if no parameters, convert to path
         if path.segments.iter().all(|seg| seg.args.is_empty()) {
@@ -36,26 +44,7 @@ impl Locator {
         Self::ParameterPath(path)
     }
 }
-impl Into<Path> for Locator {
-    fn into(self) -> Path {
-        match self {
-            Self::Ident(ident) => ident.into(),
-            Self::Path(path) => path,
-            Self::ParameterPath(path) => panic!("cannot convert ParameterPath to Path: {:?}", path),
-        }
-    }
-}
-impl<'a> Into<Path> for &'a Locator {
-    fn into(self) -> Path {
-        match self {
-            Locator::Ident(ident) => ident.into(),
-            Locator::Path(path) => path.clone(),
-            Locator::ParameterPath(path) => {
-                panic!("cannot convert ParameterPath to Path: {:?}", path)
-            }
-        }
-    }
-}
+
 impl Display for Locator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

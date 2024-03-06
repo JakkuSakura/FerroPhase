@@ -1,6 +1,6 @@
 use crate::common_struct;
 use crate::id::Ident;
-use crate::ty::TypeValue;
+use crate::value::TypeValue;
 use common::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 

@@ -2,10 +2,12 @@ use common::*;
 use std::fmt::{Debug, Display, Formatter};
 
 mod arena;
+mod closure;
 mod stmt;
 mod typing;
 mod value;
 
+use crate::expr::closure::Closure;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::{Value, ValueUnit};
@@ -30,6 +32,10 @@ common_enum! {
         Select(Box<Select>),
         Struct(Box<StructExpr>),
         Reference(Box<Reference>),
+        Closure(Box<Closure<Expr>>),
+
+        SelfType(Box<SelfType>),
+
         Any(AnyBox),
     }
 

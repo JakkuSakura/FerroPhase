@@ -1,16 +1,18 @@
-use crate::context::SharedScopedContext;
-use crate::expr::*;
-use common::*;
-
 mod inline;
 mod interpret;
+mod optimizer;
 mod specialize;
 
-use crate::ast::{Item, Module};
-use crate::value::Value;
 pub use inline::*;
 pub use interpret::*;
+pub use optimizer::*;
 pub use specialize::*;
+
+use crate::ast::{Item, Module};
+use crate::context::SharedScopedContext;
+use crate::expr::{ControlFlow, Expr, Invoke};
+use crate::value::Value;
+use common::*;
 
 #[allow(unused_variables)]
 pub trait OptimizePass {

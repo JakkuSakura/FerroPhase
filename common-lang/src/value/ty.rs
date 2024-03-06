@@ -1,5 +1,4 @@
-pub mod system;
-use crate::expr::TypeExpr;
+use crate::expr::Expr;
 use crate::id::Ident;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::*;
@@ -7,6 +6,7 @@ use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+
 pub type TypeId = u64;
 
 common_enum! {
@@ -27,7 +27,7 @@ common_enum! {
         Nothing(TypeNothing),
         Type(TypeType),
         Reference(Box<TypeReference>),
-        Expr(Box<TypeExpr>),
+        Expr(Box<Expr>),
         AnyBox(AnyBox),
     }
 
@@ -48,23 +48,20 @@ impl TypeValue {
     pub fn bool() -> TypeValue {
         TypeValue::Primitive(TypePrimitive::Bool)
     }
-    pub fn expr(e: TypeExpr) -> Self {
-        match e {
-            TypeExpr::Value(v) => *v,
-            _ => TypeValue::Expr(Box::new(e)),
-        }
+    pub fn expr(e: Expr) -> Self {
+        TypeValue::Expr(Box::new(e))
     }
     pub fn value(v: Value) -> Self {
         match v {
-            Value::Expr(expr) => TypeValue::Expr(TypeExpr::Expr(expr).into()),
+            Value::Expr(expr) => TypeValue::Expr(Box::new(expr)),
             _ => TypeValue::Value(ValueType::new(v).into()),
         }
     }
     pub fn path(path: crate::id::Path) -> TypeValue {
-        TypeValue::expr(TypeExpr::path(path))
+        TypeValue::expr(Expr::path(path))
     }
     pub fn ident(ident: Ident) -> TypeValue {
-        TypeValue::expr(TypeExpr::ident(ident))
+        TypeValue::expr(Expr::ident(ident))
     }
     pub fn reference(ty: TypeValue) -> Self {
         TypeValue::Reference(
@@ -82,13 +79,13 @@ impl TypeValue {
 
     pub fn impl_trait(name: Ident) -> Self {
         Self::ImplTraits(ImplTraits {
-            bounds: TypeBounds::new(TypeExpr::ident(name)),
+            bounds: TypeBounds::new(Expr::ident(name)),
         })
     }
     pub fn locator(locator: crate::id::Locator) -> Self {
-        Self::expr(TypeExpr::Locator(locator))
+        Self::expr(Expr::Locator(locator))
     }
-    pub fn type_bound(expr: TypeExpr) -> Self {
+    pub fn type_bound(expr: Expr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))
     }
     pub fn as_struct(&self) -> Option<&TypeStruct> {
@@ -251,17 +248,14 @@ common_struct! {
 
 common_struct! {
     pub struct TypeBounds {
-        pub bounds: Vec<TypeExpr>,
+        pub bounds: Vec<Expr>,
     }
 }
 impl TypeBounds {
     pub fn any() -> Self {
         Self { bounds: vec![] }
     }
-    pub fn new(expr: TypeExpr) -> Self {
-        if expr.is_any() {
-            return TypeBounds::any();
-        }
+    pub fn new(expr: Expr) -> Self {
         TypeBounds { bounds: vec![expr] }
     }
 }

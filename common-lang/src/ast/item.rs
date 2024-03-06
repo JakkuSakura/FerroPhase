@@ -1,6 +1,5 @@
-use crate::expr::{Expr, TypeExpr};
+use crate::expr::Expr;
 use crate::id::{Ident, Locator, Path};
-use crate::ty::*;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::*;
 use crate::{common_enum, common_struct};
@@ -153,7 +152,7 @@ impl ItemChunkExt for ItemChunk {
         self.iter()
             .filter_map(|item| match item {
                 Item::Impl(impl_) if impl_.trait_ty.is_none() => {
-                    if let TypeExpr::Locator(Locator::Ident(ident)) = &impl_.self_ty {
+                    if let Expr::Locator(Locator::Ident(ident)) = &impl_.self_ty {
                         if ident.as_str() == self_ty {
                             Some(impl_)
                         } else {
@@ -243,7 +242,7 @@ common_struct! {
 common_struct! {
     pub struct Impl {
         pub trait_ty: Option<Locator>,
-        pub self_ty: TypeExpr,
+        pub self_ty: Expr,
         pub items: ItemChunk,
     }
 }
