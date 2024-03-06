@@ -1,3 +1,5 @@
+mod typing;
+
 use crate::ast::{
     DefConst, DefEnum, DefFunction, DefStruct, DefType, Import, Item, Module, Tree, Visibility,
 };
@@ -5,24 +7,22 @@ use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::id::{Ident, Locator};
 use crate::ops::*;
-use crate::passes::OptimizePass;
-use crate::ty::system::TypeSystem;
-use crate::ty::TypeValue;
+use crate::pass::OptimizePass;
+use crate::utils::conv::TryConv;
 use crate::value::*;
 use crate::Serializer;
 use common::*;
-use std::rc::Rc;
+use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct InterpreterPass {
-    pub serializer: Rc<dyn Serializer>,
-    pub type_system: TypeSystem,
+    pub serializer: Arc<dyn Serializer>,
     pub ignore_missing_items: bool,
 }
 
 impl InterpreterPass {
-    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
         Self {
-            type_system: TypeSystem::new(serializer.clone()),
             serializer,
             ignore_missing_items: false,
         }
@@ -167,6 +167,27 @@ impl InterpreterPass {
     pub fn lookup_bin_op_kind(&self, op: BinOpKind) -> Result<BuiltinFn> {
         match op {
             BinOpKind::Add => Ok(builtin_add()),
+            BinOpKind::AddTrait => {
+                let this = self.clone();
+                Ok(BuiltinFn::new(op, move |args, value| {
+                    let args: Vec<_> = args
+                        .into_iter()
+                        .map(|x| {
+                            let value = this.interpret_value(x, value, true)?;
+                            match value {
+                                Value::Type(TypeValue::ImplTraits(impls)) => Ok(impls.bounds),
+                                _ => bail!("Expected impl Traits, got {:?}", value),
+                            }
+                        })
+                        .try_collect()?;
+                    Ok(TypeValue::ImplTraits(ImplTraits {
+                        bounds: TypeBounds {
+                            bounds: args.into_iter().flat_map(|x| x.bounds).collect(),
+                        },
+                    })
+                    .into())
+                }))
+            }
             BinOpKind::Sub => Ok(builtin_sub()),
             BinOpKind::Mul => Ok(builtin_mul()),
             // BinOpKind::Div => Ok(builtin_div()),
@@ -197,15 +218,18 @@ impl InterpreterPass {
         Ok(())
     }
     pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_type_with_ctx(def.name.clone(), TypeValue::Struct(def.value.clone()));
+        ctx.insert_value_with_ctx(
+            def.name.clone(),
+            TypeValue::Struct(def.value.clone()).into(),
+        );
         Ok(())
     }
     pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_type_with_ctx(def.name.clone(), TypeValue::Enum(def.value.clone()));
+        ctx.insert_value_with_ctx(def.name.clone(), TypeValue::Enum(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_type(&self, def: &DefType, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_type_with_ctx(def.name.clone(), def.value.clone());
+        ctx.insert_value_with_ctx(def.name.clone(), Value::Type(def.value.clone()));
         Ok(())
     }
     pub fn interpret_def_const(&self, def: &DefConst, ctx: &SharedScopedContext) -> Result<()> {
@@ -224,12 +248,9 @@ impl InterpreterPass {
         node: &StructExpr,
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
-        let struct_ = self
-            .type_system
-            .evaluate_type_expr(&node.name, ctx)?
-            .as_struct()
-            .context("Expected struct")?
-            .clone();
+        let value: Value = self.interpret_expr(&node.name, ctx)?.try_conv()?;
+        let ty: TypeValue = value.try_conv()?;
+        let struct_ = ty.try_conv()?;
         let fields: Vec<_> = node
             .fields
             .iter()
@@ -300,7 +321,7 @@ impl InterpreterPass {
     }
     pub fn interpret_type(&self, node: &TypeValue, ctx: &SharedScopedContext) -> Result<TypeValue> {
         // TODO: handle closure
-        self.type_system.evaluate_type_value(node, ctx)
+        self.evaluate_type_value(node, ctx)
     }
     pub fn interpret_function_value(
         &self,
@@ -318,10 +339,8 @@ impl InterpreterPass {
             })?;
         let sub = context.child(Ident::new("__call__"), Visibility::Private, true);
         for generic in &node.generics_params {
-            let ty = self
-                .type_system
-                .evaluate_type_bounds(&generic.bounds, ctx)?;
-            sub.insert_type_with_ctx(generic.name.clone(), ty);
+            let ty = self.evaluate_type_bounds(&generic.bounds, ctx)?;
+            sub.insert_value_with_ctx(generic.name.clone(), ty.into());
         }
         let params: Vec<_> = node
             .params
@@ -419,7 +438,7 @@ impl InterpreterPass {
         match node {
             Expr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
             Expr::Locator(n) => ctx
-                .get_value_recursive(n)
+                .get_value_recursive(n.to_path())
                 .with_context(|| format!("could not find {:?} in context", n)),
             Expr::Value(n) => self.interpret_value(n, ctx, resolve),
             Expr::Block(n) => self.interpret_block(n, ctx),

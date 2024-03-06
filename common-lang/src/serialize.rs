@@ -1,13 +1,12 @@
 use crate::ast::{File, Item, Module, Tree};
 use crate::expr::{AExpr, Block, Expr, Invoke, Statement};
-use crate::ty::TypeValue;
-use crate::value::{Value, ValueFunction};
+use crate::value::{TypeValue, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[allow(unused_variables)]
-pub trait Serializer {
+pub trait Serializer: Send + Sync {
     fn serialize_tree(&self, node: &Tree) -> Result<String> {
         match node {
             Tree::Item(item) => self.serialize_item(item),
@@ -75,15 +74,15 @@ pub trait Serializer {
 }
 
 thread_local! {
-    static SERIALIZER: RefCell<Option<Rc<dyn Serializer>>> = RefCell::new(None);
+    static SERIALIZER: RefCell<Option<Arc<dyn Serializer>>> = RefCell::new(None);
 }
-pub fn register_threadlocal_serializer(serializer: Rc<dyn Serializer>) {
+pub fn register_threadlocal_serializer(serializer: Arc<dyn Serializer>) {
     SERIALIZER.with(move |s| {
         *s.borrow_mut() = Some(serializer);
     });
 }
 
-pub fn get_threadlocal_serializer() -> Rc<dyn Serializer> {
+pub fn get_threadlocal_serializer() -> Arc<dyn Serializer> {
     SERIALIZER.with(|s| {
         s.borrow()
             .as_ref()

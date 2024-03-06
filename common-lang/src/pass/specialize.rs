@@ -2,29 +2,24 @@ use crate::ast::{DefFunction, Import, Item, Visibility};
 use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::id::{Ident, Locator};
-use crate::interpreter::Interpreter;
-use crate::passes::OptimizePass;
+use crate::pass::{InterpreterPass, OptimizePass};
 use crate::pat::{Pattern, PatternIdent};
-use crate::ty::system::TypeSystem;
-use crate::ty::TypeValue;
 use crate::value::*;
 use crate::*;
 use common::*;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 pub struct SpecializePass {
     spec_id: AtomicUsize,
-    serializer: Rc<dyn Serializer>,
-    interpreter: Interpreter,
-    type_system: TypeSystem,
+    serializer: Arc<dyn Serializer>,
+    interpreter: InterpreterPass,
 }
 impl SpecializePass {
-    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
-            interpreter: Interpreter::new(serializer.clone()),
-            type_system: TypeSystem::new(serializer.clone()),
+            interpreter: InterpreterPass::new(serializer.clone()),
             serializer,
         }
     }
@@ -43,7 +38,7 @@ impl SpecializePass {
         for arg in invoke.args.iter() {
             let x = match arg.get() {
                 Expr::Locator(v) => ctx
-                    .get_expr(&v)
+                    .get_expr(v.to_path())
                     .with_context(|| format!("Couldn't find {:?} in context", v))?,
                 x => x,
             };
@@ -63,7 +58,7 @@ impl SpecializePass {
         let mut new_params: Vec<FunctionParam> = vec![];
         let mut new_args: Vec<Expr> = vec![];
         for (param, arg) in zip_eq(func.params.iter(), args.iter()) {
-            match self.interpreter.interpret_expr(arg.get(), ctx) {
+            match self.interpreter.interpret_expr(&arg.get(), ctx) {
                 Err(err) => {
                     warn!("Cannot evaluate arg {} {:?}: {:?}", param.name, arg, err);
                     new_args.push(arg.get());
@@ -111,14 +106,14 @@ impl SpecializePass {
         let mut ret = func.ret.clone();
         match &ret {
             TypeValue::Expr(expr) => match &**expr {
-                TypeExpr::Locator(Locator::Ident(ident))
+                Expr::Locator(Locator::Ident(ident))
                     if func
                         .generics_params
                         .iter()
                         .find(|x| &x.name == ident)
                         .is_some() =>
                 {
-                    ret = self.type_system.infer_expr(&new_body, &ctx)?.into();
+                    ret = self.interpreter.infer_expr(&new_body, &ctx)?.into();
                 }
                 _ => {}
             },
@@ -219,12 +214,7 @@ impl OptimizePass for SpecializePass {
                 .map(|x| x.into()),
 
             _ => {
-                if let Ok(v) = self
-                    .interpreter
-                    .opt
-                    .pass
-                    .optimize_invoke(invoke.clone(), func, ctx)
-                {
+                if let Ok(v) = self.interpreter.optimize_invoke(invoke.clone(), func, ctx) {
                     return Ok(v);
                 }
                 Ok(invoke.into())
@@ -232,6 +222,6 @@ impl OptimizePass for SpecializePass {
         }
     }
     fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
-        self.interpreter.opt.pass.evaluate_condition(expr, ctx)
+        self.interpreter.evaluate_condition(expr, ctx)
     }
 }

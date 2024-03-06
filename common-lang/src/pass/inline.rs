@@ -1,16 +1,17 @@
 use crate::context::SharedScopedContext;
 use crate::expr::*;
-use crate::passes::OptimizePass;
+use crate::id::Locator;
+use crate::pass::OptimizePass;
 use crate::value::Value;
 use crate::Serializer;
 use common::*;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct InlinePass {
-    pub serializer: Rc<dyn Serializer>,
+    pub serializer: Arc<dyn Serializer>,
 }
 impl InlinePass {
-    pub fn new(serializer: Rc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
         Self { serializer }
     }
 
@@ -47,12 +48,8 @@ impl InlinePass {
 
         Ok(Expr::Invoke(invoke.into()))
     }
-    pub fn try_get_pat(
-        &self,
-        ident: crate::id::Locator,
-        ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
-        match ctx.get_expr(ident.clone()) {
+    pub fn try_get_pat(&self, ident: Locator, ctx: &SharedScopedContext) -> Result<Expr> {
+        match ctx.get_expr(ident.to_path()) {
             Some(expr) => Ok(expr),
             None => Ok(Expr::Locator(ident)),
         }

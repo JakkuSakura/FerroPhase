@@ -267,7 +267,7 @@ dependencies = [
  "bytes",
  "common",
  "dashmap",
- "derive-from-one",
+ "derive_more",
  "serde",
  "serde_json",
 ]
@@ -311,14 +311,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive-from-one"
-version = "0.1.0"
+name = "derive_more"
+version = "1.0.0-beta.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acda47033f45e681d437fa5ad86d84e094da3d937a31543a707422d1320f69ff"
+checksum = "f7abbfc297053be59290e3152f8cbcd52c8642e0728b69ee187d991d4c1af08d"
 dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "1.0.0-beta.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bba3e9872d7c58ce7ef0fcf1844fcc3e23ef2a58377b50df35dd98e42a5726e"
+dependencies = [
+ "convert_case",
  "proc-macro2",
  "quote",
  "syn 2.0.31",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -1457,6 +1468,12 @@ name = "unicode-width"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e51733f11c9c4f72aa0c160008246859e340b00807569a0da0e7a1079b27ba85"
+
+[[package]]
+name = "unicode-xid"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 
 [[package]]
 name = "url"

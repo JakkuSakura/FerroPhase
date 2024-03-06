@@ -1,6 +1,6 @@
-use crate::expr::TypeExpr;
+use crate::expr::Expr;
 use crate::id::{Ident, Locator};
-use crate::ty::TypeValue;
+use crate::value::TypeValue;
 use crate::{common_enum, common_struct};
 common_enum! {
     pub enum Pattern {
@@ -16,7 +16,7 @@ common_enum! {
     }
 }
 impl Pattern {
-    pub fn as_ident(&self) -> Option<&crate::id::Ident> {
+    pub fn as_ident(&self) -> Option<&Ident> {
         match self {
             Pattern::Ident(ident) => Some(&ident.ident),
             _ => None,
@@ -59,7 +59,7 @@ common_struct! {
 }
 common_struct! {
     pub struct PatternVariant {
-        pub name: TypeExpr,
+        pub name: Expr, // TypeExpr
         pub pattern: Option<Box<Pattern>>,
     }
 

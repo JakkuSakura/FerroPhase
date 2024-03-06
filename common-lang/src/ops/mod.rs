@@ -8,6 +8,7 @@ pub use builtins::*;
 common_enum! {
     pub enum BinOpKind {
         Add,
+        AddTrait,
         Sub,
         Mul,
         Div,
@@ -46,6 +47,7 @@ impl Display for BinOpKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             BinOpKind::Add => write!(f, "+"),
+            BinOpKind::AddTrait => write!(f, "+"),
             BinOpKind::Sub => write!(f, "-"),
             BinOpKind::Mul => write!(f, "*"),
             BinOpKind::Div => write!(f, "/"),

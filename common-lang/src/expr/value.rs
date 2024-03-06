@@ -66,15 +66,18 @@ common_struct! {
 common_enum! {
     pub enum ControlFlow {
         Continue,
+        #[from(ignore)]
         Break(Option<Expr>),
+        #[from(ignore)]
         Return(Option<Expr>),
         Into,
+        #[from(ignore)]
         IntoAndBreak(Option<Expr>),
     }
 }
 common_struct! {
     pub struct StructExpr {
-        pub name: TypeExpr,
+        pub name: Expr, // TypeExpr
         pub fields: Vec<FieldValue>,
     }
 }
