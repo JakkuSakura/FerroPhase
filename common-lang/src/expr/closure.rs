@@ -10,6 +10,11 @@ pub struct Closure<Expr> {
     pub ctx: SharedScopedContext,
     pub expr: Expr,
 }
+impl<Expr> Closure<Expr> {
+    pub fn new(ctx: SharedScopedContext, expr: Expr) -> Self {
+        Self { ctx, expr }
+    }
+}
 
 impl<Expr: Display> Display for Closure<Expr> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

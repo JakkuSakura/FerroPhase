@@ -1,14 +1,13 @@
 use common::*;
 
 use common_lang::ast::{File, Module};
-use common_lang::context::{ScopedContext, SharedScopedContext};
+use common_lang::context::SharedScopedContext;
 use common_lang::expr::Expr;
 use common_lang::pass::{load_optimizers, FoldOptimizer};
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;
 use rust_lang::RustSerde;
-use std::rc::Rc;
 use std::sync::Arc;
 
 trait Optimizee {
@@ -60,9 +59,9 @@ impl Optimizee for File {
     }
 }
 fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
-    let ctx = Arc::new(ScopedContext::new());
+    let ctx = SharedScopedContext::new();
     let formatter = RustSerde::new();
-    let optimizer = load_optimizers(Rc::new(formatter));
+    let optimizer = load_optimizers(Arc::new(formatter));
     let node = code.optimize(optimizer, &ctx)?;
 
     Ok(node.into())
