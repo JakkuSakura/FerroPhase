@@ -32,7 +32,18 @@ impl FoldOptimizer {
 
     pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &SharedScopedContext) -> Result<Expr> {
         // TODO: obtain closure here
-        let func = self.optimize_expr(invoke.func.into(), ctx)?;
+        let func;
+        let closure_context;
+        match self.optimize_expr(invoke.func.into(), ctx)? {
+            Expr::Closured(c) => {
+                closure_context = Some(c.ctx);
+                func = c.expr;
+            }
+            e => {
+                closure_context = None;
+                func = e;
+            }
+        }
         let args = take(&mut invoke.args);
         for arg in args {
             let expr = self.optimize_expr(arg.into(), ctx)?;
@@ -49,11 +60,9 @@ impl FoldOptimizer {
                         Value::Function(mut f) => {
                             // TODO: when calling function, use context of its own, instead of use current context
 
-                            let sub_ctx = ctx.child(
-                                f.name.clone().unwrap_or(Ident::new("__func__")),
-                                Visibility::Private,
-                                false,
-                            );
+                            let sub_ctx = closure_context
+                                .map(|x| x.child("__invoke__".into(), Visibility::Private, false))
+                                .unwrap_or_else(|| SharedScopedContext::new());
                             for (i, arg) in invoke.args.clone().into_iter().enumerate() {
                                 let param = f.params.get(i).with_context(|| {
                                     format!("Couldn't find {} parameter of {:?}", i, f)
@@ -110,7 +119,7 @@ impl FoldOptimizer {
         expr = match expr {
             Expr::Locator(val) => {
                 info!("Looking for {}", val);
-                ctx.get_expr(val.to_path())
+                ctx.get_expr_with_ctx(val.to_path())
                     .with_context(|| format!("Couldn't find {}", val))?
             }
             Expr::Block(x) => self.optimize_block(x, ctx)?,

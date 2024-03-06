@@ -823,6 +823,7 @@ impl RustPrinter {
             Expr::Block(n) => self.print_block(n),
             Expr::Struct(n) => self.print_struct_expr(n),
             Expr::Select(n) => self.print_select(n),
+            Expr::Closured(n) => self.print_expr(&n.expr),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
