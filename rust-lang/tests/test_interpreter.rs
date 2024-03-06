@@ -1,6 +1,6 @@
 use common::assert_eq;
 use common::*;
-use common_lang::context::ScopedContext;
+use common_lang::context::SharedScopedContext;
 use common_lang::expr::*;
 use common_lang::interpreter::Interpreter;
 use common_lang::register_threadlocal_serializer;
@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 fn interpret_shll_expr(expr: Expr) -> Result<Value> {
     let interpreter = Interpreter::new(Rc::new(RustSerde::new()));
-    let ctx = ScopedContext::new().into_shared();
+    let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)
 }
 

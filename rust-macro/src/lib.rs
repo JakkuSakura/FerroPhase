@@ -1,7 +1,7 @@
 use common::*;
 
 use common_lang::ast::{File, Module};
-use common_lang::context::{ArcScopedContext, ScopedContext};
+use common_lang::context::{ScopedContext, SharedScopedContext};
 use common_lang::expr::Expr;
 use common_lang::optimizer::{load_optimizers, FoldOptimizer};
 use proc_macro::TokenStream;
@@ -12,14 +12,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 trait Optimizee {
-    fn optimize(self, optimizer: Vec<FoldOptimizer>, ctx: &ArcScopedContext)
-        -> Result<TokenStream>;
+    fn optimize(
+        self,
+        optimizer: Vec<FoldOptimizer>,
+        ctx: &SharedScopedContext,
+    ) -> Result<TokenStream>;
 }
 impl Optimizee for Expr {
     fn optimize(
         mut self,
         optimizer: Vec<FoldOptimizer>,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TokenStream> {
         for opt in optimizer {
             self = opt.optimize_expr(self, ctx)?;
@@ -33,7 +36,7 @@ impl Optimizee for Module {
     fn optimize(
         mut self,
         optimizer: Vec<FoldOptimizer>,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TokenStream> {
         for opt in optimizer {
             self = opt.optimize_module(self, ctx, true)?;
@@ -47,7 +50,7 @@ impl Optimizee for File {
     fn optimize(
         mut self,
         optimizer: Vec<FoldOptimizer>,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TokenStream> {
         for opt in optimizer {
             self = opt.optimize_file(self, ctx)?;

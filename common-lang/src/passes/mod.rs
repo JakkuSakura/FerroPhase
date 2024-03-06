@@ -1,4 +1,4 @@
-use crate::context::ArcScopedContext;
+use crate::context::SharedScopedContext;
 use crate::expr::*;
 use common::*;
 
@@ -16,32 +16,32 @@ pub use specialize::*;
 pub trait OptimizePass {
     fn name(&self) -> &str;
 
-    fn optimize_item(&self, item: Item, ctx: &ArcScopedContext) -> Result<Item> {
+    fn optimize_item(&self, item: Item, ctx: &SharedScopedContext) -> Result<Item> {
         Ok(item)
     }
 
-    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         Ok(pat.clone())
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         Ok(expr)
     }
 
-    fn optimize_module(&self, module: Module, ctx: &ArcScopedContext) -> Result<Module> {
+    fn optimize_module(&self, module: Module, ctx: &SharedScopedContext) -> Result<Module> {
         Ok(module)
     }
-    fn evaluate_invoke(&self, invoke: Invoke, ctx: &ArcScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(&self, invoke: Invoke, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         Ok(ControlFlow::Continue)
     }
     fn optimize_invoke(
         &self,
         invoke: Invoke,
         func: &Value,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<Expr> {
         Ok(invoke.into())
     }
-    fn evaluate_condition(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<ControlFlow> {
+    fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         Ok(ControlFlow::Into)
     }
 }
