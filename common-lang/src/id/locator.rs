@@ -1,6 +1,5 @@
 use crate::common_enum;
 use crate::id::{Ident, ParameterPath, Path};
-use common::*;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 

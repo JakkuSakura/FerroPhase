@@ -6,6 +6,7 @@ use crate::pass::{InlinePass, OptimizePass, SpecializePass};
 use crate::value::*;
 use crate::*;
 use common::*;
+use itertools::Itertools;
 use std::mem::take;
 use std::sync::Arc;
 

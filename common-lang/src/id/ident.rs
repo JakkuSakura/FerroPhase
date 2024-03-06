@@ -1,4 +1,4 @@
-use common::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 
