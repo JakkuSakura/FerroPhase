@@ -1,5 +1,5 @@
 use crate::ast::Visibility;
-use crate::context::ArcScopedContext;
+use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::ty::{
     DecimalType, FieldTypeValue, ImplTraits, IntType, TypeBounds, TypeFunction, TypePrimitive,
@@ -84,7 +84,7 @@ impl TypeSystem {
         &self,
         expr: &Expr,
         type_value: &TypeValue,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<()> {
         match expr {
             Expr::Locator(n) => {
@@ -102,7 +102,7 @@ impl TypeSystem {
     pub fn evaluate_type_value_op(
         &self,
         op: &TypeBinOp,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TypeValue> {
         match op {
             TypeBinOp::Add { left, right } => {
@@ -133,7 +133,11 @@ impl TypeSystem {
             }
         }
     }
-    pub fn evaluate_type_value(&self, ty: &TypeValue, ctx: &ArcScopedContext) -> Result<TypeValue> {
+    pub fn evaluate_type_value(
+        &self,
+        ty: &TypeValue,
+        ctx: &SharedScopedContext,
+    ) -> Result<TypeValue> {
         match ty {
             TypeValue::Expr(expr) => self.evaluate_type_expr(expr, ctx),
             TypeValue::Struct(n) => {
@@ -175,7 +179,7 @@ impl TypeSystem {
                 );
                 for g in &f.generics_params {
                     let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
-                    sub.insert_type(g.name.clone(), constrain);
+                    sub.insert_type_with_ctx(g.name.clone(), constrain);
                 }
                 let params = f
                     .params
@@ -200,7 +204,7 @@ impl TypeSystem {
     pub fn evaluate_impl_traits(
         &self,
         traits: &ImplTraits,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TypeValue> {
         let traits = self.evaluate_type_bounds(&traits.bounds, ctx)?;
         match traits {
@@ -208,7 +212,11 @@ impl TypeSystem {
             _ => Ok(traits),
         }
     }
-    pub fn evaluate_type_expr(&self, ty: &TypeExpr, ctx: &ArcScopedContext) -> Result<TypeValue> {
+    pub fn evaluate_type_expr(
+        &self,
+        ty: &TypeExpr,
+        ctx: &SharedScopedContext,
+    ) -> Result<TypeValue> {
         match ty {
             TypeExpr::Value(v) => self.evaluate_type_value(v, ctx),
             TypeExpr::Locator(i) => {
@@ -228,7 +236,7 @@ impl TypeSystem {
     pub fn evaluate_type_bounds(
         &self,
         bounds: &TypeBounds,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TypeValue> {
         let bounds: Vec<_> = bounds
             .bounds
@@ -250,7 +258,7 @@ impl TypeSystem {
         &self,
         expr: &Expr,
         ty: &TypeExpr,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<()> {
         let tv = self.evaluate_type_expr(ty, ctx)?;
         self.type_check_expr_against_value(expr, &tv, ctx)
@@ -260,7 +268,7 @@ impl TypeSystem {
         &self,
         callee: &Expr,
         params: &[Expr],
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TypeValue> {
         match callee {
             Expr::Locator(crate::id::Locator::Ident(ident)) => match ident.as_str() {
@@ -284,7 +292,7 @@ impl TypeSystem {
     pub fn infer_ident(
         &self,
         ident: &crate::id::Ident,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<TypeValue> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
@@ -317,7 +325,7 @@ impl TypeSystem {
             .with_context(|| format!("Could not find {:?} in context", ident))?;
         self.infer_expr(&expr, ctx)
     }
-    pub fn infer_expr(&self, expr: &Expr, ctx: &ArcScopedContext) -> Result<TypeValue> {
+    pub fn infer_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<TypeValue> {
         match expr {
             Expr::Locator(n) => {
                 let ty = ctx
@@ -368,7 +376,7 @@ impl TypeSystem {
     pub fn infer_function(
         &self,
         func: &ValueFunction,
-        _ctx: &ArcScopedContext,
+        _ctx: &SharedScopedContext,
     ) -> Result<TypeFunction> {
         let mut params = vec![];
         for p in &func.params {

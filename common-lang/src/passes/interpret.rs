@@ -1,7 +1,7 @@
 use crate::ast::{
     DefConst, DefEnum, DefFunction, DefStruct, DefType, Import, Item, Module, Tree, Visibility,
 };
-use crate::context::{ArcScopedContext, LazyValue};
+use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::id::{Ident, Locator};
 use crate::ops::*;
@@ -28,7 +28,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_module(&self, node: &Module, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_module(&self, node: &Module, ctx: &SharedScopedContext) -> Result<Value> {
         let result: Vec<_> = node
             .items
             .iter()
@@ -36,7 +36,7 @@ impl InterpreterPass {
             .try_collect()?;
         Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
-    pub fn interpret_invoke(&self, node: &Invoke, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_invoke(&self, node: &Invoke, ctx: &SharedScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
         match node.func.get() {
             Expr::Value(value) => match *value {
@@ -86,10 +86,10 @@ impl InterpreterPass {
             kind => bail!("Could not invoke {:?}", kind),
         }
     }
-    pub fn interpret_import(&self, _node: &Import, _ctx: &ArcScopedContext) -> Result<()> {
+    pub fn interpret_import(&self, _node: &Import, _ctx: &SharedScopedContext) -> Result<()> {
         Ok(())
     }
-    pub fn interpret_block(&self, node: &Block, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_block(&self, node: &Block, ctx: &SharedScopedContext) -> Result<Value> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         for (i, stmt) in node.stmts.iter().enumerate() {
             let ret = self.interpret_stmt(&stmt, &ctx)?;
@@ -102,7 +102,7 @@ impl InterpreterPass {
         Ok(Value::unit())
     }
 
-    pub fn interpret_cond(&self, node: &Match, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_cond(&self, node: &Match, ctx: &SharedScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;
             match interpret {
@@ -123,7 +123,7 @@ impl InterpreterPass {
     pub fn interpret_print(
         se: &dyn Serializer,
         args: &[Expr],
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<()> {
         let formatted: Vec<_> = args
             .into_iter()
@@ -135,7 +135,7 @@ impl InterpreterPass {
     pub fn interpret_ident(
         &self,
         ident: &Ident,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
         resolve: bool,
     ) -> Result<Value> {
         return match ident.as_str() {
@@ -187,41 +187,32 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
+    pub fn interpret_def_function(
+        &self,
+        def: &DefFunction,
+        ctx: &SharedScopedContext,
+    ) -> Result<()> {
         let name = &def.name;
-        ctx.insert_function(name.clone(), def.value.clone());
+        ctx.insert_value_with_ctx(name.clone(), Value::Function(def.value.clone()));
         Ok(())
     }
-    pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &ArcScopedContext) -> Result<()> {
-        ctx.insert_type(def.name.clone(), TypeValue::Struct(def.value.clone()));
+    pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &SharedScopedContext) -> Result<()> {
+        ctx.insert_type_with_ctx(def.name.clone(), TypeValue::Struct(def.value.clone()));
         Ok(())
     }
-    pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &ArcScopedContext) -> Result<()> {
-        ctx.insert_type(def.name.clone(), TypeValue::Enum(def.value.clone()));
+    pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &SharedScopedContext) -> Result<()> {
+        ctx.insert_type_with_ctx(def.name.clone(), TypeValue::Enum(def.value.clone()));
         Ok(())
     }
-    pub fn interpret_def_type(&self, def: &DefType, ctx: &ArcScopedContext) -> Result<()> {
-        ctx.insert_type(
-            def.name.clone(),
-            // TODO: inspect this lazy value
-            TypeValue::any_box(LazyValue {
-                ctx: ctx.clone(),
-                expr: def.value.clone(),
-            }),
-        );
+    pub fn interpret_def_type(&self, def: &DefType, ctx: &SharedScopedContext) -> Result<()> {
+        ctx.insert_type_with_ctx(def.name.clone(), def.value.clone());
         Ok(())
     }
-    pub fn interpret_def_const(&self, def: &DefConst, ctx: &ArcScopedContext) -> Result<()> {
-        ctx.insert_value(
-            def.name.clone(),
-            Value::any(LazyValue {
-                ctx: ctx.clone(),
-                expr: def.value.clone(),
-            }),
-        );
+    pub fn interpret_def_const(&self, def: &DefConst, ctx: &SharedScopedContext) -> Result<()> {
+        ctx.insert_value_with_ctx(def.name.clone(), def.value.clone());
         Ok(())
     }
-    pub fn interpret_args(&self, node: &[AExpr], ctx: &ArcScopedContext) -> Result<Vec<Value>> {
+    pub fn interpret_args(&self, node: &[AExpr], ctx: &SharedScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
             .iter()
             .map(|x| self.try_evaluate_expr(&x.get(), ctx).map(Value::expr))
@@ -231,7 +222,7 @@ impl InterpreterPass {
     pub fn interpret_struct_expr(
         &self,
         node: &StructExpr,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
         let struct_ = self
             .type_system
@@ -257,7 +248,7 @@ impl InterpreterPass {
     pub fn interpret_struct_value(
         &self,
         node: &ValueStruct,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
         let fields: Vec<_> = node
             .structural
@@ -275,7 +266,7 @@ impl InterpreterPass {
             structural: ValueStructural { fields },
         })
     }
-    pub fn interpret_select(&self, s: &Select, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_select(&self, s: &Select, ctx: &SharedScopedContext) -> Result<Value> {
         let obj0 = self.interpret_expr(&s.obj, ctx)?;
         let obj = obj0.as_structural().with_context(|| {
             format!(
@@ -295,7 +286,7 @@ impl InterpreterPass {
     pub fn interpret_tuple(
         &self,
         node: &ValueTuple,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
         resolve: bool,
     ) -> Result<ValueTuple> {
         let values: Vec<_> = node
@@ -307,28 +298,30 @@ impl InterpreterPass {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
-    pub fn interpret_type(&self, node: &TypeValue, ctx: &ArcScopedContext) -> Result<TypeValue> {
-        match node {
-            TypeValue::AnyBox(n) => {
-                if let Some(exp) = n.downcast_ref::<LazyValue<TypeExpr>>() {
-                    return self.type_system.evaluate_type_expr(&exp.expr, &exp.ctx);
-                }
-                bail!("Failed to interpret type {:?}", node)
-            }
-            _ => self.type_system.evaluate_type_value(node, ctx),
-        }
+    pub fn interpret_type(&self, node: &TypeValue, ctx: &SharedScopedContext) -> Result<TypeValue> {
+        // TODO: handle closure
+        self.type_system.evaluate_type_value(node, ctx)
     }
     pub fn interpret_function_value(
         &self,
         node: &ValueFunction,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<ValueFunction> {
-        let sub = ctx.child(Ident::new("__func__"), Visibility::Private, true);
+        // TODO: handle unnamed function, need to pass closure to here
+        let (_, context) = ctx
+            .get_function(node.name.clone().unwrap())
+            .with_context(|| {
+                format!(
+                    "Could not find function {} in context",
+                    node.sig.name.as_ref().unwrap()
+                )
+            })?;
+        let sub = context.child(Ident::new("__call__"), Visibility::Private, true);
         for generic in &node.generics_params {
             let ty = self
                 .type_system
                 .evaluate_type_bounds(&generic.bounds, ctx)?;
-            sub.insert_type(generic.name.clone(), ty);
+            sub.insert_type_with_ctx(generic.name.clone(), ty);
         }
         let params: Vec<_> = node
             .params
@@ -355,7 +348,7 @@ impl InterpreterPass {
     pub fn interpret_value(
         &self,
         val: &Value,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
         resolve: bool,
     ) -> Result<Value> {
         match val {
@@ -365,12 +358,7 @@ impl InterpreterPass {
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
             Value::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(Value::Tuple),
             Value::Expr(n) => self.interpret_expr(n, ctx),
-            Value::Any(n) => {
-                if let Some(exp) = n.downcast_ref::<LazyValue<Expr>>() {
-                    let ret = self.interpret_expr(&exp.expr, &exp.ctx)?;
-                    return Ok(ret);
-                }
-
+            Value::Any(_n) => {
                 if self.ignore_missing_items {
                     return Ok(val.clone());
                 }
@@ -397,7 +385,7 @@ impl InterpreterPass {
         &self,
         op: BinOpKind,
         args: &[AExpr],
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<Value> {
         let builtin_fn = self.lookup_bin_op_kind(op)?;
         let args = self.interpret_args(args, ctx)?;
@@ -407,7 +395,7 @@ impl InterpreterPass {
         &self,
         op: UnOpKind,
         arg: Value,
-        _ctx: &ArcScopedContext,
+        _ctx: &SharedScopedContext,
     ) -> Result<Value> {
         match op {
             UnOpKind::Neg => match arg {
@@ -425,7 +413,7 @@ impl InterpreterPass {
     pub fn interpret_expr_common(
         &self,
         node: &Expr,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
         resolve: bool,
     ) -> Result<Value> {
         match node {
@@ -443,13 +431,17 @@ impl InterpreterPass {
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_expr(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_expr(&self, node: &Expr, ctx: &SharedScopedContext) -> Result<Value> {
         self.interpret_expr_common(node, ctx, true)
     }
-    pub fn interpret_expr_no_resolve(&self, node: &Expr, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_expr_no_resolve(
+        &self,
+        node: &Expr,
+        ctx: &SharedScopedContext,
+    ) -> Result<Value> {
         self.interpret_expr_common(node, ctx, false)
     }
-    pub fn interpret_item(&self, node: &Item, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_item(&self, node: &Item, ctx: &SharedScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
             Item::Module(n) => self.interpret_module(n, ctx),
@@ -465,7 +457,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_let(&self, node: &StatementLet, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_let(&self, node: &StatementLet, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.interpret_expr(&node.value, ctx)?;
         ctx.insert_value(
             node.pat.as_ident().context("Only supports ident")?.as_str(),
@@ -477,7 +469,7 @@ impl InterpreterPass {
     pub fn interpret_stmt(
         &self,
         node: &Statement,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<Option<Value>> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         match node {
@@ -495,7 +487,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_tree(&self, node: &Tree, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: &Tree, ctx: &SharedScopedContext) -> Result<Value> {
         match node {
             Tree::Item(item) => self.interpret_item(item, ctx),
             Tree::Expr(expr) => self.interpret_expr(expr, ctx),
@@ -508,16 +500,16 @@ impl OptimizePass for InterpreterPass {
     fn name(&self) -> &str {
         "interpreter"
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         Ok(Expr::value(value))
     }
 
-    fn optimize_item(&self, _item: Item, _ctx: &ArcScopedContext) -> Result<Item> {
+    fn optimize_item(&self, _item: Item, _ctx: &SharedScopedContext) -> Result<Item> {
         Ok(Item::unit())
     }
 
-    fn evaluate_condition(&self, expr: Expr, ctx: &ArcScopedContext) -> Result<ControlFlow> {
+    fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         match value {
             Value::Bool(b) => {
@@ -530,14 +522,14 @@ impl OptimizePass for InterpreterPass {
             _ => bail!("Failed to interpret {:?} => {:?}", expr, value),
         }
     }
-    fn evaluate_invoke(&self, _invoke: Invoke, _ctx: &ArcScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(&self, _invoke: Invoke, _ctx: &SharedScopedContext) -> Result<ControlFlow> {
         Ok(ControlFlow::Into)
     }
     fn optimize_invoke(
         &self,
         invoke: Invoke,
         func: &Value,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<Expr> {
         match func {
             Value::Function(func) => self.interpret_expr(&func.body, ctx).map(Expr::value),
@@ -554,7 +546,7 @@ impl OptimizePass for InterpreterPass {
         }
     }
 
-    fn try_evaluate_expr(&self, pat: &Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         let value = ctx.try_get_value_from_expr(pat).with_context(|| {
             format!(
                 "could not find {:?} in context {:?}",

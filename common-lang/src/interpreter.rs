@@ -1,5 +1,5 @@
 use crate::ast::{Item, Module, Tree};
-use crate::context::ArcScopedContext;
+use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::optimizer::FoldOptimizer;
 use crate::passes::InterpreterPass;
@@ -41,12 +41,12 @@ impl Interpreter {
             Tree::File(file) => self.extract_module(file.module),
         }
     }
-    pub fn interpret_tree(&self, node: Tree, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: Tree, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_tree(node, ctx)?;
 
         self.extract_tree(value)
     }
-    pub fn interpret_expr(&self, node: Expr, ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn interpret_expr(&self, node: Expr, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_expr(node, ctx)?;
         self.extract_expr(value)
     }

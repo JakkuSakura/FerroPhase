@@ -1,4 +1,4 @@
-use crate::context::ArcScopedContext;
+use crate::context::SharedScopedContext;
 use crate::ops::BinOpKind;
 use crate::value::*;
 use crate::Serializer;
@@ -30,12 +30,12 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    func: Rc<dyn Fn(&[Value], &ArcScopedContext) -> Result<Value>>,
+    func: Rc<dyn Fn(&[Value], &SharedScopedContext) -> Result<Value>>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[Value], &ArcScopedContext) -> Result<Value> + 'static,
+        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
@@ -44,14 +44,14 @@ impl BuiltinFn {
     }
     pub fn new_with_ident(
         name: crate::id::Ident,
-        f: impl Fn(&[Value], &ArcScopedContext) -> Result<Value> + 'static,
+        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
             func: Rc::new(f),
         }
     }
-    pub fn invoke(&self, args: &[Value], ctx: &ArcScopedContext) -> Result<Value> {
+    pub fn invoke(&self, args: &[Value], ctx: &SharedScopedContext) -> Result<Value> {
         (self.func)(args, ctx)
     }
 }

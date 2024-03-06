@@ -1,5 +1,5 @@
 use crate::ast::{DefFunction, File, Import, Item, Module, Tree, Visibility};
-use crate::context::ArcScopedContext;
+use crate::context::SharedScopedContext;
 use crate::expr::*;
 use crate::id::Ident;
 use crate::passes::*;
@@ -30,7 +30,8 @@ impl FoldOptimizer {
         Self { serializer, pass }
     }
 
-    pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &SharedScopedContext) -> Result<Expr> {
+        // TODO: obtain closure here
         let func = self.optimize_expr(invoke.func.into(), ctx)?;
         let args = take(&mut invoke.args);
         for arg in args {
@@ -102,7 +103,7 @@ impl FoldOptimizer {
         Ok(invoke)
     }
 
-    pub fn optimize_expr(&self, mut expr: Expr, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_expr(&self, mut expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         let serialized = self.serializer.serialize_expr(&expr)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
@@ -124,14 +125,14 @@ impl FoldOptimizer {
         Ok(expr)
     }
 
-    pub fn optimize_import(&self, import: Import, _ctx: &ArcScopedContext) -> Result<Import> {
+    pub fn optimize_import(&self, import: Import, _ctx: &SharedScopedContext) -> Result<Import> {
         Ok(import)
     }
 
     pub fn optimize_module(
         &self,
         mut module: Module,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
         with_submodule: bool,
     ) -> Result<Module> {
         let sub = if with_submodule {
@@ -154,21 +155,21 @@ impl FoldOptimizer {
         let module = self.pass.optimize_module(module, ctx)?;
         Ok(module)
     }
-    fn prescan_item(&self, item: &Item, ctx: &ArcScopedContext) -> Result<()> {
+    fn prescan_item(&self, item: &Item, ctx: &SharedScopedContext) -> Result<()> {
         match item {
             Item::DefFunction(x) => self.prescan_def_function(x, ctx),
             Item::Module(x) => self.prescan_module(x, ctx),
             _ => Ok(()),
         }
     }
-    fn prescan_module(&self, module: &Module, ctx: &ArcScopedContext) -> Result<()> {
+    fn prescan_module(&self, module: &Module, ctx: &SharedScopedContext) -> Result<()> {
         let module = module.clone();
         for item in module.items {
             self.prescan_item(&item, ctx)?;
         }
         Ok(())
     }
-    pub fn optimize_item(&self, mut item: Item, ctx: &ArcScopedContext) -> Result<Item> {
+    pub fn optimize_item(&self, mut item: Item, ctx: &SharedScopedContext) -> Result<Item> {
         let serialized = self.serializer.serialize_item(&item)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
@@ -197,7 +198,11 @@ impl FoldOptimizer {
         Ok(item)
     }
 
-    pub fn optimize_let(&self, let_: StatementLet, ctx: &ArcScopedContext) -> Result<StatementLet> {
+    pub fn optimize_let(
+        &self,
+        let_: StatementLet,
+        ctx: &SharedScopedContext,
+    ) -> Result<StatementLet> {
         let value = self.optimize_expr(let_.value, ctx)?;
         ctx.insert_expr(
             let_.pat.as_ident().context("Only supports ident")?.clone(),
@@ -209,7 +214,7 @@ impl FoldOptimizer {
             value,
         })
     }
-    pub fn optimize_stmt(&self, stmt: Statement, ctx: &ArcScopedContext) -> Result<Statement> {
+    pub fn optimize_stmt(&self, stmt: Statement, ctx: &SharedScopedContext) -> Result<Statement> {
         match stmt {
             Statement::Expr(x) => {
                 let expr = self.optimize_expr(x, ctx)?;
@@ -229,14 +234,14 @@ impl FoldOptimizer {
         }
     }
 
-    fn prescan_stmt(&self, stmt: &Statement, ctx: &ArcScopedContext) -> Result<()> {
+    fn prescan_stmt(&self, stmt: &Statement, ctx: &SharedScopedContext) -> Result<()> {
         match stmt {
             Statement::Item(x) => self.prescan_item(&**x, ctx),
 
             _ => Ok(()),
         }
     }
-    pub fn optimize_block(&self, mut b: Block, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_block(&self, mut b: Block, ctx: &SharedScopedContext) -> Result<Expr> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         b.stmts
             .iter()
@@ -260,7 +265,7 @@ impl FoldOptimizer {
         b.stmts = stmts;
         Ok(Expr::block(b))
     }
-    pub fn optimize_match(&self, b: Match, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_match(&self, b: Match, ctx: &SharedScopedContext) -> Result<Expr> {
         let mut cases = vec![];
         for case in b.cases {
             let cond = self.optimize_expr(case.cond, ctx)?;
@@ -285,7 +290,7 @@ impl FoldOptimizer {
         }
         Ok(Expr::Match(Match { cases }))
     }
-    pub fn optimize_if(&self, if_: If, ctx: &ArcScopedContext) -> Result<Expr> {
+    pub fn optimize_if(&self, if_: If, ctx: &SharedScopedContext) -> Result<Expr> {
         let match_ = Match { cases: if_.cases };
         let expr = self.optimize_match(match_, ctx)?;
         if let Expr::Match(match_) = expr {
@@ -298,7 +303,7 @@ impl FoldOptimizer {
     pub fn optimize_func(
         &self,
         func: ValueFunction,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<ValueFunction> {
         let body = self.optimize_expr(func.body, ctx)?;
         Ok(ValueFunction {
@@ -310,13 +315,13 @@ impl FoldOptimizer {
     pub fn optimize_def_function(
         &self,
         mut def: DefFunction,
-        ctx: &ArcScopedContext,
+        ctx: &SharedScopedContext,
     ) -> Result<DefFunction> {
         def.value = self.optimize_func(def.value, ctx)?;
 
         Ok(def)
     }
-    pub fn prescan_def_function(&self, def: &DefFunction, ctx: &ArcScopedContext) -> Result<()> {
+    pub fn prescan_def_function(&self, def: &DefFunction, ctx: &SharedScopedContext) -> Result<()> {
         let def = def.clone();
         match def.name.as_str() {
             _ => {
@@ -325,16 +330,16 @@ impl FoldOptimizer {
                     self.serializer.serialize_function(&def.value)?,
                 );
 
-                ctx.insert_function(def.name.clone(), def.value.clone());
+                ctx.insert_value_with_ctx(def.name.clone(), Value::Function(def.value.clone()));
                 Ok(())
             }
         }
     }
-    pub fn optimize_file(&self, mut file: File, ctx: &ArcScopedContext) -> Result<File> {
+    pub fn optimize_file(&self, mut file: File, ctx: &SharedScopedContext) -> Result<File> {
         file.module = self.optimize_module(file.module, ctx, false)?;
         Ok(file)
     }
-    pub fn optimize_tree(&self, node: Tree, ctx: &ArcScopedContext) -> Result<Tree> {
+    pub fn optimize_tree(&self, node: Tree, ctx: &SharedScopedContext) -> Result<Tree> {
         match node {
             Tree::Item(item) => {
                 let item = self.optimize_item(item, ctx)?;
