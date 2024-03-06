@@ -8,6 +8,7 @@ use common_lang::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path}
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use common_lang::pat::{Pattern, PatternIdent};
 use common_lang::value::*;
+use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
 

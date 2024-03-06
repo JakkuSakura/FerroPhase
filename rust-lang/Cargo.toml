@@ -7,15 +7,17 @@ edition = "2021"
 
 [dependencies]
 common-lang = { path = "../common-lang" }
-common = { path = "../common" }
+common = { workspace = true }
 syn-serde = { version = "0.2", features = ["json"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 serde = "1"
 syn-inline-mod = "0.6.0"
-rustc = { path = "rustc", optional = true }
+pretty_assertions = "1.4.0"
+eyre = "0.6.12"
+itertools = "0.12.1"
 
 [features]
-default = ["rustc"]
-rustc = ["dep:rustc"]
+default = []
+

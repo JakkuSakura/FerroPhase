@@ -1,7 +1,7 @@
 use crate::common_struct;
 use crate::id::Ident;
 use crate::value::TypeValue;
-use common::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]

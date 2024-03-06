@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 common-lang = { path = "../common-lang" }
-common = { path = "../common" }
+common = { workspace = true }
 swc_ecma_ast = "0.110"
 swc_ecma_quote = "0.57"
 swc_ecma_codegen = "0.146"
