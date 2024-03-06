@@ -1,5 +1,5 @@
 use crate::ast::Visibility;
-use crate::expr::Expr;
+use crate::expr::{Closure, Expr};
 use crate::id::{Ident, Path};
 use crate::value::{TypeValue, Value, ValueFunction};
 use common::*;
@@ -162,7 +162,12 @@ impl SharedScopedContext {
         self.get_value(key).map(Expr::value)
     }
     pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<Expr> {
-        self.get_value(key).map(Expr::value)
+        let storage = self.get_storage(key, true)?;
+        let mut expr = storage.value.map(Expr::value)?;
+        if let Some(closure) = storage.closure {
+            expr = Box::new(Closure::new(Self(closure), expr)).into();
+        }
+        Some(expr)
     }
     pub fn get_type(&self, key: impl Into<Path>) -> Option<TypeValue> {
         let storage = self.get_storage(key, true)?;

@@ -1,3 +1,7 @@
+use crate::id::{Ident, Locator, Path};
+use crate::utils::anybox::{AnyBox, AnyBoxable};
+use crate::value::{Value, ValueUnit};
+use crate::{common_enum, get_threadlocal_serializer};
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -7,12 +11,8 @@ mod stmt;
 mod typing;
 mod value;
 
-use crate::expr::closure::Closure;
-use crate::id::{Ident, Locator, Path};
-use crate::utils::anybox::{AnyBox, AnyBoxable};
-use crate::value::{Value, ValueUnit};
-use crate::{common_enum, get_threadlocal_serializer};
 pub use arena::*;
+pub use closure::*;
 pub use stmt::*;
 pub use typing::*;
 pub use value::*;
@@ -32,7 +32,9 @@ common_enum! {
         Select(Box<Select>),
         Struct(Box<StructExpr>),
         Reference(Box<Reference>),
-        Closure(Box<Closure<Expr>>),
+
+        /// closured because it's conceptually a closure, not a real one
+        Closured(Box<Closure<Expr>>),
 
         SelfType(Box<SelfType>),
 
