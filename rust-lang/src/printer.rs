@@ -545,18 +545,13 @@ impl RustPrinter {
     }
     pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
         let stmts = self.print_items_chunk(&m.items)?;
-        if m.name.as_str() == "__file__" {
-            Ok(quote!(
+
+        let mod_name = format_ident!("{}", m.name.as_str());
+        Ok(quote!(
+            pub mod #mod_name {
                 #stmts
-            ))
-        } else {
-            let mod_name = format_ident!("{}", m.name.as_str());
-            Ok(quote!(
-                pub mod #mod_name {
-                    #stmts
-                }
-            ))
-        }
+            }
+        ))
     }
     pub fn print_import(&self, node: &Import) -> Result<TokenStream> {
         let vis = self.print_vis(node.visibility);
@@ -841,11 +836,15 @@ impl RustPrinter {
             _ => bail!("Unable to serialize {:?}", item),
         }
     }
+    pub fn print_file(&self, file: &File) -> Result<TokenStream> {
+        let items = self.print_items_chunk(&file.module.items)?;
+        Ok(quote!(#items))
+    }
     pub fn print_tree(&self, node: &Tree) -> Result<TokenStream> {
         match node {
             Tree::Item(n) => self.print_item(n),
             Tree::Expr(n) => self.print_expr(n),
-            Tree::File(n) => self.print_module(&n.module),
+            Tree::File(n) => self.print_file(n),
         }
     }
 }
