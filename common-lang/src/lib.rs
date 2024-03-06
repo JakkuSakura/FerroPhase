@@ -1,5 +1,3 @@
-extern crate core;
-
 pub mod ast;
 pub mod context;
 pub mod cst;
@@ -10,15 +8,13 @@ pub mod id;
 pub mod interpreter;
 pub mod mir;
 pub mod ops;
-pub mod optimizer;
-pub mod passes;
+pub mod pass;
 pub mod pat;
 mod serialize;
-pub mod span;
 pub mod thir;
-pub mod ty;
 pub mod utils;
 pub mod value;
 pub mod vm;
+
 pub use deserialize::*;
 pub use serialize::*;

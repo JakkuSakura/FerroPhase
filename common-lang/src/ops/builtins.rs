@@ -1,15 +1,16 @@
 use crate::context::SharedScopedContext;
+use crate::id::Ident;
 use crate::ops::BinOpKind;
 use crate::value::*;
 use crate::Serializer;
 use common::*;
 use std::fmt::{Debug, Display, Formatter};
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum BuiltinFnName {
     BinOpKind(BinOpKind),
-    Name(crate::id::Ident),
+    Name(Ident),
 }
 impl Display for BuiltinFnName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -22,7 +23,7 @@ impl Display for BuiltinFnName {
 impl Debug for BuiltinFnName {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinFnName::BinOpKind(k) => std::fmt::Debug::fmt(k, f),
+            BuiltinFnName::BinOpKind(k) => Debug::fmt(k, f),
             BuiltinFnName::Name(n) => std::fmt::Debug::fmt(n, f),
         }
     }
@@ -30,25 +31,25 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    func: Rc<dyn Fn(&[Value], &SharedScopedContext) -> Result<Value>>,
+    func: Arc<dyn Fn(&[Value], &SharedScopedContext) -> Result<Value> + Send + Sync>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + 'static,
+        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
-            func: Rc::new(f),
+            func: Arc::new(f),
         }
     }
     pub fn new_with_ident(
-        name: crate::id::Ident,
-        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + 'static,
+        name: Ident,
+        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
-            func: Rc::new(f),
+            func: Arc::new(f),
         }
     }
     pub fn invoke(&self, args: &[Value], ctx: &SharedScopedContext) -> Result<Value> {
@@ -73,7 +74,7 @@ impl<'de> Deserialize<'de> for BuiltinFn {
         let name = BuiltinFnName::deserialize(deserializer)?;
         Ok(Self {
             name,
-            func: Rc::new(|_, _| unreachable!()),
+            func: Arc::new(|_, _| unreachable!()),
         })
     }
 }
@@ -86,8 +87,8 @@ impl PartialEq for BuiltinFn {
 impl Eq for BuiltinFn {}
 pub fn operate_on_literals(
     name: BinOpKind,
-    op_i64: impl Fn(&[i64]) -> i64 + 'static,
-    op_f64: impl Fn(&[f64]) -> f64 + 'static,
+    op_i64: impl Fn(&[i64]) -> i64 + Send + Sync + 'static,
+    op_f64: impl Fn(&[f64]) -> f64 + Send + Sync + 'static,
 ) -> BuiltinFn {
     BuiltinFn::new(name, move |args, _ctx| {
         let mut args_i64 = vec![];
@@ -113,8 +114,8 @@ pub fn operate_on_literals(
 }
 pub fn binary_comparison_on_literals(
     name: BinOpKind,
-    op_i64: impl Fn(i64, i64) -> bool + 'static,
-    op_f64: impl Fn(f64, f64) -> bool + 'static,
+    op_i64: impl Fn(i64, i64) -> bool + Send + Sync + 'static,
+    op_f64: impl Fn(f64, f64) -> bool + Send + Sync + 'static,
 ) -> BuiltinFn {
     BuiltinFn::new(name, move |args, _ctx| {
         if args.len() != 2 {
@@ -195,7 +196,7 @@ pub fn builtin_ne() -> BuiltinFn {
     binary_comparison_on_literals(BinOpKind::Ne, |x, y| x != y, |x, y| x != y)
 }
 
-pub fn builtin_print(se: Rc<dyn Serializer>) -> BuiltinFn {
+pub fn builtin_print(se: Arc<dyn Serializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("print".into(), move |args, ctx| {
         let formatted: Vec<_> = args
             .into_iter()

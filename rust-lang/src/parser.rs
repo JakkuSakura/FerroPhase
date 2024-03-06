@@ -10,10 +10,7 @@ use common_lang::ops::{BinOpKind, UnOpKind};
 use common_lang::pat::{
     Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
 };
-use common_lang::ty::{
-    DecimalType, EnumTypeVariant, FieldTypeValue, ImplTraits, IntType, TypeBounds, TypeEnum,
-    TypeFunction, TypePrimitive, TypeReference, TypeStruct, TypeStructural, TypeValue,
-};
+use common_lang::utils::anybox::AnyBox;
 use common_lang::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
@@ -142,7 +139,7 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
         FnArg::Receiver(rev) => FunctionParam {
             name: Ident::new("self"),
             ty: {
-                TypeValue::expr(TypeExpr::SelfType(
+                TypeValue::expr(Expr::SelfType(
                     SelfType {
                         reference: rev.reference.is_some(),
                         mutability: rev.mutability.is_some(),
@@ -190,11 +187,11 @@ fn parse_return_type(o: ReturnType) -> Result<TypeValue> {
         ReturnType::Type(_, t) => parse_type_value(*t)?,
     })
 }
-fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<TypeExpr> {
+fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<Expr> {
     match b {
         syn::TypeParamBound::Trait(t) => {
             let path = parse_path(t.path)?;
-            Ok(TypeExpr::path(path))
+            Ok(Expr::path(path))
         }
         _ => bail!("Does not support lifetimes {:?}", b),
     }
@@ -378,7 +375,7 @@ fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
 }
 pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
     Ok(StructExpr {
-        name: TypeExpr::path(parse_path(s.path)?).into(),
+        name: Expr::path(parse_path(s.path)?).into(),
         fields: s
             .fields
             .into_iter()
@@ -424,7 +421,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<AExpr> {
 
         raw => {
             warn!("RawExpr {:?}", raw);
-            Expr::Any(crate::utils::anybox::AnyBox::new(RawExpr { raw }))
+            Expr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };
     Ok(expr.into())
@@ -501,7 +498,7 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
             .map(|x| parse_path(x.1))
             .transpose()?
             .map(Locator::path),
-        self_ty: TypeExpr::value(parse_type_value(*im.self_ty.clone())?),
+        self_ty: Expr::value(parse_type_value(*im.self_ty.clone())?.into()),
         items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
@@ -616,8 +613,7 @@ impl syn::parse::Parse for TypeValueParser {
 }
 
 enum TypeExprParser {
-    Add { left: TypeExpr, right: TypeExpr },
-    Sub { left: TypeExpr, right: TypeExpr },
+    Add { left: Expr, right: Expr },
     Value(TypeValue),
 }
 impl syn::parse::Parse for TypeExprParser {
@@ -629,18 +625,18 @@ impl syn::parse::Parse for TypeExprParser {
             }
             if input.peek(Token![+]) {
                 input.parse::<Token![+]>()?;
-                let rhs = input.parse::<TypeValueParser>()?.into();
+                let rhs: TypeValue = input.parse::<TypeValueParser>()?.into();
                 lhs = TypeExprParser::Add {
                     left: lhs.into(),
-                    right: TypeExpr::value(rhs).into(),
+                    right: Expr::value(rhs.into()),
                 };
-            } else if input.peek(Token![-]) {
-                input.parse::<Token![-]>()?;
-                let rhs = input.parse::<TypeValueParser>()?.into();
-                lhs = TypeExprParser::Sub {
-                    left: lhs.into(),
-                    right: TypeExpr::value(rhs).into(),
-                };
+            // } else if input.peek(Token![-]) {
+            //     input.parse::<Token![-]>()?;
+            //     let rhs: TypeValue = input.parse::<TypeValueParser>()?.into();
+            //     lhs = TypeExprParser::Sub {
+            //         left: lhs.into(),
+            //         right: Expr::value(rhs.into()),
+            //     };
             } else {
                 return Err(input.error("Expected + or -"));
             }
@@ -648,20 +644,21 @@ impl syn::parse::Parse for TypeExprParser {
         Ok(lhs)
     }
 }
-impl Into<TypeExpr> for TypeExprParser {
-    fn into(self) -> TypeExpr {
+impl Into<Expr> for TypeExprParser {
+    fn into(self) -> Expr {
         match self {
-            TypeExprParser::Add { left, right } => {
-                TypeExpr::BinOp(TypeBinOp::Add { left, right }.into())
-            }
-            TypeExprParser::Sub { left, right } => {
-                TypeExpr::BinOp(TypeBinOp::Sub { left, right }.into())
-            }
-            TypeExprParser::Value(v) => TypeExpr::value(v),
+            TypeExprParser::Add { left, right } => Expr::Invoke(Invoke {
+                func: Expr::value(Value::BinOpKind(BinOpKind::AddTrait)).into(),
+                args: vec![left.into(), right.into()],
+            }),
+            // TypeExprParser::Sub { .. } => {
+            //     unreachable!()
+            // }
+            TypeExprParser::Value(v) => Expr::value(v.into()),
         }
     }
 }
-fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<TypeExpr> {
+fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<Expr> {
     let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
     Ok(t.into())
 }
@@ -696,7 +693,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
         syn::Item::Impl(im) => Ok(Item::Impl(parse_impl(im)?)),
         syn::Item::Use(u) => Ok(match parse_use(u) {
             Ok(i) => Item::Import(i),
-            Err(r) => Item::Any(crate::utils::anybox::AnyBox::new(r)),
+            Err(r) => Item::Any(AnyBox::new(r)),
         }),
         syn::Item::Macro(m) => Ok(Item::any(RawItemMacro { raw: m })),
         syn::Item::Struct(s) => {

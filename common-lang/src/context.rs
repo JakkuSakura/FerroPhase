@@ -1,8 +1,7 @@
 use crate::ast::Visibility;
 use crate::expr::Expr;
 use crate::id::{Ident, Path};
-use crate::ty::TypeValue;
-use crate::value::{Value, ValueFunction};
+use crate::value::{TypeValue, Value, ValueFunction};
 use common::*;
 use dashmap::DashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -10,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 #[derive(Clone, Default)]
 pub struct ValueStorage {
     value: Option<Value>,
-    ty: Option<TypeValue>,
+    ty: Option<Value>,
     closure: Option<Arc<ScopedContext>>,
 }
 pub struct ScopedContext {
@@ -40,10 +39,6 @@ impl ScopedContext {
         }
     }
 
-    pub fn insert_type_with_ctx(&self, key: impl Into<Ident>, value: TypeValue) {
-        self.storages.entry(key.into()).or_default().ty = Some(value);
-    }
-
     pub fn insert_value(&self, key: impl Into<Ident>, value: Value) {
         self.storages.entry(key.into()).or_default().value = Some(value);
     }
@@ -57,7 +52,7 @@ impl ScopedContext {
         for key in self.storages.iter() {
             let (k, v) = key.pair();
             let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
-            let ty = v.ty.as_ref().unwrap_or(&TypeValue::ANY);
+            let ty = v.ty.as_ref().unwrap_or(&Value::UNDEFINED);
             debug!("{}: val:{} ty:{}", k, value, ty)
         }
         Ok(())
@@ -166,9 +161,16 @@ impl SharedScopedContext {
     pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
         self.get_value(key).map(Expr::value)
     }
+    pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<Expr> {
+        self.get_value(key).map(Expr::value)
+    }
     pub fn get_type(&self, key: impl Into<Path>) -> Option<TypeValue> {
         let storage = self.get_storage(key, true)?;
-        storage.ty
+        let ty = storage.ty?;
+        match ty {
+            Value::Type(ty) => Some(ty),
+            _ => None,
+        }
     }
     pub fn root(&self) -> Self {
         self.get_parent()
@@ -179,7 +181,7 @@ impl SharedScopedContext {
     pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
-            Expr::Locator(ident) => self.get_value(ident),
+            Expr::Locator(ident) => self.get_value(ident.to_path()),
             Expr::Value(value) => Some(*value.clone()),
             _ => None,
         };
@@ -196,7 +198,7 @@ impl SharedScopedContext {
         let expr = self.get_expr(&key)?;
         info!("get_value_recursive {} => {:?}", key, expr);
         match expr {
-            Expr::Locator(ident) => self.get_value_recursive(ident),
+            Expr::Locator(ident) => self.get_value_recursive(ident.to_path()),
             _ => Some(Value::expr(expr)),
         }
     }
@@ -234,3 +236,9 @@ impl SharedScopedContext {
         values
     }
 }
+impl PartialEq for SharedScopedContext {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for SharedScopedContext {}

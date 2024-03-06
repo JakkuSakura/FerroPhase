@@ -35,7 +35,7 @@ macro_rules! common_enum {
         $(#[$attr:meta])*
         pub enum $name:ident { $($t:tt)* }
     ) => {
-        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, derive_from_one::FromOne)]
+        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, derive_more::From, derive_more::TryInto)]
         $(#[$attr])*
         pub enum $name {
             $($t)*

@@ -4,10 +4,9 @@ use common::*;
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use common_lang::ast::*;
 use common_lang::expr::*;
-use common_lang::id::{ParameterPath, ParameterPathSegment};
+use common_lang::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use common_lang::pat::{Pattern, PatternIdent};
-use common_lang::ty::*;
 use common_lang::value::*;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
@@ -15,7 +14,7 @@ use quote::*;
 pub struct RustPrinter;
 
 impl RustPrinter {
-    pub fn print_ident(&self, i: &crate::id::Ident) -> TokenStream {
+    pub fn print_ident(&self, i: &Ident) -> TokenStream {
         match i.as_str() {
             "+" => quote!(+),
             "*" => quote!(*),
@@ -123,6 +122,7 @@ impl RustPrinter {
     pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
         match op {
             BinOpKind::Add => quote!(+),
+            BinOpKind::AddTrait => quote!(+),
             BinOpKind::Sub => quote!(-),
             BinOpKind::Mul => quote!(*),
             BinOpKind::Div => quote!(/),
@@ -255,7 +255,7 @@ impl RustPrinter {
                 Ok(quote!(box #pattern))
             }
             Pattern::Variant(variant) => {
-                let name = self.print_type_expr(&variant.name)?;
+                let name = self.print_expr(&variant.name)?;
                 let pattern = if let Some(pattern) = &variant.pattern {
                     let pattern = self.print_pattern(pattern)?;
                     quote!(#pattern)
@@ -434,13 +434,55 @@ impl RustPrinter {
         ));
     }
     pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
+        let func = node.func.get();
+
         let fun = self.print_expr(&node.func.get())?;
         let args: Vec<_> = node
             .args
             .iter()
             .map(|x| self.print_expr(&x.get()))
             .try_collect()?;
-        match &node.func.get() {
+        match &func {
+            Expr::Value(value) => match &**value {
+                Value::Type(_) => {
+                    return Ok(quote!(
+                        <#fun>::<#(#args), *>
+                    ))
+                }
+                Value::BinOpKind(op) => {
+                    let ret = match op {
+                        BinOpKind::Add => quote!(#(#args) + *),
+                        BinOpKind::AddTrait => quote!(#(#args) + *),
+                        BinOpKind::Sub => quote!(#(#args) - *),
+                        BinOpKind::Div => quote!(#(#args) / *),
+                        BinOpKind::Mul => {
+                            let mut result = vec![];
+                            for (i, a) in args.into_iter().enumerate() {
+                                if i != 0 {
+                                    result.push(quote!(*));
+                                }
+                                result.push(a);
+                            }
+                            quote!(#(#result)*)
+                        }
+                        BinOpKind::Mod => quote!(#(#args) % *),
+                        BinOpKind::Gt => quote!(#(#args) > *),
+                        BinOpKind::Lt => quote!(#(#args) < *),
+                        BinOpKind::Ge => quote!(#(#args) >= *),
+                        BinOpKind::Le => quote!(#(#args) <= *),
+                        BinOpKind::Eq => quote!(#(#args) == *),
+                        BinOpKind::Ne => quote!(#(#args) != *),
+                        BinOpKind::Or => quote!(#(#args) || *),
+                        BinOpKind::And => quote!(#(#args) && *),
+                        BinOpKind::BitOr => quote!(#(#args) | *),
+                        BinOpKind::BitAnd => quote!(#(#args) & *),
+                        BinOpKind::BitXor => quote!(#(#args) ^ *),
+                        BinOpKind::Any(_) => bail!("Not supported binop: {:?}", op),
+                    };
+                    return Ok(ret);
+                }
+                _ => {}
+            },
             Expr::Select(select) => match select.select {
                 SelectType::Field => {
                     return Ok(quote!(
@@ -455,20 +497,6 @@ impl RustPrinter {
         let fun_str = fun.to_string();
 
         let code = match fun_str.as_str() {
-            "+" => quote!(#(#args) + *),
-            "-" => quote!(#(#args) - *),
-            "/" => quote!(#(#args) / *),
-            "|" => quote!(#(#args) | *),
-            "*" => {
-                let mut result = vec![];
-                for (i, a) in args.into_iter().enumerate() {
-                    if i != 0 {
-                        result.push(quote!(*));
-                    }
-                    result.push(a);
-                }
-                quote!(#(#result)*)
-            }
             "tuple" => quote!(
                 (#(#args), *)
             ),
@@ -535,7 +563,7 @@ impl RustPrinter {
     }
 
     pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
-        let name = self.print_type_expr(&impl_.self_ty)?;
+        let name = self.print_expr(&impl_.self_ty)?;
         let methods = self.print_items_chunk(&impl_.items)?;
         Ok(quote!(
             impl #name {
@@ -579,7 +607,7 @@ impl RustPrinter {
         Ok(quote!(#name { #(#kwargs), * }))
     }
     pub fn print_struct_expr(&self, s: &StructExpr) -> Result<TokenStream> {
-        let name = self.print_type_expr(&s.name)?;
+        let name = self.print_expr(&s.name)?;
         let kwargs: Vec<_> = s
             .fields
             .iter()
@@ -709,7 +737,7 @@ impl RustPrinter {
         let bounds: Vec<_> = bounds
             .bounds
             .iter()
-            .map(|x| self.print_type_expr(&x))
+            .map(|x| self.print_expr(&x))
             .try_collect()?;
         Ok(quote!(#(#bounds)+ *))
     }
@@ -719,7 +747,7 @@ impl RustPrinter {
             TypeValue::Primitive(p) => self.print_primitive_type(*p),
             TypeValue::Struct(s) => self.print_struct_type(s),
             TypeValue::Structural(s) => self.print_unnamed_struct_type(s),
-            TypeValue::Expr(e) => self.print_type_expr(e),
+            TypeValue::Expr(e) => self.print_expr(e),
             TypeValue::ImplTraits(t) => self.print_impl_traits(t),
             TypeValue::TypeBounds(t) => self.print_type_bounds(t),
             TypeValue::Unit(_) => Ok(quote!(())),
@@ -738,7 +766,7 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_path(&self, path: &crate::id::Path) -> TokenStream {
+    pub fn print_path(&self, path: &Path) -> TokenStream {
         let segments: Vec<_> = path.segments.iter().map(|x| self.print_ident(x)).collect();
         quote!(#(#segments)::*)
     }
@@ -762,38 +790,14 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#(#segments)::*))
     }
-    pub fn print_locator(&self, pat: &crate::id::Locator) -> Result<TokenStream> {
+    pub fn print_locator(&self, pat: &Locator) -> Result<TokenStream> {
         Ok(match pat {
-            crate::id::Locator::Ident(n) => self.print_ident(n),
-            crate::id::Locator::Path(n) => self.print_path(n),
-            crate::id::Locator::ParameterPath(n) => self.print_parameter_path(n)?,
+            Locator::Ident(n) => self.print_ident(n),
+            Locator::Path(n) => self.print_path(n),
+            Locator::ParameterPath(n) => self.print_parameter_path(n)?,
         })
     }
-    pub fn print_type_bin_op(&self, op: &TypeBinOp) -> Result<TokenStream> {
-        match op {
-            TypeBinOp::Add { left, right } => {
-                let left = self.print_type_expr(&left)?;
-                let right = self.print_type_expr(&right)?;
-                Ok(quote!(#left + #right))
-            }
-            TypeBinOp::Sub { left, right } => {
-                let left = self.print_type_expr(&left)?;
-                let right = self.print_type_expr(&right)?;
-                Ok(quote!(#left - #right))
-            }
-            #[allow(unreachable_patterns)]
-            _ => bail!("Unable to serialize {:?}", op),
-        }
-    }
-    pub fn print_type_expr(&self, node: &TypeExpr) -> Result<TokenStream> {
-        match node {
-            TypeExpr::Locator(n) => self.print_locator(n),
-            TypeExpr::Value(n) => self.print_type_value(n),
-            TypeExpr::Invoke(n) => self.print_invoke_type(n),
-            TypeExpr::BinOp(op) => self.print_type_bin_op(op),
-            _ => bail!("Unable to serialize {:?}", node),
-        }
-    }
+
     pub fn print_stmt_expr(&self, node: &SideEffect) -> Result<TokenStream> {
         let expr = self.print_expr(&node.expr)?;
         Ok(quote!(#expr;))
@@ -809,8 +813,8 @@ impl RustPrinter {
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Locator(crate::id::Locator::Ident(n)) => Ok(self.print_ident(n)),
-            Expr::Locator(crate::id::Locator::Path(n)) => Ok(self.print_path(n)),
+            Expr::Locator(Locator::Ident(n)) => Ok(self.print_ident(n)),
+            Expr::Locator(Locator::Path(n)) => Ok(self.print_path(n)),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),

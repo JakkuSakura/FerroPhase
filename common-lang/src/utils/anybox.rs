@@ -4,11 +4,12 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-pub trait AnyBoxable: Any + Debug + Clone + PartialEq + Eq + 'static {}
-impl<T: Any + Debug + Clone + PartialEq + Eq + 'static> AnyBoxable for T {}
+pub trait AnyBoxable: Any + Debug + Clone + PartialEq + Eq + Send + Sync + 'static {}
+impl<T: Any + Debug + Clone + PartialEq + Eq + Send + Sync + 'static> AnyBoxable for T {}
+// TODO: make it constant
 pub struct AnyBoxVTable {
     pub debug: fn(&dyn Any) -> String,
-    pub clone: fn(&dyn Any) -> Box<dyn Any>,
+    pub clone: fn(&dyn Any) -> Box<dyn Any + Send + Sync>,
     pub equals: fn(&dyn Any, &dyn Any) -> bool,
     pub hash: fn(&dyn Any) -> u64,
 }
@@ -28,7 +29,7 @@ impl AnyBoxVTable {
 }
 
 pub struct AnyBox {
-    pub value: Box<dyn Any>,
+    pub value: Box<dyn Any + Send + Sync>,
     vtable: Arc<AnyBoxVTable>,
 }
 impl AnyBox {

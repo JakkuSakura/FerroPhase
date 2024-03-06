@@ -1,14 +1,16 @@
+mod ty;
 mod value;
+
+pub use ty::*;
+pub use value::*;
 
 use crate::expr::Expr;
 use crate::ops::{BinOpKind, UnOpKind};
-use crate::ty::TypeValue;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, get_threadlocal_serializer};
 use common::bail;
 use std::fmt::{Display, Formatter};
-pub use value::*;
 
 pub type ValueId = u64;
 
@@ -64,6 +66,7 @@ impl Value {
         Value::Null(ValueNull)
     }
     pub const NULL: Value = Value::Null(ValueNull);
+
     pub fn expr(e: impl Into<Expr>) -> Self {
         match e.into() {
             Expr::Value(v) => *v,
