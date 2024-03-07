@@ -4,70 +4,62 @@ use crate::expr::Expr;
 use crate::pass::InterpreterPass;
 use crate::utils::conv::TryConv;
 use crate::value::{
-    DecimalType, FieldTypeValue, GenericParam, ImplTraits, IntType, TypeBounds, TypeFunction,
-    TypePrimitive, TypeStruct, TypeStructural, TypeType, TypeValue, Value, ValueFunction,
+    DecimalType, FieldTypeValue, GenericParam, ImplTraits, IntType, Type, TypeBounds, TypeFunction,
+    TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
 };
 use common::{bail, ensure, ContextCompat, Error, Result};
 use itertools::Itertools;
 
 impl InterpreterPass {
-    pub fn type_check_value(&self, lit: &Value, ty: &TypeValue) -> Result<()> {
+    pub fn type_check_value(&self, lit: &Value, ty: &Type) -> Result<()> {
         match lit {
             Value::Int(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(TypePrimitive::Int(_))),
+                    matches!(ty, Type::Primitive(TypePrimitive::Int(_))),
                     "Expected i64, got {:?}",
                     lit
                 )
             }
             Value::Bool(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(TypePrimitive::Bool)),
+                    matches!(ty, Type::Primitive(TypePrimitive::Bool)),
                     "Expected bool, got {:?}",
                     lit
                 )
             }
             Value::Decimal(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(TypePrimitive::Decimal(_))),
+                    matches!(ty, Type::Primitive(TypePrimitive::Decimal(_))),
                     "Expected f64, got {:?}",
                     lit
                 )
             }
             Value::Char(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(TypePrimitive::Char)),
+                    matches!(ty, Type::Primitive(TypePrimitive::Char)),
                     "Expected char, got {:?}",
                     lit
                 )
             }
             Value::String(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(TypePrimitive::String)),
+                    matches!(ty, Type::Primitive(TypePrimitive::String)),
                     "Expected string, got {:?}",
                     lit
                 )
             }
             Value::List(_) => {
                 ensure!(
-                    matches!(ty, TypeValue::Primitive(TypePrimitive::List)),
+                    matches!(ty, Type::Primitive(TypePrimitive::List)),
                     "Expected list, got {:?}",
                     lit
                 )
             }
             Value::Unit(_) => {
-                ensure!(
-                    matches!(ty, TypeValue::Unit(_)),
-                    "Expected unit, got {:?}",
-                    lit
-                )
+                ensure!(matches!(ty, Type::Unit(_)), "Expected unit, got {:?}", lit)
             }
             Value::Type(_) => {
-                ensure!(
-                    matches!(ty, TypeValue::Type(_)),
-                    "Expected type, got {:?}",
-                    lit
-                )
+                ensure!(matches!(ty, Type::Type(_)), "Expected type, got {:?}", lit)
             }
             _ => {}
         }
@@ -76,7 +68,7 @@ impl InterpreterPass {
     pub fn type_check_expr_against_value(
         &self,
         expr: &Expr,
-        type_value: &TypeValue,
+        type_value: &Type,
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         match expr {
@@ -93,18 +85,14 @@ impl InterpreterPass {
         Ok(())
     }
 
-    pub fn evaluate_type_value(
-        &self,
-        ty: &TypeValue,
-        ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
+    pub fn evaluate_type_value(&self, ty: &Type, ctx: &SharedScopedContext) -> Result<Type> {
         match ty {
-            TypeValue::Expr(expr) => {
+            Type::Expr(expr) => {
                 let value = self.interpret_expr(expr, ctx)?;
                 let ty = value.try_conv()?;
                 return Ok(ty);
             }
-            TypeValue::Struct(n) => {
+            Type::Struct(n) => {
                 let fields = n
                     .fields
                     .iter()
@@ -116,12 +104,12 @@ impl InterpreterPass {
                         })
                     })
                     .try_collect()?;
-                return Ok(TypeValue::Struct(TypeStruct {
+                return Ok(Type::Struct(TypeStruct {
                     name: n.name.clone(),
                     fields,
                 }));
             }
-            TypeValue::Structural(n) => {
+            Type::Structural(n) => {
                 let fields = n
                     .fields
                     .iter()
@@ -133,9 +121,9 @@ impl InterpreterPass {
                         })
                     })
                     .try_collect()?;
-                return Ok(TypeValue::Structural(TypeStructural { fields }));
+                return Ok(Type::Structural(TypeStructural { fields }));
             }
-            TypeValue::Function(f) => {
+            Type::Function(f) => {
                 let sub = ctx.child(
                     crate::id::Ident::new("__func__"),
                     Visibility::Private,
@@ -151,7 +139,7 @@ impl InterpreterPass {
                     .map(|x| self.evaluate_type_value(x, &sub))
                     .try_collect()?;
                 let ret = self.evaluate_type_value(&f.ret, &sub)?;
-                return Ok(TypeValue::Function(
+                return Ok(Type::Function(
                     TypeFunction {
                         params,
                         generics_params: f.generics_params.clone(),
@@ -160,8 +148,8 @@ impl InterpreterPass {
                     .into(),
                 ));
             }
-            TypeValue::TypeBounds(b) => return self.evaluate_type_bounds(b, ctx),
-            TypeValue::ImplTraits(t) => return self.evaluate_impl_traits(t, ctx),
+            Type::TypeBounds(b) => return self.evaluate_type_bounds(b, ctx),
+            Type::ImplTraits(t) => return self.evaluate_impl_traits(t, ctx),
             _ => Ok(ty.clone()),
         }
     }
@@ -169,10 +157,10 @@ impl InterpreterPass {
         &self,
         traits: &ImplTraits,
         ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
+    ) -> Result<Type> {
         let traits = self.evaluate_type_bounds(&traits.bounds, ctx)?;
         match traits {
-            TypeValue::TypeBounds(bounds) => Ok(TypeValue::ImplTraits(ImplTraits { bounds })),
+            Type::TypeBounds(bounds) => Ok(Type::ImplTraits(ImplTraits { bounds })),
             _ => Ok(traits),
         }
     }
@@ -181,14 +169,14 @@ impl InterpreterPass {
         &self,
         bounds: &TypeBounds,
         ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
+    ) -> Result<Type> {
         let bounds: Vec<_> = bounds
             .bounds
             .iter()
             .map(|x| self.interpret_expr(x, ctx))
             .try_collect()?;
         if bounds.is_empty() {
-            return Ok(TypeValue::any());
+            return Ok(Type::any());
         }
         if bounds.len() == 1 {
             return bounds.first().unwrap().clone().try_conv();
@@ -209,13 +197,13 @@ impl InterpreterPass {
         callee: &Expr,
         params: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
+    ) -> Result<Type> {
         match callee {
             Expr::Locator(crate::id::Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(params.first().context("No param")?, ctx)
                 }
-                "print" => return Ok(TypeValue::unit()),
+                "print" => return Ok(Type::unit()),
                 _ => {}
             },
             _ => {}
@@ -223,37 +211,33 @@ impl InterpreterPass {
 
         let callee = self.infer_expr(callee, ctx)?;
         match callee {
-            TypeValue::Function(f) => return Ok(f.ret),
+            Type::Function(f) => return Ok(f.ret),
             _ => {}
         }
 
         bail!("Could not infer type call {:?}", callee)
     }
-    pub fn infer_ident(
-        &self,
-        ident: &crate::id::Ident,
-        ctx: &SharedScopedContext,
-    ) -> Result<TypeValue> {
+    pub fn infer_ident(&self, ident: &crate::id::Ident, ctx: &SharedScopedContext) -> Result<Type> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
-                return Ok(TypeValue::Function(
+                return Ok(Type::Function(
                     TypeFunction {
                         generics_params: vec![GenericParam {
                             name: crate::id::Ident::new("T"),
-                            bounds: TypeBounds::new(Expr::value(TypeValue::any().into())),
+                            bounds: TypeBounds::new(Expr::value(Type::any().into())),
                         }],
-                        params: vec![TypeValue::ident("T".into()), TypeValue::ident("T".into())],
-                        ret: TypeValue::bool(),
+                        params: vec![Type::ident("T".into()), Type::ident("T".into())],
+                        ret: Type::bool(),
                     }
                     .into(),
                 ));
             }
             "print" => {
-                return Ok(TypeValue::Function(
+                return Ok(Type::Function(
                     TypeFunction {
                         params: vec![],
                         generics_params: vec![],
-                        ret: TypeValue::unit(),
+                        ret: Type::unit(),
                     }
                     .into(),
                 ))
@@ -265,7 +249,7 @@ impl InterpreterPass {
             .with_context(|| format!("Could not find {:?} in context", ident))?;
         self.infer_expr(&expr, ctx)
     }
-    pub fn infer_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<TypeValue> {
+    pub fn infer_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<Type> {
         match expr {
             Expr::Locator(n) => {
                 let ty = ctx
@@ -274,24 +258,22 @@ impl InterpreterPass {
                 return Ok(ty);
             }
             Expr::Value(l) => match &**l {
-                Value::Int(_) => return Ok(TypeValue::Primitive(TypePrimitive::Int(IntType::I64))),
+                Value::Int(_) => return Ok(Type::Primitive(TypePrimitive::Int(IntType::I64))),
                 Value::Decimal(_) => {
-                    return Ok(TypeValue::Primitive(TypePrimitive::Decimal(
-                        DecimalType::F64,
-                    )))
+                    return Ok(Type::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
                 }
-                Value::Unit(_) => return Ok(TypeValue::unit()),
-                Value::Bool(_) => return Ok(TypeValue::Primitive(TypePrimitive::Bool)),
-                Value::String(_) => return Ok(TypeValue::Primitive(TypePrimitive::String)),
-                Value::Type(_) => return Ok(TypeValue::Type(TypeType {})),
-                Value::Char(_) => return Ok(TypeValue::Primitive(TypePrimitive::Char)),
-                Value::List(_) => return Ok(TypeValue::Primitive(TypePrimitive::List)),
+                Value::Unit(_) => return Ok(Type::unit()),
+                Value::Bool(_) => return Ok(Type::Primitive(TypePrimitive::Bool)),
+                Value::String(_) => return Ok(Type::Primitive(TypePrimitive::String)),
+                Value::Type(_) => return Ok(Type::Type(TypeType {})),
+                Value::Char(_) => return Ok(Type::Primitive(TypePrimitive::Char)),
+                Value::List(_) => return Ok(Type::Primitive(TypePrimitive::List)),
                 _ => {}
             },
             Expr::Invoke(invoke) => match invoke.func.get() {
                 Expr::Value(value) => match *value {
                     Value::BinOpKind(kind) if kind.is_bool() => {
-                        return Ok(TypeValue::Primitive(TypePrimitive::Bool))
+                        return Ok(Type::Primitive(TypePrimitive::Bool))
                     }
                     Value::BinOpKind(_) => {
                         return Ok(

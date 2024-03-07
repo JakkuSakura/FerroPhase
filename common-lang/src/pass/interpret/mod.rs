@@ -176,12 +176,12 @@ impl InterpreterPass {
                         .map(|x| {
                             let value = this.interpret_value(x, value, true)?;
                             match value {
-                                Value::Type(TypeValue::ImplTraits(impls)) => Ok(impls.bounds),
+                                Value::Type(Type::ImplTraits(impls)) => Ok(impls.bounds),
                                 _ => bail!("Expected impl Traits, got {:?}", value),
                             }
                         })
                         .try_collect()?;
-                    Ok(TypeValue::ImplTraits(ImplTraits {
+                    Ok(Type::ImplTraits(ImplTraits {
                         bounds: TypeBounds {
                             bounds: args.into_iter().flat_map(|x| x.bounds).collect(),
                         },
@@ -219,14 +219,11 @@ impl InterpreterPass {
         Ok(())
     }
     pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(
-            def.name.clone(),
-            TypeValue::Struct(def.value.clone()).into(),
-        );
+        ctx.insert_value_with_ctx(def.name.clone(), Type::Struct(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), TypeValue::Enum(def.value.clone()).into());
+        ctx.insert_value_with_ctx(def.name.clone(), Type::Enum(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_type(&self, def: &DefType, ctx: &SharedScopedContext) -> Result<()> {
@@ -250,7 +247,7 @@ impl InterpreterPass {
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
         let value: Value = self.interpret_expr(&node.name, ctx)?.try_conv()?;
-        let ty: TypeValue = value.try_conv()?;
+        let ty: Type = value.try_conv()?;
         let struct_ = ty.try_conv()?;
         let fields: Vec<_> = node
             .fields
@@ -320,7 +317,7 @@ impl InterpreterPass {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
-    pub fn interpret_type(&self, node: &TypeValue, ctx: &SharedScopedContext) -> Result<TypeValue> {
+    pub fn interpret_type(&self, node: &Type, ctx: &SharedScopedContext) -> Result<Type> {
         // TODO: handle closure
         self.evaluate_type_value(node, ctx)
     }
