@@ -1,6 +1,6 @@
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
-use crate::value::{Value, ValueUnit};
+use crate::value::{Type, Value, ValueUnit};
 use crate::{common_enum, get_threadlocal_serializer};
 use std::fmt::{Debug, Display, Formatter};
 
@@ -56,6 +56,7 @@ impl Expr {
         match v {
             Value::Expr(expr) => expr,
             Value::Any(any) => Expr::Any(any),
+            Value::Type(Type::Expr(expr)) => *expr,
             _ => Expr::Value(v.into()),
         }
     }
