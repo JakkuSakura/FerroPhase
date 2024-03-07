@@ -25,6 +25,14 @@ macro_rules! common_struct {
             pub struct $name { $($t)* }
         );
     };
+
+    (
+        $(#[$attr:meta])*
+        pub struct $name:ident;
+    ) => {
+        #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+        pub struct $name;
+    };
 }
 /// A macro to generate a common enum with a set of common traits.
 /// especially From<Variant> for Enum

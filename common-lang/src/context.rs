@@ -54,7 +54,8 @@ impl ScopedContext {
         for key in self.storages.iter() {
             let (k, v) = key.pair();
             let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
-            let ty = v.ty.as_ref().unwrap_or(&Value::UNDEFINED);
+
+            let ty = v.ty.as_ref().unwrap_or(&Type::UNKNOWN);
             debug!("{}: val:{} ty:{}", k, value, ty)
         }
         Ok(())
@@ -179,10 +180,7 @@ impl SharedScopedContext {
     pub fn get_type(&self, key: impl Into<Path>) -> Option<Type> {
         let storage = self.get_storage(key, true)?;
         let ty = storage.ty?;
-        match ty {
-            Value::Type(ty) => Some(ty),
-            _ => None,
-        }
+        Some(ty)
     }
     pub fn root(&self) -> Self {
         self.get_parent()
