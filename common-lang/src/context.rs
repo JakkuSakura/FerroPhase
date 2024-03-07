@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, Weak};
 #[derive(Clone, Default)]
 pub struct ValueStorage {
     value: Option<Value>,
-    ty: Option<Value>,
+    ty: Option<Type>,
     closure: Option<Arc<ScopedContext>>,
 }
 pub struct ScopedContext {
@@ -159,6 +159,11 @@ impl SharedScopedContext {
         let mut store = self.storages.entry(key.into()).or_default();
         store.value = Some(value);
         store.closure = Some(self.clone().0);
+    }
+    /// insert type inference
+    pub fn insert_type(&self, key: impl Into<Ident>, ty: Type) {
+        let mut store = self.storages.entry(key.into()).or_default();
+        store.ty = Some(ty);
     }
     pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
         self.get_value(key).map(Expr::value)
