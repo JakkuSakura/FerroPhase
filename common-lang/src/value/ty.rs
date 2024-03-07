@@ -52,11 +52,15 @@ impl Type {
         Type::Primitive(TypePrimitive::Bool)
     }
     pub fn expr(e: Expr) -> Self {
-        Type::Expr(Box::new(e))
+        match e {
+            Expr::Value(ty) => Self::value(*ty),
+            _ => Type::Expr(Box::new(e)),
+        }
     }
     pub fn value(v: Value) -> Self {
         match v {
-            Value::Expr(expr) => Type::Expr(Box::new(expr)),
+            Value::Expr(expr) => Self::expr(expr),
+            Value::Type(ty) => ty,
             _ => Type::Value(ValueType::new(v).into()),
         }
     }
