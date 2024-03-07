@@ -814,8 +814,7 @@ impl RustPrinter {
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            Expr::Locator(Locator::Ident(n)) => Ok(self.print_ident(n)),
-            Expr::Locator(Locator::Path(n)) => Ok(self.print_path(n)),
+            Expr::Locator(loc) => self.print_locator(loc),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
             Expr::Any(n) => self.print_any(n),
