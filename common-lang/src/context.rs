@@ -1,7 +1,7 @@
 use crate::ast::Visibility;
 use crate::expr::{Closure, Expr};
 use crate::id::{Ident, Path};
-use crate::value::{TypeValue, Value, ValueFunction};
+use crate::value::{Type, Value, ValueFunction};
 use common::*;
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -171,7 +171,7 @@ impl SharedScopedContext {
         }
         Some(expr)
     }
-    pub fn get_type(&self, key: impl Into<Path>) -> Option<TypeValue> {
+    pub fn get_type(&self, key: impl Into<Path>) -> Option<Type> {
         let storage = self.get_storage(key, true)?;
         let ty = storage.ty?;
         match ty {

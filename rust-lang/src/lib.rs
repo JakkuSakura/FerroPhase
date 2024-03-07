@@ -8,7 +8,7 @@ use crate::printer::RustPrinter;
 use common::Result;
 use common_lang::ast::{File, Item, Module, Tree, Visibility};
 use common_lang::expr::*;
-use common_lang::value::{TypeValue, Value, ValueFunction};
+use common_lang::value::{Type, Value, ValueFunction};
 use common_lang::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -159,7 +159,7 @@ impl Serializer for RustSerde {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_type(&self, node: &TypeValue) -> Result<String> {
+    fn serialize_type(&self, node: &Type) -> Result<String> {
         RustPrinter
             .print_type_value(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
@@ -197,7 +197,7 @@ impl Deserializer for RustSerde {
     fn deserialize_file(&self, path: &std::path::Path) -> Result<File> {
         RustParser::new().parse_file_recursively(path.to_owned())
     }
-    fn deserialize_type(&self, code: &str) -> Result<TypeValue> {
+    fn deserialize_type(&self, code: &str) -> Result<Type> {
         let code: syn::Type = parse_str(code)?;
         RustParser::new().parse_type_value(code)
     }

@@ -1,7 +1,7 @@
 use crate::expr::*;
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
-use crate::value::{TypeBounds, TypeStruct, TypeValue, Value};
+use crate::value::{Type, TypeBounds, TypeStruct, Value};
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use bytes::BytesMut;
 use common::*;
@@ -516,7 +516,7 @@ impl Display for ValueStructural {
 common_struct! {
     pub struct FunctionParam {
         pub name: Ident,
-        pub ty: TypeValue,
+        pub ty: Type,
     }
 }
 
@@ -532,7 +532,7 @@ common_struct! {
         pub name: Option<Ident>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
-        pub ret: TypeValue,
+        pub ret: Type,
     }
 }
 

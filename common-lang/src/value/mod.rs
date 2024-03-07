@@ -32,7 +32,7 @@ common_enum! {
         Option(ValueOption),
         Undefined(ValueUndefined),
         Escaped(ValueEscaped),
-        Type(TypeValue),
+        Type(Type),
         Struct(ValueStruct),
         Structural(ValueStructural),
         Function(ValueFunction),

@@ -106,7 +106,7 @@ impl SpecializePass {
 
         let mut ret = func.ret.clone();
         match &ret {
-            TypeValue::Expr(expr) => match &**expr {
+            Type::Expr(expr) => match &**expr {
                 Expr::Locator(Locator::Ident(ident))
                     if func
                         .generics_params
