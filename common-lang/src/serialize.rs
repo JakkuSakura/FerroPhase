@@ -1,6 +1,6 @@
 use crate::ast::{File, Item, Module, Tree};
 use crate::expr::{AExpr, Block, Expr, Invoke, Statement};
-use crate::value::{TypeValue, Value, ValueFunction};
+use crate::value::{Type, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ pub trait Serializer: Send + Sync {
         }
         Ok(s)
     }
-    fn serialize_type(&self, node: &TypeValue) -> Result<String> {
+    fn serialize_type(&self, node: &Type) -> Result<String> {
         bail!("not implemented: serialize_type")
     }
     fn serialize_stmt(&self, node: &Statement) -> Result<String> {

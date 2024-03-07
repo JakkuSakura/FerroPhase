@@ -52,7 +52,7 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
                         .map(|x| match x {
                             syn::GenericArgument::Type(t) => parse_type_value(t),
                             syn::GenericArgument::Const(c) => {
-                                parse_expr(c).map(|x| TypeValue::value(Value::expr(x.get())))
+                                parse_expr(c).map(|x| Type::value(Value::expr(x.get())))
                             }
                             _ => bail!("Does not support path arguments: {:?}", x),
                         })
@@ -73,9 +73,9 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
     return Ok(Locator::parameter_path(path));
 }
 
-fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
+fn parse_type_value(t: syn::Type) -> Result<Type> {
     let t = match t {
-        syn::Type::BareFn(f) => TypeValue::Function(
+        syn::Type::BareFn(f) => Type::Function(
             TypeFunction {
                 params: f
                     .inputs
@@ -91,11 +91,11 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
-            fn int(ty: IntType) -> TypeValue {
-                TypeValue::Primitive(TypePrimitive::Int(ty))
+            fn int(ty: IntType) -> Type {
+                Type::Primitive(TypePrimitive::Int(ty))
             }
-            fn float(ty: DecimalType) -> TypeValue {
-                TypeValue::Primitive(TypePrimitive::Decimal(ty))
+            fn float(ty: DecimalType) -> Type {
+                Type::Primitive(TypePrimitive::Decimal(ty))
             }
 
             match s.as_str() {
@@ -109,16 +109,16 @@ fn parse_type_value(t: syn::Type) -> Result<TypeValue> {
                 "u8" => int(IntType::U8),
                 "f64" => float(DecimalType::F64),
                 "f32" => float(DecimalType::F32),
-                _ => TypeValue::locator(parse_locator(p.path)?),
+                _ => Type::locator(parse_locator(p.path)?),
             }
         }
-        syn::Type::ImplTrait(im) => TypeValue::ImplTraits(parse_impl_trait(im)?),
-        syn::Type::Tuple(t) if t.elems.is_empty() => TypeValue::unit().into(),
+        syn::Type::ImplTrait(im) => Type::ImplTraits(parse_impl_trait(im)?),
+        syn::Type::Tuple(t) if t.elems.is_empty() => Type::unit().into(),
         // types like t!{ }
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
-            TypeValue::expr(parse_custom_type_expr(m)?)
+            Type::expr(parse_custom_type_expr(m)?)
         }
-        syn::Type::Reference(r) => TypeValue::Reference(parse_type_reference(r)?.into()),
+        syn::Type::Reference(r) => Type::Reference(parse_type_reference(r)?.into()),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -140,7 +140,7 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
         FnArg::Receiver(rev) => FunctionParam {
             name: Ident::new("self"),
             ty: {
-                TypeValue::expr(Expr::SelfType(
+                Type::expr(Expr::SelfType(
                     SelfType {
                         reference: rev.reference.is_some(),
                         mutability: rev.mutability.is_some(),
@@ -182,9 +182,9 @@ fn parse_pat(p: syn::Pat) -> Result<Pattern> {
     })
 }
 
-fn parse_return_type(o: ReturnType) -> Result<TypeValue> {
+fn parse_return_type(o: ReturnType) -> Result<Type> {
     Ok(match o {
-        ReturnType::Default => TypeValue::unit(),
+        ReturnType::Default => Type::unit(),
         ReturnType::Type(_, t) => parse_type_value(*t)?,
     })
 }
@@ -573,8 +573,8 @@ enum TypeValueParser {
     Path(Path),
     // Ident(Ident),
 }
-impl Into<TypeValue> for TypeValueParser {
-    fn into(self) -> TypeValue {
+impl Into<Type> for TypeValueParser {
+    fn into(self) -> Type {
         match self {
             // TypeExprParser::Add(o) => TypeExpr::Op(TypeOp::Add(AddOp {
             //     lhs: o.lhs.into(),
@@ -584,9 +584,9 @@ impl Into<TypeValue> for TypeValueParser {
             //     lhs: o.lhs.into(),
             //     rhs: o.rhs.into(),
             // })),
-            TypeValueParser::UnnamedStruct(s) => TypeValue::Structural(s),
-            TypeValueParser::NamedStruct(s) => TypeValue::Struct(s),
-            TypeValueParser::Path(p) => TypeValue::path(p),
+            TypeValueParser::UnnamedStruct(s) => Type::Structural(s),
+            TypeValueParser::NamedStruct(s) => Type::Struct(s),
+            TypeValueParser::Path(p) => Type::path(p),
             // TypeValueParser::Ident(i) => TypeValue::ident(i),
         }
     }
@@ -615,7 +615,7 @@ impl syn::parse::Parse for TypeValueParser {
 
 enum TypeExprParser {
     Add { left: Expr, right: Expr },
-    Value(TypeValue),
+    Value(Type),
 }
 impl syn::parse::Parse for TypeExprParser {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -626,7 +626,7 @@ impl syn::parse::Parse for TypeExprParser {
             }
             if input.peek(Token![+]) {
                 input.parse::<Token![+]>()?;
-                let rhs: TypeValue = input.parse::<TypeValueParser>()?.into();
+                let rhs: Type = input.parse::<TypeValueParser>()?.into();
                 lhs = TypeExprParser::Add {
                     left: lhs.into(),
                     right: Expr::value(rhs.into()),
@@ -720,7 +720,7 @@ fn parse_item(item: syn::Item) -> Result<Item> {
                         Fields::Unnamed(_) => bail!("Does not support unnamed fields"),
                         Fields::Unit => {
                             // be int or string
-                            TypeValue::any()
+                            Type::any()
                         }
                     };
                     Ok(EnumTypeVariant { name, value: ty })
@@ -824,7 +824,7 @@ impl RustParser {
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
     }
-    pub fn parse_type_value(&self, code: syn::Type) -> Result<TypeValue> {
+    pub fn parse_type_value(&self, code: syn::Type) -> Result<Type> {
         parse_type_value(code)
     }
 }

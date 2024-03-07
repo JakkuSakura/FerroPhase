@@ -204,14 +204,14 @@ common_struct! {
 common_struct! {
     pub struct DefType {
         pub name: Ident,
-        pub value: TypeValue,
+        pub value: Type,
         pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct DefConst {
         pub name: Ident,
-        pub ty: Option<TypeValue>,
+        pub ty: Option<Type>,
         pub value: Value,
         pub visibility: Visibility,
     }
@@ -249,7 +249,7 @@ common_struct! {
 
 common_enum! {
     pub enum DeclareKind {
-        Const { ty: TypeValue },
+        Const { ty: Type },
         Type { bounds: TypeBounds },
         Function { sig: FunctionSignature },
 

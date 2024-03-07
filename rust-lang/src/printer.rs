@@ -524,8 +524,8 @@ impl RustPrinter {
         let ty = self.print_type_value(&param.ty)?;
         Ok(quote!(#name: #ty))
     }
-    pub fn print_return_type(&self, node: &TypeValue) -> Result<TokenStream> {
-        if matches!(node, TypeValue::Unit(_)) {
+    pub fn print_return_type(&self, node: &Type) -> Result<TokenStream> {
+        if matches!(node, Type::Unit(_)) {
             return Ok(quote!());
         }
         let ty = self.print_type_value(&node)?;
@@ -742,19 +742,19 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#(#bounds)+ *))
     }
-    pub fn print_type_value(&self, v: &TypeValue) -> Result<TokenStream> {
+    pub fn print_type_value(&self, v: &Type) -> Result<TokenStream> {
         match v {
-            TypeValue::Function(f) => self.print_func_type(f),
-            TypeValue::Primitive(p) => self.print_primitive_type(*p),
-            TypeValue::Struct(s) => self.print_struct_type(s),
-            TypeValue::Structural(s) => self.print_unnamed_struct_type(s),
-            TypeValue::Expr(e) => self.print_expr(e),
-            TypeValue::ImplTraits(t) => self.print_impl_traits(t),
-            TypeValue::TypeBounds(t) => self.print_type_bounds(t),
-            TypeValue::Unit(_) => Ok(quote!(())),
-            TypeValue::Any(_) => Ok(quote!(dyn Any)),
-            TypeValue::Nothing(_) => Ok(quote!(!)),
-            TypeValue::Reference(r) => {
+            Type::Function(f) => self.print_func_type(f),
+            Type::Primitive(p) => self.print_primitive_type(*p),
+            Type::Struct(s) => self.print_struct_type(s),
+            Type::Structural(s) => self.print_unnamed_struct_type(s),
+            Type::Expr(e) => self.print_expr(e),
+            Type::ImplTraits(t) => self.print_impl_traits(t),
+            Type::TypeBounds(t) => self.print_type_bounds(t),
+            Type::Unit(_) => Ok(quote!(())),
+            Type::Any(_) => Ok(quote!(dyn Any)),
+            Type::Nothing(_) => Ok(quote!(!)),
+            Type::Reference(r) => {
                 let ty = self.print_type_value(&r.ty)?;
                 if r.mutability == Some(true) {
                     Ok(quote!(&mut #ty))
@@ -762,7 +762,7 @@ impl RustPrinter {
                     Ok(quote!(&#ty))
                 }
             }
-            TypeValue::Value(v) => self.print_value(&v.value),
+            Type::Value(v) => self.print_value(&v.value),
             _ => bail!("Not supported {:?}", v),
         }
     }
