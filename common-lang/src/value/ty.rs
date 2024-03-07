@@ -23,6 +23,7 @@ common_enum! {
         Vec(Box<TypeVec>),
         Any(TypeAny),
         Unit(TypeUnit),
+        Unknown(TypeUnknown),
         Nothing(TypeNothing),
         Type(TypeType),
         Reference(Box<TypeReference>),
@@ -33,14 +34,17 @@ common_enum! {
 }
 impl Type {
     pub const fn unit() -> Type {
-        Type::Unit(TypeUnit {})
+        Type::Unit(TypeUnit)
     }
-    pub const UNIT: Type = Type::Unit(TypeUnit {});
+    pub const UNIT: Type = Type::Unit(TypeUnit);
     pub const fn any() -> Type {
-        Type::Any(TypeAny {})
+        Type::Any(TypeAny)
     }
-    pub const ANY: Type = Type::Any(TypeAny {});
-
+    pub const ANY: Type = Type::Any(TypeAny);
+    pub const fn unknown() -> Type {
+        Type::Unknown(TypeUnknown)
+    }
+    pub const UNKNOWN: Type = Type::Unknown(TypeUnknown);
     pub fn is_any(&self) -> bool {
         matches!(self, Type::Any(_))
     }
@@ -261,12 +265,13 @@ impl TypeBounds {
 macro_rules! plain_type {
     ($name: ident) => {
         common_struct! {
-            pub struct $name {}
+            pub struct $name;
         }
     };
 }
 plain_type! { TypeAny }
 plain_type! { TypeUnit }
+plain_type! { TypeUnknown }
 plain_type! { TypeNothing }
 plain_type! { TypeType }
 
