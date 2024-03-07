@@ -1,6 +1,6 @@
 use crate::expr::Expr;
 use crate::id::{Ident, Locator};
-use crate::value::TypeValue;
+use crate::value::Type;
 use crate::{common_enum, common_struct};
 common_enum! {
     pub enum Pattern {
@@ -69,7 +69,7 @@ common_struct! {
     /// where x: T is PatternType
     pub struct PatternType {
         pub pat: Box<Pattern>,
-        pub ty: TypeValue,
+        pub ty: Type,
     }
 }
 

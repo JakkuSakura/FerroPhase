@@ -10,7 +10,7 @@ pub type TypeId = u64;
 
 common_enum! {
     /// TypeValue is a solid type value
-    pub enum TypeValue {
+    pub enum Type {
         Primitive(TypePrimitive),
         Struct(TypeStruct),
         Structural(TypeStructural),
@@ -31,39 +31,39 @@ common_enum! {
     }
 
 }
-impl TypeValue {
-    pub const fn unit() -> TypeValue {
-        TypeValue::Unit(TypeUnit {})
+impl Type {
+    pub const fn unit() -> Type {
+        Type::Unit(TypeUnit {})
     }
-    pub const UNIT: TypeValue = TypeValue::Unit(TypeUnit {});
-    pub const fn any() -> TypeValue {
-        TypeValue::Any(TypeAny {})
+    pub const UNIT: Type = Type::Unit(TypeUnit {});
+    pub const fn any() -> Type {
+        Type::Any(TypeAny {})
     }
-    pub const ANY: TypeValue = TypeValue::Any(TypeAny {});
+    pub const ANY: Type = Type::Any(TypeAny {});
 
     pub fn is_any(&self) -> bool {
-        matches!(self, TypeValue::Any(_))
+        matches!(self, Type::Any(_))
     }
-    pub fn bool() -> TypeValue {
-        TypeValue::Primitive(TypePrimitive::Bool)
+    pub fn bool() -> Type {
+        Type::Primitive(TypePrimitive::Bool)
     }
     pub fn expr(e: Expr) -> Self {
-        TypeValue::Expr(Box::new(e))
+        Type::Expr(Box::new(e))
     }
     pub fn value(v: Value) -> Self {
         match v {
-            Value::Expr(expr) => TypeValue::Expr(Box::new(expr)),
-            _ => TypeValue::Value(ValueType::new(v).into()),
+            Value::Expr(expr) => Type::Expr(Box::new(expr)),
+            _ => Type::Value(ValueType::new(v).into()),
         }
     }
-    pub fn path(path: crate::id::Path) -> TypeValue {
-        TypeValue::expr(Expr::path(path))
+    pub fn path(path: crate::id::Path) -> Type {
+        Type::expr(Expr::path(path))
     }
-    pub fn ident(ident: Ident) -> TypeValue {
-        TypeValue::expr(Expr::ident(ident))
+    pub fn ident(ident: Ident) -> Type {
+        Type::expr(Expr::ident(ident))
     }
-    pub fn reference(ty: TypeValue) -> Self {
-        TypeValue::Reference(
+    pub fn reference(ty: Type) -> Self {
+        Type::Reference(
             TypeReference {
                 ty: Box::new(ty),
                 mutability: None,
@@ -89,18 +89,18 @@ impl TypeValue {
     }
     pub fn as_struct(&self) -> Option<&TypeStruct> {
         match self {
-            TypeValue::Struct(s) => Some(s),
+            Type::Struct(s) => Some(s),
             _ => None,
         }
     }
-    pub fn unwrap_reference(&self) -> &TypeValue {
+    pub fn unwrap_reference(&self) -> &Type {
         match self {
-            TypeValue::Reference(r) => &r.ty,
+            Type::Reference(r) => &r.ty,
             _ => self,
         }
     }
 }
-impl Display for TypeValue {
+impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_type(self).unwrap();
         f.write_str(&s)
@@ -183,7 +183,7 @@ impl TypePrimitive {
 impl Display for TypePrimitive {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&TypeValue::Primitive(*self))
+            .serialize_type(&Type::Primitive(*self))
             .unwrap();
         f.write_str(&s)
     }
@@ -191,20 +191,20 @@ impl Display for TypePrimitive {
 
 common_struct! {
     pub struct TypeVec {
-        pub ty: TypeValue,
+        pub ty: Type,
     }
 }
 
 common_struct! {
     pub struct TypeTuple {
-        pub types: Vec<TypeValue>,
+        pub types: Vec<Type>,
     }
 }
 
 common_struct! {
     pub struct FieldTypeValue {
         pub name: Ident,
-        pub value: TypeValue,
+        pub value: Type,
     }
 }
 common_struct! {
@@ -223,7 +223,7 @@ common_struct! {
 common_struct! {
     pub struct EnumTypeVariant {
         pub name: Ident,
-        pub value: TypeValue,
+        pub value: Type,
     }
 }
 
@@ -234,9 +234,9 @@ common_struct! {
 }
 common_struct! {
     pub struct TypeFunction {
-        pub params: Vec<TypeValue>,
+        pub params: Vec<Type>,
         pub generics_params: Vec<GenericParam>,
-        pub ret: TypeValue,
+        pub ret: Type,
     }
 }
 common_struct! {
@@ -272,7 +272,7 @@ plain_type! { TypeType }
 
 common_struct! {
     pub struct TypeReference {
-        pub ty: Box<TypeValue>,
+        pub ty: Box<Type>,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
     }
@@ -280,7 +280,7 @@ common_struct! {
 impl Display for TypeReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&TypeValue::Reference(self.clone().into()))
+            .serialize_type(&Type::Reference(self.clone().into()))
             .unwrap();
 
         f.write_str(&s)
