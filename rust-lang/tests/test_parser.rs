@@ -1,17 +1,17 @@
-use common::assert_eq;
+use std::sync::Arc;
+
 use common::*;
 use common_lang::ast::{DefFunction, Impl, Item, Visibility};
 use common_lang::expr::*;
 use common_lang::id::Locator;
 use common_lang::register_threadlocal_serializer;
-use common_lang::ty::{TypePrimitive, TypeValue};
-use common_lang::value::{FunctionParam, FunctionSignature, ValueFunction};
+use common_lang::value::{FunctionParam, FunctionSignature, Type, TypePrimitive, ValueFunction};
+use pretty_assertions::assert_eq;
 use rust_lang::{shll_parse_expr, shll_parse_item, RustSerde};
-use std::rc::Rc;
 
 #[test]
 fn test_parse_fn() -> Result<()> {
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
     let code = shll_parse_item! {
         fn foo(a: i64) -> i64 {
             a + 1
@@ -30,10 +30,10 @@ fn test_parse_fn() -> Result<()> {
                     name: Some("foo".into()),
                     params: vec![FunctionParam {
                         name: "a".into(),
-                        ty: TypeValue::Primitive(TypePrimitive::i64())
+                        ty: Type::Primitive(TypePrimitive::i64())
                     }],
                     generics_params: vec![],
-                    ret: TypeValue::Primitive(TypePrimitive::i64())
+                    ret: Type::Primitive(TypePrimitive::i64())
                 },
                 body: block.into(),
             },
@@ -44,7 +44,7 @@ fn test_parse_fn() -> Result<()> {
 }
 #[test]
 fn test_parse_impl_for() -> Result<()> {
-    register_threadlocal_serializer(Rc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
 
     let code = shll_parse_item! {
         impl Foo for Bar {
@@ -57,7 +57,7 @@ fn test_parse_impl_for() -> Result<()> {
         code,
         Item::Impl(Impl {
             trait_ty: Some(Locator::Ident("Foo".into())),
-            self_ty: TypeExpr::ident("Bar".into()),
+            self_ty: Expr::ident("Bar".into()),
             items: vec![shll_parse_item! {
                 fn foo(a: i64) -> i64 {
                     a + 1
