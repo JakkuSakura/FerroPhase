@@ -754,6 +754,7 @@ impl RustPrinter {
             Type::Unit(_) => Ok(quote!(())),
             Type::Any(_) => Ok(quote!(dyn Any)),
             Type::Nothing(_) => Ok(quote!(!)),
+            Type::Unknown(_) => Ok(quote!(_)),
             Type::Reference(r) => {
                 let ty = self.print_type_value(&r.ty)?;
                 if r.mutability == Some(true) {
