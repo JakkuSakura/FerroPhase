@@ -142,11 +142,17 @@ impl RustPrinter {
             BinOpKind::Any(ident) => self.print_ident(ident),
         }
     }
+    pub fn print_bin_op(&self, binop: &BinOp) -> Result<TokenStream> {
+        let lhs = self.print_expr(&binop.lhs.get())?;
+        let rhs = self.print_expr(&binop.rhs.get())?;
+        let op = self.print_bin_op_kind(&binop.op);
+        Ok(quote!(#lhs #op #rhs))
+    }
     pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
         match invoke.func.get() {
-            Expr::Value(value) => match &*value {
+            Expr::Value(value) => match value {
                 Value::BinOpKind(op) => {
-                    let op = self.print_bin_op_kind(op);
+                    let op = self.print_bin_op_kind(&op);
                     let args: Vec<_> = invoke
                         .args
                         .iter()
@@ -408,7 +414,7 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_type_value(&x.ty))
             .try_collect()?;
-        let stmts = self.print_expr_optimized(&func.body)?;
+        let stmts = self.print_expr_optimized(&func.body.get())?;
         let gg;
         if !func.sig.generics_params.is_empty() {
             let gt: Vec<_> = func
@@ -444,7 +450,7 @@ impl RustPrinter {
             .map(|x| self.print_expr(&x.get()))
             .try_collect()?;
         match &func {
-            Expr::Value(value) => match &**value {
+            Expr::Value(value) => match &value {
                 Value::Type(_) => {
                     return Ok(quote!(
                         <#fun>::<#(#args), *>
@@ -511,7 +517,7 @@ impl RustPrinter {
         Ok(code)
     }
     pub fn print_ref(&self, n: &Reference) -> Result<TokenStream> {
-        let referee = self.print_expr(&n.referee)?;
+        let referee = self.print_expr(&n.referee.get())?;
         if n.mutable == Some(true) {
             Ok(quote!(&mut #referee))
         } else {
@@ -547,7 +553,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_select(&self, select: &Select) -> Result<TokenStream> {
-        let obj = self.print_expr(&select.obj)?;
+        let obj = self.print_expr(&select.obj.get())?;
         let field = self.print_ident(&select.field);
         match select.select {
             SelectType::Const => Ok(quote!(
@@ -607,8 +613,8 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#name { #(#kwargs), * }))
     }
-    pub fn print_struct_expr(&self, s: &StructExpr) -> Result<TokenStream> {
-        let name = self.print_expr(&s.name)?;
+    pub fn print_struct_expr(&self, s: &InitStruct) -> Result<TokenStream> {
+        let name = self.print_expr(&s.name.get())?;
         let kwargs: Vec<_> = s
             .fields
             .iter()
@@ -694,7 +700,7 @@ impl RustPrinter {
             Value::Struct(s) => self.print_struct_value(s),
             Value::Any(n) => self.print_any(n),
             Value::BinOpKind(op) => Ok(self.print_bin_op_kind(op)),
-            Value::Expr(e) => self.print_expr(e),
+            Value::Expr(e) => self.print_expr(&e.get()),
             Value::Undefined(u) => self.print_undefined(u),
             Value::None(_) => Ok(quote!(None)),
             Value::Some(s) => {
@@ -713,14 +719,14 @@ impl RustPrinter {
     }
     pub fn print_primitive_type(&self, ty: TypePrimitive) -> Result<TokenStream> {
         match ty {
-            TypePrimitive::Int(IntType::I64) => Ok(quote!(i64)),
-            TypePrimitive::Int(IntType::U64) => Ok(quote!(u64)),
-            TypePrimitive::Int(IntType::I32) => Ok(quote!(i32)),
-            TypePrimitive::Int(IntType::U32) => Ok(quote!(u32)),
-            TypePrimitive::Int(IntType::I16) => Ok(quote!(i16)),
-            TypePrimitive::Int(IntType::U16) => Ok(quote!(u16)),
-            TypePrimitive::Int(IntType::I8) => Ok(quote!(i8)),
-            TypePrimitive::Int(IntType::U8) => Ok(quote!(u8)),
+            TypePrimitive::Int(TypeInt::I64) => Ok(quote!(i64)),
+            TypePrimitive::Int(TypeInt::U64) => Ok(quote!(u64)),
+            TypePrimitive::Int(TypeInt::I32) => Ok(quote!(i32)),
+            TypePrimitive::Int(TypeInt::U32) => Ok(quote!(u32)),
+            TypePrimitive::Int(TypeInt::I16) => Ok(quote!(i16)),
+            TypePrimitive::Int(TypeInt::U16) => Ok(quote!(u16)),
+            TypePrimitive::Int(TypeInt::I8) => Ok(quote!(i8)),
+            TypePrimitive::Int(TypeInt::U8) => Ok(quote!(u8)),
             TypePrimitive::Decimal(DecimalType::F64) => Ok(quote!(f64)),
             TypePrimitive::Decimal(DecimalType::F32) => Ok(quote!(f32)),
             TypePrimitive::Bool => Ok(quote!(bool)),
@@ -818,13 +824,14 @@ impl RustPrinter {
             Expr::Locator(loc) => self.print_locator(loc),
             Expr::Value(n) => self.print_value(n),
             Expr::Invoke(n) => self.print_invoke_expr(n),
+            Expr::BinOp(op) => self.print_bin_op(op),
             Expr::Any(n) => self.print_any(n),
             Expr::Match(n) => self.print_match(n),
             Expr::If(n) => self.print_if(n),
             Expr::Block(n) => self.print_block(n),
-            Expr::Struct(n) => self.print_struct_expr(n),
+            Expr::InitStruct(n) => self.print_struct_expr(n),
             Expr::Select(n) => self.print_select(n),
-            Expr::Closured(n) => self.print_expr(&n.expr),
+            Expr::Closured(n) => self.print_expr(&n.expr.get()),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }

@@ -22,7 +22,7 @@ impl Interpreter {
     }
     fn extract_expr(&self, node: Expr) -> Result<Value> {
         match node {
-            Expr::Value(value) => Ok(*value),
+            Expr::Value(value) => Ok(value),
             _ => bail!("Failed to extract Value from {}", node),
         }
     }

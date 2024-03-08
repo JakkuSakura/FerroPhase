@@ -38,7 +38,7 @@ impl FoldOptimizer {
         match self.optimize_expr(invoke.func.into(), ctx)? {
             Expr::Closured(c) => {
                 closure_context = Some(c.ctx);
-                func = c.expr;
+                func = c.expr.into();
             }
             e => {
                 closure_context = None;
@@ -57,7 +57,7 @@ impl FoldOptimizer {
             ControlFlow::Into => {
                 // FIXME: optimize out this clone
                 match func.clone() {
-                    Expr::Value(value) => match *value {
+                    Expr::Value(value) => match value {
                         Value::Function(mut f) => {
                             // TODO: when calling function, use context of its own, instead of use current context
 
@@ -72,7 +72,7 @@ impl FoldOptimizer {
                                 sub_ctx.insert_expr(param.name.clone(), arg.into());
                             }
                             debug!("Doing {} for {} invoking 1", self.pass.name(), invoke);
-                            f.body = self.optimize_expr(f.body, &sub_ctx)?;
+                            f.body = self.optimize_expr(f.body.into(), &sub_ctx)?.into();
 
                             debug!("Doing {} for {} invoking 2", self.pass.name(), invoke);
 
@@ -315,7 +315,7 @@ impl FoldOptimizer {
         func: ValueFunction,
         ctx: &SharedScopedContext,
     ) -> Result<ValueFunction> {
-        let body = self.optimize_expr(func.body, ctx)?;
+        let body = self.optimize_expr(func.body.into(), ctx)?;
         Ok(ValueFunction {
             body: body.into(),
             ..func

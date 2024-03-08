@@ -539,7 +539,7 @@ common_struct! {
 common_struct! {
     pub struct ValueFunction {
         pub sig: FunctionSignature,
-        pub body: Expr,
+        pub body: AExpr,
     }
 }
 impl ValueFunction {

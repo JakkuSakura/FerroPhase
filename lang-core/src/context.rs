@@ -173,7 +173,7 @@ impl SharedScopedContext {
         let storage = self.get_storage(key, true)?;
         let mut expr = storage.value.map(Expr::value)?;
         if let Some(closure) = storage.closure {
-            expr = Box::new(Closure::new(Self(closure), expr)).into();
+            expr = Closure::new(Self(closure), expr.into()).into();
         }
         Some(expr)
     }
@@ -192,7 +192,7 @@ impl SharedScopedContext {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
             Expr::Locator(ident) => self.get_value(ident.to_path()),
-            Expr::Value(value) => Some(*value.clone()),
+            Expr::Value(value) => Some(value.clone()),
             _ => None,
         };
         info!(
