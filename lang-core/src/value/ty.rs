@@ -53,13 +53,13 @@ impl Type {
     }
     pub fn expr(e: Expr) -> Self {
         match e {
-            Expr::Value(ty) => Self::value(*ty),
+            Expr::Value(ty) => Self::value(ty),
             _ => Type::Expr(Box::new(e)),
         }
     }
     pub fn value(v: Value) -> Self {
         match v {
-            Value::Expr(expr) => Self::expr(expr),
+            Value::Expr(expr) => Self::expr(expr.get()),
             Value::Type(ty) => ty,
             _ => Type::Value(ValueType::new(v).into()),
         }
@@ -117,7 +117,7 @@ impl Display for Type {
 
 common_enum! {
     #[derive(Copy)]
-    pub enum IntType {
+    pub enum TypeInt {
         I64,
         U64,
         I32,
@@ -129,18 +129,18 @@ common_enum! {
         BigInt,
     }
 }
-impl Display for IntType {
+impl Display for TypeInt {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            IntType::I64 => write!(f, "i64"),
-            IntType::U64 => write!(f, "u64"),
-            IntType::I32 => write!(f, "i32"),
-            IntType::U32 => write!(f, "u32"),
-            IntType::I16 => write!(f, "i16"),
-            IntType::U16 => write!(f, "u16"),
-            IntType::I8 => write!(f, "i8"),
-            IntType::U8 => write!(f, "u8"),
-            IntType::BigInt => write!(f, "bigint"),
+            TypeInt::I64 => write!(f, "i64"),
+            TypeInt::U64 => write!(f, "u64"),
+            TypeInt::I32 => write!(f, "i32"),
+            TypeInt::U32 => write!(f, "u32"),
+            TypeInt::I16 => write!(f, "i16"),
+            TypeInt::U16 => write!(f, "u16"),
+            TypeInt::I8 => write!(f, "i8"),
+            TypeInt::U8 => write!(f, "u8"),
+            TypeInt::BigInt => write!(f, "bigint"),
         }
     }
 }
@@ -168,7 +168,7 @@ impl Display for DecimalType {
 common_enum! {
     #[derive(Copy)]
     pub enum TypePrimitive {
-        Int(IntType),
+        Int(TypeInt),
         Decimal(DecimalType),
         Bool,
         Char,
@@ -179,7 +179,7 @@ common_enum! {
 
 impl TypePrimitive {
     pub fn i64() -> TypePrimitive {
-        TypePrimitive::Int(IntType::I64)
+        TypePrimitive::Int(TypeInt::I64)
     }
     pub fn f64() -> TypePrimitive {
         TypePrimitive::Decimal(DecimalType::F64)

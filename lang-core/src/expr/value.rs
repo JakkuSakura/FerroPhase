@@ -1,6 +1,7 @@
 use crate::expr::arena::AExpr;
 use crate::expr::*;
 use crate::id::Ident;
+use crate::ops::{BinOpKind, UnOpKind};
 use crate::value::FieldValue;
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use std::fmt::Display;
@@ -32,7 +33,7 @@ common_enum! {
 
 common_struct! {
     pub struct Select {
-        pub obj: Expr,
+        pub obj: AExpr,
         pub field: Ident,
         pub select: SelectType,
     }
@@ -40,7 +41,7 @@ common_struct! {
 
 common_struct! {
     pub struct Reference {
-        pub referee: Expr,
+        pub referee: AExpr,
         pub mutable: Option<bool>,
     }
 }
@@ -76,8 +77,23 @@ common_enum! {
     }
 }
 common_struct! {
-    pub struct StructExpr {
-        pub name: Expr, // TypeExpr
+    pub struct InitStruct {
+        pub name: AExpr, // TypeExpr
         pub fields: Vec<FieldValue>,
+    }
+}
+
+common_struct! {
+    pub struct BinOp {
+        pub op: BinOpKind,
+        pub lhs: AExpr,
+        pub rhs: AExpr,
+    }
+}
+common_struct! {
+    pub struct UnOp {
+        pub op: UnOpKind,
+        pub val: AExpr,
+
     }
 }

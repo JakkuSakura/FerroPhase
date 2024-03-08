@@ -4,28 +4,16 @@ lang-core contains mainly AST of SHLL
 
 ## Boxing
 
-According to oxc and syn
-
-1.
+Boxing/interning inside AST is a trade-off between performance and ergonomics.
 
 ```rust
-   enum Expression {
-       Variant(Box<Struct>)
-   }
-   struct Struct {
-       expression: Expression
-   }
-```
+enum Expression {
+    Variant(Struct)
+}
 
-2.
-
-```rust
-   enum Expression {
-       Variant(Struct)
-   }
-   struct Struct {
-       expression: Box<Expression>
-   }
+struct Struct {
+    expression: Box<Expression> //, or just AExpr
+}
 ```
 
 1. has better performance and egonomics

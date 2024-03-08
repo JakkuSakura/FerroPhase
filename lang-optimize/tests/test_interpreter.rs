@@ -3,10 +3,10 @@ use eyre::Result;
 use eyre::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::expr::*;
-use lang_core::interpreter::Interpreter;
 use lang_core::register_threadlocal_serializer;
 use lang_core::value::Value;
-use pretty_assertions::*;
+use lang_optimize::interpreter::Interpreter;
+use pretty_assertions::assert_eq;
 use rust_lang::{shll_parse_expr, shll_parse_value, RustSerde};
 use std::sync::Arc;
 

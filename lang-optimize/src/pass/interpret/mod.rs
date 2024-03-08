@@ -40,7 +40,7 @@ impl InterpreterPass {
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &SharedScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
         match node.func.get() {
-            Expr::Value(value) => match *value {
+            Expr::Value(value) => match value {
                 Value::BinOpKind(kind) => {
                     self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
                 }
@@ -71,8 +71,8 @@ impl InterpreterPass {
                 )
             }
             Expr::Select(select) => match select.field.as_str() {
-                "to_string" => match &select.obj {
-                    Expr::Value(value) => match &**value {
+                "to_string" => match &select.obj.get() {
+                    Expr::Value(value) => match value {
                         Value::String(obj) => {
                             let mut obj = obj.clone();
                             obj.owned = true;
@@ -243,10 +243,10 @@ impl InterpreterPass {
     }
     pub fn interpret_struct_expr(
         &self,
-        node: &StructExpr,
+        node: &InitStruct,
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
-        let value: Value = self.interpret_expr(&node.name, ctx)?.try_conv()?;
+        let value: Value = self.interpret_expr(&node.name.get(), ctx)?.try_conv()?;
         let ty: Type = value.try_conv()?;
         let struct_ = ty.try_conv()?;
         let fields: Vec<_> = node
@@ -286,7 +286,7 @@ impl InterpreterPass {
         })
     }
     pub fn interpret_select(&self, s: &Select, ctx: &SharedScopedContext) -> Result<Value> {
-        let obj0 = self.interpret_expr(&s.obj, ctx)?;
+        let obj0 = self.interpret_expr(&s.obj.get(), ctx)?;
         let obj = obj0.as_structural().with_context(|| {
             format!(
                 "Expected structural type, got {}",
@@ -374,7 +374,7 @@ impl InterpreterPass {
             Value::Structural(_) => bail!("Failed to interpret {:?}", val),
             Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
             Value::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(Value::Tuple),
-            Value::Expr(n) => self.interpret_expr(n, ctx),
+            Value::Expr(n) => self.interpret_expr(&n.get(), ctx),
             Value::Any(_n) => {
                 if self.ignore_missing_items {
                     return Ok(val.clone());
@@ -397,6 +397,12 @@ impl InterpreterPass {
             }
             _ => Ok(val.clone()),
         }
+    }
+    pub fn interpret_binop(&self, binop: &BinOp, ctx: &SharedScopedContext) -> Result<Value> {
+        let builtin_fn = self.lookup_bin_op_kind(binop.op.clone())?;
+        let lhs = self.interpret_expr(&binop.lhs.get(), ctx)?;
+        let rhs = self.interpret_expr(&binop.rhs.get(), ctx)?;
+        builtin_fn.invoke(&vec![lhs, rhs], ctx)
     }
     pub fn interpret_invoke_binop(
         &self,
@@ -442,9 +448,10 @@ impl InterpreterPass {
             Expr::Block(n) => self.interpret_block(n, ctx),
             Expr::Match(c) => self.interpret_cond(c, ctx),
             Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
+            Expr::BinOp(op) => self.interpret_binop(op, ctx),
             Expr::Any(n) => Ok(Value::Any(n.clone())),
             Expr::Select(s) => self.interpret_select(s, ctx),
-            Expr::Struct(s) => self.interpret_struct_expr(s, ctx).map(Value::Struct),
+            Expr::InitStruct(s) => self.interpret_struct_expr(s, ctx).map(Value::Struct),
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
@@ -549,7 +556,7 @@ impl OptimizePass for InterpreterPass {
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {
         match func {
-            Value::Function(func) => self.interpret_expr(&func.body, ctx).map(Expr::value),
+            Value::Function(func) => self.interpret_expr(&func.body.get(), ctx).map(Expr::value),
             Value::BinOpKind(kind) => self
                 .interpret_invoke_binop(kind.clone(), &invoke.args, ctx)
                 .map(Expr::value),
