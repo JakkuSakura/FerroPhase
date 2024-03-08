@@ -1,5 +1,5 @@
 [package]
-name = "common-lang"
+name = "lang-core"
 version = "0.1.0"
 edition = "2021"
 

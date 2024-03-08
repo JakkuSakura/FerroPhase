@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use common::*;
-use common_lang::ast::{DefFunction, Impl, Item, Visibility};
-use common_lang::expr::*;
-use common_lang::id::Locator;
-use common_lang::register_threadlocal_serializer;
-use common_lang::value::{FunctionParam, FunctionSignature, Type, TypePrimitive, ValueFunction};
+use lang_core::ast::{DefFunction, Impl, Item, Visibility};
+use lang_core::expr::*;
+use lang_core::id::Locator;
+use lang_core::register_threadlocal_serializer;
+use lang_core::value::{FunctionParam, FunctionSignature, Type, TypePrimitive, ValueFunction};
 use pretty_assertions::assert_eq;
 use rust_lang::{shll_parse_expr, shll_parse_item, RustSerde};
 

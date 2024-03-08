@@ -2,13 +2,13 @@ use common::Result;
 use common::*;
 
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
-use common_lang::ast::*;
-use common_lang::expr::*;
-use common_lang::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use common_lang::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
-use common_lang::pat::{Pattern, PatternIdent};
-use common_lang::value::*;
 use itertools::Itertools;
+use lang_core::ast::*;
+use lang_core::expr::*;
+use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
+use lang_core::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
+use lang_core::pat::{Pattern, PatternIdent};
+use lang_core::value::*;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
 

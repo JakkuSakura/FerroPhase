@@ -1,9 +1,9 @@
 use common::*;
 
-use common_lang::ast::{File, Module};
-use common_lang::context::SharedScopedContext;
-use common_lang::expr::Expr;
-use common_lang::pass::{load_optimizers, FoldOptimizer};
+use lang_core::ast::{File, Module};
+use lang_core::context::SharedScopedContext;
+use lang_core::expr::Expr;
+use lang_core::pass::{load_optimizers, FoldOptimizer};
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;

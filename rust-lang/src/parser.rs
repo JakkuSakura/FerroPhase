@@ -1,18 +1,18 @@
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro, RawUse};
 use common::*;
-use common_lang::ast::{
+use itertools::Itertools;
+use lang_core::ast::{
     Declare, DeclareKind, DefEnum, DefFunction, DefStruct, DefTrait, DefType, File, Impl, Import,
     Item, Module, Visibility,
 };
-use common_lang::expr::*;
-use common_lang::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use common_lang::ops::{BinOpKind, UnOpKind};
-use common_lang::pat::{
+use lang_core::expr::*;
+use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
+use lang_core::ops::{BinOpKind, UnOpKind};
+use lang_core::pat::{
     Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
 };
-use common_lang::utils::anybox::AnyBox;
-use common_lang::value::*;
-use itertools::Itertools;
+use lang_core::utils::anybox::AnyBox;
+use lang_core::value::*;
 use quote::ToTokens;
 use std::path::PathBuf;
 use syn::parse::ParseStream;
