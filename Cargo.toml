@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "common-lang",
+    "lang-core",
     "rust-lang",
     "rust-macro",
     "javascript-lang"

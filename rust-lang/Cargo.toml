@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common-lang = { path = "../common-lang" }
+lang-core = { path = "../lang-core" }
 common = { workspace = true }
 syn-serde = { version = "0.2", features = ["json"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
