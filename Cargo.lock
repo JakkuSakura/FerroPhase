@@ -840,6 +840,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "lang-optimize"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "common",
+ "dashmap",
+ "derive_more",
+ "itertools 0.12.1",
+ "lang-core",
+ "proc-macro2",
+ "quote",
+ "rust-lang",
+ "serde",
+ "serde_json",
+ "syn 2.0.31",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1346,6 +1364,7 @@ version = "0.1.0"
 dependencies = [
  "common",
  "lang-core",
+ "lang-optimize",
  "proc-macro2",
  "quote",
  "rust-lang",

@@ -2,9 +2,10 @@
 resolver = "2"
 members = [
     "lang-core",
+    "lang-optimize",
     "rust-lang",
     "rust-macro",
-    "javascript-lang"
+    "javascript-lang",
 ]
 exclude = []
 
