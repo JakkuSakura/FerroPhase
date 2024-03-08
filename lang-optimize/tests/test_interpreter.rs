@@ -1,6 +1,4 @@
 use common::*;
-use eyre::Result;
-use eyre::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::expr::*;
 use lang_core::register_threadlocal_serializer;

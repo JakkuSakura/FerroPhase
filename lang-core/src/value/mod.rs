@@ -4,7 +4,7 @@ mod value;
 pub use ty::*;
 pub use value::*;
 
-use crate::expr::{AExpr, Expr};
+use crate::expr::{BExpr, Expr};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
@@ -37,7 +37,7 @@ common_enum! {
         Structural(ValueStructural),
         Function(ValueFunction),
         Tuple(ValueTuple),
-        Expr(AExpr),
+        Expr(BExpr),
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),
         Any(AnyBox),

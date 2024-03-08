@@ -1,5 +1,5 @@
 use crate::ast::{File, Item, Module, Tree};
-use crate::expr::{AExpr, Block, Expr, Invoke, Statement};
+use crate::expr::{BExpr, Block, Expr, Invoke, Statement};
 use crate::value::{Type, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
@@ -27,10 +27,10 @@ pub trait Serializer: Send + Sync {
         }
         Ok(s)
     }
-    fn serialize_args_arena(&self, nodes: &[AExpr]) -> Result<String> {
+    fn serialize_args_arena(&self, nodes: &[BExpr]) -> Result<String> {
         let mut v = vec![];
         for node in nodes.iter() {
-            v.push(node.get());
+            v.push(*node.clone());
         }
         self.serialize_args(&v)
     }
