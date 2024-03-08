@@ -23,19 +23,22 @@ common_enum! {
     /// aka ValueExpr
     pub enum Expr {
         Locator(Locator),
-        Value(Box<Value>),
+        Value(Value),
         Block(Block),
         Match(Match),
         If(If),
         Invoke(Invoke),
-        Select(Box<Select>),
-        Struct(Box<StructExpr>),
-        Reference(Box<Reference>),
+        // it provides better code, instead of nested Invoke
+        BinOp(BinOp),
+        UnOp(UnOp),
+        Select(Select),
+        InitStruct(InitStruct),
+        Reference(Reference),
 
         /// closured because it's conceptually a closure, not a real one
-        Closured(Box<Closure<Expr>>),
+        Closured(Closure),
 
-        SelfType(Box<SelfType>),
+        SelfType(SelfType),
 
         Any(AnyBox),
     }
@@ -54,7 +57,7 @@ impl Expr {
     }
     pub fn value(v: Value) -> Expr {
         match v {
-            Value::Expr(expr) => expr,
+            Value::Expr(expr) => expr.get(),
             Value::Any(any) => Expr::Any(any),
             Value::Type(Type::Expr(expr)) => *expr,
             _ => Expr::Value(v.into()),

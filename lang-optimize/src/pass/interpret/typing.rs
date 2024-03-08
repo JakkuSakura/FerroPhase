@@ -7,7 +7,7 @@ use lang_core::expr::Expr;
 use lang_core::id::{Ident, Locator};
 use lang_core::utils::conv::TryConv;
 use lang_core::value::{
-    DecimalType, FieldTypeValue, GenericParam, ImplTraits, IntType, Type, TypeBounds, TypeFunction,
+    DecimalType, FieldTypeValue, GenericParam, ImplTraits, Type, TypeBounds, TypeFunction, TypeInt,
     TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
 };
 
@@ -254,8 +254,8 @@ impl InterpreterPass {
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return Ok(ty);
             }
-            Expr::Value(l) => match &**l {
-                Value::Int(_) => return Ok(Type::Primitive(TypePrimitive::Int(IntType::I64))),
+            Expr::Value(l) => match l {
+                Value::Int(_) => return Ok(Type::Primitive(TypePrimitive::Int(TypeInt::I64))),
                 Value::Decimal(_) => {
                     return Ok(Type::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
                 }
@@ -268,7 +268,7 @@ impl InterpreterPass {
                 _ => {}
             },
             Expr::Invoke(invoke) => match invoke.func.get() {
-                Expr::Value(value) => match *value {
+                Expr::Value(value) => match value {
                     Value::BinOpKind(kind) if kind.is_bool() => {
                         return Ok(Type::Primitive(TypePrimitive::Bool))
                     }

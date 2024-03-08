@@ -91,7 +91,7 @@ fn parse_type_value(t: syn::Type) -> Result<Type> {
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
-            fn int(ty: IntType) -> Type {
+            fn int(ty: TypeInt) -> Type {
                 Type::Primitive(TypePrimitive::Int(ty))
             }
             fn float(ty: DecimalType) -> Type {
@@ -99,14 +99,14 @@ fn parse_type_value(t: syn::Type) -> Result<Type> {
             }
 
             match s.as_str() {
-                "i64" => int(IntType::I64),
-                "i32" => int(IntType::I32),
-                "i16" => int(IntType::I16),
-                "i8" => int(IntType::I8),
-                "u64" => int(IntType::U64),
-                "u32" => int(IntType::U32),
-                "u16" => int(IntType::U16),
-                "u8" => int(IntType::U8),
+                "i64" => int(TypeInt::I64),
+                "i32" => int(TypeInt::I32),
+                "i16" => int(TypeInt::I16),
+                "i8" => int(TypeInt::I8),
+                "u64" => int(TypeInt::U64),
+                "u32" => int(TypeInt::U32),
+                "u16" => int(TypeInt::U16),
+                "u8" => int(TypeInt::U8),
                 "f64" => float(DecimalType::F64),
                 "f32" => float(DecimalType::F32),
                 _ => Type::locator(parse_locator(p.path)?),
@@ -309,7 +309,7 @@ fn parse_if(i: syn::ExprIf) -> Result<If> {
 
     Ok(If { cases })
 }
-fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
+fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = parse_expr(*b.left)?;
     let rhs = parse_expr(*b.right)?;
     let (op, flatten) = match b.op {
@@ -334,11 +334,11 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
         let mut lhs = lhs.get();
         match &mut lhs {
             Expr::Invoke(first_arg) => match first_arg.func.get() {
-                Expr::Value(value) => match &*value {
+                Expr::Value(value) => match value {
                     Value::BinOpKind(i) => {
-                        if *i == op {
+                        if i == op {
                             first_arg.args.push(rhs);
-                            return Ok(first_arg.clone());
+                            return Ok(first_arg.clone().into());
                         }
                     }
                     _ => {}
@@ -348,10 +348,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Invoke> {
             _ => {}
         }
     }
-    Ok(Invoke {
-        func: Expr::value(Value::BinOpKind(op)).into(),
-        args: vec![lhs, rhs],
-    })
+    Ok(BinOp { op, lhs, rhs }.into())
 }
 fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
     let values = t
@@ -374,8 +371,8 @@ fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
         value: Value::expr(parse_expr(fv.expr)?),
     })
 }
-pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<StructExpr> {
-    Ok(StructExpr {
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<InitStruct> {
+    Ok(InitStruct {
         name: Expr::path(parse_path(s.path)?).into(),
         fields: s
             .fields
@@ -393,22 +390,19 @@ pub fn parse_literal(lit: syn::Lit) -> Result<Value> {
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
-pub fn parse_unary(u: syn::ExprUnary) -> Result<Invoke> {
+pub fn parse_unary(u: syn::ExprUnary) -> Result<UnOp> {
     let expr = parse_expr(*u.expr)?;
     let op = match u.op {
         syn::UnOp::Neg(_) => UnOpKind::Neg,
         syn::UnOp::Not(_) => UnOpKind::Not,
         _ => bail!("Unary op not supported: {:?}", u.op),
     };
-    Ok(Invoke {
-        func: Expr::value(Value::UnOpKind(op)).into(),
-        args: vec![expr],
-    })
+    Ok(UnOp { op, val: expr })
 }
 pub fn parse_expr(expr: syn::Expr) -> Result<AExpr> {
     let expr = match expr {
-        syn::Expr::Binary(b) => Expr::Invoke(parse_binary(b)?.into()),
-        syn::Expr::Unary(u) => Expr::Invoke(parse_unary(u)?.into()),
+        syn::Expr::Binary(b) => parse_binary(b)?,
+        syn::Expr::Unary(u) => parse_unary(u)?.into(),
         syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
         syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?.into()),
         syn::Expr::If(i) => Expr::If(parse_if(i)?),
@@ -418,7 +412,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<AExpr> {
         syn::Expr::Path(p) => Expr::path(parse_path(p.path)?),
         syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
-        syn::Expr::Struct(s) => Expr::Struct(parse_struct_expr(s)?.into()),
+        syn::Expr::Struct(s) => Expr::InitStruct(parse_struct_expr(s)?.into()),
 
         raw => {
             warn!("RawExpr {:?}", raw);
@@ -648,9 +642,10 @@ impl syn::parse::Parse for TypeExprParser {
 impl Into<Expr> for TypeExprParser {
     fn into(self) -> Expr {
         match self {
-            TypeExprParser::Add { left, right } => Expr::Invoke(Invoke {
-                func: Expr::value(Value::BinOpKind(BinOpKind::AddTrait)).into(),
-                args: vec![left.into(), right.into()],
+            TypeExprParser::Add { left, right } => Expr::BinOp(BinOp {
+                lhs: left.into(),
+                rhs: right.into(),
+                op: BinOpKind::Add,
             }),
             // TypeExprParser::Sub { .. } => {
             //     unreachable!()

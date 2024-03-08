@@ -17,7 +17,7 @@ impl InlinePass {
 
     pub fn inline_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         match expr {
-            Expr::Value(value) => self.inline_value(*value, ctx).map(Expr::value),
+            Expr::Value(value) => self.inline_value(value, ctx).map(Expr::value),
             _ => Ok(expr),
         }
     }
@@ -35,7 +35,7 @@ impl InlinePass {
                             invoke.func = Expr::ident(name.clone()).into();
                             return Ok(Expr::Invoke(invoke.into()));
                         }
-                        _ if invoke.args.is_empty() => return Ok(func.body.clone()),
+                        _ if invoke.args.is_empty() => return Ok(func.body.get()),
                         _ => {}
                     };
                 }
@@ -63,7 +63,7 @@ impl InlinePass {
     }
     pub fn inline_value(&self, value: Value, ctx: &SharedScopedContext) -> Result<Value> {
         match value {
-            Value::Expr(expr) => self.inline_expr(expr, ctx).map(Value::expr),
+            Value::Expr(expr) => self.inline_expr(expr.get(), ctx).map(Value::expr),
             _ => Ok(value),
         }
     }
