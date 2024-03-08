@@ -1,9 +1,6 @@
-use crate::expr::Expr;
 use crate::id::Ident;
-use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::value::*;
-use crate::{common_enum, common_struct, get_threadlocal_serializer};
-use std::fmt::{Debug, Display, Formatter};
+use crate::{common_enum, common_struct};
 use std::hash::Hash;
 
 pub type TypeId = u64;
@@ -59,7 +56,7 @@ impl Type {
     }
     pub fn value(v: Value) -> Self {
         match v {
-            Value::Expr(expr) => Self::expr(expr.get()),
+            Value::Expr(expr) => Self::expr(*expr),
             Value::Type(ty) => ty,
             _ => Type::Value(ValueType::new(v).into()),
         }

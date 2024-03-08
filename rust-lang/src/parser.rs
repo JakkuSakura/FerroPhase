@@ -351,12 +351,13 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
     Ok(BinOp { op, lhs, rhs }.into())
 }
 fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
-    let values = t
-        .elems
-        .into_iter()
-        .map(parse_expr)
-        .map(|x| x.map(Value::expr))
-        .try_collect()?;
+    let mut values = vec![];
+    for e in t.elems {
+        let expr = parse_expr(e)?;
+        let value = Value::expr(*expr);
+        values.push(value);
+    }
+
     Ok(ValueTuple { values })
 }
 fn parse_member(mem: syn::Member) -> Result<Ident> {
@@ -399,7 +400,7 @@ pub fn parse_unary(u: syn::ExprUnary) -> Result<UnOp> {
     };
     Ok(UnOp { op, val: expr })
 }
-pub fn parse_expr(expr: syn::Expr) -> Result<AExpr> {
+pub fn parse_expr(expr: syn::Expr) -> Result<BExpr> {
     let expr = match expr {
         syn::Expr::Binary(b) => parse_binary(b)?,
         syn::Expr::Unary(u) => parse_unary(u)?.into(),

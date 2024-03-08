@@ -1,5 +1,4 @@
 pub mod anybox;
-pub mod arena;
 pub mod conv;
 pub mod inject;
 pub mod macros;

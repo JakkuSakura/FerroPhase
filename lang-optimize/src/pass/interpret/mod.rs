@@ -234,7 +234,7 @@ impl InterpreterPass {
         ctx.insert_value_with_ctx(def.name.clone(), def.value.clone());
         Ok(())
     }
-    pub fn interpret_args(&self, node: &[AExpr], ctx: &SharedScopedContext) -> Result<Vec<Value>> {
+    pub fn interpret_args(&self, node: &[BExpr], ctx: &SharedScopedContext) -> Result<Vec<Value>> {
         let args: Vec<_> = node
             .iter()
             .map(|x| self.try_evaluate_expr(&x.get(), ctx).map(Value::expr))
@@ -407,7 +407,7 @@ impl InterpreterPass {
     pub fn interpret_invoke_binop(
         &self,
         op: BinOpKind,
-        args: &[AExpr],
+        args: &[BExpr],
         ctx: &SharedScopedContext,
     ) -> Result<Value> {
         let builtin_fn = self.lookup_bin_op_kind(op)?;
