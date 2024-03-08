@@ -353,19 +353,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common-lang"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "common",
- "dashmap",
- "derive_more",
- "itertools 0.12.1",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "console-api"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -832,11 +819,24 @@ name = "javascript-lang"
 version = "0.1.0"
 dependencies = [
  "common",
- "common-lang",
+ "lang-core",
  "swc_ecma_ast",
  "swc_ecma_codegen",
  "swc_ecma_parser",
  "swc_ecma_quote",
+]
+
+[[package]]
+name = "lang-core"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "common",
+ "dashmap",
+ "derive_more",
+ "itertools 0.12.1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1328,9 +1328,9 @@ name = "rust-lang"
 version = "0.1.0"
 dependencies = [
  "common",
- "common-lang",
  "eyre",
  "itertools 0.12.1",
+ "lang-core",
  "pretty_assertions",
  "proc-macro2",
  "quote",
@@ -1345,7 +1345,7 @@ name = "rust-macro"
 version = "0.1.0"
 dependencies = [
  "common",
- "common-lang",
+ "lang-core",
  "proc-macro2",
  "quote",
  "rust-lang",

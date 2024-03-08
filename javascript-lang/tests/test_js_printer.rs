@@ -1,8 +1,8 @@
 use common::assert_eq;
-use common_lang::expr::*;
-use common_lang::value::{EnumTypeVariant, Type, TypeEnum, TypeUnit};
-use common_lang::Serializer;
 use javascript_lang::ts::printer::TsPrinter;
+use lang_core::expr::*;
+use lang_core::value::{EnumTypeVariant, Type, TypeEnum, TypeUnit};
+use lang_core::Serializer;
 #[test]
 fn test_print_enum_declaration() {
     let printer = TsPrinter::new();

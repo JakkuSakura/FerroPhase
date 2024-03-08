@@ -1,7 +1,7 @@
 use common::{bail, Itertools, Result};
-use common_lang::id::Ident;
-use common_lang::ty::{EnumTypeVariant, TypeEnum, TypeValue};
-use common_lang::Serializer;
+use lang_core::id::Ident;
+use lang_core::ty::{EnumTypeVariant, TypeEnum, TypeValue};
+use lang_core::Serializer;
 use std::cell::RefCell;
 use std::io::{Cursor, Write};
 use std::rc::Rc;

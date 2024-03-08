@@ -1,11 +1,13 @@
-# common-lang
+# lang-core
 
-common-lang contains mainly AST of SHLL
+lang-core contains mainly AST of SHLL
 
 ## Boxing
+
 According to oxc and syn
 
 1.
+
 ```rust
    enum Expression {
        Variant(Box<Struct>)
@@ -14,7 +16,9 @@ According to oxc and syn
        expression: Expression
    }
 ```
+
 2.
+
 ```rust
    enum Expression {
        Variant(Struct)
@@ -27,11 +31,13 @@ According to oxc and syn
 1. has better performance and egonomics
 
 So the rules are:
+
 1. Box will only appear in enum
 2. Use enum directly without considering Box
 3. Make sure enum is thin enough to pass around
 
 ## TODO
+
 1. [ ] support unsafe and pointers via virtual machine
 2. [ ] evaluate kinda complex rust std types
 3. [x] new code structure:

@@ -1,10 +1,10 @@
 use common::*;
 
-use common_lang::context::SharedScopedContext;
-use common_lang::interpreter::Interpreter;
-use common_lang::pass::load_optimizers;
-use common_lang::{Deserializer, Serializer};
 use itertools::Itertools;
+use lang_core::context::SharedScopedContext;
+use lang_core::interpreter::Interpreter;
+use lang_core::pass::load_optimizers;
+use lang_core::{Deserializer, Serializer};
 use rust_lang::printer::RustPrinter;
 use rust_lang::rustfmt::format_code;
 use rust_lang::RustSerde;
