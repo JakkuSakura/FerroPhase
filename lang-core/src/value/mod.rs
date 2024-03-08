@@ -4,7 +4,7 @@ mod value;
 pub use ty::*;
 pub use value::*;
 
-use crate::expr::Expr;
+use crate::expr::{AExpr, Expr};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
@@ -37,7 +37,7 @@ common_enum! {
         Structural(ValueStructural),
         Function(ValueFunction),
         Tuple(ValueTuple),
-        Expr(Expr),
+        Expr(AExpr),
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),
         Any(AnyBox),
@@ -69,8 +69,8 @@ impl Value {
 
     pub fn expr(e: impl Into<Expr>) -> Self {
         match e.into() {
-            Expr::Value(v) => *v,
-            e => Value::Expr(e),
+            Expr::Value(v) => v,
+            e => Value::Expr(e.into()),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {

@@ -97,7 +97,7 @@ impl SpecializePass {
             bindings.push(binding);
         }
 
-        let new_body = Expr::block(Block::prepend(bindings, func.body.clone()));
+        let new_body = Expr::block(Block::prepend(bindings, func.body.get()));
         let new_name = Ident::new(format!(
             "{}_{}",
             name,
@@ -144,7 +144,7 @@ impl SpecializePass {
         //     args: Default::default(),
         // });
         if invoke.args.is_empty() {
-            Ok(new_func.body)
+            Ok(new_func.body.into())
         } else {
             Ok(Block::new(vec![
                 Item::DefFunction(DefFunction {

@@ -847,8 +847,10 @@ dependencies = [
  "common",
  "dashmap",
  "derive_more",
+ "eyre",
  "itertools 0.12.1",
  "lang-core",
+ "pretty_assertions",
  "proc-macro2",
  "quote",
  "rust-lang",
@@ -946,6 +948,25 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mips"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "common",
+ "dashmap",
+ "derive_more",
+ "eyre",
+ "itertools 0.12.1",
+ "lang-core",
+ "lang-optimize",
+ "proc-macro2",
+ "rust-lang",
+ "serde",
+ "serde_json",
+ "syn 2.0.31",
 ]
 
 [[package]]

@@ -6,6 +6,7 @@ members = [
     "rust-lang",
     "rust-macro",
     "javascript-lang",
+    "mips",
 ]
 exclude = []
 
