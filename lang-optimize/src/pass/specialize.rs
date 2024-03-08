@@ -35,7 +35,7 @@ impl SpecializePass {
         func: &ValueFunction,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {
-        let mut args: Vec<AExpr> = vec![];
+        let mut args: Vec<BExpr> = vec![];
         for arg in invoke.args.iter() {
             let x = match arg.get() {
                 Expr::Locator(v) => ctx
