@@ -1,14 +1,15 @@
-use crate::ast::Visibility;
-use crate::context::SharedScopedContext;
-use crate::expr::Expr;
 use crate::pass::InterpreterPass;
-use crate::utils::conv::TryConv;
-use crate::value::{
+use common::{bail, ensure, ContextCompat, Error, Result};
+use itertools::Itertools;
+use lang_core::ast::Visibility;
+use lang_core::context::SharedScopedContext;
+use lang_core::expr::Expr;
+use lang_core::id::{Ident, Locator};
+use lang_core::utils::conv::TryConv;
+use lang_core::value::{
     DecimalType, FieldTypeValue, GenericParam, ImplTraits, IntType, Type, TypeBounds, TypeFunction,
     TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
 };
-use common::{bail, ensure, ContextCompat, Error, Result};
-use itertools::Itertools;
 
 impl InterpreterPass {
     pub fn type_check_value(&self, lit: &Value, ty: &Type) -> Result<()> {
@@ -124,11 +125,7 @@ impl InterpreterPass {
                 return Ok(Type::Structural(TypeStructural { fields }));
             }
             Type::Function(f) => {
-                let sub = ctx.child(
-                    crate::id::Ident::new("__func__"),
-                    Visibility::Private,
-                    false,
-                );
+                let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
                 for g in &f.generics_params {
                     let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
                     sub.insert_value_with_ctx(g.name.clone(), constrain.into());
@@ -199,7 +196,7 @@ impl InterpreterPass {
         ctx: &SharedScopedContext,
     ) -> Result<Type> {
         match callee {
-            Expr::Locator(crate::id::Locator::Ident(ident)) => match ident.as_str() {
+            Expr::Locator(Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(params.first().context("No param")?, ctx)
                 }
@@ -217,13 +214,13 @@ impl InterpreterPass {
 
         bail!("Could not infer type call {:?}", callee)
     }
-    pub fn infer_ident(&self, ident: &crate::id::Ident, ctx: &SharedScopedContext) -> Result<Type> {
+    pub fn infer_ident(&self, ident: &Ident, ctx: &SharedScopedContext) -> Result<Type> {
         match ident.as_str() {
             ">" | ">=" | "<" | "<=" | "==" | "!=" => {
                 return Ok(Type::Function(
                     TypeFunction {
                         generics_params: vec![GenericParam {
-                            name: crate::id::Ident::new("T"),
+                            name: Ident::new("T"),
                             bounds: TypeBounds::new(Expr::value(Type::any().into())),
                         }],
                         params: vec![Type::ident("T".into()), Type::ident("T".into())],
