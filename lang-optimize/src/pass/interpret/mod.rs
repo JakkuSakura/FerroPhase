@@ -1,18 +1,18 @@
 mod typing;
 
-use crate::ast::{
-    DefConst, DefEnum, DefFunction, DefStruct, DefType, Import, Item, Module, Tree, Visibility,
-};
-use crate::context::SharedScopedContext;
-use crate::expr::*;
-use crate::id::{Ident, Locator};
-use crate::ops::*;
 use crate::pass::OptimizePass;
-use crate::utils::conv::TryConv;
-use crate::value::*;
-use crate::Serializer;
 use common::*;
 use itertools::Itertools;
+use lang_core::ast::{
+    DefConst, DefEnum, DefFunction, DefStruct, DefType, Import, Item, Module, Tree, Visibility,
+};
+use lang_core::context::SharedScopedContext;
+use lang_core::expr::*;
+use lang_core::id::{Ident, Locator};
+use lang_core::ops::*;
+use lang_core::utils::conv::TryConv;
+use lang_core::value::*;
+use lang_core::Serializer;
 use std::sync::Arc;
 
 #[derive(Clone)]
