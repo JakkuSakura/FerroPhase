@@ -13,7 +13,7 @@ use common::bail;
 use std::fmt::{Display, Formatter};
 
 pub type ValueId = u64;
-
+pub type BValue = Box<Value>;
 common_enum! {
     pub enum Value {
         Int(ValueInt),
@@ -44,6 +44,9 @@ common_enum! {
     }
 }
 impl Value {
+    pub fn get(&self) -> Self {
+        self.clone()
+    }
     pub fn bool(b: bool) -> Value {
         Value::Bool(ValueBool::new(b))
     }
@@ -113,5 +116,10 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_value(self).unwrap();
         f.write_str(&s)
+    }
+}
+impl From<BValue> for Value {
+    fn from(e: BValue) -> Self {
+        *e
     }
 }
