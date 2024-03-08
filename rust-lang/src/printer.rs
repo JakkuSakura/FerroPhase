@@ -1,7 +1,5 @@
-use common::Result;
-use common::*;
-
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
+use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
 use lang_core::expr::*;

@@ -35,7 +35,7 @@ impl FoldOptimizer {
         // TODO: obtain closure here
         let func;
         let closure_context;
-        match self.optimize_expr(invoke.func.into(), ctx)? {
+        match self.optimize_expr(invoke.func.get(), ctx)? {
             Expr::Closured(c) => {
                 closure_context = Some(c.ctx);
                 func = c.expr.into();

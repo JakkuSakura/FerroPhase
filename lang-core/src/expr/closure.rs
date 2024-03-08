@@ -1,5 +1,5 @@
 use crate::context::SharedScopedContext;
-use crate::expr::AExpr;
+use crate::expr::BExpr;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
@@ -8,10 +8,10 @@ use std::hash::Hash;
 #[derive(Clone, PartialEq, Eq)]
 pub struct Closure {
     pub ctx: SharedScopedContext,
-    pub expr: AExpr,
+    pub expr: BExpr,
 }
 impl Closure {
-    pub fn new(ctx: SharedScopedContext, expr: AExpr) -> Self {
+    pub fn new(ctx: SharedScopedContext, expr: BExpr) -> Self {
         Self { ctx, expr }
     }
 }

@@ -4,19 +4,18 @@ use crate::value::{Type, Value, ValueUnit};
 use crate::{common_enum, get_threadlocal_serializer};
 use std::fmt::{Debug, Display, Formatter};
 
-mod arena;
 mod closure;
 mod stmt;
 mod typing;
 mod value;
 
-pub use arena::*;
 pub use closure::*;
 pub use stmt::*;
 pub use typing::*;
 pub use value::*;
 
 pub type ExprId = u64;
+pub type BExpr = Box<Expr>;
 
 common_enum! {
     /// Expr is an expression that returns a value
@@ -46,6 +45,9 @@ common_enum! {
 }
 
 impl Expr {
+    pub fn get(&self) -> Self {
+        self.clone()
+    }
     pub fn unit() -> Expr {
         Expr::Value(Value::Unit(ValueUnit).into())
     }
@@ -57,7 +59,7 @@ impl Expr {
     }
     pub fn value(v: Value) -> Expr {
         match v {
-            Value::Expr(expr) => expr.get(),
+            Value::Expr(expr) => *expr,
             Value::Any(any) => Expr::Any(any),
             Value::Type(Type::Expr(expr)) => *expr,
             _ => Expr::Value(v.into()),
@@ -96,5 +98,10 @@ impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_expr(self).unwrap();
         f.write_str(&s)
+    }
+}
+impl From<BExpr> for Expr {
+    fn from(expr: BExpr) -> Self {
+        *expr
     }
 }
