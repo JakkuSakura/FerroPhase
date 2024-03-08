@@ -1,13 +1,13 @@
-use crate::ast::{DefFunction, Import, Item, Visibility};
-use crate::context::SharedScopedContext;
-use crate::expr::*;
-use crate::id::{Ident, Locator};
 use crate::pass::{InterpreterPass, OptimizePass};
-use crate::pat::{Pattern, PatternIdent};
-use crate::value::*;
-use crate::*;
 use common::*;
 use itertools::{zip_eq, Itertools};
+use lang_core::ast::{DefFunction, Import, Item, Visibility};
+use lang_core::context::SharedScopedContext;
+use lang_core::expr::*;
+use lang_core::id::{Ident, Locator};
+use lang_core::pat::{Pattern, PatternIdent};
+use lang_core::value::*;
+use lang_core::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 

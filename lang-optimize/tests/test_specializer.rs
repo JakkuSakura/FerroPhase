@@ -1,9 +1,8 @@
-use common::assert_eq;
 use common::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::expr::*;
-use lang_core::pass::{FoldOptimizer, SpecializePass};
 use lang_core::register_threadlocal_serializer;
+use lang_optimize::pass::{FoldOptimizer, SpecializePass};
 use rust_lang::{shll_parse_expr, RustSerde};
 use std::sync::Arc;
 

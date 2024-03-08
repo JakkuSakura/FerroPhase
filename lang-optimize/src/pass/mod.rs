@@ -8,11 +8,11 @@ pub use interpret::*;
 pub use optimizer::*;
 pub use specialize::*;
 
-use crate::ast::{Item, Module};
-use crate::context::SharedScopedContext;
-use crate::expr::{ControlFlow, Expr, Invoke};
-use crate::value::Value;
 use common::*;
+use lang_core::ast::{Item, Module};
+use lang_core::context::SharedScopedContext;
+use lang_core::expr::{ControlFlow, Expr, Invoke};
+use lang_core::value::Value;
 
 #[allow(unused_variables)]
 pub trait OptimizePass {

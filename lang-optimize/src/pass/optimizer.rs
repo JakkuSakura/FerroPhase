@@ -1,12 +1,12 @@
-use crate::ast::{DefFunction, File, Import, Item, Module, Tree, Visibility};
-use crate::context::SharedScopedContext;
-use crate::expr::*;
-use crate::id::Ident;
 use crate::pass::{InlinePass, OptimizePass, SpecializePass};
-use crate::value::*;
-use crate::*;
 use common::*;
 use itertools::Itertools;
+use lang_core::ast::{DefFunction, File, Import, Item, Module, Tree, Visibility};
+use lang_core::context::SharedScopedContext;
+use lang_core::expr::*;
+use lang_core::id::Ident;
+use lang_core::value::*;
+use lang_core::*;
 use std::mem::take;
 use std::sync::Arc;
 
