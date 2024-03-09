@@ -82,7 +82,7 @@ common_struct! {
 
 common_struct! {
     pub struct BinOp {
-        pub op: BinOpKind,
+        pub kind: BinOpKind,
         pub lhs: BExpr,
         pub rhs: BExpr,
     }

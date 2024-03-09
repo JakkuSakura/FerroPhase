@@ -9,17 +9,50 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
 
 #[derive(Clone, Default)]
-pub struct ValueStorage {
+pub struct ValueSlot {
     value: Option<Value>,
     ty: Option<Type>,
     closure: Option<Arc<ScopedContext>>,
+}
+#[derive(Clone, Default)]
+pub struct SharedValueSlot {
+    storage: Arc<Mutex<ValueSlot>>,
+}
+impl SharedValueSlot {
+    pub fn new() -> Self {
+        Self {
+            storage: Arc::new(Mutex::new(ValueSlot::default())),
+        }
+    }
+    pub fn with_storage<R>(&self, func: impl FnOnce(&mut ValueSlot) -> R) -> R {
+        let mut storage = self.storage.lock().unwrap();
+        func(&mut storage)
+    }
+    pub fn value(&self) -> Option<Value> {
+        self.with_storage(|x| x.value.clone())
+    }
+    pub fn ty(&self) -> Option<Type> {
+        self.with_storage(|x| x.ty.clone())
+    }
+    pub fn set_value(&self, value: Value) {
+        self.with_storage(|x| x.value = Some(value));
+    }
+    pub fn set_ty(&self, ty: Type) {
+        self.with_storage(|x| x.ty = Some(ty));
+    }
+    pub fn closure(&self) -> Option<Arc<ScopedContext>> {
+        self.with_storage(|x| x.closure.clone())
+    }
+    pub fn set_closure(&self, closure: Arc<ScopedContext>) {
+        self.with_storage(|x| x.closure = Some(closure));
+    }
 }
 pub struct ScopedContext {
     parent: Option<Weak<Self>>,
     #[allow(dead_code)]
     ident: Ident,
     path: Path,
-    storages: DashMap<Ident, ValueStorage>,
+    storages: DashMap<Ident, SharedValueSlot>,
     childs: DashMap<Ident, Arc<Self>>,
     buffer: Mutex<Vec<String>>,
     #[allow(dead_code)]
@@ -42,7 +75,10 @@ impl ScopedContext {
     }
 
     pub fn insert_value(&self, key: impl Into<Ident>, value: Value) {
-        self.storages.entry(key.into()).or_default().value = Some(value);
+        self.storages
+            .entry(key.into())
+            .or_default()
+            .set_value(value);
     }
 
     pub fn insert_expr(&self, key: impl Into<Ident>, value: Expr) {
@@ -53,10 +89,12 @@ impl ScopedContext {
         debug!("Values in {}", self.path);
         for key in self.storages.iter() {
             let (k, v) = key.pair();
-            let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
+            v.with_storage(|v| {
+                let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
 
-            let ty = v.ty.as_ref().unwrap_or(&Type::UNKNOWN);
-            debug!("{}: val:{} ty:{}", k, value, ty)
+                let ty = v.ty.as_ref().unwrap_or(&Type::UNKNOWN);
+                debug!("{}: val:{} ty:{}", k, value, ty)
+            })
         }
         Ok(())
     }
@@ -99,10 +137,10 @@ impl SharedScopedContext {
 
     pub fn get_function(&self, key: impl Into<Path>) -> Option<(ValueFunction, Self)> {
         let value = self.get_storage(key, true)?;
-        match value.value? {
+        value.with_storage(|value| match value.value.clone()? {
             Value::Function(func) => Some((func.clone(), Self(value.closure.clone().unwrap()))),
             _ => None,
-        }
+        })
     }
     pub fn get_module_recursive(
         self: &SharedScopedContext,
@@ -124,7 +162,7 @@ impl SharedScopedContext {
 
         Some(this)
     }
-    pub fn get_storage(&self, key: impl Into<Path>, access_local: bool) -> Option<ValueStorage> {
+    pub fn get_storage(&self, key: impl Into<Path>, access_local: bool) -> Option<SharedValueSlot> {
         let key = key.into();
         debug!(
             "get_storage in {} {} access_local={}",
@@ -154,33 +192,36 @@ impl SharedScopedContext {
     }
     pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
         let storage = self.get_storage(key, true)?;
-        storage.value
+        storage.value()
     }
     pub fn insert_value_with_ctx(&self, key: impl Into<Ident>, value: Value) {
-        let mut store = self.storages.entry(key.into()).or_default();
-        store.value = Some(value);
-        store.closure = Some(self.clone().0);
+        let store = self.storages.entry(key.into()).or_default();
+        store.with_storage(|store| {
+            store.value = Some(value);
+            store.closure = Some(self.clone().0);
+        });
     }
     /// insert type inference
     pub fn insert_type(&self, key: impl Into<Ident>, ty: Type) {
-        let mut store = self.storages.entry(key.into()).or_default();
-        store.ty = Some(ty);
+        let store = self.storages.entry(key.into()).or_default();
+        store.set_ty(ty)
     }
     pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
         self.get_value(key).map(Expr::value)
     }
     pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<Expr> {
         let storage = self.get_storage(key, true)?;
-        let mut expr = storage.value.map(Expr::value)?;
-        if let Some(closure) = storage.closure {
-            expr = Closure::new(Self(closure), expr.into()).into();
-        }
-        Some(expr)
+        storage.with_storage(|storage| {
+            let expr = storage.value.clone().map(Expr::value)?;
+            if let Some(closure) = storage.closure.clone() {
+                return Some(Closure::new(Self(closure), expr.into()).into());
+            }
+            Some(expr)
+        })
     }
     pub fn get_type(&self, key: impl Into<Path>) -> Option<Type> {
         let storage = self.get_storage(key, true)?;
-        let ty = storage.ty?;
-        Some(ty)
+        storage.ty()
     }
     pub fn root(&self) -> Self {
         self.get_parent()
@@ -192,7 +233,7 @@ impl SharedScopedContext {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
             Expr::Locator(ident) => self.get_value(ident.to_path()),
-            Expr::Value(value) => Some(value.clone()),
+            Expr::Value(value) => Some(value.get()),
             _ => None,
         };
         info!(
