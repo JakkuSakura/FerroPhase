@@ -39,7 +39,7 @@ impl Item {
     pub fn is_unit(&self) -> bool {
         if let Some(expr) = self.as_expr() {
             if let Expr::Value(value) = expr {
-                if let Value::Unit(_) = value {
+                if let Value::Unit(_) = &**value {
                     return true;
                 }
             }

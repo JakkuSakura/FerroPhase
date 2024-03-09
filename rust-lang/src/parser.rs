@@ -312,7 +312,7 @@ fn parse_if(i: syn::ExprIf) -> Result<If> {
 fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = parse_expr(*b.left)?;
     let rhs = parse_expr(*b.right)?;
-    let (op, flatten) = match b.op {
+    let (kind, flatten) = match b.op {
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
         syn::BinOp::Sub(_) => (BinOpKind::Sub, false),
@@ -334,9 +334,9 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
         let mut lhs = lhs.get();
         match &mut lhs {
             Expr::Invoke(first_arg) => match first_arg.func.get() {
-                Expr::Value(value) => match value {
+                Expr::Value(value) => match value.as_ref() {
                     Value::BinOpKind(i) => {
-                        if i == op {
+                        if *i == kind {
                             first_arg.args.push(rhs);
                             return Ok(first_arg.clone().into());
                         }
@@ -348,7 +348,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
             _ => {}
         }
     }
-    Ok(BinOp { op, lhs, rhs }.into())
+    Ok(BinOp { kind, lhs, rhs }.into())
 }
 fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
     let mut values = vec![];
@@ -646,7 +646,7 @@ impl Into<Expr> for TypeExprParser {
             TypeExprParser::Add { left, right } => Expr::BinOp(BinOp {
                 lhs: left.into(),
                 rhs: right.into(),
-                op: BinOpKind::Add,
+                kind: BinOpKind::Add,
             }),
             // TypeExprParser::Sub { .. } => {
             //     unreachable!()
