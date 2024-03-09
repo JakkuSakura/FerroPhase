@@ -6,6 +6,7 @@ use lang_core::expr::*;
 use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use lang_core::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use lang_core::pat::{Pattern, PatternIdent};
+use lang_core::utils::anybox::AnyBox;
 use lang_core::value::*;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
@@ -137,18 +138,17 @@ impl RustPrinter {
             BinOpKind::BitOr => quote!(|),
             BinOpKind::BitAnd => quote!(&),
             BinOpKind::BitXor => quote!(^),
-            BinOpKind::Any(ident) => self.print_ident(ident),
         }
     }
     pub fn print_bin_op(&self, binop: &BinOp) -> Result<TokenStream> {
         let lhs = self.print_expr(&binop.lhs.get())?;
         let rhs = self.print_expr(&binop.rhs.get())?;
-        let op = self.print_bin_op_kind(&binop.op);
+        let op = self.print_bin_op_kind(&binop.kind);
         Ok(quote!(#lhs #op #rhs))
     }
     pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
         match invoke.func.get() {
-            Expr::Value(value) => match value {
+            Expr::Value(value) => match value.as_ref() {
                 Value::BinOpKind(op) => {
                     let op = self.print_bin_op_kind(&op);
                     let args: Vec<_> = invoke
@@ -448,7 +448,7 @@ impl RustPrinter {
             .map(|x| self.print_expr(&x.get()))
             .try_collect()?;
         match &func {
-            Expr::Value(value) => match &value {
+            Expr::Value(value) => match value.as_ref() {
                 Value::Type(_) => {
                     return Ok(quote!(
                         <#fun>::<#(#args), *>
@@ -482,7 +482,6 @@ impl RustPrinter {
                         BinOpKind::BitOr => quote!(#(#args) | *),
                         BinOpKind::BitAnd => quote!(#(#args) & *),
                         BinOpKind::BitXor => quote!(#(#args) ^ *),
-                        BinOpKind::Any(_) => bail!("Not supported binop: {:?}", op),
                     };
                     return Ok(ret);
                 }
@@ -666,7 +665,7 @@ impl RustPrinter {
         Ok(quote!(()))
     }
 
-    pub fn print_any(&self, n: &crate::utils::anybox::AnyBox) -> Result<TokenStream> {
+    pub fn print_any(&self, n: &AnyBox) -> Result<TokenStream> {
         if let Some(n) = n.downcast_ref::<RawExprMacro>() {
             return Ok(n.raw.to_token_stream());
         }

@@ -17,7 +17,7 @@ impl InlinePass {
 
     pub fn inline_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         match expr {
-            Expr::Value(value) => self.inline_value(value, ctx).map(Expr::value),
+            Expr::Value(value) => self.inline_value(value.into(), ctx).map(Expr::value),
             _ => Ok(expr),
         }
     }
