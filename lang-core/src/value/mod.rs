@@ -47,6 +47,7 @@ impl Value {
     pub fn get(&self) -> Self {
         self.clone()
     }
+
     pub fn bool(b: bool) -> Value {
         Value::Bool(ValueBool::new(b))
     }
@@ -72,7 +73,7 @@ impl Value {
 
     pub fn expr(e: impl Into<Expr>) -> Self {
         match e.into() {
-            Expr::Value(v) => v,
+            Expr::Value(v) => *v,
             e => Value::Expr(e.into()),
         }
     }

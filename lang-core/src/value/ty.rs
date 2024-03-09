@@ -54,7 +54,8 @@ impl Type {
             _ => Type::Expr(Box::new(e)),
         }
     }
-    pub fn value(v: Value) -> Self {
+    pub fn value(v: impl Into<Value>) -> Self {
+        let v = v.into();
         match v {
             Value::Expr(expr) => Self::expr(*expr),
             Value::Type(ty) => ty,

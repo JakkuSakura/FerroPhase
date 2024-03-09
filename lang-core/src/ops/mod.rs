@@ -6,6 +6,7 @@ use crate::id::Ident;
 pub use builtins::*;
 
 common_enum! {
+    #[derive(Copy)]
     pub enum BinOpKind {
         Add,
         AddTrait,
@@ -24,7 +25,6 @@ common_enum! {
         BitOr,
         BitAnd,
         BitXor,
-        Any(Ident),
     }
 
 }
@@ -63,7 +63,6 @@ impl Display for BinOpKind {
             BinOpKind::BitOr => write!(f, "|"),
             BinOpKind::BitAnd => write!(f, "&"),
             BinOpKind::BitXor => write!(f, "^"),
-            BinOpKind::Any(i) => write!(f, "{}", i),
         }
     }
 }

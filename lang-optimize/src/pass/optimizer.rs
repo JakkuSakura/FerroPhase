@@ -57,7 +57,7 @@ impl FoldOptimizer {
             ControlFlow::Into => {
                 // FIXME: optimize out this clone
                 match func.clone() {
-                    Expr::Value(value) => match value {
+                    Expr::Value(value) => match value.into() {
                         Value::Function(mut f) => {
                             // TODO: when calling function, use context of its own, instead of use current context
 

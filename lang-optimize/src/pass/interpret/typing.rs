@@ -254,7 +254,7 @@ impl InterpreterPass {
                     .with_context(|| format!("Could not find {:?} in context", n))?;
                 return Ok(ty);
             }
-            Expr::Value(l) => match l {
+            Expr::Value(l) => match l.as_ref() {
                 Value::Int(_) => return Ok(Type::Primitive(TypePrimitive::Int(TypeInt::I64))),
                 Value::Decimal(_) => {
                     return Ok(Type::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
@@ -268,7 +268,7 @@ impl InterpreterPass {
                 _ => {}
             },
             Expr::Invoke(invoke) => match invoke.func.get() {
-                Expr::Value(value) => match value {
+                Expr::Value(value) => match value.as_ref() {
                     Value::BinOpKind(kind) if kind.is_bool() => {
                         return Ok(Type::Primitive(TypePrimitive::Bool))
                     }

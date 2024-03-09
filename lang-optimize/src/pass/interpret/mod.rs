@@ -40,7 +40,7 @@ impl InterpreterPass {
     pub fn interpret_invoke(&self, node: &Invoke, ctx: &SharedScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
         match node.func.get() {
-            Expr::Value(value) => match value {
+            Expr::Value(value) => match value.as_ref() {
                 Value::BinOpKind(kind) => {
                     self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
                 }
@@ -72,7 +72,7 @@ impl InterpreterPass {
             }
             Expr::Select(select) => match select.field.as_str() {
                 "to_string" => match &select.obj.get() {
-                    Expr::Value(value) => match value {
+                    Expr::Value(value) => match value.as_ref() {
                         Value::String(obj) => {
                             let mut obj = obj.clone();
                             obj.owned = true;
@@ -399,7 +399,7 @@ impl InterpreterPass {
         }
     }
     pub fn interpret_binop(&self, binop: &BinOp, ctx: &SharedScopedContext) -> Result<Value> {
-        let builtin_fn = self.lookup_bin_op_kind(binop.op.clone())?;
+        let builtin_fn = self.lookup_bin_op_kind(binop.kind.clone())?;
         let lhs = self.interpret_expr(&binop.lhs.get(), ctx)?;
         let rhs = self.interpret_expr(&binop.rhs.get(), ctx)?;
         builtin_fn.invoke(&vec![lhs, rhs], ctx)

@@ -1,6 +1,6 @@
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
-use crate::value::{Type, Value, ValueUnit};
+use crate::value::{BValue, Type, Value, ValueUnit};
 use crate::{common_enum, get_threadlocal_serializer};
 use std::fmt::{Debug, Display, Formatter};
 
@@ -22,7 +22,7 @@ common_enum! {
     /// aka ValueExpr
     pub enum Expr {
         Locator(Locator),
-        Value(Value),
+        Value(BValue),
         Block(Block),
         Match(Match),
         If(If),
