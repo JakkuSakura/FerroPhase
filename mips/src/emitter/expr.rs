@@ -1,9 +1,9 @@
 use eyre::{bail, Result};
 
 use lang_core::ast::Expr;
+use lang_core::ast::{Type, TypeInt, TypePrimitive, Value};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
-use lang_core::value::{Type, TypeInt, TypePrimitive, Value};
 
 use crate::emitter::MipsEmitter;
 use crate::instruction::{MipsInstruction, MipsOpcode};

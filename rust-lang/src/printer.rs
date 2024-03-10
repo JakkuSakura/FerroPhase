@@ -6,7 +6,6 @@ use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use lang_core::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use lang_core::pat::{Pattern, PatternIdent};
 use lang_core::utils::anybox::AnyBox;
-use lang_core::value::*;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
 
