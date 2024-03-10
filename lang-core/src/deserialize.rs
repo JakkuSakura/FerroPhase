@@ -1,5 +1,4 @@
-use crate::ast::{File, Item, Tree};
-use crate::expr::Expr;
+use crate::ast::{Expr, File, Item, Tree};
 use crate::value::Type;
 use common::*;
 

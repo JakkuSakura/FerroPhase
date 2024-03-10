@@ -1,7 +1,7 @@
 use eyre::{bail, Result};
 
+use lang_core::ast::Expr;
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::Expr;
 use lang_core::ops::BinOpKind;
 use lang_core::value::{Type, TypeInt, TypePrimitive, Value};
 

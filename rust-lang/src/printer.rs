@@ -2,7 +2,6 @@ use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
-use lang_core::expr::*;
 use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use lang_core::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use lang_core::pat::{Pattern, PatternIdent};
