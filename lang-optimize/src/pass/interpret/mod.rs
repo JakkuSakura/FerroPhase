@@ -3,16 +3,11 @@ mod typing;
 use crate::pass::OptimizePass;
 use common::*;
 use itertools::Itertools;
-use lang_core::ast::{
-    BExpr, BinOp, Block, ControlFlow, DefConst, DefEnum, DefFunction, DefStruct, DefType, Expr,
-    Import, InitStruct, Invoke, Item, Match, Module, Select, Statement, StatementLet, Tree,
-    Visibility,
-};
+use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::{Ident, Locator};
 use lang_core::ops::*;
 use lang_core::utils::conv::TryConv;
-use lang_core::value::*;
 use lang_core::Serializer;
 use std::sync::Arc;
 

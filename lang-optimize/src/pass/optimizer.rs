@@ -1,13 +1,9 @@
 use crate::pass::{InlinePass, OptimizePass, SpecializePass};
 use common::*;
 use itertools::Itertools;
-use lang_core::ast::{
-    Block, ControlFlow, DefFunction, Expr, File, If, Import, Invoke, Item, Match, MatchCase,
-    Module, SideEffect, Statement, StatementLet, Tree, Visibility,
-};
+use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::Ident;
-use lang_core::value::*;
 use lang_core::*;
 use std::mem::take;
 use std::sync::Arc;

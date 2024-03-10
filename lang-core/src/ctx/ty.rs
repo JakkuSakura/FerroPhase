@@ -1,6 +1,6 @@
 use crate::ast::{Expr, ExprId};
+use crate::ast::{Type, Value};
 use crate::ctx::Context;
-use crate::value::{Type, Value};
 use eyre::Result;
 
 pub trait TypingSystem {

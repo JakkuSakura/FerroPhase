@@ -3,9 +3,9 @@ use std::sync::Arc;
 use common::*;
 use lang_core::ast::*;
 use lang_core::ast::{DefFunction, Impl, Item, Visibility};
+use lang_core::ast::{FunctionParam, FunctionSignature, Type, TypePrimitive, ValueFunction};
 use lang_core::id::Locator;
 use lang_core::register_threadlocal_serializer;
-use lang_core::value::{FunctionParam, FunctionSignature, Type, TypePrimitive, ValueFunction};
 use pretty_assertions::assert_eq;
 use rust_lang::{shll_parse_expr, shll_parse_item, RustSerde};
 

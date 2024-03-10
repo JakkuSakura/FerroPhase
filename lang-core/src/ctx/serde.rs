@@ -1,8 +1,8 @@
 use crate::ast::Expr;
 use eyre::Result;
 
+use crate::ast::{Type, Value};
 use crate::ctx::Context;
-use crate::value::{Type, Value};
 
 pub trait SerializeSystem {
     fn get_serialized_from_ty(&self, ctx: &Context, ty: &Type) -> Result<String> {

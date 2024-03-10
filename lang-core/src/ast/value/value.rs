@@ -1,7 +1,7 @@
 use crate::ast::BExpr;
+use crate::ast::{Type, TypeBounds, TypeStruct, Value};
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
-use crate::value::{Type, TypeBounds, TypeStruct, Value};
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use bytes::BytesMut;
 use common::*;

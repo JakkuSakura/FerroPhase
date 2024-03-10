@@ -1,4 +1,4 @@
-use crate::value::{Value, ValuePointer};
+use crate::ast::{Value, ValuePointer};
 
 pub struct VmValue {
     pub value: Value,

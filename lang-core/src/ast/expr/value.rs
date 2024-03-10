@@ -1,7 +1,7 @@
+use crate::ast::FieldValue;
 use crate::ast::{BExpr, Expr};
 use crate::id::Ident;
 use crate::ops::{BinOpKind, UnOpKind};
-use crate::value::FieldValue;
 use crate::{common_enum, common_struct, get_threadlocal_serializer};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
@@ -63,7 +63,7 @@ common_struct! {
         pub body: Expr,
     }
 }
-// TODO: move to another place
+
 common_enum! {
     pub enum ControlFlow {
         Continue,
