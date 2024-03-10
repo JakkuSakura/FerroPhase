@@ -1,9 +1,8 @@
 use crate::pass::InterpreterPass;
 use common::{bail, ensure, ContextCompat, Error, Result};
 use itertools::Itertools;
-use lang_core::ast::Visibility;
+use lang_core::ast::{Expr, Visibility};
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::Expr;
 use lang_core::id::{Ident, Locator};
 use lang_core::utils::conv::TryConv;
 use lang_core::value::{

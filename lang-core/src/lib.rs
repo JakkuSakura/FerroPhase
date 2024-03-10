@@ -3,7 +3,7 @@ pub mod context;
 pub mod cst;
 pub mod ctx;
 mod deserialize;
-pub mod expr;
+
 pub mod hir;
 pub mod id;
 pub mod mir;

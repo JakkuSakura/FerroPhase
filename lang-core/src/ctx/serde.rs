@@ -1,7 +1,7 @@
+use crate::ast::Expr;
 use eyre::Result;
 
 use crate::ctx::Context;
-use crate::expr::Expr;
 use crate::value::{Type, Value};
 
 pub trait SerializeSystem {

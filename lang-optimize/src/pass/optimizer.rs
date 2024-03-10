@@ -1,9 +1,11 @@
 use crate::pass::{InlinePass, OptimizePass, SpecializePass};
 use common::*;
 use itertools::Itertools;
-use lang_core::ast::{DefFunction, File, Import, Item, Module, Tree, Visibility};
+use lang_core::ast::{
+    Block, ControlFlow, DefFunction, Expr, File, If, Import, Invoke, Item, Match, MatchCase,
+    Module, SideEffect, Statement, StatementLet, Tree, Visibility,
+};
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::*;
 use lang_core::id::Ident;
 use lang_core::value::*;
 use lang_core::*;

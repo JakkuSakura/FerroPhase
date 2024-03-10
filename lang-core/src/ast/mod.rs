@@ -1,10 +1,12 @@
-use crate::expr::Expr;
+//! AST are trees, so Box<T> is fine
+
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
 
+mod expr;
 mod item;
+pub use expr::*;
 pub use item::*;
-
 common_struct! {
     pub struct File {
         pub path: PathBuf,

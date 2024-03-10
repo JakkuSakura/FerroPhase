@@ -4,10 +4,11 @@ use crate::pass::OptimizePass;
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::{
-    DefConst, DefEnum, DefFunction, DefStruct, DefType, Import, Item, Module, Tree, Visibility,
+    BExpr, BinOp, Block, ControlFlow, DefConst, DefEnum, DefFunction, DefStruct, DefType, Expr,
+    Import, InitStruct, Invoke, Item, Match, Module, Select, Statement, StatementLet, Tree,
+    Visibility,
 };
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::*;
 use lang_core::id::{Ident, Locator};
 use lang_core::ops::*;
 use lang_core::utils::conv::TryConv;

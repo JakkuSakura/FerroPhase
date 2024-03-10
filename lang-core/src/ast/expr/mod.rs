@@ -18,8 +18,7 @@ pub type ExprId = u64;
 pub type BExpr = Box<Expr>;
 
 common_enum! {
-    /// Expr is an expression that returns a value
-    /// aka ValueExpr
+    /// Expr is an expression that returns a value, note that a Type is also a Value
     pub enum Expr {
         Locator(Locator),
         Value(BValue),

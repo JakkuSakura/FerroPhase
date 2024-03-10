@@ -1,8 +1,8 @@
 use common::*;
 
+use lang_core::ast::Expr;
 use lang_core::ast::{File, Module};
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::Expr;
 use lang_optimize::pass::{load_optimizers, FoldOptimizer};
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
