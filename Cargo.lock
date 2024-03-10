@@ -834,6 +834,7 @@ dependencies = [
  "common",
  "dashmap",
  "derive_more",
+ "eyre",
  "itertools 0.12.1",
  "serde",
  "serde_json",
