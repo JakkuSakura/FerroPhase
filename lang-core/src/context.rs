@@ -1,5 +1,4 @@
-use crate::ast::Visibility;
-use crate::expr::{Closure, Expr};
+use crate::ast::{Closure, Expr, Visibility};
 use crate::id::{Ident, Path};
 use crate::value::{Type, Value, ValueFunction};
 use common::*;

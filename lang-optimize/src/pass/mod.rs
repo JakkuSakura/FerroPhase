@@ -9,9 +9,9 @@ pub use optimizer::*;
 pub use specialize::*;
 
 use common::*;
+use lang_core::ast::{ControlFlow, Expr, Invoke};
 use lang_core::ast::{Item, Module};
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::{ControlFlow, Expr, Invoke};
 use lang_core::value::Value;
 
 #[allow(unused_variables)]

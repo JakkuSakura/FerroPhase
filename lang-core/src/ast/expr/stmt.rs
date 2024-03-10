@@ -1,7 +1,6 @@
-use crate::ast::Item;
+use crate::ast::{Expr, Item};
 use crate::common_enum;
 use crate::common_struct;
-use crate::expr::Expr;
 use crate::id::Ident;
 use crate::pat::Pattern;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
