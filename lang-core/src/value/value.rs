@@ -1,4 +1,4 @@
-use crate::expr::*;
+use crate::ast::BExpr;
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
 use crate::value::{Type, TypeBounds, TypeStruct, Value};

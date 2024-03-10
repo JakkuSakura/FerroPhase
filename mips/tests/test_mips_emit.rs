@@ -1,6 +1,6 @@
 use common::*;
+use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::*;
 use lang_core::register_threadlocal_serializer;
 use mips::emitter::MipsEmitter;
 use mips::instruction::MipsInstruction;

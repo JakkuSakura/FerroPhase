@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use common::*;
 
-use lang_core::ast::{Item, Module, Tree};
+use lang_core::ast::{Expr, Item, Module, Tree};
 use lang_core::context::SharedScopedContext;
-use lang_core::expr::*;
 use lang_core::value::Value;
 use lang_core::Serializer;
 
