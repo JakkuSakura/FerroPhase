@@ -1,5 +1,5 @@
+use crate::ast::Type;
 use crate::context::SharedScopedContext;
-use crate::value::Type;
 use common::*;
 
 pub struct Injector {}

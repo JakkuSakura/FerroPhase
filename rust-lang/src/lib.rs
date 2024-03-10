@@ -7,7 +7,6 @@ use crate::parser::RustParser;
 use crate::printer::RustPrinter;
 use common::Result;
 use lang_core::ast::*;
-use lang_core::value::{Type, Value, ValueFunction};
 use lang_core::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;

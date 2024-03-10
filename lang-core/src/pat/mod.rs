@@ -1,6 +1,6 @@
 use crate::ast::Expr;
+use crate::ast::Type;
 use crate::id::{Ident, Locator};
-use crate::value::Type;
 use crate::{common_enum, common_struct};
 common_enum! {
     pub enum Pattern {

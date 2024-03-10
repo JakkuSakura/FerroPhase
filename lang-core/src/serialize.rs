@@ -1,5 +1,5 @@
 use crate::ast::{BExpr, Block, Expr, File, Invoke, Item, Module, Statement, Tree};
-use crate::value::{Type, Value, ValueFunction};
+use crate::ast::{Type, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
 use std::sync::Arc;

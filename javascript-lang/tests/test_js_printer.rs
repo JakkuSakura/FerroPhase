@@ -1,7 +1,7 @@
 use common::assert_eq;
 use javascript_lang::ts::printer::TsPrinter;
 use lang_core::ast::*;
-use lang_core::value::{EnumTypeVariant, Type, TypeEnum, TypeUnit};
+use lang_core::ast::{EnumTypeVariant, Type, TypeEnum, TypeUnit};
 use lang_core::Serializer;
 #[test]
 fn test_print_enum_declaration() {

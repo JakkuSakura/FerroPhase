@@ -5,8 +5,10 @@ use std::path::PathBuf;
 
 mod expr;
 mod item;
+mod value;
 pub use expr::*;
 pub use item::*;
+pub use value::*;
 common_struct! {
     pub struct File {
         pub path: PathBuf,

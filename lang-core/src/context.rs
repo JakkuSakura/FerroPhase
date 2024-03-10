@@ -1,6 +1,6 @@
 use crate::ast::{Closure, Expr, Visibility};
+use crate::ast::{Type, Value, ValueFunction};
 use crate::id::{Ident, Path};
-use crate::value::{Type, Value, ValueFunction};
 use common::*;
 use dashmap::DashMap;
 use itertools::Itertools;

@@ -5,7 +5,6 @@ use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::{Ident, Locator};
 use lang_core::pat::{Pattern, PatternIdent};
-use lang_core::value::*;
 use lang_core::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
