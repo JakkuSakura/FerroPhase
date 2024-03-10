@@ -1,5 +1,5 @@
+use crate::ast::Type;
 use crate::ast::{Expr, File, Item, Tree};
-use crate::value::Type;
 use common::*;
 
 pub trait Deserializer {

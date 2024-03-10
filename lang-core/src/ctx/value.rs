@@ -1,6 +1,6 @@
+use crate::ast::Value;
 use crate::ast::{Expr, ExprId};
 use crate::ctx::Context;
-use crate::value::Value;
 use eyre::Result;
 
 pub trait ValueSystem {
