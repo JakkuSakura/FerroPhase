@@ -1,6 +1,6 @@
 use eyre::{bail, Result};
 
-use lang_core::ast::Expr;
+use lang_core::ast::{Expr, ExprBinOp, ExprLoop};
 use lang_core::ast::{Type, TypeInt, TypePrimitive, Value};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
@@ -22,7 +22,7 @@ impl EmitExprResult {
 
 impl MipsEmitter {
     pub fn emit_binop_int(
-        &self,
+        &mut self,
         op: BinOpKind,
         ret: MipsRegister,
         lhs: MipsRegister,
@@ -40,8 +40,8 @@ impl MipsEmitter {
             bail!("Unsupported binop {}", op);
         }
     }
-    pub fn emit_binop(
-        &self,
+    pub fn emit_binop_impl(
+        &mut self,
         op: BinOpKind,
         lhs: MipsRegister,
         rhs: MipsRegister,
@@ -56,7 +56,11 @@ impl MipsEmitter {
             _ => bail!("Unsupported type {}", ty),
         }
     }
-    pub fn emit_value(&self, value: &Value, _ctx: &SharedScopedContext) -> Result<EmitExprResult> {
+    pub fn emit_value(
+        &mut self,
+        value: &Value,
+        _ctx: &SharedScopedContext,
+    ) -> Result<EmitExprResult> {
         match value {
             Value::Int(i) => {
                 if i.value > i16::MAX as i64 {
@@ -66,27 +70,48 @@ impl MipsEmitter {
                 let ins = self.emit_load_immediate(ret, i.value as i16);
                 Ok(ins)
             }
+            Value::Unit(_) => Ok(EmitExprResult::new(MipsRegister::Zero, vec![])),
             _ => bail!("Unsupported value {}", value),
         }
     }
-    pub fn emit_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<EmitExprResult> {
+    pub fn emit_binop(
+        &mut self,
+        binop: &ExprBinOp,
+        ctx: &SharedScopedContext,
+    ) -> Result<EmitExprResult> {
+        let lhs = self.emit_expr(&binop.lhs, ctx)?;
+        let rhs = self.emit_expr(&binop.rhs, ctx)?;
+        let dst = self.get_register_t();
+        let op = self.emit_binop_impl(
+            binop.kind.clone(),
+            lhs.ret,
+            rhs.ret,
+            dst,
+            Type::Primitive(TypePrimitive::Int(TypeInt::I32)),
+            ctx,
+        )?;
+        let result =
+            EmitExprResult::new(dst, vec![lhs.instructions, rhs.instructions, op].concat());
+        Ok(result)
+    }
+    pub fn emit_loop(
+        &mut self,
+        l: &ExprLoop,
+        _ctx: &SharedScopedContext,
+    ) -> Result<EmitExprResult> {
+        let lbl = self.get_label();
+        let mut ins = vec![];
+        let label = MipsInstruction::Label { name: lbl.clone() };
+        ins.push(label);
+        ins.extend(self.emit_expr(&l.body, _ctx)?.instructions);
+        let jump = MipsInstruction::J { label: lbl.clone() };
+        ins.push(jump);
+        Ok(EmitExprResult::new(MipsRegister::Zero, ins))
+    }
+    pub fn emit_expr(&mut self, expr: &Expr, ctx: &SharedScopedContext) -> Result<EmitExprResult> {
         match expr {
-            Expr::BinOp(op) => {
-                let lhs = self.emit_expr(&op.lhs, ctx)?;
-                let rhs = self.emit_expr(&op.rhs, ctx)?;
-                let dst = self.get_register_t();
-                let op = self.emit_binop(
-                    op.kind.clone(),
-                    dst,
-                    lhs.ret,
-                    rhs.ret,
-                    Type::Primitive(TypePrimitive::Int(TypeInt::I32)),
-                    ctx,
-                )?;
-                let result =
-                    EmitExprResult::new(dst, vec![lhs.instructions, rhs.instructions, op].concat());
-                Ok(result)
-            }
+            Expr::BinOp(op) => self.emit_binop(op, ctx),
+            Expr::Loop(l) => self.emit_loop(l, ctx),
             Expr::Value(value) => self.emit_value(value, ctx),
 
             _ => bail!("Unsupported expr {}", expr),

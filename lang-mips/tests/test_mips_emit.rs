@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 fn emit_mips_shll_expr(expr: Expr) -> Result<Vec<MipsInstruction>> {
     let ctx = SharedScopedContext::new();
-    let emitter = MipsEmitter::new();
+    let mut emitter = MipsEmitter::new();
 
     let ret = emitter.emit_expr(&expr, &ctx)?;
     for ins in &ret.instructions {

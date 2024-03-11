@@ -7,6 +7,9 @@ use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
 pub enum MipsInstruction {
+    Label {
+        name: String,
+    },
     // R-Type instructions
     Add {
         rd: MipsRegister,
@@ -55,10 +58,10 @@ pub enum MipsInstruction {
     },
     // J-Type instructions
     J {
-        target_address: u32,
+        label: String,
     },
     Jal {
-        target_address: u32,
+        label: String,
     },
     Jr {
         rs: MipsRegister,
@@ -156,11 +159,11 @@ impl Display for MipsInstruction {
             MipsInstruction::Beq { rs, rt, offset } => {
                 write!(f, "beq {}, {}, {}", rs, rt, offset)
             }
-            MipsInstruction::J { target_address } => {
-                write!(f, "j {}", target_address)
+            MipsInstruction::J { label } => {
+                write!(f, "j {}", label)
             }
-            MipsInstruction::Jal { target_address } => {
-                write!(f, "jal {}", target_address)
+            MipsInstruction::Jal { label } => {
+                write!(f, "jal {}", label)
             }
             MipsInstruction::Jr { rs } => {
                 write!(f, "jr {}", rs)
@@ -182,6 +185,9 @@ impl Display for MipsInstruction {
             }
             MipsInstruction::Mflo { rd } => {
                 write!(f, "mflo {}", rd)
+            }
+            MipsInstruction::Label { name } => {
+                write!(f, "{}:", name)
             }
         }
     }
