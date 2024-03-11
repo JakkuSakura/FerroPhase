@@ -841,6 +841,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "lang-mips"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "common",
+ "dashmap",
+ "derive_more",
+ "eyre",
+ "itertools 0.12.1",
+ "lang-core",
+ "lang-optimize",
+ "proc-macro2",
+ "quote",
+ "rust-lang",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "syn 2.0.31",
+]
+
+[[package]]
 name = "lang-optimize"
 version = "0.1.0"
 dependencies = [
@@ -949,28 +971,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "mips"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "common",
- "dashmap",
- "derive_more",
- "eyre",
- "itertools 0.12.1",
- "lang-core",
- "lang-optimize",
- "proc-macro2",
- "quote",
- "rust-lang",
- "serde",
- "serde_json",
- "strum",
- "strum_macros",
- "syn 2.0.31",
 ]
 
 [[package]]
