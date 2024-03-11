@@ -1,4 +1,4 @@
-use crate::ast::{BExpr, Block, Expr, File, Invoke, Item, Module, Statement, Tree};
+use crate::ast::{BExpr, Expr, ExprBlock, ExprInvoke, File, Item, Module, Statement, Tree};
 use crate::ast::{Type, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
@@ -33,13 +33,13 @@ pub trait Serializer: Send + Sync {
         }
         self.serialize_args(&v)
     }
-    fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
+    fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String> {
         bail!("not implemented: serialize_invoke")
     }
     fn serialize_item(&self, node: &Item) -> Result<String> {
         bail!("not implemented: serialize_item")
     }
-    fn serialize_block(&self, node: &Block) -> Result<String> {
+    fn serialize_block(&self, node: &ExprBlock) -> Result<String> {
         bail!("not implemented: serialize_block")
     }
     fn serialize_file(&self, node: &File) -> Result<String> {

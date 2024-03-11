@@ -29,7 +29,7 @@ impl SpecializePass {
 
     pub fn specialize_invoke_details(
         &self,
-        invoke: Invoke,
+        invoke: ExprInvoke,
         func: &ValueFunction,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {
@@ -95,7 +95,7 @@ impl SpecializePass {
             bindings.push(binding);
         }
 
-        let new_body = Expr::block(Block::prepend(bindings, func.body.get()));
+        let new_body = Expr::block(ExprBlock::prepend(bindings, func.body.get()));
         let new_name = Ident::new(format!(
             "{}_{}",
             name,
@@ -144,7 +144,7 @@ impl SpecializePass {
         if invoke.args.is_empty() {
             Ok(new_func.body.into())
         } else {
-            Ok(Block::new(vec![
+            Ok(ExprBlock::new(vec![
                 Item::DefFunction(DefFunction {
                     name: new_name.clone(),
                     ty: None,
@@ -153,7 +153,7 @@ impl SpecializePass {
                 })
                 .into(),
                 Statement::Expr(
-                    Invoke {
+                    ExprInvoke {
                         func: Expr::ident(new_name).into(),
                         args: Default::default(),
                     }
@@ -166,7 +166,7 @@ impl SpecializePass {
 
     pub fn specialize_invoke_func(
         &self,
-        invoke: Invoke,
+        invoke: ExprInvoke,
         func: &ValueFunction,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {
@@ -198,12 +198,16 @@ impl OptimizePass for SpecializePass {
         }
     }
 
-    fn evaluate_invoke(&self, _invoke: Invoke, _ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(
+        &self,
+        _invoke: ExprInvoke,
+        _ctx: &SharedScopedContext,
+    ) -> Result<ControlFlow> {
         Ok(ControlFlow::Into)
     }
     fn optimize_invoke(
         &self,
-        invoke: Invoke,
+        invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {

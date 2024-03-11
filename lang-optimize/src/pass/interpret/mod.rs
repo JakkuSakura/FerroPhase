@@ -33,7 +33,7 @@ impl InterpreterPass {
             .try_collect()?;
         Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
-    pub fn interpret_invoke(&self, node: &Invoke, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_invoke(&self, node: &ExprInvoke, ctx: &SharedScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
         match node.func.get() {
             Expr::Value(value) => match value.as_ref() {
@@ -59,7 +59,7 @@ impl InterpreterPass {
             Expr::Locator(Locator::Ident(ident)) => {
                 let func = self.interpret_ident(&ident, ctx, true)?;
                 self.interpret_invoke(
-                    &Invoke {
+                    &ExprInvoke {
                         func: Expr::value(func).into(),
                         args: node.args.clone(),
                     },
@@ -86,7 +86,7 @@ impl InterpreterPass {
     pub fn interpret_import(&self, _node: &Import, _ctx: &SharedScopedContext) -> Result<()> {
         Ok(())
     }
-    pub fn interpret_block(&self, node: &Block, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<Value> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         for (i, stmt) in node.stmts.iter().enumerate() {
             let ret = self.interpret_stmt(&stmt, &ctx)?;
@@ -99,7 +99,7 @@ impl InterpreterPass {
         Ok(Value::unit())
     }
 
-    pub fn interpret_cond(&self, node: &Match, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_cond(&self, node: &ExprMatch, ctx: &SharedScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;
             match interpret {
@@ -239,7 +239,7 @@ impl InterpreterPass {
     }
     pub fn interpret_struct_expr(
         &self,
-        node: &InitStruct,
+        node: &ExprInitStruct,
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
         let value: Value = self.interpret_expr(&node.name.get(), ctx)?.try_conv()?;
@@ -281,7 +281,7 @@ impl InterpreterPass {
             structural: ValueStructural { fields },
         })
     }
-    pub fn interpret_select(&self, s: &Select, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_select(&self, s: &ExprSelect, ctx: &SharedScopedContext) -> Result<Value> {
         let obj0 = self.interpret_expr(&s.obj.get(), ctx)?;
         let obj = obj0.as_structural().with_context(|| {
             format!(
@@ -394,7 +394,7 @@ impl InterpreterPass {
             _ => Ok(val.clone()),
         }
     }
-    pub fn interpret_binop(&self, binop: &BinOp, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_binop(&self, binop: &ExprBinOp, ctx: &SharedScopedContext) -> Result<Value> {
         let builtin_fn = self.lookup_bin_op_kind(binop.kind.clone())?;
         let lhs = self.interpret_expr(&binop.lhs.get(), ctx)?;
         let rhs = self.interpret_expr(&binop.rhs.get(), ctx)?;
@@ -542,12 +542,16 @@ impl OptimizePass for InterpreterPass {
             _ => bail!("Failed to interpret {:?} => {:?}", expr, value),
         }
     }
-    fn evaluate_invoke(&self, _invoke: Invoke, _ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(
+        &self,
+        _invoke: ExprInvoke,
+        _ctx: &SharedScopedContext,
+    ) -> Result<ControlFlow> {
         Ok(ControlFlow::Into)
     }
     fn optimize_invoke(
         &self,
-        invoke: Invoke,
+        invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {

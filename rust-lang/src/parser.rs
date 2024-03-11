@@ -136,7 +136,7 @@ fn parse_input(i: FnArg) -> Result<FunctionParam> {
             name: Ident::new("self"),
             ty: {
                 Type::expr(Expr::SelfType(
-                    SelfType {
+                    ExprSelfType {
                         reference: rev.reference.is_some(),
                         mutability: rev.mutability.is_some(),
                     }
@@ -255,19 +255,19 @@ pub fn parse_trait_item(f: syn::TraitItem) -> Result<Declare> {
     }
 }
 
-fn parse_call(call: syn::ExprCall) -> Result<Invoke> {
+fn parse_call(call: syn::ExprCall) -> Result<ExprInvoke> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
-    Ok(Invoke {
+    Ok(ExprInvoke {
         func: fun.into(),
         args,
     })
 }
-fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
-    Ok(Invoke {
+fn parse_method_call(call: syn::ExprMethodCall) -> Result<ExprInvoke> {
+    Ok(ExprInvoke {
         func: Expr::Select(
-            Select {
+            ExprSelect {
                 obj: parse_expr(*call.receiver)?.into(),
                 field: parse_ident(call.method),
                 select: SelectType::Method,
@@ -279,7 +279,7 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<Invoke> {
     })
 }
 
-fn parse_if(i: syn::ExprIf) -> Result<If> {
+fn parse_if(i: syn::ExprIf) -> Result<ExprIf> {
     let mut cases = vec![MatchCase {
         cond: parse_expr(*i.cond)?.get(),
         body: Expr::block(parse_block(i.then_branch)?).into(),
@@ -302,7 +302,7 @@ fn parse_if(i: syn::ExprIf) -> Result<If> {
         };
     }
 
-    Ok(If { cases })
+    Ok(ExprIf { cases })
 }
 fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = parse_expr(*b.left)?;
@@ -343,7 +343,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
             _ => {}
         }
     }
-    Ok(BinOp { kind, lhs, rhs }.into())
+    Ok(ExprBinOp { kind, lhs, rhs }.into())
 }
 fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
     let mut values = vec![];
@@ -367,8 +367,8 @@ fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
         value: Value::expr(parse_expr(fv.expr)?),
     })
 }
-pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<InitStruct> {
-    Ok(InitStruct {
+pub fn parse_struct_expr(s: syn::ExprStruct) -> Result<ExprInitStruct> {
+    Ok(ExprInitStruct {
         name: Expr::path(parse_path(s.path)?).into(),
         fields: s
             .fields
@@ -386,14 +386,14 @@ pub fn parse_literal(lit: syn::Lit) -> Result<Value> {
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
-pub fn parse_unary(u: syn::ExprUnary) -> Result<UnOp> {
+pub fn parse_unary(u: syn::ExprUnary) -> Result<ExprUnOp> {
     let expr = parse_expr(*u.expr)?;
     let op = match u.op {
         syn::UnOp::Neg(_) => UnOpKind::Neg,
         syn::UnOp::Not(_) => UnOpKind::Not,
         _ => bail!("Unary op not supported: {:?}", u.op),
     };
-    Ok(UnOp { op, val: expr })
+    Ok(ExprUnOp { op, val: expr })
 }
 pub fn parse_expr(expr: syn::Expr) -> Result<BExpr> {
     let expr = match expr {
@@ -432,7 +432,7 @@ fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
     })
 }
 
-fn parse_block(block: syn::Block) -> Result<Block> {
+fn parse_block(block: syn::Block) -> Result<ExprBlock> {
     // info!("Parsing block {:?}", block);
     let last_value = block
         .stmts
@@ -448,7 +448,7 @@ fn parse_block(block: syn::Block) -> Result<Block> {
             last.try_make_expr()
         }
     }
-    Ok(Block { stmts })
+    Ok(ExprBlock { stmts })
 }
 fn parse_vis(v: syn::Visibility) -> Visibility {
     match v {
@@ -638,7 +638,7 @@ impl syn::parse::Parse for TypeExprParser {
 impl Into<Expr> for TypeExprParser {
     fn into(self) -> Expr {
         match self {
-            TypeExprParser::Add { left, right } => Expr::BinOp(BinOp {
+            TypeExprParser::Add { left, right } => Expr::BinOp(ExprBinOp {
                 lhs: left.into(),
                 rhs: right.into(),
                 kind: BinOpKind::Add,
@@ -743,8 +743,8 @@ fn parse_item(item: syn::Item) -> Result<Item> {
         _ => bail!("Does not support item yet: {:?}", item),
     }
 }
-fn parse_expr_reference(item: syn::ExprReference) -> Result<Reference> {
-    Ok(Reference {
+fn parse_expr_reference(item: syn::ExprReference) -> Result<ExprReference> {
+    Ok(ExprReference {
         referee: parse_expr(*item.expr)?.into(),
         mutable: Some(item.mutability.is_some()),
     })
