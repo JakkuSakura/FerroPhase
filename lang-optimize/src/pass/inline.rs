@@ -22,7 +22,7 @@ impl InlinePass {
     }
     pub fn inline_invoke(
         &self,
-        mut invoke: Invoke,
+        mut invoke: ExprInvoke,
         func: &Value,
         _ctx: &SharedScopedContext,
     ) -> Result<Expr> {
@@ -72,7 +72,11 @@ impl OptimizePass for InlinePass {
     fn name(&self) -> &str {
         "inline"
     }
-    fn evaluate_invoke(&self, invoke: Invoke, _ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(
+        &self,
+        invoke: ExprInvoke,
+        _ctx: &SharedScopedContext,
+    ) -> Result<ControlFlow> {
         if invoke.args.is_empty() {
             Ok(ControlFlow::Into)
         } else {
@@ -81,7 +85,7 @@ impl OptimizePass for InlinePass {
     }
     fn optimize_invoke(
         &self,
-        invoke: Invoke,
+        invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {

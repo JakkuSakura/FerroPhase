@@ -138,13 +138,13 @@ impl RustPrinter {
             BinOpKind::BitXor => quote!(^),
         }
     }
-    pub fn print_bin_op(&self, binop: &BinOp) -> Result<TokenStream> {
+    pub fn print_bin_op(&self, binop: &ExprBinOp) -> Result<TokenStream> {
         let lhs = self.print_expr(&binop.lhs.get())?;
         let rhs = self.print_expr(&binop.rhs.get())?;
         let op = self.print_bin_op_kind(&binop.kind);
         Ok(quote!(#lhs #op #rhs))
     }
-    pub fn print_invoke_expr(&self, invoke: &Invoke) -> Result<TokenStream> {
+    pub fn print_invoke_expr(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
         match invoke.func.get() {
             Expr::Value(value) => match value.as_ref() {
                 Value::BinOpKind(op) => {
@@ -177,7 +177,7 @@ impl RustPrinter {
             #fun(#(#args), *)
         ))
     }
-    pub fn print_invoke_type(&self, invoke: &Invoke) -> Result<TokenStream> {
+    pub fn print_invoke_type(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
         let fun = self.print_expr(&invoke.func.get())?;
         let args: Vec<_> = invoke
             .args
@@ -331,13 +331,13 @@ impl RustPrinter {
         }
         Ok(quote!(#(#stmts) *))
     }
-    pub fn print_block(&self, n: &Block) -> Result<TokenStream> {
+    pub fn print_block(&self, n: &ExprBlock) -> Result<TokenStream> {
         let chunk = self.print_statement_chunk(&n.stmts)?;
         Ok(quote!({
             #chunk
         }))
     }
-    pub fn print_if(&self, cond: &If) -> Result<TokenStream> {
+    pub fn print_if(&self, cond: &ExprIf) -> Result<TokenStream> {
         let mut ts = vec![];
 
         for (i, c) in cond.cases.iter().enumerate() {
@@ -367,7 +367,7 @@ impl RustPrinter {
         }
         Ok(quote!(#(#ts)*))
     }
-    pub fn print_match(&self, m: &Match) -> Result<TokenStream> {
+    pub fn print_match(&self, m: &ExprMatch) -> Result<TokenStream> {
         let mut ts = vec![];
         for (_i, c) in m.cases.iter().enumerate() {
             let node = &c.cond;
@@ -436,7 +436,7 @@ impl RustPrinter {
             }
         ));
     }
-    pub fn print_invoke(&self, node: &Invoke) -> Result<TokenStream> {
+    pub fn print_invoke(&self, node: &ExprInvoke) -> Result<TokenStream> {
         let func = node.func.get();
 
         let fun = self.print_expr(&node.func.get())?;
@@ -511,7 +511,7 @@ impl RustPrinter {
         // }
         Ok(code)
     }
-    pub fn print_ref(&self, n: &Reference) -> Result<TokenStream> {
+    pub fn print_ref(&self, n: &ExprReference) -> Result<TokenStream> {
         let referee = self.print_expr(&n.referee.get())?;
         if n.mutable == Some(true) {
             Ok(quote!(&mut #referee))
@@ -547,7 +547,7 @@ impl RustPrinter {
             fn(#(#args), *) #ret
         ))
     }
-    pub fn print_select(&self, select: &Select) -> Result<TokenStream> {
+    pub fn print_select(&self, select: &ExprSelect) -> Result<TokenStream> {
         let obj = self.print_expr(&select.obj.get())?;
         let field = self.print_ident(&select.field);
         match select.select {
@@ -608,7 +608,7 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#name { #(#kwargs), * }))
     }
-    pub fn print_struct_expr(&self, s: &InitStruct) -> Result<TokenStream> {
+    pub fn print_struct_expr(&self, s: &ExprInitStruct) -> Result<TokenStream> {
         let name = self.print_expr(&s.name.get())?;
         let kwargs: Vec<_> = s
             .fields
