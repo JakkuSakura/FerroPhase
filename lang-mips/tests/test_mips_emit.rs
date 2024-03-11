@@ -75,3 +75,15 @@ fn test_mips_emit_loop_if() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_mips_emit_comp() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+
+    let code = shll_parse_expr! {
+        1 < 2
+    };
+    let _value = emit_mips_shll_expr(code)?;
+
+    Ok(())
+}
