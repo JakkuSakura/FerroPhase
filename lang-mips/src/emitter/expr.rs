@@ -25,8 +25,8 @@ impl MipsEmitter {
         &mut self,
         op: BinOpKind,
         ret: MipsRegister,
-        lhs: MipsRegister,
-        rhs: MipsRegister,
+        mut lhs: MipsRegister,
+        mut rhs: MipsRegister,
         _ctx: &SharedScopedContext,
     ) -> Result<Vec<MipsInstruction>> {
         let opcode = MipsOpcode::from_binop(op)?;
@@ -36,6 +36,23 @@ impl MipsEmitter {
             let ins = MipsInstruction::from_opcode_mult_div_mod(opcode, lhs, rhs);
             let ins_mflo = MipsInstruction::Mflo { rd: ret };
             Ok(vec![ins, ins_mflo])
+        } else if opcode == MipsOpcode::Slt {
+            match op {
+                BinOpKind::Lt => {}
+                BinOpKind::Ge => {
+                    // swap lhs and rhs
+                    let tmp = lhs;
+                    lhs = rhs;
+                    rhs = tmp;
+                }
+                _ => bail!("Unsupported binop {}", op),
+            }
+            let ins = MipsInstruction::Slt {
+                rd: ret,
+                rs: lhs,
+                rt: rhs,
+            };
+            Ok(vec![ins])
         } else {
             bail!("Unsupported binop {}", op);
         }
@@ -118,8 +135,9 @@ impl MipsEmitter {
         let cond = self.emit_expr(&if_.cond, _ctx)?;
         let mut ins = vec![];
         ins.extend(cond.instructions);
-        ins.push(MipsInstruction::Bez {
+        ins.push(MipsInstruction::Beq {
             rs: cond.ret,
+            rt: MipsRegister::Zero,
             label: if if_.elze.is_some() {
                 label_else.clone()
             } else {

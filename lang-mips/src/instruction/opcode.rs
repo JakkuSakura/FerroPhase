@@ -2,33 +2,30 @@ use eyre::bail;
 use eyre::Result;
 use lang_core::ops::BinOpKind;
 use strum_macros::{Display, EnumString};
-#[derive(Debug, Clone, Copy, EnumString, Display)]
+#[derive(Debug, Clone, Copy, EnumString, Display, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum MipsOpcode {
-    // R-type instructions
     Add,
     Sub,
     And,
     Or,
-    // I-type instructions
     Addi,
     Lw,
     Li,
     Sw,
     Beq,
-    // J-type instructions
     J,
     Jal,
     Jr,
-    // Other instructions
     Nop,
     Halt,
-
     Mult,
     Div,
     Mod,
-
     Mflo,
+
+    Slt,
+    Slti,
 }
 
 impl MipsOpcode {
@@ -54,6 +51,8 @@ impl MipsOpcode {
             // BinOpKind::BitXor => MipsOpcode::Nop,
             BinOpKind::BitAnd => MipsOpcode::And,
             BinOpKind::BitOr => MipsOpcode::Or,
+            BinOpKind::Lt => MipsOpcode::Slt,
+            BinOpKind::Ge => MipsOpcode::Slt,
             _ => bail!("Unsupported binop {} with type int", bin_op_kind),
         };
         Ok(ret)
