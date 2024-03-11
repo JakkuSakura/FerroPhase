@@ -7,12 +7,12 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 common_struct! {
-    pub struct Invoke {
+    pub struct ExprInvoke {
         pub func: BExpr,
         pub args: Vec<BExpr>,
     }
 }
-impl Display for Invoke {
+impl Display for ExprInvoke {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_invoke(self).unwrap();
 
@@ -31,7 +31,7 @@ common_enum! {
 }
 
 common_struct! {
-    pub struct Select {
+    pub struct ExprSelect {
         pub obj: BExpr,
         pub field: Ident,
         pub select: SelectType,
@@ -39,21 +39,26 @@ common_struct! {
 }
 
 common_struct! {
-    pub struct Reference {
+    pub struct ExprReference {
         pub referee: BExpr,
         pub mutable: Option<bool>,
     }
 }
 
 common_struct! {
-    pub struct Match {
+    pub struct ExprMatch {
         pub cases: Vec<MatchCase>,
     }
 }
 
 common_struct! {
-    pub struct If {
+    pub struct ExprIf {
         pub cases: Vec<MatchCase>,
+    }
+}
+common_struct! {
+    pub struct ExprLoop {
+        pub content: BExpr,
     }
 }
 
@@ -77,21 +82,26 @@ common_enum! {
     }
 }
 common_struct! {
-    pub struct InitStruct {
+    pub struct ExprInitStruct {
         pub name: BExpr, // TypeExpr
+        pub fields: Vec<FieldValue>,
+    }
+}
+common_struct! {
+    pub struct ExprInitStructural {
         pub fields: Vec<FieldValue>,
     }
 }
 
 common_struct! {
-    pub struct BinOp {
+    pub struct ExprBinOp {
         pub kind: BinOpKind,
         pub lhs: BExpr,
         pub rhs: BExpr,
     }
 }
 common_struct! {
-    pub struct UnOp {
+    pub struct ExprUnOp {
         pub op: UnOpKind,
         pub val: BExpr,
 

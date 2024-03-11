@@ -10,7 +10,7 @@ pub use specialize::*;
 
 use common::*;
 use lang_core::ast::Value;
-use lang_core::ast::{ControlFlow, Expr, Invoke};
+use lang_core::ast::{ControlFlow, Expr, ExprInvoke};
 use lang_core::ast::{Item, Module};
 use lang_core::context::SharedScopedContext;
 
@@ -32,12 +32,16 @@ pub trait OptimizePass {
     fn optimize_module(&self, module: Module, ctx: &SharedScopedContext) -> Result<Module> {
         Ok(module)
     }
-    fn evaluate_invoke(&self, invoke: Invoke, ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_invoke(
+        &self,
+        invoke: ExprInvoke,
+        ctx: &SharedScopedContext,
+    ) -> Result<ControlFlow> {
         Ok(ControlFlow::Continue)
     }
     fn optimize_invoke(
         &self,
-        invoke: Invoke,
+        invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {

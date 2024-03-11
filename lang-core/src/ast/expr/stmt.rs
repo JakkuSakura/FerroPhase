@@ -99,30 +99,30 @@ common_struct! {
     pub struct StatementForEach {
         pub variable: Ident,
         pub iterable: Expr,
-        pub body: Block,
+        pub body: ExprBlock,
     }
 }
 
 common_struct! {
     pub struct StatementWhile {
         pub cond: Expr,
-        pub body: Block,
+        pub body: ExprBlock,
     }
 }
 common_struct! {
     pub struct StatementLoop {
-        pub body: Block,
+        pub body: ExprBlock,
     }
 }
 
 pub type StatementChunk = Vec<Statement>;
 
 common_struct! {
-    pub struct Block {
+    pub struct ExprBlock {
         pub stmts: StatementChunk,
     }
 }
-impl Block {
+impl ExprBlock {
     pub fn new(stmts: StatementChunk) -> Self {
         Self { stmts }
     }
