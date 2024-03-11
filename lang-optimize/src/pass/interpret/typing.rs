@@ -1,4 +1,4 @@
-use crate::pass::InterpreterPass;
+use crate::pass::{FoldOptimizer, InterpreterPass};
 use common::{bail, ensure, ContextCompat, Error, Result};
 use itertools::Itertools;
 use lang_core::ast::{
@@ -7,6 +7,7 @@ use lang_core::ast::{
 };
 use lang_core::ast::{Expr, Visibility};
 use lang_core::context::SharedScopedContext;
+use lang_core::ctx::{Context, TypeSystem};
 use lang_core::id::{Ident, Locator};
 use lang_core::utils::conv::TryConv;
 
@@ -306,5 +307,32 @@ impl InterpreterPass {
             generics_params: func.generics_params.clone(),
             ret,
         })
+    }
+}
+impl TypeSystem for InterpreterPass {
+    fn get_ty_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Type> {
+        let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
+
+        let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;
+        match expr {
+            Expr::Value(v) => match v.into() {
+                Value::Type(t) => return Ok(t),
+                v => bail!("Expected type, got {:?}", v),
+            },
+            _ => bail!("Expected type, got {:?}", expr),
+        }
+    }
+    fn get_ty_from_value(&self, ctx: &Context, value: &Value) -> Result<Type> {
+        let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
+
+        let value = fold.optimize_expr(Expr::Value(value.clone().into()), &ctx.values)?;
+
+        match value {
+            Expr::Value(v) => match v.into() {
+                Value::Type(t) => return Ok(t),
+                v => bail!("Expected type, got {:?}", v),
+            },
+            _ => bail!("Expected type, got {:?}", value),
+        }
     }
 }
