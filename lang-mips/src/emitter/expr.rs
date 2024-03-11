@@ -88,6 +88,7 @@ impl MipsEmitter {
                 Ok(result)
             }
             Expr::Value(value) => self.emit_value(value, ctx),
+
             _ => bail!("Unsupported expr {}", expr),
         }
     }
