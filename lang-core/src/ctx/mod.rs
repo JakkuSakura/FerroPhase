@@ -5,6 +5,7 @@ mod serde;
 mod ty;
 mod value;
 
+use crate::context::SharedScopedContext;
 pub use serde::*;
 pub use ty::*;
 pub use value::*;
@@ -19,7 +20,8 @@ impl Deref for SharedContext {
     }
 }
 pub struct Context {
-    pub typing: Arc<dyn TypingSystem>,
+    pub values: SharedScopedContext,
+    pub ty: Arc<dyn TypeSystem>,
     pub value: Arc<dyn ValueSystem>,
     pub ser: Arc<dyn SerializeSystem>,
     pub de: Arc<dyn DeserializeSystem>,
@@ -27,7 +29,8 @@ pub struct Context {
 impl Context {
     pub fn new() -> Self {
         Self {
-            typing: Arc::new(()),
+            values: SharedScopedContext::new(),
+            ty: Arc::new(()),
             value: Arc::new(()),
             ser: Arc::new(()),
             de: Arc::new(()),
