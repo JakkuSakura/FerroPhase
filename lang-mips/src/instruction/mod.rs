@@ -31,13 +31,10 @@ pub enum MipsInstruction {
         rs: MipsRegister,
         rt: MipsRegister,
     },
-    Bez {
+    Slt {
+        rd: MipsRegister,
         rs: MipsRegister,
-        label: String,
-    },
-    Bnez {
-        rs: MipsRegister,
-        label: String,
+        rt: MipsRegister,
     },
     // I-Type instructions
     Addi {
@@ -59,10 +56,20 @@ pub enum MipsInstruction {
         rt: MipsRegister,
         offset: i16,
     },
+    Slti {
+        rs: MipsRegister,
+        rt: MipsRegister,
+        immediate: i16,
+    },
     Beq {
         rs: MipsRegister,
         rt: MipsRegister,
-        offset: i16,
+        label: String,
+    },
+    Bne {
+        rs: MipsRegister,
+        rt: MipsRegister,
+        label: String,
     },
     // J-Type instructions
     J {
@@ -164,8 +171,14 @@ impl Display for MipsInstruction {
             MipsInstruction::Sw { rs, rt, offset } => {
                 write!(f, "sw {}, {}({})", rt, offset, rs)
             }
-            MipsInstruction::Beq { rs, rt, offset } => {
-                write!(f, "beq {}, {}, {}", rs, rt, offset)
+            MipsInstruction::Slt { rd, rs, rt } => {
+                write!(f, "slt {}, {}, {}", rd, rs, rt)
+            }
+            MipsInstruction::Slti { rs, rt, immediate } => {
+                write!(f, "slti {}, {}, {}", rt, rs, immediate)
+            }
+            MipsInstruction::Beq { rs, rt, label } => {
+                write!(f, "beq {}, {}, {}", rs, rt, label)
             }
             MipsInstruction::J { label } => {
                 write!(f, "j {}", label)
@@ -197,11 +210,8 @@ impl Display for MipsInstruction {
             MipsInstruction::Label { name } => {
                 write!(f, "{}:", name)
             }
-            MipsInstruction::Bez { rs, label } => {
-                write!(f, "bez {}, {}", rs, label)
-            }
-            MipsInstruction::Bnez { rs, label } => {
-                write!(f, "bnez {}, {}", rs, label)
+            MipsInstruction::Bne { rs, rt, label } => {
+                write!(f, "bne {}, {}, {}", rs, rt, label)
             }
         }
     }
