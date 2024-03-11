@@ -280,37 +280,59 @@ impl FoldOptimizer {
     pub fn optimize_match(&self, b: ExprMatch, ctx: &SharedScopedContext) -> Result<Expr> {
         let mut cases = vec![];
         for case in b.cases {
-            let cond = self.optimize_expr(case.cond, ctx)?;
-            let do_continue = self.pass.evaluate_condition(cond.clone(), ctx)?;
+            let cond: BExpr = self.optimize_expr(case.cond.into(), ctx)?.into();
+            let do_continue = self.pass.evaluate_condition(cond.get(), ctx)?;
             match do_continue {
                 ControlFlow::Continue => continue,
                 ControlFlow::Break(_) => break,
                 ControlFlow::Return(_) => break,
                 ControlFlow::Into => {
-                    let body = self.optimize_expr(case.body, ctx)?;
-                    cases.push(MatchCase { cond, body });
+                    let body: BExpr = self.optimize_expr(case.body.into(), ctx)?.into();
+                    cases.push(ExprMatchCase { cond, body });
                 }
                 ControlFlow::IntoAndBreak(_) => {
-                    let body = self.optimize_expr(case.body, ctx)?;
-                    cases.push(MatchCase { cond, body });
+                    let body: BExpr = self.optimize_expr(case.body.into(), ctx)?.into();
+                    cases.push(ExprMatchCase { cond, body });
                     break;
                 }
             }
         }
-        if cases.len() == 1 {
-            return Ok(cases.into_iter().next().unwrap().body);
-        }
+
         Ok(Expr::Match(ExprMatch { cases }))
     }
     pub fn optimize_if(&self, if_: ExprIf, ctx: &SharedScopedContext) -> Result<Expr> {
-        let match_ = ExprMatch { cases: if_.cases };
-        let expr = self.optimize_match(match_, ctx)?;
-        if let Expr::Match(match_) = expr {
-            return Ok(Expr::If(ExprIf {
-                cases: match_.cases,
-            }));
+        let mut cases = vec![ExprMatchCase {
+            cond: if_.cond,
+            body: if_.then,
+        }];
+        if let Some(elze) = if_.elze {
+            cases.push(ExprMatchCase {
+                cond: Expr::Value(Value::Bool(ValueBool { value: true }).into()).into(),
+                body: elze,
+            });
         }
-        Ok(expr)
+        let match_ = ExprMatch { cases };
+
+        let match_ = self.optimize_match(match_, ctx)?;
+        if let Expr::Match(match_) = match_ {
+            if match_.cases.len() == 0 {
+                return Ok(Expr::Value(Value::Unit(ValueUnit).into()));
+            }
+
+            if match_.cases.len() >= 1 {
+                let mut iter = match_.cases.into_iter();
+                let first = iter.next().unwrap();
+                let second = iter.next();
+                return Ok(ExprIf {
+                    cond: first.cond,
+                    then: first.body,
+                    elze: second.map(|x| x.body),
+                }
+                .into());
+            }
+            unreachable!()
+        }
+        Ok(match_)
     }
     pub fn optimize_func(
         &self,

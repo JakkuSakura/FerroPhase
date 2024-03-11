@@ -31,6 +31,14 @@ pub enum MipsInstruction {
         rs: MipsRegister,
         rt: MipsRegister,
     },
+    Bez {
+        rs: MipsRegister,
+        label: String,
+    },
+    Bnez {
+        rs: MipsRegister,
+        label: String,
+    },
     // I-Type instructions
     Addi {
         rs: MipsRegister,
@@ -188,6 +196,12 @@ impl Display for MipsInstruction {
             }
             MipsInstruction::Label { name } => {
                 write!(f, "{}:", name)
+            }
+            MipsInstruction::Bez { rs, label } => {
+                write!(f, "bez {}, {}", rs, label)
+            }
+            MipsInstruction::Bnez { rs, label } => {
+                write!(f, "bnez {}, {}", rs, label)
             }
         }
     }

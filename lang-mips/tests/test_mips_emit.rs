@@ -15,6 +15,7 @@ fn emit_mips_shll_expr(expr: Expr) -> Result<Vec<MipsInstruction>> {
     for ins in &ret.instructions {
         println!("{}", ins);
     }
+    println!("ret: {:?}", ret.ret);
     Ok(ret.instructions)
 }
 
@@ -36,6 +37,39 @@ fn test_mips_emit_loop() -> Result<()> {
 
     let code = shll_parse_expr! {
         loop {}
+    };
+    let _value = emit_mips_shll_expr(code)?;
+
+    Ok(())
+}
+#[test]
+fn test_mips_emit_if() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+
+    let code = shll_parse_expr! {
+        if 1 {
+            2
+        } else {
+            3
+        }
+    };
+    let _value = emit_mips_shll_expr(code)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_mips_emit_loop_if() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+
+    let code = shll_parse_expr! {
+        loop {
+            if 1 {
+                2
+            } else {
+                3
+            }
+        }
     };
     let _value = emit_mips_shll_expr(code)?;
 

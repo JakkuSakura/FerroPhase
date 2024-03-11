@@ -47,13 +47,15 @@ common_struct! {
 
 common_struct! {
     pub struct ExprMatch {
-        pub cases: Vec<MatchCase>,
+        pub cases: Vec<ExprMatchCase>,
     }
 }
 
 common_struct! {
     pub struct ExprIf {
-        pub cases: Vec<MatchCase>,
+        pub cond: BExpr,
+        pub then: BExpr,
+        pub elze: Option<BExpr>,
     }
 }
 common_struct! {
@@ -64,9 +66,9 @@ common_struct! {
 }
 
 common_struct! {
-    pub struct MatchCase {
-        pub cond: Expr,
-        pub body: Expr,
+    pub struct ExprMatchCase {
+        pub cond: BExpr,
+        pub body: BExpr,
     }
 }
 

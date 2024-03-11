@@ -280,29 +280,19 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<ExprInvoke> {
 }
 
 fn parse_if(i: syn::ExprIf) -> Result<ExprIf> {
-    let mut cases = vec![MatchCase {
-        cond: parse_expr(*i.cond)?.get(),
-        body: Expr::block(parse_block(i.then_branch)?).into(),
-    }];
-    if let Some((_, else_body)) = i.else_branch {
-        'else_check: {
-            let body = parse_expr(*else_body)?.get();
-            match body {
-                Expr::If(m) => {
-                    cases.extend(m.cases.clone());
-                    break 'else_check;
-                }
-                _ => {}
-            }
-
-            cases.push(MatchCase {
-                cond: Expr::value(Value::bool(true)),
-                body,
-            });
-        };
+    let cond = parse_expr(*i.cond)?;
+    let then = parse_block(i.then_branch)?;
+    let elze;
+    if let Some((_, e)) = i.else_branch {
+        elze = Some(parse_expr(*e)?);
+    } else {
+        elze = None;
     }
-
-    Ok(ExprIf { cases })
+    Ok(ExprIf {
+        cond,
+        then: Expr::block(then).into(),
+        elze,
+    })
 }
 fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = parse_expr(*b.left)?;
