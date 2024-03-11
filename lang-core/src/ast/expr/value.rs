@@ -58,7 +58,8 @@ common_struct! {
 }
 common_struct! {
     pub struct ExprLoop {
-        pub content: BExpr,
+        pub label: Option<Ident>,
+        pub body: BExpr,
     }
 }
 
