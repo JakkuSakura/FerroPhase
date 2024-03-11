@@ -15,7 +15,7 @@ fn emit_mips_shll_expr(expr: Expr) -> Result<Vec<MipsInstruction>> {
     for ins in &ret.instructions {
         println!("{}", ins);
     }
-    println!("ret: {:?}", ret.ret);
+    println!("ret: {}", ret.ret);
     Ok(ret.instructions)
 }
 
