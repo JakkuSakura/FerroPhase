@@ -399,9 +399,13 @@ pub fn parse_expr(expr: syn::Expr) -> Result<BExpr> {
     let expr = match expr {
         syn::Expr::Binary(b) => parse_binary(b)?,
         syn::Expr::Unary(u) => parse_unary(u)?.into(),
-        syn::Expr::Block(b) if b.label.is_none() => Expr::Block(parse_block(b.block)?),
+        syn::Expr::Block(b) if b.label.is_none() => Expr::block(parse_block(b.block)?),
         syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?.into()),
         syn::Expr::If(i) => Expr::If(parse_if(i)?),
+        syn::Expr::Loop(l) => Expr::Loop(ExprLoop {
+            label: None, // TODO: label
+            body: Expr::block(parse_block(l.body)?).into(),
+        }),
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?.into()),
