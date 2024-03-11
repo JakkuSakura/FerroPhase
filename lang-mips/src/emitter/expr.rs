@@ -7,15 +7,15 @@ use lang_core::ops::BinOpKind;
 
 use crate::emitter::MipsEmitter;
 use crate::instruction::{MipsInstruction, MipsOpcode};
-use crate::register::MipsRegister;
+use crate::register::{MipsRegister, MipsRegisterOwned};
 
 #[derive(Debug)]
 pub struct MipsEmitExprResult {
-    pub ret: MipsRegister,
+    pub ret: MipsRegisterOwned,
     pub instructions: Vec<MipsInstruction>,
 }
 impl MipsEmitExprResult {
-    pub fn new(ret: MipsRegister, instructions: Vec<MipsInstruction>) -> Self {
+    pub fn new(ret: MipsRegisterOwned, instructions: Vec<MipsInstruction>) -> Self {
         Self { ret, instructions }
     }
 }
@@ -24,19 +24,30 @@ impl MipsEmitter {
     pub fn emit_binop_int(
         &mut self,
         op: BinOpKind,
-        ret: MipsRegister,
-        mut lhs: MipsRegister,
-        mut rhs: MipsRegister,
+        mut lhs: MipsRegisterOwned,
+        mut rhs: MipsRegisterOwned,
         _ctx: &SharedScopedContext,
-    ) -> Result<Vec<MipsInstruction>> {
+    ) -> Result<MipsEmitExprResult> {
         let opcode = MipsOpcode::from_binop(op)?;
         if opcode.is_r_type() {
-            Ok(vec![MipsInstruction::from_opcode_r(opcode, ret, lhs, rhs)])
+            let ret = self.register.acquire_t().unwrap();
+            let ins =
+                MipsInstruction::from_opcode_r(opcode, ret.register, lhs.register, rhs.register);
+            Ok(MipsEmitExprResult {
+                ret,
+                instructions: vec![ins],
+            })
         } else if opcode.followed_by_mflo() {
-            let ins = MipsInstruction::from_opcode_mult_div_mod(opcode, lhs, rhs);
-            let ins_mflo = MipsInstruction::Mflo { rd: ret };
-            Ok(vec![ins, ins_mflo])
+            let ret = self.register.acquire_t().unwrap();
+
+            let ins = MipsInstruction::from_opcode_mult_div_mod(opcode, lhs.register, rhs.register);
+            let ins_mflo = MipsInstruction::Mflo { rd: ret.register };
+            Ok(MipsEmitExprResult {
+                ret,
+                instructions: vec![ins, ins_mflo],
+            })
         } else if opcode == MipsOpcode::Slt {
+            let ret = self.register.acquire_t().unwrap();
             match op {
                 BinOpKind::Lt => {}
                 BinOpKind::Ge => {
@@ -48,11 +59,14 @@ impl MipsEmitter {
                 _ => bail!("Unsupported binop {}", op),
             }
             let ins = MipsInstruction::Slt {
-                rd: ret,
-                rs: lhs,
-                rt: rhs,
+                rd: ret.register,
+                rs: lhs.register,
+                rt: rhs.register,
             };
-            Ok(vec![ins])
+            Ok(MipsEmitExprResult {
+                ret,
+                instructions: vec![ins],
+            })
         } else {
             bail!("Unsupported binop {}", op);
         }
@@ -60,15 +74,14 @@ impl MipsEmitter {
     pub fn emit_binop_impl(
         &mut self,
         op: BinOpKind,
-        lhs: MipsRegister,
-        rhs: MipsRegister,
-        ret: MipsRegister,
+        lhs: MipsRegisterOwned,
+        rhs: MipsRegisterOwned,
         ty: Type,
         _ctx: &SharedScopedContext,
-    ) -> Result<Vec<MipsInstruction>> {
+    ) -> Result<MipsEmitExprResult> {
         match ty {
             Type::Primitive(TypePrimitive::Int(TypeInt::I32)) => {
-                self.emit_binop_int(op, lhs, rhs, ret, _ctx)
+                self.emit_binop_int(op, lhs, rhs, _ctx)
             }
             _ => bail!("Unsupported type {}", ty),
         }
@@ -83,11 +96,10 @@ impl MipsEmitter {
                 if i.value > i16::MAX as i64 {
                     bail!("Value {} is too large for MIPS", i.value);
                 }
-                let ret = self.get_register_t();
-                let ins = self.emit_load_immediate(ret, i.value as i16);
+                let ins = self.emit_load_immediate(i.value as i16);
                 Ok(ins)
             }
-            Value::Unit(_) => Ok(MipsEmitExprResult::new(MipsRegister::Zero, vec![])),
+            Value::Unit(_) => Ok(MipsEmitExprResult::new(MipsRegisterOwned::zero(), vec![])),
             _ => bail!("Unsupported value {}", value),
         }
     }
@@ -98,17 +110,18 @@ impl MipsEmitter {
     ) -> Result<MipsEmitExprResult> {
         let lhs = self.emit_expr(&binop.lhs, ctx)?;
         let rhs = self.emit_expr(&binop.rhs, ctx)?;
-        let dst = self.get_register_t();
+
         let op = self.emit_binop_impl(
             binop.kind.clone(),
             lhs.ret,
             rhs.ret,
-            dst,
             Type::Primitive(TypePrimitive::Int(TypeInt::I32)),
             ctx,
         )?;
-        let result =
-            MipsEmitExprResult::new(dst, vec![lhs.instructions, rhs.instructions, op].concat());
+        let result = MipsEmitExprResult::new(
+            op.ret,
+            vec![lhs.instructions, rhs.instructions, op.instructions].concat(),
+        );
         Ok(result)
     }
     pub fn emit_loop(
@@ -123,7 +136,7 @@ impl MipsEmitter {
         ins.extend(self.emit_expr(&l.body, _ctx)?.instructions);
         let jump = MipsInstruction::J { label: lbl.clone() };
         ins.push(jump);
-        Ok(MipsEmitExprResult::new(MipsRegister::Zero, ins))
+        Ok(MipsEmitExprResult::new(MipsRegisterOwned::zero(), ins))
     }
     pub fn emit_if(
         &mut self,
@@ -136,7 +149,7 @@ impl MipsEmitter {
         let mut ins = vec![];
         ins.extend(cond.instructions);
         ins.push(MipsInstruction::Beq {
-            rs: cond.ret,
+            rs: cond.ret.register,
             rt: MipsRegister::Zero,
             label: if if_.elze.is_some() {
                 label_else.clone()
@@ -157,8 +170,8 @@ impl MipsEmitter {
             // copy the result of then to the result of else
             // Move is a pseudo instruction
             ins.push(MipsInstruction::Add {
-                rd: then.ret,
-                rs: else_.ret,
+                rd: then.ret.register,
+                rs: else_.ret.register,
                 rt: MipsRegister::Zero,
             });
         }
