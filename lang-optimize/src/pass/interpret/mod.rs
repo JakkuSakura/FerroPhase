@@ -1,10 +1,11 @@
 mod typing;
 
-use crate::pass::OptimizePass;
+use crate::pass::{FoldOptimizer, OptimizePass};
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
+use lang_core::ctx::{Context, ValueSystem};
 use lang_core::id::{Ident, Locator};
 use lang_core::ops::*;
 use lang_core::utils::conv::TryConv;
@@ -582,5 +583,16 @@ impl OptimizePass for InterpreterPass {
             )
         })?;
         Ok(Expr::value(value))
+    }
+}
+
+impl ValueSystem for InterpreterPass {
+    fn get_value_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Value> {
+        let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
+        let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;
+        match expr {
+            Expr::Value(value) => Ok(*value),
+            _ => bail!("Expected value, got {:?}", expr),
+        }
     }
 }
