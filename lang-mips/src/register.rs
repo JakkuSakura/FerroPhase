@@ -30,6 +30,27 @@ impl MipsRegister {
     pub fn as_str(&self) -> &'static str {
         self.into()
     }
+    pub fn is_s(&self) -> bool {
+        matches!(
+            self,
+            Self::S0 | Self::S1 | Self::S2 | Self::S3 | Self::S4 | Self::S5 | Self::S6 | Self::S7
+        )
+    }
+    pub fn is_t(&self) -> bool {
+        matches!(
+            self,
+            Self::T0
+                | Self::T1
+                | Self::T2
+                | Self::T3
+                | Self::T4
+                | Self::T5
+                | Self::T6
+                | Self::T7
+                | Self::T8
+                | Self::T9
+        )
+    }
 }
 impl Display for MipsRegister {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
