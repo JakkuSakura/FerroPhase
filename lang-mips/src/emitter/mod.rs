@@ -1,4 +1,4 @@
-use crate::emitter::expr::EmitExprResult;
+use crate::emitter::expr::MipsEmitExprResult;
 use crate::instruction::MipsInstruction;
 use crate::register::MipsRegister;
 
@@ -56,12 +56,12 @@ impl MipsEmitter {
     }
 
     // MIPS only allows 16-bit immediate values, so we need to use the `li` instruction to load
-    pub fn emit_load_immediate(&self, ret: MipsRegister, value: i16) -> EmitExprResult {
+    pub fn emit_load_immediate(&self, ret: MipsRegister, value: i16) -> MipsEmitExprResult {
         let ins = MipsInstruction::Li {
             rt: ret,
             immediate: value,
         };
-        EmitExprResult {
+        MipsEmitExprResult {
             ret,
             instructions: vec![ins],
         }

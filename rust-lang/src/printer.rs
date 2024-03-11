@@ -337,35 +337,21 @@ impl RustPrinter {
             #chunk
         }))
     }
-    pub fn print_if(&self, cond: &ExprIf) -> Result<TokenStream> {
-        let mut ts = vec![];
-
-        for (i, c) in cond.cases.iter().enumerate() {
-            let node = &c.cond;
-            let co = self.print_expr(node)?;
-            let node = &c.body;
-            let ex = self.print_expr_optimized(node)?;
-            if i == 0 {
-                ts.push(quote!(
-                    if #co {
-                        #ex
-                    }
-                ));
-            } else if i < cond.cases.len() - 1 {
-                ts.push(quote!(
-                    else if #co {
-                        #ex
-                    }
-                ));
-            } else {
-                ts.push(quote!(
-                    else {
-                        #ex
-                    }
-                ));
+    pub fn print_if(&self, if_: &ExprIf) -> Result<TokenStream> {
+        let cond = self.print_expr(&if_.cond)?;
+        let then = self.print_expr_optimized(&if_.then)?;
+        let elze = if let Some(elze) = &if_.elze {
+            let elze = self.print_expr(elze)?;
+            quote!(else #elze)
+        } else {
+            quote!()
+        };
+        Ok(quote!(
+            if #cond {
+                #then
             }
-        }
-        Ok(quote!(#(#ts)*))
+            #elze
+        ))
     }
     pub fn print_match(&self, m: &ExprMatch) -> Result<TokenStream> {
         let mut ts = vec![];
