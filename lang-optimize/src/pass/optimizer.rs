@@ -29,7 +29,11 @@ impl FoldOptimizer {
         Self { serializer, pass }
     }
 
-    pub fn optimize_invoke(&self, mut invoke: Invoke, ctx: &SharedScopedContext) -> Result<Expr> {
+    pub fn optimize_invoke(
+        &self,
+        mut invoke: ExprInvoke,
+        ctx: &SharedScopedContext,
+    ) -> Result<Expr> {
         // TODO: obtain closure here
         let func;
         let closure_context;
@@ -249,7 +253,7 @@ impl FoldOptimizer {
             _ => Ok(()),
         }
     }
-    pub fn optimize_block(&self, mut b: Block, ctx: &SharedScopedContext) -> Result<Expr> {
+    pub fn optimize_block(&self, mut b: ExprBlock, ctx: &SharedScopedContext) -> Result<Expr> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         b.stmts
             .iter()
@@ -273,7 +277,7 @@ impl FoldOptimizer {
         b.stmts = stmts;
         Ok(Expr::block(b))
     }
-    pub fn optimize_match(&self, b: Match, ctx: &SharedScopedContext) -> Result<Expr> {
+    pub fn optimize_match(&self, b: ExprMatch, ctx: &SharedScopedContext) -> Result<Expr> {
         let mut cases = vec![];
         for case in b.cases {
             let cond = self.optimize_expr(case.cond, ctx)?;
@@ -296,13 +300,13 @@ impl FoldOptimizer {
         if cases.len() == 1 {
             return Ok(cases.into_iter().next().unwrap().body);
         }
-        Ok(Expr::Match(Match { cases }))
+        Ok(Expr::Match(ExprMatch { cases }))
     }
-    pub fn optimize_if(&self, if_: If, ctx: &SharedScopedContext) -> Result<Expr> {
-        let match_ = Match { cases: if_.cases };
+    pub fn optimize_if(&self, if_: ExprIf, ctx: &SharedScopedContext) -> Result<Expr> {
+        let match_ = ExprMatch { cases: if_.cases };
         let expr = self.optimize_match(match_, ctx)?;
         if let Expr::Match(match_) = expr {
-            return Ok(Expr::If(If {
+            return Ok(Expr::If(ExprIf {
                 cases: match_.cases,
             }));
         }

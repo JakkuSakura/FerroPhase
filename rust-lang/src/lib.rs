@@ -127,7 +127,7 @@ impl Serializer for RustSerde {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_invoke(&self, node: &Invoke) -> Result<String> {
+    fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String> {
         RustPrinter
             .print_invoke(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
@@ -139,7 +139,7 @@ impl Serializer for RustSerde {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_block(&self, node: &Block) -> Result<String> {
+    fn serialize_block(&self, node: &ExprBlock) -> Result<String> {
         RustPrinter
             .print_block(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))

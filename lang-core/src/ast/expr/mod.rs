@@ -22,21 +22,23 @@ common_enum! {
     pub enum Expr {
         Locator(Locator),
         Value(BValue),
-        Block(Block),
-        Match(Match),
-        If(If),
-        Invoke(Invoke),
+        Block(ExprBlock),
+        Match(ExprMatch),
+        If(ExprIf),
+        Loop(ExprLoop),
+        Invoke(ExprInvoke),
         // it provides better code, instead of nested Invoke
-        BinOp(BinOp),
-        UnOp(UnOp),
-        Select(Select),
-        InitStruct(InitStruct),
-        Reference(Reference),
+        BinOp(ExprBinOp),
+        UnOp(ExprUnOp),
+        Select(ExprSelect),
+        InitStruct(ExprInitStruct),
+        InitStructual(ExprInitStructural),
+        Reference(ExprReference),
 
         /// closured because it's conceptually a closure, not a real one
-        Closured(Closure),
+        Closured(ExprClosure),
 
-        SelfType(SelfType),
+        SelfType(ExprSelfType),
 
         Any(AnyBox),
     }
@@ -70,7 +72,7 @@ impl Expr {
     pub fn path(path: Path) -> Expr {
         Expr::Locator(Locator::path(path))
     }
-    pub fn block(block: Block) -> Expr {
+    pub fn block(block: ExprBlock) -> Expr {
         if block.stmts.len() == 1 {
             let last = block.stmts.last().unwrap();
             if let Statement::Expr(expr) = last {
