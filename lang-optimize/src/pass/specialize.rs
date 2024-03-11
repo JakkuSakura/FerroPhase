@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub struct SpecializePass {
     spec_id: AtomicUsize,
     serializer: Arc<dyn Serializer>,
+    // TODO: use Context instead of InterpreterPass
     interpreter: InterpreterPass,
 }
 impl SpecializePass {
