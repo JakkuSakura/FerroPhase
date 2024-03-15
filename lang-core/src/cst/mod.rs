@@ -8,3 +8,5 @@
 //! - a Parser that does error recovery at opening of the Tree
 //! also refer to https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/syntax.md
 //! Another thing: CST and AST are tree like, so Box<T> should be fine
+//! Can be combined with Pratt Parsing algorithm for operator precedence
+//! https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
