@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
 
@@ -60,14 +60,42 @@ impl Display for MipsRegister {
     }
 }
 #[derive(Debug)]
-pub struct RegisterManager {
-    registers_s: RefCell<Vec<MipsRegister>>,
-    registers_t: RefCell<Vec<MipsRegister>>,
+pub struct MipsRegisterManaged {
+    pub register: MipsRegister,
+    pub borrowed: Cell<bool>,
 }
-impl RegisterManager {
+impl MipsRegisterManaged {
+    pub fn new(register: MipsRegister) -> Self {
+        Self {
+            register,
+            borrowed: Cell::new(false),
+        }
+    }
+    pub fn borrow(&self) {
+        assert!(
+            !self.borrowed.get(),
+            "register {} is already borrowed",
+            self.register
+        );
+        self.borrowed.set(true);
+    }
+    pub fn release(&self) {
+        self.borrowed.set(false);
+    }
+    pub fn is_borrowed(&self) -> bool {
+        self.borrowed.get()
+    }
+}
+// TODO: abstract to lang-asm
+#[derive(Debug)]
+pub struct MipsRegisterManager {
+    registers_s: Vec<Rc<MipsRegisterManaged>>,
+    registers_t: Vec<Rc<MipsRegisterManaged>>,
+}
+impl MipsRegisterManager {
     pub fn new() -> Self {
         let this = Self {
-            registers_s: RefCell::new(vec![
+            registers_s: [
                 MipsRegister::S0,
                 MipsRegister::S1,
                 MipsRegister::S2,
@@ -76,8 +104,12 @@ impl RegisterManager {
                 MipsRegister::S5,
                 MipsRegister::S6,
                 MipsRegister::S7,
-            ]),
-            registers_t: RefCell::new(vec![
+            ]
+            .into_iter()
+            .map(MipsRegisterManaged::new)
+            .map(Rc::new)
+            .collect(),
+            registers_t: [
                 MipsRegister::T0,
                 MipsRegister::T1,
                 MipsRegister::T2,
@@ -88,56 +120,55 @@ impl RegisterManager {
                 MipsRegister::T7,
                 MipsRegister::T8,
                 MipsRegister::T9,
-            ]),
+            ]
+            .into_iter()
+            .map(MipsRegisterManaged::new)
+            .map(Rc::new)
+            .collect(),
         };
-        this.registers_t.borrow_mut().reverse();
-        this.registers_s.borrow_mut().reverse();
         this
     }
-    fn new_owned(self: &Rc<Self>, register: MipsRegister) -> MipsRegisterOwned {
-        MipsRegisterOwned {
-            register,
-            manager: Some(Rc::clone(self)),
-        }
+
+    pub fn acquire_s(&self) -> Option<MipsRegisterOwned> {
+        let register = self.registers_s.iter().find(|r| !r.is_borrowed()).cloned();
+        register.map(MipsRegisterOwned::new)
     }
-    pub fn acquire_s(self: &Rc<Self>) -> Option<MipsRegisterOwned> {
-        let register = self.registers_s.borrow_mut().pop();
-        register.map(|register| self.new_owned(register))
+    pub fn acquire_t(&self) -> Option<MipsRegisterOwned> {
+        let register = self.registers_t.iter().find(|r| !r.is_borrowed()).cloned();
+        register.map(MipsRegisterOwned::new)
     }
-    pub fn acquire_t(self: &Rc<Self>) -> Option<MipsRegisterOwned> {
-        let register = self.registers_t.borrow_mut().pop();
-        register.map(|register| self.new_owned(register))
-    }
-    pub fn release(&self, register: MipsRegister) {
-        if register.is_s() {
-            self.registers_s.borrow_mut().push(register);
-        } else if register.is_t() {
-            self.registers_t.borrow_mut().push(register);
-        }
+    pub fn list_borrowed(&self) -> Vec<MipsRegister> {
+        self.registers_s
+            .iter()
+            .chain(self.registers_t.iter())
+            .filter(|r| r.is_borrowed())
+            .map(|r| r.register)
+            .collect()
     }
 }
 #[derive(Debug)]
 pub struct MipsRegisterOwned {
-    pub register: MipsRegister,
-    pub manager: Option<Rc<RegisterManager>>,
+    pub register: Rc<MipsRegisterManaged>,
 }
 impl MipsRegisterOwned {
     pub fn zero() -> Self {
-        Self {
-            register: MipsRegister::Zero,
-            manager: None,
-        }
+        let register = Rc::new(MipsRegisterManaged::new(MipsRegister::Zero));
+        register.borrow();
+        Self { register }
+    }
+    pub fn new(register: Rc<MipsRegisterManaged>) -> Self {
+        register.borrow();
+        Self { register }
     }
 }
+
 impl Drop for MipsRegisterOwned {
     fn drop(&mut self) {
-        if let Some(manager) = &self.manager {
-            manager.release(self.register);
-        }
+        self.register.release()
     }
 }
 impl Display for MipsRegisterOwned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.register)
+        write!(f, "{}", self.register.register)
     }
 }

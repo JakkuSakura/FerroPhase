@@ -7,7 +7,7 @@ use lang_core::ops::BinOpKind;
 
 use crate::emitter::MipsEmitter;
 use crate::instruction::{MipsInstruction, MipsOpcode};
-use crate::register::{MipsRegister, MipsRegisterOwned};
+use crate::storage::register::{MipsRegister, MipsRegisterOwned};
 
 #[derive(Debug)]
 pub struct MipsEmitExprResult {
@@ -30,24 +30,34 @@ impl MipsEmitter {
     ) -> Result<MipsEmitExprResult> {
         let opcode = MipsOpcode::from_binop(op)?;
         if opcode.is_r_type() {
-            let ret = self.register.acquire_t().unwrap();
-            let ins =
-                MipsInstruction::from_opcode_r(opcode, ret.register, lhs.register, rhs.register);
+            let ret = self.stack.register_manager().acquire_t().unwrap();
+            let ins = MipsInstruction::from_opcode_r(
+                opcode,
+                ret.register.register,
+                lhs.register.register,
+                rhs.register.register,
+            );
             Ok(MipsEmitExprResult {
                 ret,
                 instructions: vec![ins],
             })
         } else if opcode.followed_by_mflo() {
-            let ret = self.register.acquire_t().unwrap();
+            let ret = self.stack.register_manager().acquire_t().unwrap();
 
-            let ins = MipsInstruction::from_opcode_mult_div_mod(opcode, lhs.register, rhs.register);
-            let ins_mflo = MipsInstruction::Mflo { rd: ret.register };
+            let ins = MipsInstruction::from_opcode_mult_div_mod(
+                opcode,
+                lhs.register.register,
+                rhs.register.register,
+            );
+            let ins_mflo = MipsInstruction::Mflo {
+                rd: ret.register.register,
+            };
             Ok(MipsEmitExprResult {
                 ret,
                 instructions: vec![ins, ins_mflo],
             })
         } else if opcode == MipsOpcode::Slt {
-            let ret = self.register.acquire_t().unwrap();
+            let ret = self.stack.register_manager().acquire_t().unwrap();
             match op {
                 BinOpKind::Lt => {}
                 BinOpKind::Ge => {
@@ -59,9 +69,9 @@ impl MipsEmitter {
                 _ => bail!("Unsupported binop {}", op),
             }
             let ins = MipsInstruction::Slt {
-                rd: ret.register,
-                rs: lhs.register,
-                rt: rhs.register,
+                rd: ret.register.register,
+                rs: lhs.register.register,
+                rt: rhs.register.register,
             };
             Ok(MipsEmitExprResult {
                 ret,
@@ -149,7 +159,7 @@ impl MipsEmitter {
         let mut ins = vec![];
         ins.extend(cond.instructions);
         ins.push(MipsInstruction::Beq {
-            rs: cond.ret.register,
+            rs: cond.ret.register.register,
             rt: MipsRegister::Zero,
             label: if if_.elze.is_some() {
                 label_else.clone()
@@ -170,8 +180,8 @@ impl MipsEmitter {
             // copy the result of then to the result of else
             // Move is a pseudo instruction
             ins.push(MipsInstruction::Add {
-                rd: then.ret.register,
-                rs: else_.ret.register,
+                rd: then.ret.register.register,
+                rs: else_.ret.register.register,
                 rt: MipsRegister::Zero,
             });
         }
