@@ -1,104 +1,139 @@
-mod opcode;
 pub use opcode::*;
 
-use crate::register::MipsRegister;
-use std::fmt;
-use std::fmt::{Display, Formatter};
+use crate::storage::register::MipsRegister;
 
-#[derive(Debug, Clone)]
+mod opcode;
+
+#[derive(Debug, Clone, parse_display::Display)]
 pub enum MipsInstruction {
-    Label {
-        name: String,
-    },
-    // R-Type instructions
+    #[display("{name}:")]
+    Label { name: String },
+    /// R\[rd] = R\[rs] + R\[rt]
+    #[display("add {rd}, {rs}, {rt}")]
     Add {
         rd: MipsRegister,
         rs: MipsRegister,
         rt: MipsRegister,
     },
+    /// R\[rd] = R\[rs] - R\[rt]
+    #[display("sub {rd}, {rs}, {rt}")]
     Sub {
         rd: MipsRegister,
         rs: MipsRegister,
         rt: MipsRegister,
     },
+    /// R\[rd] = R\[rs] & R\[rt]
+    /// Bitwise AND
+    #[display("and {rd}, {rs}, {rt}")]
     And {
         rd: MipsRegister,
         rs: MipsRegister,
         rt: MipsRegister,
     },
+    /// R\[rd] = R\[rs] | R\[rt]
+    /// Bitwise OR
+    #[display("or {rd}, {rs}, {rt}")]
     Or {
         rd: MipsRegister,
         rs: MipsRegister,
         rt: MipsRegister,
     },
+    /// R\[rd] = R\[rs] < R\[rt]
+    #[display("slt {rd}, {rs}, {rt}")]
     Slt {
         rd: MipsRegister,
         rs: MipsRegister,
         rt: MipsRegister,
     },
-    // I-Type instructions
+    /// R\[rt] = R\[rs] + immediate
+    #[display("addi {rs}, {rt}, {immediate}")]
     Addi {
         rs: MipsRegister,
         rt: MipsRegister,
         immediate: i16,
     },
+    /// M\[rt] = M\[R\[rs] + offset]
+    #[display("lw {rt}, {offset}({rs})")]
     Lw {
-        rs: MipsRegister,
         rt: MipsRegister,
+        rs: MipsRegister,
         offset: i16,
     },
-    Li {
-        rt: MipsRegister,
-        immediate: i16,
-    },
+    /// R\[rt] = immediate
+    #[display("li {rt}, {immediate}")]
+    Li { rt: MipsRegister, immediate: i16 },
+    /// M\[R\[rs] + offset] = R\[rt]
+    #[display("sw {rt}, {offset}({rs})")]
     Sw {
-        rs: MipsRegister,
         rt: MipsRegister,
+        rs: MipsRegister,
         offset: i16,
     },
+    /// R\[rt] = R\[rs] < R\[rt]
+    #[display("slti {rs}, {rt}, {immediate}")]
     Slti {
         rs: MipsRegister,
         rt: MipsRegister,
         immediate: i16,
     },
+    /// R\[rd] = R\[rs] == R\[rt]
+    #[display("beq {rs}, {rt}, {label}")]
     Beq {
         rs: MipsRegister,
         rt: MipsRegister,
         label: String,
     },
+    /// R\[rd] = R\[rs] != R\[rt]
+    #[display("bne {rs}, {rt}, {label}")]
     Bne {
         rs: MipsRegister,
         rt: MipsRegister,
         label: String,
     },
-    // J-Type instructions
-    J {
-        label: String,
-    },
-    Jal {
-        label: String,
-    },
-    Jr {
-        rs: MipsRegister,
-    },
-    // Other instructions
+    /// Jump to label
+    #[display("j {label}")]
+    J { label: String },
+    /// Jump and link to label
+    #[display("jal {label}")]
+    Jal { label: String },
+    /// Jump to register
+    #[display("jr {rs}")]
+    Jr { rs: MipsRegister },
+    /// No operation
+    #[display("nop")]
     Nop,
+    /// Halt
+    #[display("halt")]
     Halt,
+    /// Multiply
+    /// $hi, $lo = $rs * $rt
+    #[display("mult {lhs}, {rhs}")]
     Mult {
         lhs: MipsRegister,
         rhs: MipsRegister,
     },
+    /// Divide
+    #[display("div {lhs}, {rhs}")]
     Div {
         lhs: MipsRegister,
         rhs: MipsRegister,
     },
+    /// Modulo
+    #[display("mod {lhs}, {rhs}")]
     Mod {
         lhs: MipsRegister,
         rhs: MipsRegister,
     },
-    Mflo {
-        rd: MipsRegister,
-    },
+    /// Move from LO
+    /// due to how MIPS pipeline works,
+    /// we need to avoid calling mult and div in next 2 instructions
+    #[display("mflo {rd}")]
+    Mflo { rd: MipsRegister },
+    /// Move from HI
+    /// due to how MIPS pipeline works,
+    /// we need to avoid calling mult and div in next 2 instructions
+    #[display("mfhi {rd}")]
+    Mfhi { rd: MipsRegister },
 }
 impl MipsInstruction {
     pub fn from_opcode_r(
@@ -141,78 +176,6 @@ impl MipsInstruction {
             MipsOpcode::Div => MipsInstruction::Div { lhs, rhs },
             MipsOpcode::Mod => MipsInstruction::Mod { lhs, rhs },
             _ => panic!("Unsupported opcode {}", opcode),
-        }
-    }
-}
-impl Display for MipsInstruction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            MipsInstruction::Add { rd, rs, rt } => {
-                write!(f, "add {}, {}, {}", rd, rs, rt)
-            }
-            MipsInstruction::Sub { rd, rs, rt } => {
-                write!(f, "sub {}, {}, {}", rd, rs, rt)
-            }
-            MipsInstruction::And { rd, rs, rt } => {
-                write!(f, "and {}, {}, {}", rd, rs, rt)
-            }
-            MipsInstruction::Or { rd, rs, rt } => {
-                write!(f, "or {}, {}, {}", rd, rs, rt)
-            }
-            MipsInstruction::Addi { rs, rt, immediate } => {
-                write!(f, "addi {}, {}, {}", rt, rs, immediate)
-            }
-            MipsInstruction::Lw { rs, rt, offset } => {
-                write!(f, "lw {}, {}({})", rt, offset, rs)
-            }
-            MipsInstruction::Li { rt, immediate } => {
-                write!(f, "li {}, {}", rt, immediate)
-            }
-            MipsInstruction::Sw { rs, rt, offset } => {
-                write!(f, "sw {}, {}({})", rt, offset, rs)
-            }
-            MipsInstruction::Slt { rd, rs, rt } => {
-                write!(f, "slt {}, {}, {}", rd, rs, rt)
-            }
-            MipsInstruction::Slti { rs, rt, immediate } => {
-                write!(f, "slti {}, {}, {}", rt, rs, immediate)
-            }
-            MipsInstruction::Beq { rs, rt, label } => {
-                write!(f, "beq {}, {}, {}", rs, rt, label)
-            }
-            MipsInstruction::J { label } => {
-                write!(f, "j {}", label)
-            }
-            MipsInstruction::Jal { label } => {
-                write!(f, "jal {}", label)
-            }
-            MipsInstruction::Jr { rs } => {
-                write!(f, "jr {}", rs)
-            }
-            MipsInstruction::Nop => {
-                write!(f, "nop")
-            }
-            MipsInstruction::Halt => {
-                write!(f, "halt")
-            }
-            MipsInstruction::Mult { lhs, rhs } => {
-                write!(f, "mult {}, {}", lhs, rhs)
-            }
-            MipsInstruction::Div { lhs, rhs } => {
-                write!(f, "div {}, {}", lhs, rhs)
-            }
-            MipsInstruction::Mod { lhs, rhs } => {
-                write!(f, "mod {}, {}", lhs, rhs)
-            }
-            MipsInstruction::Mflo { rd } => {
-                write!(f, "mflo {}", rd)
-            }
-            MipsInstruction::Label { name } => {
-                write!(f, "{}:", name)
-            }
-            MipsInstruction::Bne { rs, rt, label } => {
-                write!(f, "bne {}, {}, {}", rs, rt, label)
-            }
         }
     }
 }
