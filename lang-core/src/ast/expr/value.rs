@@ -110,3 +110,11 @@ common_struct! {
 
     }
 }
+
+common_struct! {
+    pub struct ExprAssign {
+        pub target: BExpr,
+        pub value: BExpr,
+    }
+
+}
