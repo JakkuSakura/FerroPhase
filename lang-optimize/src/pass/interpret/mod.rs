@@ -502,7 +502,6 @@ impl InterpreterPass {
                     Some(x)
                 }
             }),
-            Statement::SideEffect(n) => self.interpret_expr(&n.expr, ctx).map(|_| None),
             Statement::Item(_) => Ok(None),
             _ => bail!("Failed to interpret {:?}", node),
         }

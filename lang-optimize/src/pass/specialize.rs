@@ -96,7 +96,11 @@ impl SpecializePass {
             bindings.push(binding);
         }
 
-        let new_body = Expr::block(ExprBlock::prepend(bindings, func.body.get()));
+        // let new_body = Expr::block(ExprBlock::prepend(bindings, func.body.get()));
+        let new_body = Expr::block(ExprBlock {
+            stmts: bindings,
+            ret: Some(func.body.clone()),
+        });
         let new_name = Ident::new(format!(
             "{}_{}",
             name,
@@ -145,23 +149,27 @@ impl SpecializePass {
         if invoke.args.is_empty() {
             Ok(new_func.body.into())
         } else {
-            Ok(ExprBlock::new(vec![
-                Item::DefFunction(DefFunction {
-                    name: new_name.clone(),
-                    ty: None,
-                    value: new_func,
-                    visibility: Visibility::Private,
-                })
+            Ok(Expr::Block(
+                ExprBlock {
+                    stmts: vec![Statement::Item(
+                        Item::DefFunction(DefFunction {
+                            name: new_name.clone(),
+                            ty: None,
+                            value: new_func,
+                            visibility: Visibility::Private,
+                        })
+                        .into(),
+                    )],
+                    ret: Some(
+                        Expr::Invoke(ExprInvoke {
+                            func: Expr::ident(new_name).into(),
+                            args: Default::default(),
+                        })
+                        .into(),
+                    ),
+                }
                 .into(),
-                Statement::Expr(
-                    ExprInvoke {
-                        func: Expr::ident(new_name).into(),
-                        args: Default::default(),
-                    }
-                    .into(),
-                ),
-            ])
-            .into())
+            ))
         }
     }
 
