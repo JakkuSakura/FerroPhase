@@ -1,6 +1,6 @@
 use eyre::{bail, Result};
 
-use lang_core::ast::{Expr, ExprBinOp, ExprIf, ExprLoop};
+use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprLoop};
 use lang_core::ast::{Type, TypeInt, TypePrimitive, Value};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
@@ -192,6 +192,23 @@ impl MipsEmitter {
             instructions: ins,
         })
     }
+    pub fn emit_block(
+        &mut self,
+        block: &ExprBlock,
+        ctx: &SharedScopedContext,
+    ) -> Result<MipsEmitExprResult> {
+        let mut ins = vec![];
+        for stmt in &block.stmts {
+            ins.extend(self.emit_statement(stmt, ctx)?.instructions);
+        }
+        let ret = if let Some(ret) = &block.ret {
+            self.emit_expr(ret, ctx)?
+        } else {
+            MipsEmitExprResult::new(MipsRegisterOwned::zero(), vec![])
+        };
+        ins.extend(ret.instructions);
+        Ok(MipsEmitExprResult::new(ret.ret, ins))
+    }
     pub fn emit_expr(
         &mut self,
         expr: &Expr,
@@ -202,7 +219,7 @@ impl MipsEmitter {
             Expr::BinOp(op) => self.emit_binop(op, ctx),
             Expr::Loop(l) => self.emit_loop(l, ctx),
             Expr::If(if_) => self.emit_if(if_, ctx),
-
+            Expr::Block(b) => self.emit_block(b, ctx),
             _ => bail!("Unsupported expr {}", expr),
         }
     }

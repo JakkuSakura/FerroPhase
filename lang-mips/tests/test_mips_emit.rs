@@ -87,3 +87,19 @@ fn test_mips_emit_comp() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_mips_emit_func() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+
+    let code = shll_parse_expr! {
+        {
+            fn foo() -> i32 {
+                1
+            }
+        }
+    };
+    let _value = emit_mips_shll_expr(code)?;
+
+    Ok(())
+}
