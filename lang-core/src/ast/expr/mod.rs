@@ -27,9 +27,9 @@ common_enum! {
         If(ExprIf),
         Loop(ExprLoop),
         Invoke(ExprInvoke),
-        // it provides better code, instead of nested Invoke
         BinOp(ExprBinOp),
         UnOp(ExprUnOp),
+        Assign(ExprAssign),
         Select(ExprSelect),
         InitStruct(ExprInitStruct),
         InitStructual(ExprInitStructural),
@@ -73,22 +73,10 @@ impl Expr {
         Expr::Locator(Locator::path(path))
     }
     pub fn block(block: ExprBlock) -> Expr {
-        if block.stmts.len() == 1 {
-            let last = block.stmts.last().unwrap();
-            if let Statement::Expr(expr) = last {
-                return expr.clone();
-            }
-            if let Statement::SideEffect(expr) = last {
-                if let Expr::Block(block) = &expr.expr {
-                    let mut block = block.clone();
-                    block.make_last_side_effect();
-                    return Expr::block(block);
-                }
-            }
+        if block.stmts.len() == 0 {
+            return block.ret.map(|x| *x).unwrap_or(Expr::unit());
         }
-        if block.stmts.is_empty() {
-            return Expr::unit();
-        }
+
         Expr::Block(block)
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {

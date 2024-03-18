@@ -238,10 +238,7 @@ impl FoldOptimizer {
                 .map(Statement::Item),
             Statement::Any(_) => Ok(stmt),
             Statement::Let(x) => self.optimize_let(x, ctx).map(Statement::Let),
-            Statement::SideEffect(x) => {
-                let expr = self.optimize_expr(x.expr, ctx)?;
-                Ok(Statement::SideEffect(SideEffect { expr }))
-            }
+            #[allow(unreachable_patterns)]
             _ => bail!("Could not optimize {:?}", stmt),
         }
     }

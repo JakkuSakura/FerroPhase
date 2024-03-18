@@ -279,48 +279,43 @@ impl RustPrinter {
             let #pat = #value;
         ))
     }
-    pub fn print_assign(&self, assign: &StatementAssign) -> Result<TokenStream> {
+    pub fn print_assign(&self, assign: &ExprAssign) -> Result<TokenStream> {
         let target = self.print_expr(&assign.target)?;
         let value = self.print_expr(&assign.value)?;
         Ok(quote!(
             #target = #value;
         ))
     }
-    pub fn print_for_each(&self, for_each: &StatementForEach) -> Result<TokenStream> {
-        let name = self.print_ident(&for_each.variable);
-        let iter = self.print_expr(&for_each.iterable)?;
-        let body = self.print_block(&for_each.body)?;
-        Ok(quote!(
-            for #name in #iter
-                #body
-        ))
-    }
-    pub fn print_while(&self, while_: &StatementWhile) -> Result<TokenStream> {
-        let cond = self.print_expr(&while_.cond)?;
-        let body = self.print_block(&while_.body)?;
-        Ok(quote!(
-            while #cond
-                #body
-        ))
-    }
-    pub fn print_loop(&self, loop_: &StatementLoop) -> Result<TokenStream> {
-        let body = self.print_block(&loop_.body)?;
-        Ok(quote!(
-            loop
-                #body
-        ))
-    }
+    // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
+    //     let name = self.print_ident(&for_each.variable);
+    //     let iter = self.print_expr(&for_each.iterable)?;
+    //     let body = self.print_block(&for_each.body)?;
+    //     Ok(quote!(
+    //         for #name in #iter
+    //             #body
+    //     ))
+    // }
+    // pub fn print_while(&self, while_: &ExprWhile) -> Result<TokenStream> {
+    //     let cond = self.print_expr(&while_.cond)?;
+    //     let body = self.print_block(&while_.body)?;
+    //     Ok(quote!(
+    //         while #cond
+    //             #body
+    //     ))
+    // }
+    // pub fn print_loop(&self, loop_: &ExprLoop) -> Result<TokenStream> {
+    //     let body = self.print_block(&loop_.body)?;
+    //     Ok(quote!(
+    //         loop
+    //             #body
+    //     ))
+    // }
     pub fn print_statement(&self, stmt: &Statement) -> Result<TokenStream> {
         match stmt {
             Statement::Item(item) => self.print_item(item),
             Statement::Let(let_) => self.print_let(let_),
-            Statement::SideEffect(stmt) => self.print_stmt_expr(&stmt),
             Statement::Expr(expr) => self.print_expr(expr),
             Statement::Any(any) => self.print_any(any),
-            Statement::Assign(assign) => self.print_assign(assign),
-            Statement::ForEach(for_each) => self.print_for_each(for_each),
-            Statement::While(while_) => self.print_while(while_),
-            Statement::Loop(loop_) => self.print_loop(loop_),
         }
     }
     pub fn print_statement_chunk(&self, items: &[Statement]) -> Result<TokenStream> {
@@ -787,10 +782,6 @@ impl RustPrinter {
         })
     }
 
-    pub fn print_stmt_expr(&self, node: &SideEffect) -> Result<TokenStream> {
-        let expr = self.print_expr(&node.expr)?;
-        Ok(quote!(#expr;))
-    }
     pub fn print_expr_optimized(&self, node: &Expr) -> Result<TokenStream> {
         match node {
             Expr::Match(n) => self.print_match(n),

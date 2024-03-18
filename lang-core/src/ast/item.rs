@@ -4,6 +4,8 @@ use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::hash::Hash;
 
+pub type BItem = Box<Item>;
+
 common_enum! {
     /// Item is an syntax tree node that "declares" a thing without returning a value
     pub enum Item {

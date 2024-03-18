@@ -412,37 +412,43 @@ pub fn parse_expr(expr: syn::Expr) -> Result<BExpr> {
     Ok(expr.into())
 }
 
-fn parse_stmt(stmt: syn::Stmt) -> Result<Statement> {
+/// returns: statement, with_semicolon
+fn parse_stmt(stmt: syn::Stmt) -> Result<(Statement, bool)> {
     Ok(match stmt {
-        syn::Stmt::Local(l) => Statement::Let(StatementLet {
-            pat: parse_pat(l.pat)?,
-            value: parse_expr(*l.init.context("No value")?.expr)?.into(),
-        }),
-        syn::Stmt::Item(tm) => parse_item(tm).map(Statement::item)?,
+        syn::Stmt::Local(l) => (
+            Statement::Let(StatementLet {
+                pat: parse_pat(l.pat)?,
+                value: parse_expr(*l.init.context("No value")?.expr)?.into(),
+            }),
+            true,
+        ),
+        syn::Stmt::Item(tm) => (parse_item(tm).map(Statement::item)?, true),
         syn::Stmt::Expr(e, semicolon) => {
-            Statement::maybe_stmt_expr(parse_expr(e)?.into(), semicolon.is_some())
+            (Statement::Expr(parse_expr(e)?.into()), semicolon.is_some())
         }
-        syn::Stmt::Macro(raw) => Statement::any(RawStmtMacro { raw }),
+        syn::Stmt::Macro(raw) => (Statement::any(RawStmtMacro { raw }), true),
     })
 }
 
 fn parse_block(block: syn::Block) -> Result<ExprBlock> {
     // info!("Parsing block {:?}", block);
-    let last_value = block
-        .stmts
-        .last()
-        .map(|x| match x {
-            syn::Stmt::Expr(_, s) => s.is_none(),
-            _ => false,
-        })
-        .unwrap_or_default();
-    let mut stmts: Vec<_> = block.stmts.into_iter().map(parse_stmt).try_collect()?;
-    if last_value {
-        if let Some(last) = stmts.last_mut() {
-            last.try_make_expr()
-        }
+    let mut stmts = vec![];
+    let mut last_with_semicolon = true;
+    for stmt in block.stmts.into_iter() {
+        let (stmt, with_semicolon) = parse_stmt(stmt)?;
+        stmts.push(stmt);
+        last_with_semicolon = with_semicolon;
     }
-    Ok(ExprBlock { stmts })
+    let ret = if !last_with_semicolon {
+        let expr = match stmts.pop().unwrap() {
+            Statement::Expr(e) => e,
+            x => bail!("Last statement should be expr, but got {:?}", x),
+        };
+        Some(expr.into())
+    } else {
+        None
+    };
+    Ok(ExprBlock { stmts, ret })
 }
 fn parse_vis(v: syn::Visibility) -> Visibility {
     match v {
