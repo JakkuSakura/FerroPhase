@@ -4,6 +4,8 @@ use crate::storage::MipsStorage;
 
 mod expr;
 mod func;
+mod item;
+mod stmt;
 pub struct MipsEmitter {
     stack: MipsStorage,
     label_counter: usize,

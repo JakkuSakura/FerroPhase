@@ -1,8 +1,32 @@
+use eyre::Result;
+
+use lang_core::ast::DefFunction;
+use lang_core::context::SharedScopedContext;
+
+use crate::emitter::expr::MipsEmitExprResult;
 use crate::emitter::MipsEmitter;
 use crate::instruction::MipsInstruction;
 use crate::storage::register::MipsRegister;
 
 impl MipsEmitter {
+    pub fn emit_function(
+        &mut self,
+        func: &DefFunction,
+        ctx: &SharedScopedContext,
+    ) -> Result<MipsEmitExprResult> {
+        let mut instructions = Vec::new();
+        // emit function label
+        let ins = MipsInstruction::Label {
+            name: func.name.to_string(),
+        };
+        instructions.push(ins);
+        // TODO: stash s1-s7 to stack, if used in function body
+        // emit function body
+        let ret = self.emit_expr(&func.value.body, ctx)?;
+        instructions.extend(ret.instructions);
+
+        Ok(MipsEmitExprResult::new(ret.ret, instructions))
+    }
     pub fn emit_invoke_function(&mut self, func_name: &str) -> Vec<MipsInstruction> {
         let mut instructions = Vec::new();
         // save all borrowed registers to stack
