@@ -31,7 +31,7 @@ impl InlinePass {
                 if let Some(name) = &func.name {
                     match name.as_str() {
                         "print" => {
-                            invoke.func = Expr::ident(name.clone()).into();
+                            invoke.target = Locator::ident(name.clone()).into();
                             return Ok(Expr::Invoke(invoke.into()));
                         }
                         _ if invoke.args.is_empty() => return Ok(func.body.get()),

@@ -1,15 +1,17 @@
-use crate::pass::{FoldOptimizer, InterpreterPass};
 use common::{bail, ensure, ContextCompat, Error, Result};
 use itertools::Itertools;
+
 use lang_core::ast::{
-    DecimalType, FieldTypeValue, GenericParam, ImplTraits, Type, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
+    DecimalType, ExprInvokeTarget, FieldTypeValue, ImplTraits, Type, TypeBounds, TypeFunction,
+    TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
 };
 use lang_core::ast::{Expr, Visibility};
 use lang_core::context::SharedScopedContext;
 use lang_core::ctx::{Context, TypeSystem};
 use lang_core::id::{Ident, Locator};
 use lang_core::utils::conv::TryConv;
+
+use crate::pass::{FoldOptimizer, InterpreterPass};
 
 impl InterpreterPass {
     pub fn type_check_value(&self, lit: &Value, ty: &Type) -> Result<()> {
@@ -216,19 +218,6 @@ impl InterpreterPass {
     }
     pub fn infer_ident(&self, ident: &Ident, ctx: &SharedScopedContext) -> Result<Type> {
         match ident.as_str() {
-            ">" | ">=" | "<" | "<=" | "==" | "!=" => {
-                return Ok(Type::Function(
-                    TypeFunction {
-                        generics_params: vec![GenericParam {
-                            name: Ident::new("T"),
-                            bounds: TypeBounds::new(Expr::value(Type::any().into())),
-                        }],
-                        params: vec![Type::ident("T".into()), Type::ident("T".into())],
-                        ret: Type::bool(),
-                    }
-                    .into(),
-                ));
-            }
             "print" => {
                 return Ok(Type::Function(
                     TypeFunction {
@@ -246,50 +235,64 @@ impl InterpreterPass {
             .with_context(|| format!("Could not find {:?} in context", ident))?;
         self.infer_expr(&expr, ctx)
     }
-    pub fn infer_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<Type> {
-        match expr {
-            Expr::Locator(n) => {
-                let ty = ctx
-                    .get_type(n.to_path())
-                    .with_context(|| format!("Could not find {:?} in context", n))?;
-                return Ok(ty);
-            }
-            Expr::Value(l) => match l.as_ref() {
-                Value::Int(_) => return Ok(Type::Primitive(TypePrimitive::Int(TypeInt::I64))),
-                Value::Decimal(_) => {
-                    return Ok(Type::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
-                }
-                Value::Unit(_) => return Ok(Type::unit()),
-                Value::Bool(_) => return Ok(Type::Primitive(TypePrimitive::Bool)),
-                Value::String(_) => return Ok(Type::Primitive(TypePrimitive::String)),
-                Value::Type(_) => return Ok(Type::Type(TypeType {})),
-                Value::Char(_) => return Ok(Type::Primitive(TypePrimitive::Char)),
-                Value::List(_) => return Ok(Type::Primitive(TypePrimitive::List)),
-                _ => {}
-            },
-            Expr::Invoke(invoke) => match invoke.func.get() {
-                Expr::Value(value) => match value.as_ref() {
-                    Value::BinOpKind(kind) if kind.is_bool() => {
-                        return Ok(Type::Primitive(TypePrimitive::Bool))
-                    }
-                    Value::BinOpKind(_) => {
-                        return Ok(
-                            self.infer_expr(&invoke.args.first().context("No param")?.get(), ctx)?
-                        )
-                    }
-                    _ => {}
-                },
-
-                _ => {}
-            },
-            _ => {}
+    pub fn infer_locator(&self, locator: &Locator, ctx: &SharedScopedContext) -> Result<Type> {
+        if let Some(ty) = ctx.get_type(locator.to_path()) {
+            return Ok(ty);
         }
+        match locator {
+            Locator::Ident(ident) => self.infer_ident(ident, ctx),
+            _ => bail!("Could not infer locator {:?}", locator),
+        }
+    }
+    pub fn infer_expr_invoke_target(
+        &self,
+        target: &ExprInvokeTarget,
+        ctx: &SharedScopedContext,
+    ) -> Result<Type> {
+        match target {
+            ExprInvokeTarget::Function(ident) => self.infer_locator(ident, ctx),
 
-        bail!(
-            "Could not infer type of {}: {:?}",
-            self.serializer.serialize_expr(expr)?,
-            expr
-        )
+            _ => bail!("Could not infer invoke target {:?}", target),
+        }
+    }
+    pub fn infer_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<Type> {
+        let ret = match expr {
+            Expr::Locator(n) => self.infer_locator(n, ctx)?,
+            Expr::Value(l) => match l.as_ref() {
+                Value::Int(_) => Type::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                Value::Decimal(_) => Type::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
+                Value::Unit(_) => Type::unit(),
+                Value::Bool(_) => Type::Primitive(TypePrimitive::Bool),
+                Value::String(_) => Type::Primitive(TypePrimitive::String),
+                Value::Type(_) => Type::Type(TypeType {}),
+                Value::Char(_) => Type::Primitive(TypePrimitive::Char),
+                Value::List(_) => Type::Primitive(TypePrimitive::List),
+                _ => bail!("Could not infer type of {:?}", l),
+            },
+            Expr::Invoke(invoke) => {
+                let function = self.infer_expr_invoke_target(&invoke.target, ctx)?;
+                match function {
+                    Type::Function(f) => f.ret,
+                    _ => bail!("Expected function, got {:?}", function),
+                }
+            }
+            Expr::BinOp(op) => {
+                if op.kind.is_ret_bool() {
+                    return Ok(Type::Primitive(TypePrimitive::Bool));
+                }
+                let lhs = self.infer_expr(&op.lhs, ctx)?;
+                let rhs = self.infer_expr(&op.rhs, ctx)?;
+                ensure!(
+                    lhs == rhs,
+                    "Expected same types, got {:?} and {:?}",
+                    lhs,
+                    rhs
+                );
+                lhs
+            }
+            _ => bail!("Could not infer type of {:?}", expr),
+        };
+        Ok(ret)
     }
 
     pub fn infer_function(

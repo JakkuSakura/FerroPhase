@@ -147,30 +147,30 @@ impl SpecializePass {
         //     args: Default::default(),
         // });
         if invoke.args.is_empty() {
-            Ok(new_func.body.into())
-        } else {
-            Ok(Expr::Block(
-                ExprBlock {
-                    stmts: vec![Statement::Item(
-                        Item::DefFunction(DefFunction {
-                            name: new_name.clone(),
-                            ty: None,
-                            value: new_func,
-                            visibility: Visibility::Private,
-                        })
-                        .into(),
-                    )],
-                    ret: Some(
-                        Expr::Invoke(ExprInvoke {
-                            func: Expr::ident(new_name).into(),
-                            args: Default::default(),
-                        })
-                        .into(),
-                    ),
-                }
-                .into(),
-            ))
+            return Ok(new_func.body.into());
         }
+
+        Ok(Expr::Block(
+            ExprBlock {
+                stmts: vec![Statement::Item(
+                    Item::DefFunction(DefFunction {
+                        name: new_name.clone(),
+                        ty: None,
+                        value: new_func,
+                        visibility: Visibility::Private,
+                    })
+                    .into(),
+                )],
+                ret: Some(
+                    Expr::Invoke(ExprInvoke {
+                        target: ExprInvokeTarget::Function(new_name.into()),
+                        args: Default::default(),
+                    })
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
     }
 
     pub fn specialize_invoke_func(
@@ -179,8 +179,8 @@ impl SpecializePass {
         func: &ValueFunction,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {
-        match invoke.func.get() {
-            Expr::Locator(Locator::Ident(ident)) if ident.as_str() == "print" => {
+        match &invoke.target {
+            ExprInvokeTarget::Function(Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke.into());
             }
             _ => {}
