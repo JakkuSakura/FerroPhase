@@ -14,7 +14,7 @@ impl MipsEmitter {
     ) -> Result<MipsEmitExprResult> {
         match item {
             Item::Expr(expr) => self.emit_expr(expr, ctx),
-            Item::DefFunction(f) => self.emit_function(f, ctx),
+            Item::DefFunction(f) => self.emit_def_function(f, ctx),
             _ => unimplemented!("emit_item: {:?}", item),
         }
     }

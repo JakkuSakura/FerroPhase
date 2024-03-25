@@ -27,6 +27,8 @@ common_enum! {
         If(ExprIf),
         Loop(ExprLoop),
         Invoke(ExprInvoke),
+        // InvokeFunction(ExprInvokeFunction),
+        // InvokeMethod(ExprInvokeMethod),
         BinOp(ExprBinOp),
         UnOp(ExprUnOp),
         Assign(ExprAssign),
