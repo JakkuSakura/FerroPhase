@@ -97,6 +97,7 @@ fn test_mips_emit_func() -> Result<()> {
             fn foo() -> i32 {
                 1
             }
+            foo()
         }
     };
     let _value = emit_mips_shll_expr(code)?;
