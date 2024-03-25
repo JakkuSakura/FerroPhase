@@ -29,7 +29,7 @@ common_enum! {
 
 }
 impl BinOpKind {
-    pub fn is_bool(&self) -> bool {
+    pub fn is_ret_bool(&self) -> bool {
         match self {
             BinOpKind::Gt
             | BinOpKind::Lt

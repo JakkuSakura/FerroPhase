@@ -1,6 +1,6 @@
 use eyre::{bail, Result};
 
-use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprInvoke, ExprLoop};
+use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprInvoke, ExprInvokeTarget, ExprLoop};
 use lang_core::ast::{Type, TypeInt, TypePrimitive, Value};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
@@ -203,9 +203,9 @@ impl MipsEmitter {
         invoke: &ExprInvoke,
         _ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
-        match &*invoke.func {
-            Expr::Locator(ident) => Ok(self.emit_invoke_function(&ident.to_string())),
-            _ => bail!("Unsupported invoke {}", invoke.func),
+        match &invoke.target {
+            ExprInvokeTarget::Function(ident) => Ok(self.emit_invoke_function(&ident.to_string())),
+            _ => bail!("Unsupported invoke {:?}", invoke.target),
         }
     }
 

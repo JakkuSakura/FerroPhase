@@ -144,30 +144,18 @@ impl RustPrinter {
         let op = self.print_bin_op_kind(&binop.kind);
         Ok(quote!(#lhs #op #rhs))
     }
-    pub fn print_invoke_expr(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
-        match invoke.func.get() {
-            Expr::Value(value) => match value.as_ref() {
-                Value::BinOpKind(op) => {
-                    let op = self.print_bin_op_kind(&op);
-                    let args: Vec<_> = invoke
-                        .args
-                        .iter()
-                        .map(|x| self.print_expr(&x.get()))
-                        .try_collect()?;
-                    let mut stream = quote!();
-                    for (i, a) in args.into_iter().enumerate() {
-                        if i != 0 {
-                            stream = quote!(#stream #op);
-                        }
-                        stream = quote!(#stream #a);
-                    }
-                    return Ok(stream);
-                }
-                _ => {}
-            },
-            _ => {}
+    pub fn print_invoke_target(&self, target: &ExprInvokeTarget) -> Result<TokenStream> {
+        match target {
+            ExprInvokeTarget::Function(locator) => self.print_locator(locator),
+            ExprInvokeTarget::Type(t) => self.print_type_value(t),
+            ExprInvokeTarget::Method(select) => self.print_select(select),
+            ExprInvokeTarget::Closure(fun) => self.print_func_value(fun),
+            ExprInvokeTarget::BinOp(op) => Ok(self.print_bin_op_kind(op)),
+            ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
         }
-        let fun = self.print_expr(&invoke.func.get())?;
+    }
+    pub fn print_invoke_expr(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
+        let fun = self.print_invoke_target(&invoke.target)?;
         let args: Vec<_> = invoke
             .args
             .iter()
@@ -178,7 +166,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_invoke_type(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
-        let fun = self.print_expr(&invoke.func.get())?;
+        let fun = self.print_invoke_target(&invoke.target)?;
         let args: Vec<_> = invoke
             .args
             .iter()
@@ -418,55 +406,56 @@ impl RustPrinter {
         ));
     }
     pub fn print_invoke(&self, node: &ExprInvoke) -> Result<TokenStream> {
-        let func = node.func.get();
-
-        let fun = self.print_expr(&node.func.get())?;
+        let fun = self.print_invoke_target(&node.target)?;
         let args: Vec<_> = node
             .args
             .iter()
             .map(|x| self.print_expr(&x.get()))
             .try_collect()?;
-        match &func {
-            Expr::Value(value) => match value.as_ref() {
-                Value::Type(_) => {
-                    return Ok(quote!(
-                        <#fun>::<#(#args), *>
-                    ))
-                }
-                Value::BinOpKind(op) => {
-                    let ret = match op {
-                        BinOpKind::Add => quote!(#(#args) + *),
-                        BinOpKind::AddTrait => quote!(#(#args) + *),
-                        BinOpKind::Sub => quote!(#(#args) - *),
-                        BinOpKind::Div => quote!(#(#args) / *),
-                        BinOpKind::Mul => {
-                            let mut result = vec![];
-                            for (i, a) in args.into_iter().enumerate() {
-                                if i != 0 {
-                                    result.push(quote!(*));
-                                }
-                                result.push(a);
+        match &node.target {
+            ExprInvokeTarget::Function(_) => {
+                return Ok(quote!(
+                    #fun(#(#args), *)
+                ));
+            }
+            ExprInvokeTarget::Type(_) => {
+                return Ok(quote!(
+                    <#fun>::<#(#args), *>
+                ));
+            }
+            ExprInvokeTarget::BinOp(op) => {
+                let ret = match op {
+                    BinOpKind::Add => quote!(#(#args) + *),
+                    BinOpKind::AddTrait => quote!(#(#args) + *),
+                    BinOpKind::Sub => quote!(#(#args) - *),
+                    BinOpKind::Div => quote!(#(#args) / *),
+                    BinOpKind::Mul => {
+                        let mut result = vec![];
+                        for (i, a) in args.into_iter().enumerate() {
+                            if i != 0 {
+                                result.push(quote!(*));
                             }
-                            quote!(#(#result)*)
+                            result.push(a);
                         }
-                        BinOpKind::Mod => quote!(#(#args) % *),
-                        BinOpKind::Gt => quote!(#(#args) > *),
-                        BinOpKind::Lt => quote!(#(#args) < *),
-                        BinOpKind::Ge => quote!(#(#args) >= *),
-                        BinOpKind::Le => quote!(#(#args) <= *),
-                        BinOpKind::Eq => quote!(#(#args) == *),
-                        BinOpKind::Ne => quote!(#(#args) != *),
-                        BinOpKind::Or => quote!(#(#args) || *),
-                        BinOpKind::And => quote!(#(#args) && *),
-                        BinOpKind::BitOr => quote!(#(#args) | *),
-                        BinOpKind::BitAnd => quote!(#(#args) & *),
-                        BinOpKind::BitXor => quote!(#(#args) ^ *),
-                    };
-                    return Ok(ret);
-                }
-                _ => {}
-            },
-            Expr::Select(select) => match select.select {
+                        quote!(#(#result)*)
+                    }
+                    BinOpKind::Mod => quote!(#(#args) % *),
+                    BinOpKind::Gt => quote!(#(#args) > *),
+                    BinOpKind::Lt => quote!(#(#args) < *),
+                    BinOpKind::Ge => quote!(#(#args) >= *),
+                    BinOpKind::Le => quote!(#(#args) <= *),
+                    BinOpKind::Eq => quote!(#(#args) == *),
+                    BinOpKind::Ne => quote!(#(#args) != *),
+                    BinOpKind::Or => quote!(#(#args) || *),
+                    BinOpKind::And => quote!(#(#args) && *),
+                    BinOpKind::BitOr => quote!(#(#args) | *),
+                    BinOpKind::BitAnd => quote!(#(#args) & *),
+                    BinOpKind::BitXor => quote!(#(#args) ^ *),
+                };
+                return Ok(ret);
+            }
+
+            ExprInvokeTarget::Method(select) => match select.select {
                 SelectType::Field => {
                     return Ok(quote!(
                         (#fun)(#(#args), *)
@@ -479,6 +468,7 @@ impl RustPrinter {
 
         let fun_str = fun.to_string();
 
+        // TODO: deprecate it
         let code = match fun_str.as_str() {
             "tuple" => quote!(
                 (#(#args), *)

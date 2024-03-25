@@ -260,13 +260,13 @@ fn parse_call(call: syn::ExprCall) -> Result<ExprInvoke> {
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
     Ok(ExprInvoke {
-        func: fun.into(),
+        target: fun.into(),
         args,
     })
 }
 fn parse_method_call(call: syn::ExprMethodCall) -> Result<ExprInvoke> {
     Ok(ExprInvoke {
-        func: Expr::Select(
+        target: ExprInvokeTarget::Method(
             ExprSelect {
                 obj: parse_expr(*call.receiver)?.into(),
                 field: parse_ident(call.method),
@@ -297,7 +297,7 @@ fn parse_if(i: syn::ExprIf) -> Result<ExprIf> {
 fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = parse_expr(*b.left)?;
     let rhs = parse_expr(*b.right)?;
-    let (kind, flatten) = match b.op {
+    let (kind, _flatten) = match b.op {
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
         syn::BinOp::Sub(_) => (BinOpKind::Sub, false),
@@ -315,24 +315,7 @@ fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::And(_) => (BinOpKind::And, true),
         _ => bail!("Op not supported {:?}", b.op),
     };
-    if flatten {
-        let mut lhs = lhs.get();
-        match &mut lhs {
-            Expr::Invoke(first_arg) => match first_arg.func.get() {
-                Expr::Value(value) => match value.as_ref() {
-                    Value::BinOpKind(i) => {
-                        if *i == kind {
-                            first_arg.args.push(rhs);
-                            return Ok(first_arg.clone().into());
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            },
-            _ => {}
-        }
-    }
+
     Ok(ExprBinOp { kind, lhs, rhs }.into())
 }
 fn parse_tuple(t: syn::ExprTuple) -> Result<ValueTuple> {
