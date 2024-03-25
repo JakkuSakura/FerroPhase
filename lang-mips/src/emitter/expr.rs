@@ -1,6 +1,6 @@
 use eyre::{bail, Result};
 
-use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprLoop};
+use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprInvoke, ExprLoop};
 use lang_core::ast::{Type, TypeInt, TypePrimitive, Value};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
@@ -31,12 +31,7 @@ impl MipsEmitter {
         let opcode = MipsOpcode::from_binop(op)?;
         if opcode.is_r_type() {
             let ret = self.stack.register_manager().acquire_t().unwrap();
-            let ins = MipsInstruction::from_opcode_r(
-                opcode,
-                ret.register.register,
-                lhs.register.register,
-                rhs.register.register,
-            );
+            let ins = MipsInstruction::from_opcode_r(opcode, ret.get(), lhs.get(), rhs.get());
             Ok(MipsEmitExprResult {
                 ret,
                 instructions: vec![ins],
@@ -44,14 +39,8 @@ impl MipsEmitter {
         } else if opcode.followed_by_mflo() {
             let ret = self.stack.register_manager().acquire_t().unwrap();
 
-            let ins = MipsInstruction::from_opcode_mult_div_mod(
-                opcode,
-                lhs.register.register,
-                rhs.register.register,
-            );
-            let ins_mflo = MipsInstruction::Mflo {
-                rd: ret.register.register,
-            };
+            let ins = MipsInstruction::from_opcode_mult_div_mod(opcode, lhs.get(), rhs.get());
+            let ins_mflo = MipsInstruction::Mflo { rd: ret.get() };
             Ok(MipsEmitExprResult {
                 ret,
                 instructions: vec![ins, ins_mflo],
@@ -69,9 +58,9 @@ impl MipsEmitter {
                 _ => bail!("Unsupported binop {}", op),
             }
             let ins = MipsInstruction::Slt {
-                rd: ret.register.register,
-                rs: lhs.register.register,
-                rt: rhs.register.register,
+                rd: ret.get(),
+                rs: lhs.get(),
+                rt: rhs.get(),
             };
             Ok(MipsEmitExprResult {
                 ret,
@@ -159,7 +148,7 @@ impl MipsEmitter {
         let mut ins = vec![];
         ins.extend(cond.instructions);
         ins.push(MipsInstruction::Beq {
-            rs: cond.ret.register.register,
+            rs: cond.ret.get(),
             rt: MipsRegister::Zero,
             label: if if_.elze.is_some() {
                 label_else.clone()
@@ -180,8 +169,8 @@ impl MipsEmitter {
             // copy the result of then to the result of else
             // Move is a pseudo instruction
             ins.push(MipsInstruction::Add {
-                rd: then.ret.register.register,
-                rs: else_.ret.register.register,
+                rd: then.ret.get(),
+                rs: else_.ret.get(),
                 rt: MipsRegister::Zero,
             });
         }
@@ -209,6 +198,17 @@ impl MipsEmitter {
         ins.extend(ret.instructions);
         Ok(MipsEmitExprResult::new(ret.ret, ins))
     }
+    pub fn emit_invoke(
+        &mut self,
+        invoke: &ExprInvoke,
+        _ctx: &SharedScopedContext,
+    ) -> Result<MipsEmitExprResult> {
+        match &*invoke.func {
+            Expr::Locator(ident) => Ok(self.emit_invoke_function(&ident.to_string())),
+            _ => bail!("Unsupported invoke {}", invoke.func),
+        }
+    }
+
     pub fn emit_expr(
         &mut self,
         expr: &Expr,
@@ -220,6 +220,7 @@ impl MipsEmitter {
             Expr::Loop(l) => self.emit_loop(l, ctx),
             Expr::If(if_) => self.emit_if(if_, ctx),
             Expr::Block(b) => self.emit_block(b, ctx),
+            Expr::Invoke(x) => self.emit_invoke(x, ctx),
             _ => bail!("Unsupported expr {}", expr),
         }
     }
