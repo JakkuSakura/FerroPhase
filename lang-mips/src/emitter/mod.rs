@@ -1,5 +1,6 @@
 use crate::emitter::expr::MipsEmitExprResult;
 use crate::instruction::MipsInstruction;
+use crate::storage::register::MipsRegister;
 use crate::storage::MipsStorage;
 
 mod expr;
@@ -31,12 +32,46 @@ impl MipsEmitter {
         let ret = self.stack.register_manager().acquire_t().unwrap();
 
         let ins = MipsInstruction::Li {
-            rt: ret.register.register,
+            rt: ret.get(),
             immediate: value,
         };
         MipsEmitExprResult {
             ret,
             instructions: vec![ins],
         }
+    }
+
+    pub fn emit_push_stack(&self, register: MipsRegister) -> Vec<MipsInstruction> {
+        let mut instructions = Vec::new();
+        let ins = MipsInstruction::Sw {
+            rt: register,
+            rs: MipsRegister::Sp,
+            offset: 0,
+        };
+        instructions.push(ins);
+        let ins = MipsInstruction::Addi {
+            rt: MipsRegister::Sp,
+            rs: MipsRegister::Sp,
+            immediate: -4,
+        };
+        instructions.push(ins);
+        instructions
+    }
+
+    pub fn emit_pop_stack(&self, register: MipsRegister) -> Vec<MipsInstruction> {
+        let mut instructions = Vec::new();
+        let ins = MipsInstruction::Lw {
+            rt: register,
+            rs: MipsRegister::Sp,
+            offset: 0,
+        };
+        instructions.push(ins);
+        let ins = MipsInstruction::Addi {
+            rt: MipsRegister::Sp,
+            rs: MipsRegister::Sp,
+            immediate: 4,
+        };
+        instructions.push(ins);
+        instructions
     }
 }

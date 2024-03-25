@@ -131,11 +131,11 @@ impl MipsRegisterManager {
 
     pub fn acquire_s(&self) -> Option<MipsRegisterOwned> {
         let register = self.registers_s.iter().find(|r| !r.is_borrowed()).cloned();
-        register.map(MipsRegisterOwned::new)
+        register.map(MipsRegisterOwned::new_managed)
     }
     pub fn acquire_t(&self) -> Option<MipsRegisterOwned> {
         let register = self.registers_t.iter().find(|r| !r.is_borrowed()).cloned();
-        register.map(MipsRegisterOwned::new)
+        register.map(MipsRegisterOwned::new_managed)
     }
     pub fn list_borrowed(&self) -> Vec<MipsRegister> {
         self.registers_s
@@ -147,28 +147,38 @@ impl MipsRegisterManager {
     }
 }
 #[derive(Debug)]
-pub struct MipsRegisterOwned {
-    pub register: Rc<MipsRegisterManaged>,
+pub enum MipsRegisterOwned {
+    Managed(Rc<MipsRegisterManaged>),
+    Free(MipsRegister),
 }
 impl MipsRegisterOwned {
     pub fn zero() -> Self {
-        let register = Rc::new(MipsRegisterManaged::new(MipsRegister::Zero));
-        register.borrow();
-        Self { register }
+        Self::Free(MipsRegister::Zero)
     }
-    pub fn new(register: Rc<MipsRegisterManaged>) -> Self {
+    pub fn new_managed(register: Rc<MipsRegisterManaged>) -> Self {
         register.borrow();
-        Self { register }
+        Self::Managed(register)
+    }
+    pub fn new_free(register: MipsRegister) -> Self {
+        Self::Free(register)
+    }
+    pub fn get(&self) -> MipsRegister {
+        match self {
+            Self::Managed(r) => r.register,
+            Self::Free(r) => *r,
+        }
     }
 }
 
 impl Drop for MipsRegisterOwned {
     fn drop(&mut self) {
-        self.register.release()
+        if let Self::Managed(r) = self {
+            r.release();
+        }
     }
 }
 impl Display for MipsRegisterOwned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.register.register)
+        write!(f, "{}", self.get())
     }
 }
