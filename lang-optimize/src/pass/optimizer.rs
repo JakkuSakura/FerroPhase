@@ -34,19 +34,36 @@ impl FoldOptimizer {
         mut invoke: ExprInvoke,
         ctx: &SharedScopedContext,
     ) -> Result<Expr> {
-        // TODO: obtain closure here
-        let func;
-        let closure_context;
-        match self.optimize_expr(invoke.func.get(), ctx)? {
-            Expr::Closured(c) => {
-                closure_context = Some(c.ctx);
-                func = c.expr.into();
+        let mut func;
+        let mut closure_context = None;
+        match &invoke.target {
+            ExprInvokeTarget::Function(id) => {
+                func = ctx
+                    .get_expr_with_ctx(id.to_path())
+                    .with_context(|| format!("Couldn't find {}", id))?;
             }
-            e => {
-                closure_context = None;
-                func = e;
+            ExprInvokeTarget::Method(_) => {
+                todo!()
+            }
+            ExprInvokeTarget::Type(_) => {
+                todo!()
+            }
+            ExprInvokeTarget::BinOp(_) => {
+                todo!()
+            }
+            ExprInvokeTarget::Closure(v) => {
+                func = Expr::value(v.clone().into());
+            }
+            ExprInvokeTarget::Expr(expr) => {
+                func = self.optimize_expr(expr.get(), ctx)?;
             }
         }
+
+        if let Expr::Closured(f) = &func {
+            closure_context = Some(f.ctx.clone());
+            func = f.expr.get();
+        }
+
         let args = take(&mut invoke.args);
         for arg in args {
             let expr = self.optimize_expr(arg.into(), ctx)?;
@@ -91,11 +108,11 @@ impl FoldOptimizer {
                                 ret
                             );
 
-                            return Ok(ret);
+                            Ok(ret)
                         }
                         value => {
                             let ret = self.pass.optimize_invoke(invoke, &value, ctx)?;
-                            return Ok(ret);
+                            Ok(ret)
                         }
                     },
                     _ => {
@@ -104,15 +121,15 @@ impl FoldOptimizer {
                             invoke, func
                         );
                         ctx.print_values()?;
+                        Ok(Expr::Invoke(invoke.into()))
                     }
                 }
             }
-            ControlFlow::Continue => {}
+            ControlFlow::Continue => {
+                return Ok(Expr::Invoke(invoke.into()));
+            }
             _ => bail!("Cannot handle control flow {:?}", control),
         }
-
-        let invoke = Expr::Invoke(invoke.into());
-        Ok(invoke)
     }
 
     pub fn optimize_expr(&self, mut expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {

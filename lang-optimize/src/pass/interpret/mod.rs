@@ -36,38 +36,18 @@ impl InterpreterPass {
     }
     pub fn interpret_invoke(&self, node: &ExprInvoke, ctx: &SharedScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
-        match node.func.get() {
-            Expr::Value(value) => match value.as_ref() {
-                Value::BinOpKind(kind) => {
-                    self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
-                }
-                Value::UnOpKind(func) => {
-                    ensure!(node.args.len() == 1, "Expected 1 arg for {:?}", func);
-                    let arg = self.interpret_expr(&node.args[0].get(), ctx)?;
-                    self.interpret_invoke_unop(func.clone(), arg, ctx)
-                }
-                _ => bail!("Could not invoke {}", node),
-            },
-
-            Expr::Any(any) => {
-                if let Some(exp) = any.downcast_ref::<BuiltinFn>() {
-                    let args = self.interpret_args(&node.args, ctx)?;
-                    exp.invoke(&args, ctx)
-                } else {
-                    bail!("Could not invoke {:?}", node)
-                }
-            }
-            Expr::Locator(Locator::Ident(ident)) => {
+        match &node.target {
+            ExprInvokeTarget::Function(Locator::Ident(ident)) => {
                 let func = self.interpret_ident(&ident, ctx, true)?;
                 self.interpret_invoke(
                     &ExprInvoke {
-                        func: Expr::value(func).into(),
+                        target: ExprInvokeTarget::Expr(Expr::value(func).into()),
                         args: node.args.clone(),
                     },
                     ctx,
                 )
             }
-            Expr::Select(select) => match select.field.as_str() {
+            ExprInvokeTarget::Method(select) => match select.field.as_str() {
                 "to_string" => match &select.obj.get() {
                     Expr::Value(value) => match value.as_ref() {
                         Value::String(obj) => {
@@ -80,6 +60,29 @@ impl InterpreterPass {
                     _ => bail!("Expected struct for {:?}", select),
                 },
                 x => bail!("Could not invoke {:?}", x),
+            },
+            ExprInvokeTarget::Expr(e) => match e.as_ref() {
+                Expr::Value(value) => match value.as_ref() {
+                    Value::BinOpKind(kind) => {
+                        self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
+                    }
+                    Value::UnOpKind(func) => {
+                        ensure!(node.args.len() == 1, "Expected 1 arg for {:?}", func);
+                        let arg = self.interpret_expr(&node.args[0].get(), ctx)?;
+                        self.interpret_invoke_unop(func.clone(), arg, ctx)
+                    }
+                    _ => bail!("Could not invoke {}", node),
+                },
+
+                Expr::Any(any) => {
+                    if let Some(exp) = any.downcast_ref::<BuiltinFn>() {
+                        let args = self.interpret_args(&node.args, ctx)?;
+                        exp.invoke(&args, ctx)
+                    } else {
+                        bail!("Could not invoke {:?}", node)
+                    }
+                }
+                _ => bail!("Could not invoke {:?}", node),
             },
             kind => bail!("Could not invoke {:?}", kind),
         }
