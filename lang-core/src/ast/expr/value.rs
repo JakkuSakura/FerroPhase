@@ -1,4 +1,4 @@
-use crate::ast::{BExpr, Expr, Type};
+use crate::ast::{BExpr, BValue, Expr, Type, Value};
 use crate::ast::{FieldValue, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
@@ -13,6 +13,25 @@ common_enum! {
         Closure(ValueFunction),
         BinOp(BinOpKind),
         Expr(BExpr),
+    }
+}
+impl ExprInvokeTarget {
+    pub fn expr(expr: BExpr) -> Self {
+        match &*expr {
+            Expr::Locator(locator) => Self::Function(locator.clone()),
+            Expr::Select(select) => Self::Method(select.clone()),
+            Expr::Value(value) => Self::value(value.clone()),
+            _ => Self::Expr(expr),
+        }
+    }
+    pub fn value(value: BValue) -> Self {
+        match &*value {
+            Value::Function(func) => Self::Closure(func.clone()),
+            Value::BinOpKind(kind) => Self::BinOp(kind.clone()),
+            Value::Type(ty) => Self::Type(ty.clone()),
+            Value::Expr(expr) => Self::expr(expr.clone()),
+            _ => panic!("Invalid value for ExprInvokeTarget::value: {}", value),
+        }
     }
 }
 
