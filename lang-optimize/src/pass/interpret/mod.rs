@@ -41,7 +41,7 @@ impl InterpreterPass {
                 let func = self.interpret_ident(&ident, ctx, true)?;
                 self.interpret_invoke(
                     &ExprInvoke {
-                        target: ExprInvokeTarget::Expr(Expr::value(func).into()),
+                        target: ExprInvokeTarget::expr(Expr::value(func).into()),
                         args: node.args.clone(),
                     },
                     ctx,
