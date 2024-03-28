@@ -260,7 +260,7 @@ fn parse_call(call: syn::ExprCall) -> Result<ExprInvoke> {
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
     Ok(ExprInvoke {
-        target: fun.into(),
+        target: ExprInvokeTarget::expr(fun),
         args,
     })
 }
