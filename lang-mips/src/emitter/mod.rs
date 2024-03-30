@@ -43,16 +43,16 @@ impl MipsEmitter {
 
     pub fn emit_push_stack(&self, register: MipsRegister) -> Vec<MipsInstruction> {
         let mut instructions = Vec::new();
-        let ins = MipsInstruction::Sw {
-            rt: register,
-            rs: MipsRegister::Sp,
-            offset: 0,
-        };
-        instructions.push(ins);
         let ins = MipsInstruction::Addi {
             rt: MipsRegister::Sp,
             rs: MipsRegister::Sp,
             immediate: -4,
+        };
+        instructions.push(ins);
+        let ins = MipsInstruction::Sw {
+            rt: register,
+            rs: MipsRegister::Sp,
+            offset: 0,
         };
         instructions.push(ins);
         instructions
