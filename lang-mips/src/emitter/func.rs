@@ -24,7 +24,21 @@ impl MipsEmitter {
             name: func.name.to_string(),
         };
         instructions.push(ins);
-        // TODO: stash s1-s7 to stack, if used in function body
+        let preservation = [
+            MipsRegister::Ra,
+            MipsRegister::S0,
+            MipsRegister::S1,
+            MipsRegister::S2,
+            MipsRegister::S3,
+            // MipsRegister::S4,
+            // MipsRegister::S5,
+            // MipsRegister::S6,
+            // MipsRegister::S7,
+        ];
+        for register in preservation.iter() {
+            instructions.extend(self.emit_push_stack(*register));
+        }
+
         // emit function body
         let ret = self.emit_expr(&func.value.body, ctx)?;
         instructions.extend(ret.instructions);
@@ -35,6 +49,9 @@ impl MipsEmitter {
             rt: ret.ret.get(),
             rs: MipsRegister::Zero,
         });
+        for register in preservation.iter().rev() {
+            instructions.extend(self.emit_pop_stack(*register));
+        }
         // emit function return
         let ins = MipsInstruction::Jr {
             rs: MipsRegister::Ra,
@@ -65,28 +82,12 @@ impl MipsEmitter {
                 instructions.push(ins);
             }
         }
-        // in caller, push $ra to stack first
-        let ins = MipsInstruction::Sw {
-            rt: MipsRegister::Ra,
-            rs: MipsRegister::Sp,
-            offset: 0,
-        };
-        instructions.push(ins);
-        let ins = MipsInstruction::Addi {
-            rt: MipsRegister::Sp,
-            rs: MipsRegister::Sp,
-            immediate: -4,
-        };
-        instructions.push(ins);
 
         // jump to the function
         let ins = MipsInstruction::Jal {
             label: func_name.to_string(),
         };
         instructions.push(ins);
-
-        // pop $ra from stack
-        instructions.extend(self.emit_pop_stack(MipsRegister::Ra));
 
         if let Some(frame) = self.stack.frames.last() {
             for register in frame.register.list_borrowed().into_iter().rev() {
