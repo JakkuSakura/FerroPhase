@@ -14,5 +14,5 @@ derive_more = { version = "1.0.0-beta.6", features = ["full"] }
 bytes = { version = "1.5.0", features = ["serde"] }
 itertools = "0.12.1"
 eyre = "0.6.12"
-thiserror = "1.0"
+thiserror = "1"
 miette = { version = "7.2.0", features = ["fancy"] }
