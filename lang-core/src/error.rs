@@ -8,14 +8,14 @@ use thiserror::Error;
     url(docsrs),
     help("try doing it better next time?")
 )]
-struct MyBad {
+pub struct ErrorSpanned {
     // The Source that we're gonna be printing snippets out of.
     // This can be a String if you don't have or care about file names.
     #[source_code]
     src: NamedSource<String>,
     // Snippets and highlights can be included in the diagnostic!
     #[label("This bit here")]
-    bad_bit: SourceSpan,
+    span: SourceSpan,
 }
 
 #[cfg(test)]
@@ -24,13 +24,13 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_my_bad() {
+    fn test_error_span() {
         let src = "source\n  text\n    here".to_string();
 
         Err::<(), miette::Report>(
-            MyBad {
+            ErrorSpanned {
                 src: NamedSource::new("bad_file.rs", src),
-                bad_bit: (9, 4).into(),
+                span: (9, 4).into(),
             }
             .into(),
         )
