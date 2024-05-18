@@ -10,3 +10,4 @@
 //! Another thing: CST and AST are tree like, so Box<T> should be fine
 //! Can be combined with Pratt Parsing algorithm for operator precedence
 //! https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
+pub mod ts;
