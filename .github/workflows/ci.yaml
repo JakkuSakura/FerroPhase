@@ -23,7 +23,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run lang-optimize examples
-        run: cd lang-optimize && cargo run --example generate_examples
+        run: cd lang-optimize && cargo run --example generate-examples
 
       - name: Run tests
         run: cargo test test
