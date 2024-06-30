@@ -224,32 +224,25 @@ fn parse_fn(f: syn::ItemFn) -> Result<ValueFunction> {
         body: Expr::block(parse_block(*f.block)?).into(),
     })
 }
-pub fn parse_trait_item(f: syn::TraitItem) -> Result<Declare> {
+pub fn parse_trait_item(f: syn::TraitItem) -> Result<Item> {
     match f {
         syn::TraitItem::Fn(f) => {
             let name = parse_ident(f.sig.ident.clone());
-            Ok(Declare {
+            Ok(DeclFunction {
                 name,
-                kind: DeclareKind::Function {
-                    sig: parse_fn_sig(f.sig)?,
-                },
-            })
+                sig: parse_fn_sig(f.sig)?,
+            }
+            .into())
         }
         syn::TraitItem::Type(t) => {
             let name = parse_ident(t.ident);
             let bounds = parse_type_param_bounds(t.bounds.into_iter().collect())?;
-            Ok(Declare {
-                name,
-                kind: DeclareKind::Type { bounds },
-            })
+            Ok(DeclType { name, bounds }.into())
         }
         syn::TraitItem::Const(c) => {
             let name = parse_ident(c.ident);
             let ty = parse_type_value(c.ty)?;
-            Ok(Declare {
-                name,
-                kind: DeclareKind::Const { ty },
-            })
+            Ok(DeclConst { name, ty }.into())
         }
         _ => bail!("Does not support trait item {:?}", f),
     }
@@ -647,7 +640,7 @@ fn parse_trait(t: syn::ItemTrait) -> Result<DefTrait> {
         items: t
             .items
             .into_iter()
-            .map(|x| parse_trait_item(x).map(Item::Declare))
+            .map(|x| parse_trait_item(x))
             .try_collect()?,
         visibility: vis,
     })
