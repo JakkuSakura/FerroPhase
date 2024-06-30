@@ -16,7 +16,9 @@ common_enum! {
         DefConst(DefConst),
         DefFunction(DefFunction),
         DefTrait(DefTrait),
-        Declare(Declare),
+        DeclType(DeclType),
+        DeclConst(DeclConst),
+        DeclFunction(DeclFunction),
         Import(Import),
         Impl(Impl),
         Expr(Expr),
@@ -108,7 +110,9 @@ impl Item {
             Self::DefEnum(define) => Some(&define.name),
             Self::DefType(define) => Some(&define.name),
             Self::DefConst(define) => Some(&define.name),
-            Self::Declare(declare) => Some(&declare.name),
+            Self::DeclType(declare) => Some(&declare.name),
+            Self::DeclConst(declare) => Some(&declare.name),
+            Self::DeclFunction(declare) => Some(&declare.name),
             Self::Module(module) => Some(&module.name),
             _ => None,
         }
@@ -248,17 +252,21 @@ common_struct! {
     }
 }
 
-common_enum! {
-    pub enum DeclareKind {
-        Const { ty: Type },
-        Type { bounds: TypeBounds },
-        Function { sig: FunctionSignature },
-
+common_struct! {
+    pub struct DeclConst {
+        pub name: Ident,
+        pub ty: Type,
     }
 }
 common_struct! {
-    pub struct Declare {
+    pub struct DeclType {
         pub name: Ident,
-        pub kind: DeclareKind,
+        pub bounds: TypeBounds,
+    }
+}
+common_struct! {
+    pub struct DeclFunction {
+        pub name: Ident,
+        pub sig: FunctionSignature,
     }
 }
