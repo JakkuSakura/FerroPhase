@@ -5,8 +5,9 @@ use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use lang_core::ast::{
     BExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInitStruct, ExprInvoke,
-    ExprInvokeTarget, ExprLoop, ExprParen, ExprReference, ExprSelect, ExprSelectType, ExprUnOp,
-    Statement, StatementLet, Value, ValueBool, ValueDecimal, ValueInt, ValueString, ValueTuple,
+    ExprInvokeTarget, ExprLoop, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
+    ExprSelectType, ExprUnOp, Statement, StatementLet, Value, ValueBool, ValueDecimal, ValueInt,
+    ValueString, ValueTuple,
 };
 use lang_core::ops::{BinOpKind, UnOpKind};
 use lang_core::utils::anybox::AnyBox;
@@ -28,7 +29,8 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<BExpr> {
         syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
         syn::Expr::Struct(s) => Expr::InitStruct(parse_expr_struct(s)?.into()),
-        syn::Expr::Paren(p) => Expr::Paren(parse_expr_parent(p)?),
+        syn::Expr::Paren(p) => Expr::Paren(parse_expr_paren(p)?),
+        syn::Expr::Range(r) => Expr::Range(parse_expr_range(r)?),
         raw => {
             warn!("RawExpr {:?}", raw);
             Expr::Any(AnyBox::new(RawExpr { raw }))
@@ -203,8 +205,22 @@ pub fn parse_expr_struct(s: syn::ExprStruct) -> eyre::Result<ExprInitStruct> {
             .try_collect()?,
     })
 }
-pub fn parse_expr_parent(p: syn::ExprParen) -> eyre::Result<ExprParen> {
+pub fn parse_expr_paren(p: syn::ExprParen) -> eyre::Result<ExprParen> {
     Ok(ExprParen {
         expr: parse_expr(*p.expr)?.into(),
+    })
+}
+pub fn parse_expr_range(r: syn::ExprRange) -> eyre::Result<ExprRange> {
+    let start = r.start.map(|x| parse_expr(*x)).transpose()?;
+    let limit = match r.limits {
+        syn::RangeLimits::HalfOpen(_) => ExprRangeLimit::Exclusive,
+        syn::RangeLimits::Closed(_) => ExprRangeLimit::Inclusive,
+    };
+    let end = r.end.map(|x| parse_expr(*x)).transpose()?;
+    Ok(ExprRange {
+        start,
+        limit,
+        end,
+        step: None,
     })
 }
