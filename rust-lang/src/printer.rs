@@ -274,6 +274,13 @@ impl RustPrinter {
             #target = #value;
         ))
     }
+    pub fn print_index(&self, index: &ExprIndex) -> Result<TokenStream> {
+        let expr = self.print_expr(&index.expr.get())?;
+        let index = self.print_expr(&index.index.get())?;
+        Ok(quote!(
+            #expr[#index]
+        ))
+    }
     // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
     //     let name = self.print_ident(&for_each.variable);
     //     let iter = self.print_expr(&for_each.iterable)?;
@@ -456,7 +463,7 @@ impl RustPrinter {
             }
 
             ExprInvokeTarget::Method(select) => match select.select {
-                SelectType::Field => {
+                ExprSelectType::Field => {
                     return Ok(quote!(
                         (#fun)(#(#args), *)
                     ));
@@ -522,7 +529,7 @@ impl RustPrinter {
         let obj = self.print_expr(&select.obj.get())?;
         let field = self.print_ident(&select.field);
         match select.select {
-            SelectType::Const => Ok(quote!(
+            ExprSelectType::Const => Ok(quote!(
                 #obj::#field
             )),
             _ => Ok(quote!(
@@ -793,6 +800,9 @@ impl RustPrinter {
             Expr::Block(n) => self.print_block(n),
             Expr::InitStruct(n) => self.print_struct_expr(n),
             Expr::Select(n) => self.print_select(n),
+            Expr::Reference(n) => self.print_ref(n),
+            Expr::Assign(n) => self.print_assign(n),
+            Expr::Index(n) => self.print_index(n),
             Expr::Closured(n) => self.print_expr(&n.expr.get()),
             _ => bail!("Unable to serialize {:?}", node),
         }
