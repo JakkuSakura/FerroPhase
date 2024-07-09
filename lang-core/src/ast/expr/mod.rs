@@ -40,6 +40,7 @@ common_enum! {
         Closured(ExprClosure),
         Paren(ExprParen),
         SelfType(ExprSelfType),
+        Range(ExprRange),
 
         Any(AnyBox),
     }
