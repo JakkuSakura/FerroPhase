@@ -281,6 +281,12 @@ impl RustPrinter {
             #expr[#index]
         ))
     }
+    pub fn print_paren(&self, paren: &ExprParen) -> Result<TokenStream> {
+        let expr = self.print_expr(&paren.expr.get())?;
+        Ok(quote!(
+            (#expr)
+        ))
+    }
     // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
     //     let name = self.print_ident(&for_each.variable);
     //     let iter = self.print_expr(&for_each.iterable)?;
@@ -298,13 +304,14 @@ impl RustPrinter {
     //             #body
     //     ))
     // }
-    // pub fn print_loop(&self, loop_: &ExprLoop) -> Result<TokenStream> {
-    //     let body = self.print_block(&loop_.body)?;
-    //     Ok(quote!(
-    //         loop
-    //             #body
-    //     ))
-    // }
+    pub fn print_loop(&self, loop_: &ExprLoop) -> Result<TokenStream> {
+        let body = self.print_expr_optimized(&loop_.body)?;
+        Ok(quote!(
+            loop {
+                #body
+            }
+        ))
+    }
     pub fn print_statement(&self, stmt: &Statement) -> Result<TokenStream> {
         match stmt {
             Statement::Item(item) => self.print_item(item),
@@ -804,6 +811,8 @@ impl RustPrinter {
             Expr::Assign(n) => self.print_assign(n),
             Expr::Index(n) => self.print_index(n),
             Expr::Closured(n) => self.print_expr(&n.expr.get()),
+            Expr::Paren(n) => self.print_paren(n),
+            Expr::Loop(n) => self.print_loop(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
