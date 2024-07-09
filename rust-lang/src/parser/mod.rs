@@ -1,6 +1,7 @@
 mod expr;
 mod item;
 
+use crate::parser::expr::parse_block;
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
@@ -80,7 +81,7 @@ fn parse_type_value(t: syn::Type) -> Result<Type> {
                     .map(parse_type_value)
                     .try_collect()?,
                 generics_params: vec![],
-                ret: expr::parse_return_type(f.output)?.into(),
+                ret: item::parse_return_type(f.output)?.into(),
             }
             .into(),
         )
@@ -189,10 +190,10 @@ pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
         params: sig
             .inputs
             .into_iter()
-            .map(expr::parse_fn_arg)
+            .map(item::parse_fn_arg)
             .try_collect()?,
         generics_params,
-        ret: expr::parse_return_type(sig.output)?,
+        ret: item::parse_return_type(sig.output)?,
     })
 }
 pub fn parse_trait_item(f: syn::TraitItem) -> Result<Item> {
@@ -243,7 +244,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
     match item {
         syn::ImplItem::Fn(m) => {
             // TODO: defaultness
-            let expr = expr::parse_fn(syn::ItemFn {
+            let expr = parse_fn(syn::ItemFn {
                 attrs: m.attrs,
                 vis: m.vis.clone(),
                 sig: m.sig,
@@ -333,7 +334,7 @@ impl syn::parse::Parse for TypeValueParser {
             if input.peek2(syn::Ident) {
                 let s: syn::ItemStruct = input.parse()?;
                 Ok(TypeValueParser::NamedStruct(
-                    expr::parse_item_struct(s).map_err(|err| input.error(err))?,
+                    item::parse_item_struct(s).map_err(|err| input.error(err))?,
                 ))
             } else {
                 Ok(TypeValueParser::UnnamedStruct(
@@ -404,7 +405,7 @@ fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<Expr> {
 pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
     let module = Module {
         name: Ident::new("__file__"),
-        items: file.items.into_iter().map(expr::parse_item).try_collect()?,
+        items: file.items.into_iter().map(item::parse_item).try_collect()?,
         visibility: Visibility::Public,
     };
     Ok(File { path, module })
@@ -417,11 +418,19 @@ pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
             .unwrap()
             .1
             .into_iter()
-            .map(expr::parse_item)
+            .map(item::parse_item)
             .try_collect()?,
         visibility: parse_vis(m.vis),
     })
 }
+pub fn parse_fn(f: syn::ItemFn) -> Result<ValueFunction> {
+    let sig = parse_fn_sig(f.sig)?;
+    Ok(ValueFunction {
+        sig,
+        body: Expr::block(parse_block(*f.block)?).into(),
+    })
+}
+
 pub struct RustParser {}
 
 impl RustParser {
@@ -458,7 +467,7 @@ impl RustParser {
         expr::parse_expr(code).map(|x| x.get())
     }
     pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
-        expr::parse_item(code)
+        item::parse_item(code)
     }
     pub fn parse_file(&self, path: PathBuf, code: syn::File) -> Result<File> {
         parse_file(path, code)
