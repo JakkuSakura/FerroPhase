@@ -1,3 +1,6 @@
+mod expr;
+mod item;
+
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use common::*;
 use itertools::Itertools;
@@ -46,47 +49,6 @@ impl RustPrinter {
         Ok(quote!(
             #name: #bounds
         ))
-    }
-
-    pub fn print_def_struct(&self, def: &DefStruct) -> Result<TokenStream> {
-        let name = self.print_ident(&def.name);
-        let fields: Vec<_> = def
-            .value
-            .fields
-            .iter()
-            .map(|x| self.print_field(&x))
-            .try_collect()?;
-        Ok(quote!(
-            struct #name {
-                #(#fields), *
-            }
-        ))
-    }
-    pub fn print_def_type(&self, def: &DefType) -> Result<TokenStream> {
-        let name = self.print_ident(&def.name);
-        let ty = self.print_type_value(&def.value)?;
-        return Ok(quote!(
-            type #name = t!{ #ty };
-        ));
-    }
-    pub fn print_def_const(&self, def: &DefConst) -> Result<TokenStream> {
-        let name = self.print_ident(&def.name);
-        let ty = self.print_type_value(&def.ty.as_ref().context("No type")?.clone())?;
-        let value = self.print_value(&def.value)?;
-        return Ok(quote!(
-            const #name: #ty = #value;
-        ));
-    }
-    pub fn print_def_trait(&self, def: &DefTrait) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
-        let name = self.print_ident(&def.name);
-        let ty = self.print_type_bounds(&def.bounds)?;
-        let items = self.print_items_chunk(&def.items)?;
-        return Ok(quote!(
-            #vis trait #name #ty {
-                #items
-            }
-        ));
     }
 
     pub fn print_field(&self, field: &FieldTypeValue) -> Result<TokenStream> {
@@ -138,12 +100,6 @@ impl RustPrinter {
             BinOpKind::BitXor => quote!(^),
         }
     }
-    pub fn print_bin_op(&self, binop: &ExprBinOp) -> Result<TokenStream> {
-        let lhs = self.print_expr(&binop.lhs.get())?;
-        let rhs = self.print_expr(&binop.rhs.get())?;
-        let op = self.print_bin_op_kind(&binop.kind);
-        Ok(quote!(#lhs #op #rhs))
-    }
     pub fn print_invoke_target(&self, target: &ExprInvokeTarget) -> Result<TokenStream> {
         match target {
             ExprInvokeTarget::Function(locator) => self.print_locator(locator),
@@ -153,17 +109,6 @@ impl RustPrinter {
             ExprInvokeTarget::BinOp(op) => Ok(self.print_bin_op_kind(op)),
             ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
         }
-    }
-    pub fn print_invoke_expr(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
-        let fun = self.print_invoke_target(&invoke.target)?;
-        let args: Vec<_> = invoke
-            .args
-            .iter()
-            .map(|x| self.print_expr(&x.get()))
-            .try_collect()?;
-        Ok(quote!(
-            #fun(#(#args), *)
-        ))
     }
     pub fn print_invoke_type(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
         let fun = self.print_invoke_target(&invoke.target)?;
@@ -177,14 +122,6 @@ impl RustPrinter {
         ))
     }
 
-    pub fn print_items_chunk(&self, items: &[Item]) -> Result<TokenStream> {
-        let mut stmts = vec![];
-        for item in items {
-            let item = self.print_item(item)?;
-            stmts.push(item);
-        }
-        Ok(quote!(#(#stmts) *))
-    }
     pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
         match pat {
             Pattern::Ident(ident) => self.print_pat_ident(ident),
@@ -258,35 +195,6 @@ impl RustPrinter {
             _ => todo!(),
         }
     }
-    pub fn print_let(&self, let_: &StatementLet) -> Result<TokenStream> {
-        let pat = self.print_pattern(&let_.pat)?;
-
-        let value = self.print_expr(&let_.value)?;
-
-        Ok(quote!(
-            let #pat = #value;
-        ))
-    }
-    pub fn print_assign(&self, assign: &ExprAssign) -> Result<TokenStream> {
-        let target = self.print_expr(&assign.target)?;
-        let value = self.print_expr(&assign.value)?;
-        Ok(quote!(
-            #target = #value;
-        ))
-    }
-    pub fn print_index(&self, index: &ExprIndex) -> Result<TokenStream> {
-        let expr = self.print_expr(&index.expr.get())?;
-        let index = self.print_expr(&index.index.get())?;
-        Ok(quote!(
-            #expr[#index]
-        ))
-    }
-    pub fn print_paren(&self, paren: &ExprParen) -> Result<TokenStream> {
-        let expr = self.print_expr(&paren.expr.get())?;
-        Ok(quote!(
-            (#expr)
-        ))
-    }
     // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
     //     let name = self.print_ident(&for_each.variable);
     //     let iter = self.print_expr(&for_each.iterable)?;
@@ -304,68 +212,6 @@ impl RustPrinter {
     //             #body
     //     ))
     // }
-    pub fn print_loop(&self, loop_: &ExprLoop) -> Result<TokenStream> {
-        let body = self.print_expr_optimized(&loop_.body)?;
-        Ok(quote!(
-            loop {
-                #body
-            }
-        ))
-    }
-    pub fn print_statement(&self, stmt: &Statement) -> Result<TokenStream> {
-        match stmt {
-            Statement::Item(item) => self.print_item(item),
-            Statement::Let(let_) => self.print_let(let_),
-            Statement::Expr(expr) => self.print_expr(expr),
-            Statement::Any(any) => self.print_any(any),
-        }
-    }
-    pub fn print_statement_chunk(&self, items: &[Statement]) -> Result<TokenStream> {
-        let mut stmts = vec![];
-        for item in items {
-            let item = self.print_statement(item)?;
-            stmts.push(item);
-        }
-        Ok(quote!(#(#stmts) *))
-    }
-    pub fn print_block(&self, n: &ExprBlock) -> Result<TokenStream> {
-        let chunk = self.print_statement_chunk(&n.stmts)?;
-        Ok(quote!({
-            #chunk
-        }))
-    }
-    pub fn print_if(&self, if_: &ExprIf) -> Result<TokenStream> {
-        let cond = self.print_expr(&if_.cond)?;
-        let then = self.print_expr_optimized(&if_.then)?;
-        let elze = if let Some(elze) = &if_.elze {
-            let elze = self.print_expr(elze)?;
-            quote!(else #elze)
-        } else {
-            quote!()
-        };
-        Ok(quote!(
-            if #cond {
-                #then
-            }
-            #elze
-        ))
-    }
-    pub fn print_match(&self, m: &ExprMatch) -> Result<TokenStream> {
-        let mut ts = vec![];
-        for (_i, c) in m.cases.iter().enumerate() {
-            let node = &c.cond;
-            let co = self.print_expr(node)?;
-            let node = &c.body;
-            let ex = self.print_expr_optimized(node)?;
-            ts.push(quote!(
-                if #co => { #ex }
-            ))
-        }
-        Ok(quote!(match () {
-            () #(#ts)*
-            _ => {}
-        }))
-    }
     pub fn print_vis(&self, vis: Visibility) -> TokenStream {
         match vis {
             Visibility::Public => quote!(pub),
@@ -419,92 +265,6 @@ impl RustPrinter {
             }
         ));
     }
-    pub fn print_invoke(&self, node: &ExprInvoke) -> Result<TokenStream> {
-        let fun = self.print_invoke_target(&node.target)?;
-        let args: Vec<_> = node
-            .args
-            .iter()
-            .map(|x| self.print_expr(&x.get()))
-            .try_collect()?;
-        match &node.target {
-            ExprInvokeTarget::Function(_) => {
-                return Ok(quote!(
-                    #fun(#(#args), *)
-                ));
-            }
-            ExprInvokeTarget::Type(_) => {
-                return Ok(quote!(
-                    <#fun>::<#(#args), *>
-                ));
-            }
-            ExprInvokeTarget::BinOp(op) => {
-                let ret = match op {
-                    BinOpKind::Add => quote!(#(#args) + *),
-                    BinOpKind::AddTrait => quote!(#(#args) + *),
-                    BinOpKind::Sub => quote!(#(#args) - *),
-                    BinOpKind::Div => quote!(#(#args) / *),
-                    BinOpKind::Mul => {
-                        let mut result = vec![];
-                        for (i, a) in args.into_iter().enumerate() {
-                            if i != 0 {
-                                result.push(quote!(*));
-                            }
-                            result.push(a);
-                        }
-                        quote!(#(#result)*)
-                    }
-                    BinOpKind::Mod => quote!(#(#args) % *),
-                    BinOpKind::Gt => quote!(#(#args) > *),
-                    BinOpKind::Lt => quote!(#(#args) < *),
-                    BinOpKind::Ge => quote!(#(#args) >= *),
-                    BinOpKind::Le => quote!(#(#args) <= *),
-                    BinOpKind::Eq => quote!(#(#args) == *),
-                    BinOpKind::Ne => quote!(#(#args) != *),
-                    BinOpKind::Or => quote!(#(#args) || *),
-                    BinOpKind::And => quote!(#(#args) && *),
-                    BinOpKind::BitOr => quote!(#(#args) | *),
-                    BinOpKind::BitAnd => quote!(#(#args) & *),
-                    BinOpKind::BitXor => quote!(#(#args) ^ *),
-                };
-                return Ok(ret);
-            }
-
-            ExprInvokeTarget::Method(select) => match select.select {
-                ExprSelectType::Field => {
-                    return Ok(quote!(
-                        (#fun)(#(#args), *)
-                    ));
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-
-        let fun_str = fun.to_string();
-
-        // TODO: deprecate it
-        let code = match fun_str.as_str() {
-            "tuple" => quote!(
-                (#(#args), *)
-            ),
-            _ => quote!(
-                #fun(#(#args), *)
-            ),
-        };
-        // if true {
-        //     return Ok(quote!((#code)));
-        // }
-        Ok(code)
-    }
-    pub fn print_ref(&self, n: &ExprReference) -> Result<TokenStream> {
-        let referee = self.print_expr(&n.referee.get())?;
-        if n.mutable == Some(true) {
-            Ok(quote!(&mut #referee))
-        } else {
-            Ok(quote!(&#referee))
-        }
-    }
-
     pub fn print_func_type_param(&self, param: &FunctionParam) -> Result<TokenStream> {
         let name = self.print_ident(&param.name);
         let ty = self.print_type_value(&param.ty)?;
@@ -530,32 +290,6 @@ impl RustPrinter {
         let ret = self.print_return_type(node)?;
         Ok(quote!(
             fn(#(#args), *) #ret
-        ))
-    }
-    pub fn print_select(&self, select: &ExprSelect) -> Result<TokenStream> {
-        let obj = self.print_expr(&select.obj.get())?;
-        let field = self.print_ident(&select.field);
-        match select.select {
-            ExprSelectType::Const => Ok(quote!(
-                #obj::#field
-            )),
-            _ => Ok(quote!(
-                #obj.#field
-            )),
-        }
-    }
-    pub fn print_args(&self, node: &Vec<Expr>) -> Result<TokenStream> {
-        let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;
-        Ok(quote!((#(#args),*)))
-    }
-
-    pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
-        let name = self.print_expr(&impl_.self_ty)?;
-        let methods = self.print_items_chunk(&impl_.items)?;
-        Ok(quote!(
-            impl #name {
-                #methods
-            }
         ))
     }
     pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
@@ -786,50 +520,6 @@ impl RustPrinter {
         })
     }
 
-    pub fn print_expr_optimized(&self, node: &Expr) -> Result<TokenStream> {
-        match node {
-            Expr::Match(n) => self.print_match(n),
-            Expr::If(n) => self.print_if(n),
-            Expr::Block(n) => self.print_statement_chunk(&n.stmts),
-            Expr::Value(v) if v.is_unit() => Ok(quote!()),
-            _ => self.print_expr(node),
-        }
-    }
-    pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
-        match node {
-            Expr::Locator(loc) => self.print_locator(loc),
-            Expr::Value(n) => self.print_value(n),
-            Expr::Invoke(n) => self.print_invoke_expr(n),
-            Expr::BinOp(op) => self.print_bin_op(op),
-            Expr::Any(n) => self.print_any(n),
-            Expr::Match(n) => self.print_match(n),
-            Expr::If(n) => self.print_if(n),
-            Expr::Block(n) => self.print_block(n),
-            Expr::InitStruct(n) => self.print_struct_expr(n),
-            Expr::Select(n) => self.print_select(n),
-            Expr::Reference(n) => self.print_ref(n),
-            Expr::Assign(n) => self.print_assign(n),
-            Expr::Index(n) => self.print_index(n),
-            Expr::Closured(n) => self.print_expr(&n.expr.get()),
-            Expr::Paren(n) => self.print_paren(n),
-            Expr::Loop(n) => self.print_loop(n),
-            _ => bail!("Unable to serialize {:?}", node),
-        }
-    }
-    pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
-        match item {
-            Item::DefFunction(n) => self.print_function(&n.value, n.visibility),
-            Item::DefType(n) => self.print_def_type(n),
-            Item::DefStruct(n) => self.print_def_struct(n),
-            Item::DefTrait(n) => self.print_def_trait(n),
-            // Item::DefEnum(n) => self.print_def_enum(n),
-            Item::Impl(n) => self.print_impl(n),
-            Item::Module(n) => self.print_module(n),
-            Item::Import(n) => self.print_import(n),
-            Item::Expr(n) => self.print_expr(n),
-            _ => bail!("Unable to serialize {:?}", item),
-        }
-    }
     pub fn print_file(&self, file: &File) -> Result<TokenStream> {
         let items = self.print_items_chunk(&file.module.items)?;
         Ok(quote!(#items))
