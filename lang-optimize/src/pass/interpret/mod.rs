@@ -9,17 +9,17 @@ use lang_core::ctx::{Context, ValueSystem};
 use lang_core::id::{Ident, Locator};
 use lang_core::ops::*;
 use lang_core::utils::conv::TryConv;
-use lang_core::Serializer;
+use lang_core::AstSerializer;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct InterpreterPass {
-    pub serializer: Arc<dyn Serializer>,
+    pub serializer: Arc<dyn AstSerializer>,
     pub ignore_missing_items: bool,
 }
 
 impl InterpreterPass {
-    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         Self {
             serializer,
             ignore_missing_items: false,
@@ -122,7 +122,7 @@ impl InterpreterPass {
         Ok(Value::unit())
     }
     pub fn interpret_print(
-        se: &dyn Serializer,
+        se: &dyn AstSerializer,
         args: &[AstExpr],
         ctx: &SharedScopedContext,
     ) -> Result<()> {
@@ -176,12 +176,12 @@ impl InterpreterPass {
                         .map(|x| {
                             let value = this.interpret_value(x, value, true)?;
                             match value {
-                                Value::Type(Type::ImplTraits(impls)) => Ok(impls.bounds),
+                                Value::Type(AstType::ImplTraits(impls)) => Ok(impls.bounds),
                                 _ => bail!("Expected impl Traits, got {:?}", value),
                             }
                         })
                         .try_collect()?;
-                    Ok(Type::ImplTraits(ImplTraits {
+                    Ok(AstType::ImplTraits(ImplTraits {
                         bounds: TypeBounds {
                             bounds: args.into_iter().flat_map(|x| x.bounds).collect(),
                         },
@@ -219,11 +219,11 @@ impl InterpreterPass {
         Ok(())
     }
     pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), Type::Struct(def.value.clone()).into());
+        ctx.insert_value_with_ctx(def.name.clone(), AstType::Struct(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), Type::Enum(def.value.clone()).into());
+        ctx.insert_value_with_ctx(def.name.clone(), AstType::Enum(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_type(&self, def: &DefType, ctx: &SharedScopedContext) -> Result<()> {
@@ -247,7 +247,7 @@ impl InterpreterPass {
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
         let value: Value = self.interpret_expr(&node.name.get(), ctx)?.try_conv()?;
-        let ty: Type = value.try_conv()?;
+        let ty: AstType = value.try_conv()?;
         let struct_ = ty.try_conv()?;
         let fields: Vec<_> = node
             .fields
@@ -317,7 +317,7 @@ impl InterpreterPass {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
-    pub fn interpret_type(&self, node: &Type, ctx: &SharedScopedContext) -> Result<Type> {
+    pub fn interpret_type(&self, node: &AstType, ctx: &SharedScopedContext) -> Result<AstType> {
         // TODO: handle closure
         self.evaluate_type_value(node, ctx)
     }

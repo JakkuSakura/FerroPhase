@@ -2,7 +2,6 @@ use crate::ast::*;
 use crate::context::SharedScopedContext;
 use crate::id::Ident;
 use crate::ops::BinOpKind;
-use crate::Serializer;
 use common::*;
 use itertools::*;
 use serde::{Deserialize, Serialize};
@@ -198,7 +197,7 @@ pub fn builtin_ne() -> BuiltinFn {
     binary_comparison_on_literals(BinOpKind::Ne, |x, y| x != y, |x, y| x != y)
 }
 
-pub fn builtin_print(se: Arc<dyn Serializer>) -> BuiltinFn {
+pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("print".into(), move |args, ctx| {
         let formatted: Vec<_> = args
             .into_iter()

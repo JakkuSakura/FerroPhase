@@ -1,14 +1,15 @@
 use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, AstItem, DefEnum, DefFunction, DefStruct, DefTrait, DefType, EnumTypeVariant,
-    ExprSelfType, FunctionParam, Import, Type, TypeEnum, TypeStruct,
+    AstExpr, AstItem, AstType, DefEnum, DefFunction, DefStruct, DefTrait, DefType, EnumTypeVariant,
+    ExprSelfType, FunctionParam, Import, TypeEnum, TypeStruct,
 };
 use lang_core::id::{Ident, Path};
 use lang_core::utils::anybox::AnyBox;
 use syn::{Fields, FnArg, ReturnType};
 
-use crate::parser::parse_fn;
+use crate::parser::attr::parse_attrs;
+use crate::parser::parse_value_fn;
 use crate::{parser, RawItemMacro, RawUse};
 
 pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
@@ -16,7 +17,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
         FnArg::Receiver(rev) => FunctionParam {
             name: Ident::new("self"),
             ty: {
-                Type::expr(AstExpr::SelfType(
+                AstType::expr(AstExpr::SelfType(
                     ExprSelfType {
                         reference: rev.reference.is_some(),
                         mutability: rev.mutability.is_some(),
@@ -36,9 +37,9 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
     })
 }
 
-pub fn parse_return_type(o: ReturnType) -> eyre::Result<Type> {
+pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
     Ok(match o {
-        ReturnType::Default => Type::unit(),
+        ReturnType::Default => AstType::unit(),
         ReturnType::Type(_, t) => parser::parse_type_value(*t)?,
     })
 }
@@ -101,8 +102,10 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
     match item {
         syn::Item::Fn(f0) => {
             let visibility = parser::parse_vis(f0.vis.clone());
-            let f = parse_fn(f0)?;
+            let attrs = parse_attrs(f0.attrs.clone())?;
+            let f = parse_value_fn(f0)?;
             let d = DefFunction {
+                attrs,
                 name: f.name.clone().unwrap(),
                 ty: None,
                 value: f,
@@ -139,7 +142,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
                         Fields::Unnamed(_) => bail!("Does not support unnamed fields"),
                         Fields::Unit => {
                             // be int or string
-                            Type::any()
+                            AstType::any()
                         }
                     };
                     Ok(EnumTypeVariant { name, value: ty })

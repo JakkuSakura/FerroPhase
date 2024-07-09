@@ -2,8 +2,8 @@ use common::*;
 
 use itertools::Itertools;
 use lang_core::context::SharedScopedContext;
-use lang_core::Deserializer;
-use lang_core::Serializer;
+use lang_core::AstDeserializer;
+use lang_core::AstSerializer;
 use lang_optimize::interpreter::Interpreter;
 use lang_optimize::pass::load_optimizers;
 use rust_lang::printer::RustPrinter;

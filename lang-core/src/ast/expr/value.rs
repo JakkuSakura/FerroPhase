@@ -1,14 +1,14 @@
-use crate::ast::{AstExpr, BExpr, BValue, Type, Value};
+use crate::ast::{get_threadlocal_serializer, AstExpr, AstType, BExpr, BValue, Value};
 use crate::ast::{FieldValue, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
-use crate::{common_enum, common_struct, get_threadlocal_serializer};
+use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 common_enum! {
     pub enum ExprInvokeTarget {
         Function(Locator),
-        Type(Type),
+        Type(AstType),
         Method(ExprSelect),
         Closure(ValueFunction),
         BinOp(BinOpKind),

@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::id::Ident;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
-use crate::{common_enum, common_struct, get_threadlocal_serializer};
+use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
@@ -9,7 +9,7 @@ pub type TypeId = u64;
 
 common_enum! {
     /// TypeValue is a solid type value
-    pub enum Type {
+    pub enum AstType {
         Primitive(TypePrimitive),
         Struct(TypeStruct),
         Structural(TypeStructural),
@@ -31,29 +31,29 @@ common_enum! {
     }
 
 }
-impl Type {
-    pub const fn unit() -> Type {
-        Type::Unit(TypeUnit)
+impl AstType {
+    pub const fn unit() -> AstType {
+        AstType::Unit(TypeUnit)
     }
-    pub const UNIT: Type = Type::Unit(TypeUnit);
-    pub const fn any() -> Type {
-        Type::Any(TypeAny)
+    pub const UNIT: AstType = AstType::Unit(TypeUnit);
+    pub const fn any() -> AstType {
+        AstType::Any(TypeAny)
     }
-    pub const ANY: Type = Type::Any(TypeAny);
-    pub const fn unknown() -> Type {
-        Type::Unknown(TypeUnknown)
+    pub const ANY: AstType = AstType::Any(TypeAny);
+    pub const fn unknown() -> AstType {
+        AstType::Unknown(TypeUnknown)
     }
-    pub const UNKNOWN: Type = Type::Unknown(TypeUnknown);
+    pub const UNKNOWN: AstType = AstType::Unknown(TypeUnknown);
     pub fn is_any(&self) -> bool {
-        matches!(self, Type::Any(_))
+        matches!(self, AstType::Any(_))
     }
-    pub fn bool() -> Type {
-        Type::Primitive(TypePrimitive::Bool)
+    pub fn bool() -> AstType {
+        AstType::Primitive(TypePrimitive::Bool)
     }
     pub fn expr(e: AstExpr) -> Self {
         match e {
             AstExpr::Value(ty) => Self::value(ty),
-            _ => Type::Expr(Box::new(e)),
+            _ => AstType::Expr(Box::new(e)),
         }
     }
     pub fn value(v: impl Into<Value>) -> Self {
@@ -61,17 +61,17 @@ impl Type {
         match v {
             Value::Expr(expr) => Self::expr(*expr),
             Value::Type(ty) => ty,
-            _ => Type::Value(ValueType::new(v).into()),
+            _ => AstType::Value(ValueType::new(v).into()),
         }
     }
-    pub fn path(path: crate::id::Path) -> Type {
-        Type::expr(AstExpr::path(path))
+    pub fn path(path: crate::id::Path) -> AstType {
+        AstType::expr(AstExpr::path(path))
     }
-    pub fn ident(ident: Ident) -> Type {
-        Type::expr(AstExpr::ident(ident))
+    pub fn ident(ident: Ident) -> AstType {
+        AstType::expr(AstExpr::ident(ident))
     }
-    pub fn reference(ty: Type) -> Self {
-        Type::Reference(
+    pub fn reference(ty: AstType) -> Self {
+        AstType::Reference(
             TypeReference {
                 ty: Box::new(ty),
                 mutability: None,
@@ -97,18 +97,18 @@ impl Type {
     }
     pub fn as_struct(&self) -> Option<&TypeStruct> {
         match self {
-            Type::Struct(s) => Some(s),
+            AstType::Struct(s) => Some(s),
             _ => None,
         }
     }
-    pub fn unwrap_reference(&self) -> &Type {
+    pub fn unwrap_reference(&self) -> &AstType {
         match self {
-            Type::Reference(r) => &r.ty,
+            AstType::Reference(r) => &r.ty,
             _ => self,
         }
     }
 }
-impl Display for Type {
+impl Display for AstType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_type(self).unwrap();
         f.write_str(&s)
@@ -191,7 +191,7 @@ impl TypePrimitive {
 impl Display for TypePrimitive {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&Type::Primitive(*self))
+            .serialize_type(&AstType::Primitive(*self))
             .unwrap();
         f.write_str(&s)
     }
@@ -199,20 +199,20 @@ impl Display for TypePrimitive {
 
 common_struct! {
     pub struct TypeVec {
-        pub ty: Type,
+        pub ty: AstType,
     }
 }
 
 common_struct! {
     pub struct TypeTuple {
-        pub types: Vec<Type>,
+        pub types: Vec<AstType>,
     }
 }
 
 common_struct! {
     pub struct FieldTypeValue {
         pub name: Ident,
-        pub value: Type,
+        pub value: AstType,
     }
 }
 common_struct! {
@@ -231,7 +231,7 @@ common_struct! {
 common_struct! {
     pub struct EnumTypeVariant {
         pub name: Ident,
-        pub value: Type,
+        pub value: AstType,
     }
 }
 
@@ -242,9 +242,9 @@ common_struct! {
 }
 common_struct! {
     pub struct TypeFunction {
-        pub params: Vec<Type>,
+        pub params: Vec<AstType>,
         pub generics_params: Vec<GenericParam>,
-        pub ret: Type,
+        pub ret: AstType,
     }
 }
 common_struct! {
@@ -281,7 +281,7 @@ plain_type! { TypeType }
 
 common_struct! {
     pub struct TypeReference {
-        pub ty: Box<Type>,
+        pub ty: Box<AstType>,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
     }
@@ -289,7 +289,7 @@ common_struct! {
 impl Display for TypeReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&Type::Reference(self.clone().into()))
+            .serialize_type(&AstType::Reference(self.clone().into()))
             .unwrap();
 
         f.write_str(&s)
