@@ -4,11 +4,11 @@ mod value;
 pub use ty::*;
 pub use value::*;
 
-use crate::ast::{AstExpr, BExpr};
+use crate::ast::{get_threadlocal_serializer, AstExpr, BExpr};
+use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
-use crate::{common_enum, get_threadlocal_serializer};
 use common::bail;
 use std::fmt::{Display, Formatter};
 
@@ -32,7 +32,7 @@ common_enum! {
         Option(ValueOption),
         Undefined(ValueUndefined),
         Escaped(ValueEscaped),
-        Type(Type),
+        Type(AstType),
         Struct(ValueStruct),
         Structural(ValueStructural),
         Function(ValueFunction),

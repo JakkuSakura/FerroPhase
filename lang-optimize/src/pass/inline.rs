@@ -3,14 +3,14 @@ use common::*;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::Locator;
-use lang_core::Serializer;
+use lang_core::AstSerializer;
 use std::sync::Arc;
 
 pub struct InlinePass {
-    pub serializer: Arc<dyn Serializer>,
+    pub serializer: Arc<dyn AstSerializer>,
 }
 impl InlinePass {
-    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         Self { serializer }
     }
 

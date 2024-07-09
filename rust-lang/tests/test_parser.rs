@@ -3,7 +3,7 @@ use std::sync::Arc;
 use common::*;
 use lang_core::ast::*;
 use lang_core::ast::{AstItem, DefFunction, Impl, Visibility};
-use lang_core::ast::{FunctionParam, FunctionSignature, Type, TypePrimitive, ValueFunction};
+use lang_core::ast::{AstType, FunctionParam, FunctionSignature, TypePrimitive, ValueFunction};
 use lang_core::id::Locator;
 use lang_core::register_threadlocal_serializer;
 use pretty_assertions::assert_eq;
@@ -30,10 +30,10 @@ fn test_parse_fn() -> Result<()> {
                     name: Some("foo".into()),
                     params: vec![FunctionParam {
                         name: "a".into(),
-                        ty: Type::Primitive(TypePrimitive::i64())
+                        ty: AstType::Primitive(TypePrimitive::i64())
                     }],
                     generics_params: vec![],
-                    ret: Type::Primitive(TypePrimitive::i64())
+                    ret: AstType::Primitive(TypePrimitive::i64())
                 },
                 body: block.into(),
             },

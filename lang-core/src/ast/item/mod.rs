@@ -1,3 +1,4 @@
+use crate::ast::attr::AstAttribute;
 use crate::ast::*;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
@@ -209,20 +210,21 @@ common_struct! {
 common_struct! {
     pub struct DefType {
         pub name: Ident,
-        pub value: Type,
+        pub value: AstType,
         pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct DefConst {
         pub name: Ident,
-        pub ty: Option<Type>,
+        pub ty: Option<AstType>,
         pub value: Value,
         pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct DefFunction {
+        pub attrs: Vec<AstAttribute>,
         pub name: Ident,
         pub ty: Option<TypeFunction>,
         pub value: ValueFunction,
@@ -255,7 +257,7 @@ common_struct! {
 common_struct! {
     pub struct DeclConst {
         pub name: Ident,
-        pub ty: Type,
+        pub ty: AstType,
     }
 }
 common_struct! {
