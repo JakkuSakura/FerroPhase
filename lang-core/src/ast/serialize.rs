@@ -1,13 +1,13 @@
 use crate::ast::{
     AstExpr, AstFile, AstItem, AstTree, BExpr, ExprBlock, ExprInvoke, Module, Statement,
 };
-use crate::ast::{Type, Value, ValueFunction};
+use crate::ast::{AstType, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
 use std::sync::Arc;
 
 #[allow(unused_variables)]
-pub trait Serializer: Send + Sync {
+pub trait AstSerializer: Send + Sync {
     fn serialize_tree(&self, node: &AstTree) -> Result<String> {
         match node {
             AstTree::Item(item) => self.serialize_item(item),
@@ -63,7 +63,7 @@ pub trait Serializer: Send + Sync {
         }
         Ok(s)
     }
-    fn serialize_type(&self, node: &Type) -> Result<String> {
+    fn serialize_type(&self, node: &AstType) -> Result<String> {
         bail!("not implemented: serialize_type")
     }
     fn serialize_stmt(&self, node: &Statement) -> Result<String> {
@@ -75,15 +75,15 @@ pub trait Serializer: Send + Sync {
 }
 
 thread_local! {
-    static SERIALIZER: RefCell<Option<Arc<dyn Serializer>>> = RefCell::new(None);
+    static SERIALIZER: RefCell<Option<Arc<dyn AstSerializer >>> = RefCell::new(None);
 }
-pub fn register_threadlocal_serializer(serializer: Arc<dyn Serializer>) {
+pub fn register_threadlocal_serializer(serializer: Arc<dyn AstSerializer>) {
     SERIALIZER.with(move |s| {
         *s.borrow_mut() = Some(serializer);
     });
 }
 
-pub fn get_threadlocal_serializer() -> Arc<dyn Serializer> {
+pub fn get_threadlocal_serializer() -> Arc<dyn AstSerializer> {
     SERIALIZER.with(|s| {
         s.borrow()
             .as_ref()

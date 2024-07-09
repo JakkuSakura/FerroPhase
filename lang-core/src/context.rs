@@ -1,5 +1,5 @@
 use crate::ast::{AstExpr, ExprClosure, Visibility};
-use crate::ast::{Type, Value, ValueFunction};
+use crate::ast::{AstType, Value, ValueFunction};
 use crate::id::{Ident, Path};
 use common::*;
 use dashmap::DashMap;
@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, Weak};
 #[derive(Clone, Default)]
 pub struct ValueSlot {
     value: Option<Value>,
-    ty: Option<Type>,
+    ty: Option<AstType>,
     closure: Option<Arc<ScopedContext>>,
 }
 #[derive(Clone, Default)]
@@ -30,13 +30,13 @@ impl SharedValueSlot {
     pub fn value(&self) -> Option<Value> {
         self.with_storage(|x| x.value.clone())
     }
-    pub fn ty(&self) -> Option<Type> {
+    pub fn ty(&self) -> Option<AstType> {
         self.with_storage(|x| x.ty.clone())
     }
     pub fn set_value(&self, value: Value) {
         self.with_storage(|x| x.value = Some(value));
     }
-    pub fn set_ty(&self, ty: Type) {
+    pub fn set_ty(&self, ty: AstType) {
         self.with_storage(|x| x.ty = Some(ty));
     }
     pub fn closure(&self) -> Option<Arc<ScopedContext>> {
@@ -91,7 +91,7 @@ impl ScopedContext {
             v.with_storage(|v| {
                 let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
 
-                let ty = v.ty.as_ref().unwrap_or(&Type::UNKNOWN);
+                let ty = v.ty.as_ref().unwrap_or(&AstType::UNKNOWN);
                 debug!("{}: val:{} ty:{}", k, value, ty)
             })
         }
@@ -201,7 +201,7 @@ impl SharedScopedContext {
         });
     }
     /// insert type inference
-    pub fn insert_type(&self, key: impl Into<Ident>, ty: Type) {
+    pub fn insert_type(&self, key: impl Into<Ident>, ty: AstType) {
         let store = self.storages.entry(key.into()).or_default();
         store.set_ty(ty)
     }
@@ -218,7 +218,7 @@ impl SharedScopedContext {
             Some(expr)
         })
     }
-    pub fn get_type(&self, key: impl Into<Path>) -> Option<Type> {
+    pub fn get_type(&self, key: impl Into<Path>) -> Option<AstType> {
         let storage = self.get_storage(key, true)?;
         storage.ty()
     }

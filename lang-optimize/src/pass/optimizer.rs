@@ -8,7 +8,7 @@ use lang_core::*;
 use std::mem::take;
 use std::sync::Arc;
 
-pub fn load_optimizers(serializer: Arc<dyn Serializer>) -> Vec<FoldOptimizer> {
+pub fn load_optimizers(serializer: Arc<dyn AstSerializer>) -> Vec<FoldOptimizer> {
     let optimizers: Vec<Box<dyn OptimizePass>> = vec![
         Box::new(SpecializePass::new(serializer.clone())),
         Box::new(InlinePass::new(serializer.clone())),
@@ -21,11 +21,11 @@ pub fn load_optimizers(serializer: Arc<dyn Serializer>) -> Vec<FoldOptimizer> {
 }
 
 pub struct FoldOptimizer {
-    serializer: Arc<dyn Serializer>,
+    serializer: Arc<dyn AstSerializer>,
     pub(crate) pass: Box<dyn OptimizePass>,
 }
 impl FoldOptimizer {
-    pub fn new(serializer: Arc<dyn Serializer>, pass: Box<dyn OptimizePass>) -> Self {
+    pub fn new(serializer: Arc<dyn AstSerializer>, pass: Box<dyn OptimizePass>) -> Self {
         Self { serializer, pass }
     }
 

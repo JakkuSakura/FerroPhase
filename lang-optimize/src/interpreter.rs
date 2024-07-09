@@ -5,7 +5,7 @@ use common::*;
 use lang_core::ast::Value;
 use lang_core::ast::{AstExpr, AstItem, AstTree, Module};
 use lang_core::context::SharedScopedContext;
-use lang_core::Serializer;
+use lang_core::AstSerializer;
 
 use crate::pass::{FoldOptimizer, InterpreterPass};
 
@@ -13,7 +13,7 @@ pub struct Interpreter {
     pub opt: FoldOptimizer,
 }
 impl Interpreter {
-    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         let pass = InterpreterPass::new(serializer.clone());
         Self {
             opt: FoldOptimizer::new(serializer, Box::new(pass)),
