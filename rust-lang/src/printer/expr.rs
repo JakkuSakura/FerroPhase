@@ -2,8 +2,8 @@ use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
     Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget,
-    ExprLoop, ExprMatch, ExprParen, ExprReference, ExprSelect, ExprSelectType, Statement,
-    StatementLet,
+    ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
+    ExprSelectType, Statement, StatementLet,
 };
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
@@ -38,6 +38,7 @@ impl RustPrinter {
             Expr::Closured(n) => self.print_expr(&n.expr.get()),
             Expr::Paren(n) => self.print_paren(n),
             Expr::Loop(n) => self.print_loop(n),
+            Expr::Range(n) => self.print_range(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -257,5 +258,18 @@ impl RustPrinter {
     pub fn print_args(&self, node: &Vec<Expr>) -> eyre::Result<TokenStream> {
         let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!((#(#args),*)))
+    }
+    pub fn print_range(&self, range: &ExprRange) -> eyre::Result<TokenStream> {
+        let start = range
+            .start
+            .as_ref()
+            .map(|x| self.print_expr(x))
+            .transpose()?;
+        let end = range.end.as_ref().map(|x| self.print_expr(x)).transpose()?;
+        let dots = match range.limit {
+            ExprRangeLimit::Inclusive => quote!(..=),
+            ExprRangeLimit::Exclusive => quote!(..),
+        };
+        Ok(quote!(#start #dots #end))
     }
 }

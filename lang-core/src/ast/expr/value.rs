@@ -158,3 +158,17 @@ common_struct! {
         pub expr: BExpr,
     }
 }
+common_enum! {
+    pub enum ExprRangeLimit {
+        Inclusive,
+        Exclusive,
+    }
+}
+common_struct! {
+    pub struct ExprRange {
+        pub start: Option<BExpr>,
+        pub limit: ExprRangeLimit,
+        pub end: Option<BExpr>,
+        pub step: Option<BExpr>,
+    }
+}
