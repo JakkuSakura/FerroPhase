@@ -10,22 +10,22 @@ pub use specialize::*;
 
 use common::*;
 use lang_core::ast::Value;
-use lang_core::ast::{ControlFlow, Expr, ExprInvoke};
-use lang_core::ast::{Item, Module};
+use lang_core::ast::{AstExpr, ControlFlow, ExprInvoke};
+use lang_core::ast::{AstItem, Module};
 use lang_core::context::SharedScopedContext;
 
 #[allow(unused_variables)]
 pub trait OptimizePass {
     fn name(&self) -> &str;
 
-    fn optimize_item(&self, item: Item, ctx: &SharedScopedContext) -> Result<Item> {
+    fn optimize_item(&self, item: AstItem, ctx: &SharedScopedContext) -> Result<AstItem> {
         Ok(item)
     }
 
-    fn try_evaluate_expr(&self, pat: &Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn try_evaluate_expr(&self, pat: &AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         Ok(pat.clone())
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         Ok(expr)
     }
 
@@ -44,10 +44,10 @@ pub trait OptimizePass {
         invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         Ok(invoke.into())
     }
-    fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_condition(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         Ok(ControlFlow::Into)
     }
 }

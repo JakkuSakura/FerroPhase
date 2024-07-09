@@ -9,7 +9,7 @@ use lang_core::register_threadlocal_serializer;
 use lang_optimize::pass::InterpreterPass;
 use rust_lang::{shll_parse_expr, shll_parse_value, RustSerde};
 
-fn interpret_shll_expr(expr: Expr) -> Result<Value> {
+fn interpret_shll_expr(expr: AstExpr) -> Result<Value> {
     let interpreter = InterpreterPass::new(Arc::new(RustSerde::new()));
     let mut ctx = Context::new();
     ctx.value = Arc::new(interpreter.clone());

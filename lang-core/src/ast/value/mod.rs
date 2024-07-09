@@ -4,7 +4,7 @@ mod value;
 pub use ty::*;
 pub use value::*;
 
-use crate::ast::{BExpr, Expr};
+use crate::ast::{AstExpr, BExpr};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
@@ -71,9 +71,9 @@ impl Value {
     }
     pub const NULL: Value = Value::Null(ValueNull);
 
-    pub fn expr(e: impl Into<Expr>) -> Self {
+    pub fn expr(e: impl Into<AstExpr>) -> Self {
         match e.into() {
-            Expr::Value(v) => *v,
+            AstExpr::Value(v) => *v,
             e => Value::Expr(e.into()),
         }
     }

@@ -6,7 +6,7 @@ use lang_optimize::pass::{FoldOptimizer, SpecializePass};
 use rust_lang::{shll_parse_expr, RustSerde};
 use std::sync::Arc;
 
-fn specialize_shll_expr(mut expr: Expr) -> Result<Expr> {
+fn specialize_shll_expr(mut expr: AstExpr) -> Result<AstExpr> {
     let serializer = Arc::new(RustSerde::new());
     let optimizer = FoldOptimizer::new(
         serializer.clone(),
