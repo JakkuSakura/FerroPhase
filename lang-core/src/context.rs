@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprClosure, Visibility};
+use crate::ast::{AstExpr, ExprClosure, Visibility};
 use crate::ast::{Type, Value, ValueFunction};
 use crate::id::{Ident, Path};
 use common::*;
@@ -80,7 +80,7 @@ impl ScopedContext {
             .set_value(value);
     }
 
-    pub fn insert_expr(&self, key: impl Into<Ident>, value: Expr) {
+    pub fn insert_expr(&self, key: impl Into<Ident>, value: AstExpr) {
         self.insert_value(key, Value::expr(value));
     }
 
@@ -205,13 +205,13 @@ impl SharedScopedContext {
         let store = self.storages.entry(key.into()).or_default();
         store.set_ty(ty)
     }
-    pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
-        self.get_value(key).map(Expr::value)
+    pub fn get_expr(&self, key: impl Into<Path>) -> Option<AstExpr> {
+        self.get_value(key).map(AstExpr::value)
     }
-    pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<Expr> {
+    pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<AstExpr> {
         let storage = self.get_storage(key, true)?;
         storage.with_storage(|storage| {
-            let expr = storage.value.clone().map(Expr::value)?;
+            let expr = storage.value.clone().map(AstExpr::value)?;
             if let Some(closure) = storage.closure.clone() {
                 return Some(ExprClosure::new(Self(closure), expr.into()).into());
             }
@@ -228,11 +228,11 @@ impl SharedScopedContext {
             .unwrap_or_else(|| self.clone())
     }
     // TODO: integrate it to optimizers
-    pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
+    pub fn try_get_value_from_expr(&self, expr: &AstExpr) -> Option<Value> {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
-            Expr::Locator(ident) => self.get_value(ident.to_path()),
-            Expr::Value(value) => Some(value.get()),
+            AstExpr::Locator(ident) => self.get_value(ident.to_path()),
+            AstExpr::Value(value) => Some(value.get()),
             _ => None,
         };
         info!(
@@ -248,7 +248,7 @@ impl SharedScopedContext {
         let expr = self.get_expr(&key)?;
         info!("get_value_recursive {} => {:?}", key, expr);
         match expr {
-            Expr::Locator(ident) => self.get_value_recursive(ident.to_path()),
+            AstExpr::Locator(ident) => self.get_value_recursive(ident.to_path()),
             _ => Some(Value::expr(expr)),
         }
     }

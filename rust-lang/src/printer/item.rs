@@ -1,11 +1,11 @@
 use crate::printer::RustPrinter;
 use eyre::{bail, ContextCompat, Result};
 use itertools::Itertools;
-use lang_core::ast::{DefConst, DefStruct, DefTrait, DefType, Impl, Item};
+use lang_core::ast::{AstItem, DefConst, DefStruct, DefTrait, DefType, Impl};
 use proc_macro2::TokenStream;
 use quote::quote;
 impl RustPrinter {
-    pub fn print_items_chunk(&self, items: &[Item]) -> Result<TokenStream> {
+    pub fn print_items_chunk(&self, items: &[AstItem]) -> Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
             let item = self.print_item(item)?;
@@ -65,17 +65,17 @@ impl RustPrinter {
         ))
     }
 
-    pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
+    pub fn print_item(&self, item: &AstItem) -> Result<TokenStream> {
         match item {
-            Item::DefFunction(n) => self.print_function(&n.value, n.visibility),
-            Item::DefType(n) => self.print_def_type(n),
-            Item::DefStruct(n) => self.print_def_struct(n),
-            Item::DefTrait(n) => self.print_def_trait(n),
+            AstItem::DefFunction(n) => self.print_function(&n.value, n.visibility),
+            AstItem::DefType(n) => self.print_def_type(n),
+            AstItem::DefStruct(n) => self.print_def_struct(n),
+            AstItem::DefTrait(n) => self.print_def_trait(n),
             // Item::DefEnum(n) => self.print_def_enum(n),
-            Item::Impl(n) => self.print_impl(n),
-            Item::Module(n) => self.print_module(n),
-            Item::Import(n) => self.print_import(n),
-            Item::Expr(n) => self.print_expr(n),
+            AstItem::Impl(n) => self.print_impl(n),
+            AstItem::Module(n) => self.print_module(n),
+            AstItem::Import(n) => self.print_import(n),
+            AstItem::Expr(n) => self.print_expr(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }

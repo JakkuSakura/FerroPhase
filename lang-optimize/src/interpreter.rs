@@ -3,7 +3,7 @@ use std::sync::Arc;
 use common::*;
 
 use lang_core::ast::Value;
-use lang_core::ast::{Expr, Item, Module, Tree};
+use lang_core::ast::{AstExpr, AstItem, AstTree, Module};
 use lang_core::context::SharedScopedContext;
 use lang_core::Serializer;
 
@@ -19,35 +19,35 @@ impl Interpreter {
             opt: FoldOptimizer::new(serializer, Box::new(pass)),
         }
     }
-    fn extract_expr(&self, node: Expr) -> Result<Value> {
+    fn extract_expr(&self, node: AstExpr) -> Result<Value> {
         match node {
-            Expr::Value(value) => Ok(value.get()),
+            AstExpr::Value(value) => Ok(value.get()),
             _ => bail!("Failed to extract Value from {}", node),
         }
     }
     fn extract_module(&self, _node: Module) -> Result<Value> {
         Ok(Value::unit())
     }
-    fn extract_item(&self, node: Item) -> Result<Value> {
+    fn extract_item(&self, node: AstItem) -> Result<Value> {
         match node {
-            Item::Expr(expr) => self.extract_expr(expr),
-            Item::Module(module) => self.extract_module(module),
+            AstItem::Expr(expr) => self.extract_expr(expr),
+            AstItem::Module(module) => self.extract_module(module),
             _ => bail!("Failed to extract Value from {:?}", node),
         }
     }
-    fn extract_tree(&self, node: Tree) -> Result<Value> {
+    fn extract_tree(&self, node: AstTree) -> Result<Value> {
         match node {
-            Tree::Expr(expr) => self.extract_expr(expr),
-            Tree::Item(item) => self.extract_item(item),
-            Tree::File(file) => self.extract_module(file.module),
+            AstTree::Expr(expr) => self.extract_expr(expr),
+            AstTree::Item(item) => self.extract_item(item),
+            AstTree::File(file) => self.extract_module(file.module),
         }
     }
-    pub fn interpret_tree(&self, node: Tree, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: AstTree, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_tree(node, ctx)?;
 
         self.extract_tree(value)
     }
-    pub fn interpret_expr(&self, node: Expr, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_expr(&self, node: AstExpr, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_expr(node, ctx)?;
         self.extract_expr(value)
     }

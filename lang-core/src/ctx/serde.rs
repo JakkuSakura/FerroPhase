@@ -1,4 +1,4 @@
-use crate::ast::Expr;
+use crate::ast::AstExpr;
 use eyre::Result;
 
 use crate::ast::{Type, Value};
@@ -15,7 +15,7 @@ pub trait SerializeSystem {
         let _ = id;
         unimplemented!()
     }
-    fn get_serialized_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<String> {
+    fn get_serialized_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<String> {
         let _ = ctx;
         let _ = expr;
         unimplemented!()
@@ -50,12 +50,12 @@ pub trait DeserializeSystem {
         let _ = id;
         unimplemented!()
     }
-    fn get_expr_from_serialized(&self, ctx: &Context, serialized: &str) -> Result<Expr> {
+    fn get_expr_from_serialized(&self, ctx: &Context, serialized: &str) -> Result<AstExpr> {
         let _ = ctx;
         let _ = serialized;
         unimplemented!()
     }
-    fn get_expr_from_serialized_id(&self, ctx: &Context, id: u32) -> Result<Expr> {
+    fn get_expr_from_serialized_id(&self, ctx: &Context, id: u32) -> Result<AstExpr> {
         let _ = ctx;
         let _ = id;
         unimplemented!()
