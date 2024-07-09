@@ -10,7 +10,7 @@ pub use expr::*;
 pub use item::*;
 pub use value::*;
 common_struct! {
-    pub struct File {
+    pub struct AstFile {
         pub path: PathBuf,
         pub module: Module,
     }
@@ -18,9 +18,14 @@ common_struct! {
 
 common_enum! {
     /// Tree is any syntax tree element
-    pub enum Tree {
-        Item(Item),
-        Expr(Expr),
-        File(File),
+    pub enum AstTree {
+        Item(AstItem),
+        Expr(AstExpr),
+        File(AstFile),
     }
+}
+
+pub trait AstProvider {
+    fn get_ast_from_cst(&self, cst: &str) -> AstTree;
+    fn get_ast_from_file(&self, path: &PathBuf) -> AstTree;
 }

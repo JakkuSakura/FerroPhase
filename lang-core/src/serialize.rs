@@ -1,4 +1,6 @@
-use crate::ast::{BExpr, Expr, ExprBlock, ExprInvoke, File, Item, Module, Statement, Tree};
+use crate::ast::{
+    AstExpr, AstFile, AstItem, AstTree, BExpr, ExprBlock, ExprInvoke, Module, Statement,
+};
 use crate::ast::{Type, Value, ValueFunction};
 use common::*;
 use std::cell::RefCell;
@@ -6,17 +8,17 @@ use std::sync::Arc;
 
 #[allow(unused_variables)]
 pub trait Serializer: Send + Sync {
-    fn serialize_tree(&self, node: &Tree) -> Result<String> {
+    fn serialize_tree(&self, node: &AstTree) -> Result<String> {
         match node {
-            Tree::Item(item) => self.serialize_item(item),
-            Tree::Expr(expr) => self.serialize_expr(expr),
-            Tree::File(file) => self.serialize_file(file),
+            AstTree::Item(item) => self.serialize_item(item),
+            AstTree::Expr(expr) => self.serialize_expr(expr),
+            AstTree::File(file) => self.serialize_file(file),
         }
     }
-    fn serialize_expr(&self, node: &Expr) -> Result<String> {
+    fn serialize_expr(&self, node: &AstExpr) -> Result<String> {
         bail!("not implemented: serialize_expr")
     }
-    fn serialize_args(&self, nodes: &[Expr]) -> Result<String> {
+    fn serialize_args(&self, nodes: &[AstExpr]) -> Result<String> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
             if i > 0 {
@@ -36,13 +38,13 @@ pub trait Serializer: Send + Sync {
     fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String> {
         bail!("not implemented: serialize_invoke")
     }
-    fn serialize_item(&self, node: &Item) -> Result<String> {
+    fn serialize_item(&self, node: &AstItem) -> Result<String> {
         bail!("not implemented: serialize_item")
     }
     fn serialize_block(&self, node: &ExprBlock) -> Result<String> {
         bail!("not implemented: serialize_block")
     }
-    fn serialize_file(&self, node: &File) -> Result<String> {
+    fn serialize_file(&self, node: &AstFile) -> Result<String> {
         bail!("not implemented: serialize_file")
     }
     fn serialize_module(&self, node: &Module) -> Result<String> {

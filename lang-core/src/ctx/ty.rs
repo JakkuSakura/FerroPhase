@@ -1,10 +1,10 @@
-use crate::ast::{Expr, ExprId};
+use crate::ast::{AstExpr, ExprId};
 use crate::ast::{Type, Value};
 use crate::ctx::Context;
 use eyre::Result;
 
 pub trait TypeSystem {
-    fn get_ty_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Type> {
+    fn get_ty_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<Type> {
         let _ = ctx;
         let _ = expr;
         unimplemented!()

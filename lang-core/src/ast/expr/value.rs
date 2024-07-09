@@ -1,4 +1,4 @@
-use crate::ast::{BExpr, BValue, Expr, Type, Value};
+use crate::ast::{AstExpr, BExpr, BValue, Type, Value};
 use crate::ast::{FieldValue, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
@@ -18,9 +18,9 @@ common_enum! {
 impl ExprInvokeTarget {
     pub fn expr(expr: BExpr) -> Self {
         match &*expr {
-            Expr::Locator(locator) => Self::Function(locator.clone()),
-            Expr::Select(select) => Self::Method(select.clone()),
-            Expr::Value(value) => Self::value(value.clone()),
+            AstExpr::Locator(locator) => Self::Function(locator.clone()),
+            AstExpr::Select(select) => Self::Method(select.clone()),
+            AstExpr::Value(value) => Self::value(value.clone()),
             _ => Self::Expr(expr),
         }
     }
@@ -112,12 +112,12 @@ common_enum! {
     pub enum ControlFlow {
         Continue,
         #[from(ignore)]
-        Break(Option<Expr>),
+        Break(Option<AstExpr>),
         #[from(ignore)]
-        Return(Option<Expr>),
+        Return(Option<AstExpr>),
         Into,
         #[from(ignore)]
-        IntoAndBreak(Option<Expr>),
+        IntoAndBreak(Option<AstExpr>),
     }
 }
 common_struct! {

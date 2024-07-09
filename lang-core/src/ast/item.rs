@@ -4,11 +4,11 @@ use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::hash::Hash;
 
-pub type BItem = Box<Item>;
+pub type BItem = Box<AstItem>;
 
 common_enum! {
     /// Item is an syntax tree node that "declares" a thing without returning a value
-    pub enum Item {
+    pub enum AstItem {
         Module(Module),
         DefStruct(DefStruct),
         DefEnum(DefEnum),
@@ -21,27 +21,27 @@ common_enum! {
         DeclFunction(DeclFunction),
         Import(Import),
         Impl(Impl),
-        Expr(Expr),
+        Expr(AstExpr),
         Any(AnyBox),
     }
 }
 
-impl Item {
+impl AstItem {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
-    pub fn as_expr(&self) -> Option<&Expr> {
+    pub fn as_expr(&self) -> Option<&AstExpr> {
         match self {
             Self::Expr(expr) => Some(expr),
             _ => None,
         }
     }
     pub fn unit() -> Self {
-        Self::Expr(Expr::Value(Value::unit().into()))
+        Self::Expr(AstExpr::Value(Value::unit().into()))
     }
     pub fn is_unit(&self) -> bool {
         if let Some(expr) = self.as_expr() {
-            if let Expr::Value(value) = expr {
+            if let AstExpr::Value(value) = expr {
                 if let Value::Unit(_) = &**value {
                     return true;
                 }
@@ -119,14 +119,14 @@ impl Item {
     }
 }
 
-pub type ItemChunk = Vec<Item>;
+pub type ItemChunk = Vec<AstItem>;
 pub trait ItemChunkExt {
-    fn find_item(&self, name: &str) -> Option<&Item>;
+    fn find_item(&self, name: &str) -> Option<&AstItem>;
     fn list_impl_trait(&self, trait_ty: &str) -> Vec<&Impl>;
     fn list_impl_type(&self, self_ty: &str) -> Vec<&Impl>;
 }
 impl ItemChunkExt for ItemChunk {
-    fn find_item(&self, name: &str) -> Option<&Item> {
+    fn find_item(&self, name: &str) -> Option<&AstItem> {
         self.iter().find(|item| {
             if let Some(ident) = item.get_ident() {
                 ident.as_str() == name
@@ -138,7 +138,7 @@ impl ItemChunkExt for ItemChunk {
     fn list_impl_trait(&self, trait_ty: &str) -> Vec<&Impl> {
         self.iter()
             .filter_map(|item| match item {
-                Item::Impl(impl_) => {
+                AstItem::Impl(impl_) => {
                     if let Some(trait_ty_) = &impl_.trait_ty {
                         if trait_ty_.to_string() == trait_ty {
                             Some(impl_)
@@ -156,8 +156,8 @@ impl ItemChunkExt for ItemChunk {
     fn list_impl_type(&self, self_ty: &str) -> Vec<&Impl> {
         self.iter()
             .filter_map(|item| match item {
-                Item::Impl(impl_) if impl_.trait_ty.is_none() => {
-                    if let Expr::Locator(Locator::Ident(ident)) = &impl_.self_ty {
+                AstItem::Impl(impl_) if impl_.trait_ty.is_none() => {
+                    if let AstExpr::Locator(Locator::Ident(ident)) = &impl_.self_ty {
                         if ident.as_str() == self_ty {
                             Some(impl_)
                         } else {
@@ -247,7 +247,7 @@ common_struct! {
 common_struct! {
     pub struct Impl {
         pub trait_ty: Option<Locator>,
-        pub self_ty: Expr,
+        pub self_ty: AstExpr,
         pub items: ItemChunk,
     }
 }

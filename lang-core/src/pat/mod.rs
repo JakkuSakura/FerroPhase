@@ -1,4 +1,4 @@
-use crate::ast::Expr;
+use crate::ast::AstExpr;
 use crate::ast::Type;
 use crate::id::{Ident, Locator};
 use crate::{common_enum, common_struct};
@@ -59,7 +59,7 @@ common_struct! {
 }
 common_struct! {
     pub struct PatternVariant {
-        pub name: Expr, // TypeExpr
+        pub name: AstExpr, // TypeExpr
         pub pattern: Option<Box<Pattern>>,
     }
 

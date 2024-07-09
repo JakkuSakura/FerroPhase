@@ -33,11 +33,11 @@ impl SpecializePass {
         invoke: ExprInvoke,
         func: &ValueFunction,
         ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         let mut args: Vec<BExpr> = vec![];
         for arg in invoke.args.iter() {
             let x = match arg.get() {
-                Expr::Locator(v) => ctx
+                AstExpr::Locator(v) => ctx
                     .get_expr(v.to_path())
                     .with_context(|| format!("Couldn't find {:?} in context", v))?,
                 x => x,
@@ -56,7 +56,7 @@ impl SpecializePass {
         );
         let name = func.name.as_ref().map(|x| x.name.as_str()).unwrap_or("fun");
         let mut new_params: Vec<FunctionParam> = vec![];
-        let mut new_args: Vec<Expr> = vec![];
+        let mut new_args: Vec<AstExpr> = vec![];
         for (param, arg) in zip_eq(func.params.iter(), args.iter()) {
             match self.interpreter.interpret_expr(&arg.get(), ctx) {
                 Err(err) => {
@@ -91,13 +91,13 @@ impl SpecializePass {
                     ident: name,
                     mutability: Some(false),
                 }),
-                value: Expr::value(value),
+                value: AstExpr::value(value),
             });
             bindings.push(binding);
         }
 
         // let new_body = Expr::block(ExprBlock::prepend(bindings, func.body.get()));
-        let new_body = Expr::block(ExprBlock {
+        let new_body = AstExpr::block(ExprBlock {
             stmts: bindings,
             ret: Some(func.body.clone()),
         });
@@ -110,7 +110,7 @@ impl SpecializePass {
         let mut ret = func.ret.clone();
         match &ret {
             Type::Expr(expr) => match &**expr {
-                Expr::Locator(Locator::Ident(ident))
+                AstExpr::Locator(Locator::Ident(ident))
                     if func
                         .generics_params
                         .iter()
@@ -150,10 +150,10 @@ impl SpecializePass {
             return Ok(new_func.body.into());
         }
 
-        Ok(Expr::Block(
+        Ok(AstExpr::Block(
             ExprBlock {
                 stmts: vec![Statement::Item(
-                    Item::DefFunction(DefFunction {
+                    AstItem::DefFunction(DefFunction {
                         name: new_name.clone(),
                         ty: None,
                         value: new_func,
@@ -162,7 +162,7 @@ impl SpecializePass {
                     .into(),
                 )],
                 ret: Some(
-                    Expr::Invoke(ExprInvoke {
+                    AstExpr::Invoke(ExprInvoke {
                         target: ExprInvokeTarget::Function(new_name.into()),
                         args: Default::default(),
                     })
@@ -178,7 +178,7 @@ impl SpecializePass {
         invoke: ExprInvoke,
         func: &ValueFunction,
         ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         match &invoke.target {
             ExprInvokeTarget::Function(Locator::Ident(ident)) if ident.as_str() == "print" => {
                 return Ok(invoke.into());
@@ -194,15 +194,15 @@ impl OptimizePass for SpecializePass {
         "specialize"
     }
 
-    fn try_evaluate_expr(&self, pat: &Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn try_evaluate_expr(&self, pat: &AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         match ctx.try_get_value_from_expr(pat) {
-            Some(value) => Ok(Expr::value(value)),
+            Some(value) => Ok(AstExpr::value(value)),
             None => Ok(pat.clone()),
         }
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         match ctx.try_get_value_from_expr(&expr) {
-            Some(value) => Ok(Expr::value(value)),
+            Some(value) => Ok(AstExpr::value(value)),
             None => Ok(expr),
         }
     }
@@ -219,7 +219,7 @@ impl OptimizePass for SpecializePass {
         invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         match func {
             Value::Function(func) => self
                 .specialize_invoke_func(invoke, func, ctx)
@@ -233,7 +233,7 @@ impl OptimizePass for SpecializePass {
             }
         }
     }
-    fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_condition(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         self.interpreter.evaluate_condition(expr, ctx)
     }
 }

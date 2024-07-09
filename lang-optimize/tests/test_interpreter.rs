@@ -8,7 +8,7 @@ use pretty_assertions::assert_eq;
 use rust_lang::{shll_parse_expr, shll_parse_value, RustSerde};
 use std::sync::Arc;
 
-fn interpret_shll_expr(expr: Expr) -> Result<Value> {
+fn interpret_shll_expr(expr: AstExpr) -> Result<Value> {
     let interpreter = Interpreter::new(Arc::new(RustSerde::new()));
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)

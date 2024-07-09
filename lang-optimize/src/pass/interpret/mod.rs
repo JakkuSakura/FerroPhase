@@ -41,7 +41,7 @@ impl InterpreterPass {
                 let func = self.interpret_ident(&ident, ctx, true)?;
                 self.interpret_invoke(
                     &ExprInvoke {
-                        target: ExprInvokeTarget::expr(Expr::value(func).into()),
+                        target: ExprInvokeTarget::expr(AstExpr::value(func).into()),
                         args: node.args.clone(),
                     },
                     ctx,
@@ -49,7 +49,7 @@ impl InterpreterPass {
             }
             ExprInvokeTarget::Method(select) => match select.field.as_str() {
                 "to_string" => match &select.obj.get() {
-                    Expr::Value(value) => match value.as_ref() {
+                    AstExpr::Value(value) => match value.as_ref() {
                         Value::String(obj) => {
                             let mut obj = obj.clone();
                             obj.owned = true;
@@ -62,7 +62,7 @@ impl InterpreterPass {
                 x => bail!("Could not invoke {:?}", x),
             },
             ExprInvokeTarget::Expr(e) => match e.as_ref() {
-                Expr::Value(value) => match value.as_ref() {
+                AstExpr::Value(value) => match value.as_ref() {
                     Value::BinOpKind(kind) => {
                         self.interpret_invoke_binop(kind.clone(), &node.args, ctx)
                     }
@@ -74,7 +74,7 @@ impl InterpreterPass {
                     _ => bail!("Could not invoke {}", node),
                 },
 
-                Expr::Any(any) => {
+                AstExpr::Any(any) => {
                     if let Some(exp) = any.downcast_ref::<BuiltinFn>() {
                         let args = self.interpret_args(&node.args, ctx)?;
                         exp.invoke(&args, ctx)
@@ -123,7 +123,7 @@ impl InterpreterPass {
     }
     pub fn interpret_print(
         se: &dyn Serializer,
-        args: &[Expr],
+        args: &[AstExpr],
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         let formatted: Vec<_> = args
@@ -435,48 +435,48 @@ impl InterpreterPass {
     }
     pub fn interpret_expr_common(
         &self,
-        node: &Expr,
+        node: &AstExpr,
         ctx: &SharedScopedContext,
         resolve: bool,
     ) -> Result<Value> {
         match node {
-            Expr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
-            Expr::Locator(n) => ctx
+            AstExpr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
+            AstExpr::Locator(n) => ctx
                 .get_value_recursive(n.to_path())
                 .with_context(|| format!("could not find {:?} in context", n)),
-            Expr::Value(n) => self.interpret_value(n, ctx, resolve),
-            Expr::Block(n) => self.interpret_block(n, ctx),
-            Expr::Match(c) => self.interpret_cond(c, ctx),
-            Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
-            Expr::BinOp(op) => self.interpret_binop(op, ctx),
-            Expr::Any(n) => Ok(Value::Any(n.clone())),
-            Expr::Select(s) => self.interpret_select(s, ctx),
-            Expr::InitStruct(s) => self.interpret_struct_expr(s, ctx).map(Value::Struct),
+            AstExpr::Value(n) => self.interpret_value(n, ctx, resolve),
+            AstExpr::Block(n) => self.interpret_block(n, ctx),
+            AstExpr::Match(c) => self.interpret_cond(c, ctx),
+            AstExpr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
+            AstExpr::BinOp(op) => self.interpret_binop(op, ctx),
+            AstExpr::Any(n) => Ok(Value::Any(n.clone())),
+            AstExpr::Select(s) => self.interpret_select(s, ctx),
+            AstExpr::InitStruct(s) => self.interpret_struct_expr(s, ctx).map(Value::Struct),
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
-    pub fn interpret_expr(&self, node: &Expr, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_expr(&self, node: &AstExpr, ctx: &SharedScopedContext) -> Result<Value> {
         self.interpret_expr_common(node, ctx, true)
     }
     pub fn interpret_expr_no_resolve(
         &self,
-        node: &Expr,
+        node: &AstExpr,
         ctx: &SharedScopedContext,
     ) -> Result<Value> {
         self.interpret_expr_common(node, ctx, false)
     }
-    pub fn interpret_item(&self, node: &Item, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_item(&self, node: &AstItem, ctx: &SharedScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
-            Item::Module(n) => self.interpret_module(n, ctx),
-            Item::DefFunction(n) => self.interpret_def_function(n, ctx).map(|_| Value::unit()),
-            Item::DefStruct(n) => self.interpret_def_struct(n, ctx).map(|_| Value::unit()),
-            Item::DefEnum(n) => self.interpret_def_enum(n, ctx).map(|_| Value::unit()),
-            Item::DefType(n) => self.interpret_def_type(n, ctx).map(|_| Value::unit()),
-            Item::DefConst(n) => self.interpret_def_const(n, ctx).map(|_| Value::unit()),
-            Item::Import(n) => self.interpret_import(n, ctx).map(|_| Value::unit()),
+            AstItem::Module(n) => self.interpret_module(n, ctx),
+            AstItem::DefFunction(n) => self.interpret_def_function(n, ctx).map(|_| Value::unit()),
+            AstItem::DefStruct(n) => self.interpret_def_struct(n, ctx).map(|_| Value::unit()),
+            AstItem::DefEnum(n) => self.interpret_def_enum(n, ctx).map(|_| Value::unit()),
+            AstItem::DefType(n) => self.interpret_def_type(n, ctx).map(|_| Value::unit()),
+            AstItem::DefConst(n) => self.interpret_def_const(n, ctx).map(|_| Value::unit()),
+            AstItem::Import(n) => self.interpret_import(n, ctx).map(|_| Value::unit()),
 
-            Item::Any(n) => Ok(Value::Any(n.clone())),
+            AstItem::Any(n) => Ok(Value::Any(n.clone())),
             _ => bail!("Failed to interpret {:?}", node),
         }
     }
@@ -510,11 +510,11 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_tree(&self, node: &Tree, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: &AstTree, ctx: &SharedScopedContext) -> Result<Value> {
         match node {
-            Tree::Item(item) => self.interpret_item(item, ctx),
-            Tree::Expr(expr) => self.interpret_expr(expr, ctx),
-            Tree::File(file) => self.interpret_module(&file.module, ctx),
+            AstTree::Item(item) => self.interpret_item(item, ctx),
+            AstTree::Expr(expr) => self.interpret_expr(expr, ctx),
+            AstTree::File(file) => self.interpret_module(&file.module, ctx),
         }
     }
 }
@@ -523,16 +523,16 @@ impl OptimizePass for InterpreterPass {
     fn name(&self) -> &str {
         "interpreter"
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
-        Ok(Expr::value(value))
+        Ok(AstExpr::value(value))
     }
 
-    fn optimize_item(&self, _item: Item, _ctx: &SharedScopedContext) -> Result<Item> {
-        Ok(Item::unit())
+    fn optimize_item(&self, _item: AstItem, _ctx: &SharedScopedContext) -> Result<AstItem> {
+        Ok(AstItem::unit())
     }
 
-    fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_condition(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         match value {
             Value::Bool(b) => {
@@ -557,23 +557,25 @@ impl OptimizePass for InterpreterPass {
         invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         match func {
-            Value::Function(func) => self.interpret_expr(&func.body.get(), ctx).map(Expr::value),
+            Value::Function(func) => self
+                .interpret_expr(&func.body.get(), ctx)
+                .map(AstExpr::value),
             Value::BinOpKind(kind) => self
                 .interpret_invoke_binop(kind.clone(), &invoke.args, ctx)
-                .map(Expr::value),
+                .map(AstExpr::value),
             Value::UnOpKind(func) => {
                 ensure!(invoke.args.len() == 1, "Expected 1 arg for {:?}", func);
                 let arg = self.interpret_expr(&invoke.args[0].get(), ctx)?;
                 self.interpret_invoke_unop(func.clone(), arg, ctx)
-                    .map(Expr::value)
+                    .map(AstExpr::value)
             }
             _ => bail!("Could not invoke {:?}", func),
         }
     }
 
-    fn try_evaluate_expr(&self, pat: &Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn try_evaluate_expr(&self, pat: &AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         let value = ctx.try_get_value_from_expr(pat).with_context(|| {
             format!(
                 "could not find {:?} in context {:?}",
@@ -584,16 +586,16 @@ impl OptimizePass for InterpreterPass {
                     .collect::<Vec<_>>()
             )
         })?;
-        Ok(Expr::value(value))
+        Ok(AstExpr::value(value))
     }
 }
 
 impl ValueSystem for InterpreterPass {
-    fn get_value_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Value> {
+    fn get_value_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<Value> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
         let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;
         match expr {
-            Expr::Value(value) => Ok(*value),
+            AstExpr::Value(value) => Ok(*value),
             _ => bail!("Expected value, got {:?}", expr),
         }
     }

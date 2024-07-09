@@ -15,11 +15,11 @@ pub use ty::*;
 pub use value::*;
 
 pub type ExprId = u64;
-pub type BExpr = Box<Expr>;
+pub type BExpr = Box<AstExpr>;
 
 common_enum! {
     /// Expr is an expression that returns a value, note that a Type is also a Value
-    pub enum Expr {
+    pub enum AstExpr {
         Locator(Locator),
         Value(BValue),
         Block(ExprBlock),
@@ -47,51 +47,51 @@ common_enum! {
 
 }
 
-impl Expr {
+impl AstExpr {
     pub fn get(&self) -> Self {
         self.clone()
     }
-    pub fn unit() -> Expr {
-        Expr::Value(Value::Unit(ValueUnit).into())
+    pub fn unit() -> AstExpr {
+        AstExpr::Value(Value::Unit(ValueUnit).into())
     }
     pub fn is_unit(&self) -> bool {
         match self {
-            Expr::Value(value) => value.is_unit(),
+            AstExpr::Value(value) => value.is_unit(),
             _ => false,
         }
     }
-    pub fn value(v: Value) -> Expr {
+    pub fn value(v: Value) -> AstExpr {
         match v {
             Value::Expr(expr) => *expr,
-            Value::Any(any) => Expr::Any(any),
+            Value::Any(any) => AstExpr::Any(any),
             Value::Type(Type::Expr(expr)) => *expr,
-            _ => Expr::Value(v.into()),
+            _ => AstExpr::Value(v.into()),
         }
     }
-    pub fn ident(name: Ident) -> Expr {
-        Expr::Locator(Locator::ident(name))
+    pub fn ident(name: Ident) -> AstExpr {
+        AstExpr::Locator(Locator::ident(name))
     }
-    pub fn path(path: Path) -> Expr {
-        Expr::Locator(Locator::path(path))
+    pub fn path(path: Path) -> AstExpr {
+        AstExpr::Locator(Locator::path(path))
     }
-    pub fn block(block: ExprBlock) -> Expr {
+    pub fn block(block: ExprBlock) -> AstExpr {
         if block.stmts.len() == 0 {
-            return block.ret.map(|x| *x).unwrap_or(Expr::unit());
+            return block.ret.map(|x| *x).unwrap_or(AstExpr::unit());
         }
 
-        Expr::Block(block)
+        AstExpr::Block(block)
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
 }
-impl Display for Expr {
+impl Display for AstExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_expr(self).unwrap();
         f.write_str(&s)
     }
 }
-impl From<BExpr> for Expr {
+impl From<BExpr> for AstExpr {
     fn from(expr: BExpr) -> Self {
         *expr
     }
