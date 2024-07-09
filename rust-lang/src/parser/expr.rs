@@ -5,13 +5,37 @@ use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use lang_core::ast::{
     BExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInitStruct, ExprInvoke,
-    ExprInvokeTarget, ExprLoop, ExprReference, ExprSelect, ExprSelectType, ExprUnOp, Statement,
-    StatementLet, Value, ValueBool, ValueDecimal, ValueInt, ValueString, ValueTuple,
+    ExprInvokeTarget, ExprLoop, ExprParen, ExprReference, ExprSelect, ExprSelectType, ExprUnOp,
+    Statement, StatementLet, Value, ValueBool, ValueDecimal, ValueInt, ValueString, ValueTuple,
 };
 use lang_core::ops::{BinOpKind, UnOpKind};
 use lang_core::utils::anybox::AnyBox;
 use quote::ToTokens;
 
+pub fn parse_expr(expr: syn::Expr) -> eyre::Result<BExpr> {
+    let expr = match expr {
+        syn::Expr::Binary(b) => parse_expr_binary(b)?,
+        syn::Expr::Unary(u) => parse_unary(u)?.into(),
+        syn::Expr::Block(b) if b.label.is_none() => Expr::block(parse_block(b.block)?),
+        syn::Expr::Call(c) => Expr::Invoke(parse_expr_call(c)?.into()),
+        syn::Expr::If(i) => Expr::If(parse_expr_if(i)?),
+        syn::Expr::Loop(l) => Expr::Loop(parse_expr_loop(l)?),
+        syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
+        syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
+        syn::Expr::MethodCall(c) => Expr::Invoke(parse_expr_method_call(c)?.into()),
+        syn::Expr::Index(i) => Expr::Index(parse_expr_index(i)?),
+        syn::Expr::Path(p) => Expr::path(parser::parse_path(p.path)?),
+        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
+        syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
+        syn::Expr::Struct(s) => Expr::InitStruct(parse_expr_struct(s)?.into()),
+        syn::Expr::Paren(p) => Expr::Paren(parse_expr_parent(p)?),
+        raw => {
+            warn!("RawExpr {:?}", raw);
+            Expr::Any(AnyBox::new(RawExpr { raw }))
+        } // x => bail!("Expr not supported: {:?}", x),
+    };
+    Ok(expr.into())
+}
 pub fn parse_literal(lit: syn::Lit) -> eyre::Result<Value> {
     Ok(match lit {
         syn::Lit::Int(i) => Value::Int(ValueInt::new(i.base10_parse()?)),
@@ -30,31 +54,6 @@ pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
         _ => bail!("Unary op not supported: {:?}", u.op),
     };
     Ok(ExprUnOp { op, val: expr })
-}
-
-pub fn parse_expr(expr: syn::Expr) -> eyre::Result<BExpr> {
-    let expr = match expr {
-        syn::Expr::Binary(b) => parse_expr_binary(b)?,
-        syn::Expr::Unary(u) => parse_unary(u)?.into(),
-        syn::Expr::Block(b) if b.label.is_none() => Expr::block(parse_block(b.block)?),
-        syn::Expr::Call(c) => Expr::Invoke(parse_expr_call(c)?.into()),
-        syn::Expr::If(i) => Expr::If(parse_expr_if(i)?),
-        syn::Expr::Loop(l) => Expr::Loop(parse_expr_loop(l)?),
-        syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
-        syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
-        syn::Expr::MethodCall(c) => Expr::Invoke(parse_expr_method_call(c)?.into()),
-        syn::Expr::Index(i) => Expr::Index(parse_expr_index(i)?),
-        syn::Expr::Path(p) => Expr::path(parser::parse_path(p.path)?),
-        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
-        syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
-        syn::Expr::Struct(s) => Expr::InitStruct(parse_struct_expr(s)?.into()),
-
-        raw => {
-            warn!("RawExpr {:?}", raw);
-            Expr::Any(AnyBox::new(RawExpr { raw }))
-        } // x => bail!("Expr not supported: {:?}", x),
-    };
-    Ok(expr.into())
 }
 
 /// returns: statement, with_semicolon
@@ -194,7 +193,7 @@ pub fn parse_tuple(t: syn::ExprTuple) -> eyre::Result<ValueTuple> {
     Ok(ValueTuple { values })
 }
 
-pub fn parse_struct_expr(s: syn::ExprStruct) -> eyre::Result<ExprInitStruct> {
+pub fn parse_expr_struct(s: syn::ExprStruct) -> eyre::Result<ExprInitStruct> {
     Ok(ExprInitStruct {
         name: Expr::path(parser::parse_path(s.path)?).into(),
         fields: s
@@ -202,5 +201,10 @@ pub fn parse_struct_expr(s: syn::ExprStruct) -> eyre::Result<ExprInitStruct> {
             .into_iter()
             .map(|x| parser::parse_field_value(x))
             .try_collect()?,
+    })
+}
+pub fn parse_expr_parent(p: syn::ExprParen) -> eyre::Result<ExprParen> {
+    Ok(ExprParen {
+        expr: parse_expr(*p.expr)?.into(),
     })
 }
