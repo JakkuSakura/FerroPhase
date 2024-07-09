@@ -14,9 +14,9 @@ impl InlinePass {
         Self { serializer }
     }
 
-    pub fn inline_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    pub fn inline_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         match expr {
-            Expr::Value(value) => self.inline_value(value.into(), ctx).map(Expr::value),
+            AstExpr::Value(value) => self.inline_value(value.into(), ctx).map(AstExpr::value),
             _ => Ok(expr),
         }
     }
@@ -25,14 +25,14 @@ impl InlinePass {
         mut invoke: ExprInvoke,
         func: &Value,
         _ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         match func {
             Value::Function(func) => {
                 if let Some(name) = &func.name {
                     match name.as_str() {
                         "print" => {
                             invoke.target = Locator::ident(name.clone()).into();
-                            return Ok(Expr::Invoke(invoke.into()));
+                            return Ok(AstExpr::Invoke(invoke.into()));
                         }
                         _ if invoke.args.is_empty() => return Ok(func.body.get()),
                         _ => {}
@@ -45,18 +45,18 @@ impl InlinePass {
             _ => {}
         }
 
-        Ok(Expr::Invoke(invoke.into()))
+        Ok(AstExpr::Invoke(invoke.into()))
     }
-    pub fn try_get_pat(&self, ident: Locator, ctx: &SharedScopedContext) -> Result<Expr> {
+    pub fn try_get_pat(&self, ident: Locator, ctx: &SharedScopedContext) -> Result<AstExpr> {
         match ctx.get_expr(ident.to_path()) {
             Some(expr) => Ok(expr),
-            None => Ok(Expr::Locator(ident)),
+            None => Ok(AstExpr::Locator(ident)),
         }
     }
 
-    pub fn try_get_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    pub fn try_get_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         match expr {
-            Expr::Locator(ident) => self.try_get_pat(ident, ctx),
+            AstExpr::Locator(ident) => self.try_get_pat(ident, ctx),
             _ => Ok(expr),
         }
     }
@@ -88,10 +88,10 @@ impl OptimizePass for InlinePass {
         invoke: ExprInvoke,
         func: &Value,
         ctx: &SharedScopedContext,
-    ) -> Result<Expr> {
+    ) -> Result<AstExpr> {
         self.inline_invoke(invoke, func, ctx)
     }
-    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
+    fn optimize_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         self.inline_expr(expr, ctx)
     }
 }

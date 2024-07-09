@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::ast::{BExpr, BItem, Expr, Item};
+use crate::ast::{AstExpr, AstItem, BExpr, BItem};
 use crate::common_enum;
 use crate::common_struct;
 use crate::pat::Pattern;
@@ -10,7 +10,7 @@ common_enum! {
     pub enum Statement {
         Item(BItem),
         Let(StatementLet),
-        Expr(Expr),
+        Expr(AstExpr),
         Any(AnyBox),
     }
 }
@@ -19,7 +19,7 @@ impl Statement {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
-    pub fn item(item: Item) -> Self {
+    pub fn item(item: AstItem) -> Self {
         Self::Item(Box::new(item))
     }
 
@@ -35,7 +35,7 @@ impl Statement {
 common_struct! {
     pub struct StatementLet {
         pub pat: Pattern,
-        pub value: Expr,
+        pub value: AstExpr,
     }
 }
 

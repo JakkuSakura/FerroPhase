@@ -370,7 +370,7 @@ impl RustPrinter {
             ))
         };
     }
-    pub fn print_list_expr(&self, n: &[Expr]) -> Result<TokenStream> {
+    pub fn print_list_expr(&self, n: &[AstExpr]) -> Result<TokenStream> {
         let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }
@@ -520,15 +520,15 @@ impl RustPrinter {
         })
     }
 
-    pub fn print_file(&self, file: &File) -> Result<TokenStream> {
+    pub fn print_file(&self, file: &AstFile) -> Result<TokenStream> {
         let items = self.print_items_chunk(&file.module.items)?;
         Ok(quote!(#items))
     }
-    pub fn print_tree(&self, node: &Tree) -> Result<TokenStream> {
+    pub fn print_tree(&self, node: &AstTree) -> Result<TokenStream> {
         match node {
-            Tree::Item(n) => self.print_item(n),
-            Tree::Expr(n) => self.print_expr(n),
-            Tree::File(n) => self.print_file(n),
+            AstTree::Item(n) => self.print_item(n),
+            AstTree::Expr(n) => self.print_expr(n),
+            AstTree::File(n) => self.print_file(n),
         }
     }
 }

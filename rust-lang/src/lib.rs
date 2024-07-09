@@ -115,13 +115,13 @@ impl RustSerde {
     }
 }
 impl Serializer for RustSerde {
-    fn serialize_tree(&self, node: &Tree) -> Result<String> {
+    fn serialize_tree(&self, node: &AstTree) -> Result<String> {
         RustPrinter
             .print_tree(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_expr(&self, node: &Expr) -> Result<String> {
+    fn serialize_expr(&self, node: &AstExpr) -> Result<String> {
         RustPrinter
             .print_expr(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
@@ -133,7 +133,7 @@ impl Serializer for RustSerde {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_item(&self, node: &Item) -> Result<String> {
+    fn serialize_item(&self, node: &AstItem) -> Result<String> {
         RustPrinter
             .print_item(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
@@ -176,23 +176,23 @@ impl Serializer for RustSerde {
     }
 }
 impl Deserializer for RustSerde {
-    fn deserialize_tree(&self, code: &str) -> Result<Tree> {
+    fn deserialize_tree(&self, code: &str) -> Result<AstTree> {
         let code: syn::File = parse_str(code)?;
         let path = PathBuf::from("__file__");
-        RustParser::new().parse_file(path, code).map(Tree::File)
+        RustParser::new().parse_file(path, code).map(AstTree::File)
     }
 
-    fn deserialize_expr(&self, code: &str) -> Result<Expr> {
+    fn deserialize_expr(&self, code: &str) -> Result<AstExpr> {
         let code: syn::Expr = parse_str(code)?;
         RustParser::new().parse_expr(code)
     }
 
-    fn deserialize_item(&self, code: &str) -> Result<Item> {
+    fn deserialize_item(&self, code: &str) -> Result<AstItem> {
         let code: syn::Item = parse_str(code)?;
         RustParser::new().parse_item(code)
     }
 
-    fn deserialize_file(&self, path: &std::path::Path) -> Result<File> {
+    fn deserialize_file(&self, path: &std::path::Path) -> Result<AstFile> {
         RustParser::new().parse_file_recursively(path.to_owned())
     }
     fn deserialize_type(&self, code: &str) -> Result<Type> {

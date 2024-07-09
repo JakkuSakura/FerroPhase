@@ -1,7 +1,7 @@
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
-    Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget,
+    AstExpr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget,
     ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
     ExprSelectType, Statement, StatementLet,
 };
@@ -12,33 +12,33 @@ use quote::quote;
 use crate::printer::RustPrinter;
 
 impl RustPrinter {
-    pub fn print_expr_optimized(&self, node: &Expr) -> eyre::Result<TokenStream> {
+    pub fn print_expr_optimized(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
         match node {
-            Expr::Block(n) => self.print_statement_chunk(&n.stmts),
-            Expr::Value(v) if v.is_unit() => Ok(quote!()),
+            AstExpr::Block(n) => self.print_statement_chunk(&n.stmts),
+            AstExpr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
     }
 
-    pub fn print_expr(&self, node: &Expr) -> eyre::Result<TokenStream> {
+    pub fn print_expr(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
         match node {
-            Expr::Locator(loc) => self.print_locator(loc),
-            Expr::Value(n) => self.print_value(n),
-            Expr::Invoke(n) => self.print_invoke_expr(n),
-            Expr::BinOp(op) => self.print_bin_op(op),
-            Expr::Any(n) => self.print_any(n),
-            Expr::Match(n) => self.print_match(n),
-            Expr::If(n) => self.print_if(n),
-            Expr::Block(n) => self.print_block(n),
-            Expr::InitStruct(n) => self.print_struct_expr(n),
-            Expr::Select(n) => self.print_select(n),
-            Expr::Reference(n) => self.print_ref(n),
-            Expr::Assign(n) => self.print_assign(n),
-            Expr::Index(n) => self.print_index(n),
-            Expr::Closured(n) => self.print_expr(&n.expr.get()),
-            Expr::Paren(n) => self.print_paren(n),
-            Expr::Loop(n) => self.print_loop(n),
-            Expr::Range(n) => self.print_range(n),
+            AstExpr::Locator(loc) => self.print_locator(loc),
+            AstExpr::Value(n) => self.print_value(n),
+            AstExpr::Invoke(n) => self.print_invoke_expr(n),
+            AstExpr::BinOp(op) => self.print_bin_op(op),
+            AstExpr::Any(n) => self.print_any(n),
+            AstExpr::Match(n) => self.print_match(n),
+            AstExpr::If(n) => self.print_if(n),
+            AstExpr::Block(n) => self.print_block(n),
+            AstExpr::InitStruct(n) => self.print_struct_expr(n),
+            AstExpr::Select(n) => self.print_select(n),
+            AstExpr::Reference(n) => self.print_ref(n),
+            AstExpr::Assign(n) => self.print_assign(n),
+            AstExpr::Index(n) => self.print_index(n),
+            AstExpr::Closured(n) => self.print_expr(&n.expr.get()),
+            AstExpr::Paren(n) => self.print_paren(n),
+            AstExpr::Loop(n) => self.print_loop(n),
+            AstExpr::Range(n) => self.print_range(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -255,7 +255,7 @@ impl RustPrinter {
             )),
         }
     }
-    pub fn print_args(&self, node: &Vec<Expr>) -> eyre::Result<TokenStream> {
+    pub fn print_args(&self, node: &Vec<AstExpr>) -> eyre::Result<TokenStream> {
         let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!((#(#args),*)))
     }

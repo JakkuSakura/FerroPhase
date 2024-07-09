@@ -158,11 +158,11 @@ pub fn parse_pat(p: syn::Pat) -> Result<Pattern> {
     })
 }
 
-pub fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<Expr> {
+pub fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<AstExpr> {
     match b {
         syn::TypeParamBound::Trait(t) => {
             let path = parse_path(t.path)?;
-            Ok(Expr::path(path))
+            Ok(AstExpr::path(path))
         }
         _ => bail!("Does not support lifetimes {:?}", b),
     }
@@ -196,7 +196,7 @@ pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
         ret: item::parse_return_type(sig.output)?,
     })
 }
-pub fn parse_trait_item(f: syn::TraitItem) -> Result<Item> {
+pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
     match f {
         syn::TraitItem::Fn(f) => {
             let name = parse_ident(f.sig.ident.clone());
@@ -240,7 +240,7 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
+fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
     match item {
         syn::ImplItem::Fn(m) => {
             // TODO: defaultness
@@ -250,14 +250,14 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
-            Ok(Item::DefFunction(DefFunction {
+            Ok(AstItem::DefFunction(DefFunction {
                 name: expr.name.clone().unwrap(),
                 ty: None,
                 value: expr,
                 visibility: parse_vis(m.vis),
             }))
         }
-        syn::ImplItem::Type(t) => Ok(Item::DefType(DefType {
+        syn::ImplItem::Type(t) => Ok(AstItem::DefType(DefType {
             name: parse_ident(t.ident),
             value: parse_type_value(t.ty)?,
             visibility: parse_vis(t.vis),
@@ -272,7 +272,7 @@ fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
             .map(|x| parse_path(x.1))
             .transpose()?
             .map(Locator::path),
-        self_ty: Expr::value(parse_type_value(*im.self_ty.clone())?.into()),
+        self_ty: AstExpr::value(parse_type_value(*im.self_ty.clone())?.into()),
         items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
@@ -351,7 +351,7 @@ impl syn::parse::Parse for TypeValueParser {
 }
 
 enum TypeExprParser {
-    Add { left: Expr, right: Expr },
+    Add { left: AstExpr, right: AstExpr },
     Value(Type),
 }
 impl syn::parse::Parse for TypeExprParser {
@@ -366,7 +366,7 @@ impl syn::parse::Parse for TypeExprParser {
                 let rhs: Type = input.parse::<TypeValueParser>()?.into();
                 lhs = TypeExprParser::Add {
                     left: lhs.into(),
-                    right: Expr::value(rhs.into()),
+                    right: AstExpr::value(rhs.into()),
                 };
             // } else if input.peek(Token![-]) {
             //     input.parse::<Token![-]>()?;
@@ -382,10 +382,10 @@ impl syn::parse::Parse for TypeExprParser {
         Ok(lhs)
     }
 }
-impl Into<Expr> for TypeExprParser {
-    fn into(self) -> Expr {
+impl Into<AstExpr> for TypeExprParser {
+    fn into(self) -> AstExpr {
         match self {
-            TypeExprParser::Add { left, right } => Expr::BinOp(ExprBinOp {
+            TypeExprParser::Add { left, right } => AstExpr::BinOp(ExprBinOp {
                 lhs: left.into(),
                 rhs: right.into(),
                 kind: BinOpKind::Add,
@@ -393,22 +393,22 @@ impl Into<Expr> for TypeExprParser {
             // TypeExprParser::Sub { .. } => {
             //     unreachable!()
             // }
-            TypeExprParser::Value(v) => Expr::value(v.into()),
+            TypeExprParser::Value(v) => AstExpr::value(v.into()),
         }
     }
 }
-fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<Expr> {
+fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<AstExpr> {
     let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
     Ok(t.into())
 }
 
-pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
+pub fn parse_file(path: PathBuf, file: syn::File) -> Result<AstFile> {
     let module = Module {
         name: Ident::new("__file__"),
         items: file.items.into_iter().map(item::parse_item).try_collect()?,
         visibility: Visibility::Public,
     };
-    Ok(File { path, module })
+    Ok(AstFile { path, module })
 }
 pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
     Ok(Module {
@@ -427,7 +427,7 @@ pub fn parse_fn(f: syn::ItemFn) -> Result<ValueFunction> {
     let sig = parse_fn_sig(f.sig)?;
     Ok(ValueFunction {
         sig,
-        body: Expr::block(parse_block(*f.block)?).into(),
+        body: AstExpr::block(parse_block(*f.block)?).into(),
     })
 }
 
@@ -437,7 +437,7 @@ impl RustParser {
     pub fn new() -> Self {
         RustParser {}
     }
-    pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
+    pub fn parse_file_recursively(&self, path: PathBuf) -> Result<AstFile> {
         let builder = InlinerBuilder::new();
         let path = path
             .canonicalize()
@@ -463,13 +463,13 @@ impl RustParser {
     pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
         expr::parse_expr(code).map(|x| Value::expr(x.get()))
     }
-    pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
+    pub fn parse_expr(&self, code: syn::Expr) -> Result<AstExpr> {
         expr::parse_expr(code).map(|x| x.get())
     }
-    pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
+    pub fn parse_item(&self, code: syn::Item) -> Result<AstItem> {
         item::parse_item(code)
     }
-    pub fn parse_file(&self, path: PathBuf, code: syn::File) -> Result<File> {
+    pub fn parse_file(&self, path: PathBuf, code: syn::File) -> Result<AstFile> {
         parse_file(path, code)
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
