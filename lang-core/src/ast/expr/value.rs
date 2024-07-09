@@ -49,7 +49,7 @@ impl Display for ExprInvoke {
     }
 }
 common_enum! {
-    pub enum SelectType {
+    pub enum ExprSelectType {
         Unknown,
         Field,
         Method,
@@ -63,7 +63,14 @@ common_struct! {
     pub struct ExprSelect {
         pub obj: BExpr,
         pub field: Ident,
-        pub select: SelectType,
+        pub select: ExprSelectType,
+    }
+}
+
+common_struct! {
+    pub struct ExprIndex {
+        pub expr: BExpr,
+        pub index: BExpr,
     }
 }
 
@@ -145,5 +152,4 @@ common_struct! {
         pub target: BExpr,
         pub value: BExpr,
     }
-
 }

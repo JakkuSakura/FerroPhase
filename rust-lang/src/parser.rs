@@ -263,12 +263,18 @@ fn parse_method_call(call: syn::ExprMethodCall) -> Result<ExprInvoke> {
             ExprSelect {
                 obj: parse_expr(*call.receiver)?.into(),
                 field: parse_ident(call.method),
-                select: SelectType::Method,
+                select: ExprSelectType::Method,
             }
             .into(),
         )
         .into(),
         args: call.args.into_iter().map(parse_expr).try_collect()?,
+    })
+}
+fn parse_index(i: syn::ExprIndex) -> Result<ExprIndex> {
+    Ok(ExprIndex {
+        expr: parse_expr(*i.expr)?,
+        index: parse_expr(*i.index)?,
     })
 }
 
@@ -285,6 +291,12 @@ fn parse_if(i: syn::ExprIf) -> Result<ExprIf> {
         cond,
         then: Expr::block(then).into(),
         elze,
+    })
+}
+fn parse_loop(l: syn::ExprLoop) -> Result<ExprLoop> {
+    Ok(ExprLoop {
+        label: None, // TODO: label
+        body: Expr::block(parse_block(l.body)?).into(),
     })
 }
 fn parse_binary(b: syn::ExprBinary) -> Result<Expr> {
@@ -368,13 +380,11 @@ pub fn parse_expr(expr: syn::Expr) -> Result<BExpr> {
         syn::Expr::Block(b) if b.label.is_none() => Expr::block(parse_block(b.block)?),
         syn::Expr::Call(c) => Expr::Invoke(parse_call(c)?.into()),
         syn::Expr::If(i) => Expr::If(parse_if(i)?),
-        syn::Expr::Loop(l) => Expr::Loop(ExprLoop {
-            label: None, // TODO: label
-            body: Expr::block(parse_block(l.body)?).into(),
-        }),
+        syn::Expr::Loop(l) => Expr::Loop(parse_loop(l)?),
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => Expr::any(RawExprMacro { raw: m }),
         syn::Expr::MethodCall(c) => Expr::Invoke(parse_method_call(c)?.into()),
+        syn::Expr::Index(i) => Expr::Index(parse_index(i)?),
         syn::Expr::Path(p) => Expr::path(parse_path(p.path)?),
         syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
         syn::Expr::Tuple(t) => Expr::value(Value::Tuple(parse_tuple(t)?)),
