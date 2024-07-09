@@ -153,3 +153,8 @@ common_struct! {
         pub value: BExpr,
     }
 }
+common_struct! {
+    pub struct ExprParen {
+        pub expr: BExpr,
+    }
+}
