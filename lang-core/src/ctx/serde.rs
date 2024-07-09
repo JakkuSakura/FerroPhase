@@ -1,11 +1,11 @@
 use crate::ast::AstExpr;
 use eyre::Result;
 
-use crate::ast::{Type, Value};
+use crate::ast::{AstType, Value};
 use crate::ctx::Context;
 
 pub trait SerializeSystem {
-    fn get_serialized_from_ty(&self, ctx: &Context, ty: &Type) -> Result<String> {
+    fn get_serialized_from_ty(&self, ctx: &Context, ty: &AstType) -> Result<String> {
         let _ = ctx;
         let _ = ty;
         unimplemented!()
@@ -40,12 +40,12 @@ pub trait SerializeSystem {
 impl SerializeSystem for () {}
 
 pub trait DeserializeSystem {
-    fn get_ty_from_serialized(&self, ctx: &Context, serialized: &str) -> Result<Type> {
+    fn get_ty_from_serialized(&self, ctx: &Context, serialized: &str) -> Result<AstType> {
         let _ = ctx;
         let _ = serialized;
         unimplemented!()
     }
-    fn get_ty_from_serialized_id(&self, ctx: &Context, id: u32) -> Result<Type> {
+    fn get_ty_from_serialized_id(&self, ctx: &Context, id: u32) -> Result<AstType> {
         let _ = ctx;
         let _ = id;
         unimplemented!()

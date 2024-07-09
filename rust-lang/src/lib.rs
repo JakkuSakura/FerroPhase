@@ -7,7 +7,6 @@ use crate::parser::RustParser;
 use crate::printer::RustPrinter;
 use common::Result;
 use lang_core::ast::*;
-use lang_core::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -114,7 +113,7 @@ impl RustSerde {
         Ok(code.to_string())
     }
 }
-impl Serializer for RustSerde {
+impl AstSerializer for RustSerde {
     fn serialize_tree(&self, node: &AstTree) -> Result<String> {
         RustPrinter
             .print_tree(node)
@@ -157,7 +156,7 @@ impl Serializer for RustSerde {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_type(&self, node: &Type) -> Result<String> {
+    fn serialize_type(&self, node: &AstType) -> Result<String> {
         RustPrinter
             .print_type_value(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
@@ -171,11 +170,11 @@ impl Serializer for RustSerde {
 
     fn serialize_function(&self, node: &ValueFunction) -> Result<String> {
         RustPrinter
-            .print_function(node, Visibility::Private)
+            .print_value_function(node, Visibility::Private)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 }
-impl Deserializer for RustSerde {
+impl AstDeserializer for RustSerde {
     fn deserialize_tree(&self, code: &str) -> Result<AstTree> {
         let code: syn::File = parse_str(code)?;
         let path = PathBuf::from("__file__");
@@ -195,7 +194,7 @@ impl Deserializer for RustSerde {
     fn deserialize_file(&self, path: &std::path::Path) -> Result<AstFile> {
         RustParser::new().parse_file_recursively(path.to_owned())
     }
-    fn deserialize_type(&self, code: &str) -> Result<Type> {
+    fn deserialize_type(&self, code: &str) -> Result<AstType> {
         let code: syn::Type = parse_str(code)?;
         RustParser::new().parse_type_value(code)
     }

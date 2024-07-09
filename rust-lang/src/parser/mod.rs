@@ -1,6 +1,8 @@
+mod attr;
 mod expr;
 mod item;
 
+use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_block;
 use common::*;
 use itertools::Itertools;
@@ -43,17 +45,17 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
             .into_iter()
             .map(|x| {
                 let args = match x.arguments {
-                    syn::PathArguments::AngleBracketed(a) => a
-                        .args
-                        .into_iter()
-                        .map(|x| match x {
-                            syn::GenericArgument::Type(t) => parse_type_value(t),
-                            syn::GenericArgument::Const(c) => {
-                                expr::parse_expr(c).map(|x| Type::value(Value::expr(x.get())))
-                            }
-                            _ => bail!("Does not support path arguments: {:?}", x),
-                        })
-                        .try_collect()?,
+                    syn::PathArguments::AngleBracketed(a) => {
+                        a.args
+                            .into_iter()
+                            .map(|x| match x {
+                                syn::GenericArgument::Type(t) => parse_type_value(t),
+                                syn::GenericArgument::Const(c) => expr::parse_expr(c)
+                                    .map(|x| AstType::value(Value::expr(x.get()))),
+                                _ => bail!("Does not support path arguments: {:?}", x),
+                            })
+                            .try_collect()?
+                    }
                     _ => bail!("Does not support path arguments: {:?}", x),
                 };
                 let ident = parse_ident(x.ident);
@@ -70,9 +72,9 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
     return Ok(Locator::parameter_path(path));
 }
 
-fn parse_type_value(t: syn::Type) -> Result<Type> {
+fn parse_type_value(t: syn::Type) -> Result<AstType> {
     let t = match t {
-        syn::Type::BareFn(f) => Type::Function(
+        syn::Type::BareFn(f) => AstType::Function(
             TypeFunction {
                 params: f
                     .inputs
@@ -88,11 +90,11 @@ fn parse_type_value(t: syn::Type) -> Result<Type> {
         .into(),
         syn::Type::Path(p) => {
             let s = p.path.to_token_stream().to_string();
-            fn int(ty: TypeInt) -> Type {
-                Type::Primitive(TypePrimitive::Int(ty))
+            fn int(ty: TypeInt) -> AstType {
+                AstType::Primitive(TypePrimitive::Int(ty))
             }
-            fn float(ty: DecimalType) -> Type {
-                Type::Primitive(TypePrimitive::Decimal(ty))
+            fn float(ty: DecimalType) -> AstType {
+                AstType::Primitive(TypePrimitive::Decimal(ty))
             }
 
             match s.as_str() {
@@ -106,16 +108,16 @@ fn parse_type_value(t: syn::Type) -> Result<Type> {
                 "u8" => int(TypeInt::U8),
                 "f64" => float(DecimalType::F64),
                 "f32" => float(DecimalType::F32),
-                _ => Type::locator(parse_locator(p.path)?),
+                _ => AstType::locator(parse_locator(p.path)?),
             }
         }
-        syn::Type::ImplTrait(im) => Type::ImplTraits(parse_impl_trait(im)?),
-        syn::Type::Tuple(t) if t.elems.is_empty() => Type::unit().into(),
+        syn::Type::ImplTrait(im) => AstType::ImplTraits(parse_impl_trait(im)?),
+        syn::Type::Tuple(t) if t.elems.is_empty() => AstType::unit().into(),
         // types like t!{ }
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
-            Type::expr(parse_custom_type_expr(m)?)
+            AstType::expr(parse_custom_type_expr(m)?)
         }
-        syn::Type::Reference(r) => Type::Reference(parse_type_reference(r)?.into()),
+        syn::Type::Reference(r) => AstType::Reference(parse_type_reference(r)?.into()),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
@@ -243,14 +245,15 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
 fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
     match item {
         syn::ImplItem::Fn(m) => {
-            // TODO: defaultness
-            let expr = parse_fn(syn::ItemFn {
+            let attrs = parse_attrs(m.attrs.clone())?;
+            let expr = parse_value_fn(syn::ItemFn {
                 attrs: m.attrs,
                 vis: m.vis.clone(),
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
             Ok(AstItem::DefFunction(DefFunction {
+                attrs,
                 name: expr.name.clone().unwrap(),
                 ty: None,
                 value: expr,
@@ -310,8 +313,8 @@ enum TypeValueParser {
     Path(Path),
     // Ident(Ident),
 }
-impl Into<Type> for TypeValueParser {
-    fn into(self) -> Type {
+impl Into<AstType> for TypeValueParser {
+    fn into(self) -> AstType {
         match self {
             // TypeExprParser::Add(o) => TypeExpr::Op(TypeOp::Add(AddOp {
             //     lhs: o.lhs.into(),
@@ -321,9 +324,9 @@ impl Into<Type> for TypeValueParser {
             //     lhs: o.lhs.into(),
             //     rhs: o.rhs.into(),
             // })),
-            TypeValueParser::UnnamedStruct(s) => Type::Structural(s),
-            TypeValueParser::NamedStruct(s) => Type::Struct(s),
-            TypeValueParser::Path(p) => Type::path(p),
+            TypeValueParser::UnnamedStruct(s) => AstType::Structural(s),
+            TypeValueParser::NamedStruct(s) => AstType::Struct(s),
+            TypeValueParser::Path(p) => AstType::path(p),
             // TypeValueParser::Ident(i) => TypeValue::ident(i),
         }
     }
@@ -352,7 +355,7 @@ impl syn::parse::Parse for TypeValueParser {
 
 enum TypeExprParser {
     Add { left: AstExpr, right: AstExpr },
-    Value(Type),
+    Value(AstType),
 }
 impl syn::parse::Parse for TypeExprParser {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -363,7 +366,7 @@ impl syn::parse::Parse for TypeExprParser {
             }
             if input.peek(Token![+]) {
                 input.parse::<Token![+]>()?;
-                let rhs: Type = input.parse::<TypeValueParser>()?.into();
+                let rhs: AstType = input.parse::<TypeValueParser>()?.into();
                 lhs = TypeExprParser::Add {
                     left: lhs.into(),
                     right: AstExpr::value(rhs.into()),
@@ -423,7 +426,7 @@ pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
         visibility: parse_vis(m.vis),
     })
 }
-pub fn parse_fn(f: syn::ItemFn) -> Result<ValueFunction> {
+pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
     let sig = parse_fn_sig(f.sig)?;
     Ok(ValueFunction {
         sig,
@@ -475,7 +478,7 @@ impl RustParser {
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
     }
-    pub fn parse_type_value(&self, code: syn::Type) -> Result<Type> {
+    pub fn parse_type_value(&self, code: syn::Type) -> Result<AstType> {
         parse_type_value(code)
     }
 }

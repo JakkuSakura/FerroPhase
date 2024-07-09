@@ -1,7 +1,7 @@
-use crate::ast::{BValue, Type, Value, ValueUnit};
+use crate::ast::{get_threadlocal_serializer, AstType, BValue, Value, ValueUnit};
+use crate::common_enum;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
-use crate::{common_enum, get_threadlocal_serializer};
 use std::fmt::{Debug, Display, Formatter};
 
 mod closure;
@@ -64,7 +64,7 @@ impl AstExpr {
         match v {
             Value::Expr(expr) => *expr,
             Value::Any(any) => AstExpr::Any(any),
-            Value::Type(Type::Expr(expr)) => *expr,
+            Value::Type(AstType::Expr(expr)) => *expr,
             _ => AstExpr::Value(v.into()),
         }
     }

@@ -11,12 +11,12 @@ use std::sync::Arc;
 
 pub struct SpecializePass {
     spec_id: AtomicUsize,
-    serializer: Arc<dyn Serializer>,
+    serializer: Arc<dyn AstSerializer>,
     // TODO: use Context instead of InterpreterPass
     interpreter: InterpreterPass,
 }
 impl SpecializePass {
-    pub fn new(serializer: Arc<dyn Serializer>) -> Self {
+    pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
             interpreter: InterpreterPass::new(serializer.clone()),
@@ -109,7 +109,7 @@ impl SpecializePass {
 
         let mut ret = func.ret.clone();
         match &ret {
-            Type::Expr(expr) => match &**expr {
+            AstType::Expr(expr) => match &**expr {
                 AstExpr::Locator(Locator::Ident(ident))
                     if func
                         .generics_params

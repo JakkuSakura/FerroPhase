@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use eyre::{bail, ContextCompat, Result};
 use itertools::Itertools;
-use lang_core::ast::{AstItem, DefConst, DefStruct, DefTrait, DefType, Impl};
+use lang_core::ast::{AstItem, DefConst, DefFunction, DefStruct, DefTrait, DefType, Impl};
 use proc_macro2::TokenStream;
 use quote::quote;
 impl RustPrinter {
@@ -64,10 +64,17 @@ impl RustPrinter {
             }
         ))
     }
-
+    pub fn print_def_function(&self, func: &DefFunction) -> Result<TokenStream> {
+        let attrs = self.print_attrs(&func.attrs)?;
+        let func = self.print_value_function(&func.value, func.visibility)?;
+        Ok(quote!(
+            #attrs
+            #func
+        ))
+    }
     pub fn print_item(&self, item: &AstItem) -> Result<TokenStream> {
         match item {
-            AstItem::DefFunction(n) => self.print_function(&n.value, n.visibility),
+            AstItem::DefFunction(n) => self.print_def_function(n),
             AstItem::DefType(n) => self.print_def_type(n),
             AstItem::DefStruct(n) => self.print_def_struct(n),
             AstItem::DefTrait(n) => self.print_def_trait(n),
