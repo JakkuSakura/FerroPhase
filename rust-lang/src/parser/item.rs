@@ -108,7 +108,8 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
                 attrs,
                 name: f.name.clone().unwrap(),
                 ty: None,
-                value: f,
+                sig: f.sig,
+                body: f.body,
                 visibility,
             };
             Ok(AstItem::DefFunction(d))

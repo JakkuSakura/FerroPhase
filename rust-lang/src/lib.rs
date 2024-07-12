@@ -1,16 +1,15 @@
-pub mod macros;
-pub mod parser;
-pub mod printer;
-pub mod rustfmt;
+use std::fmt::Debug;
 
-use crate::parser::RustParser;
-use crate::printer::RustPrinter;
 use common::Result;
 use lang_core::ast::*;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::path::PathBuf;
-use syn::parse_str;
+
+use crate::parser::RustParser;
+use crate::printer::RustPrinter;
+
+pub mod parser;
+pub mod printer;
+
 macro_rules! unsafe_impl_send_sync {
     ($t: ty) => {
         unsafe impl Send for $t {}
@@ -91,111 +90,78 @@ macro_rules! t {
 }
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct RustSerde {
-    rustfmt: bool,
+    printer: RustPrinter,
+    parser: RustParser,
 }
 impl RustSerde {
     pub fn new() -> Self {
-        Self { rustfmt: false }
+        Self {
+            printer: RustPrinter::new(),
+            parser: RustParser::new(),
+        }
     }
     pub fn set_rustfmt(&mut self, rustfmt: bool) {
-        self.rustfmt = rustfmt;
-    }
-    pub fn maybe_rustfmt_token_stream(&self, code: &proc_macro2::TokenStream) -> Result<String> {
-        self.maybe_rustfmt(&code.to_string())
-    }
-    pub fn maybe_rustfmt(&self, code: &str) -> Result<String> {
-        if self.rustfmt {
-            if let Ok(ok) = rustfmt::format_code(code) {
-                return Ok(ok);
-            }
-        }
-
-        Ok(code.to_string())
+        self.printer.rustfmt = rustfmt;
     }
 }
 impl AstSerializer for RustSerde {
     fn serialize_tree(&self, node: &AstTree) -> Result<String> {
-        RustPrinter
-            .print_tree(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_tree(node)
     }
 
     fn serialize_expr(&self, node: &AstExpr) -> Result<String> {
-        RustPrinter
-            .print_expr(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_expr(node)
     }
 
     fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String> {
-        RustPrinter
-            .print_invoke(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_invoke(node)
     }
 
     fn serialize_item(&self, node: &AstItem) -> Result<String> {
-        RustPrinter
-            .print_item(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_item(node)
     }
 
     fn serialize_block(&self, node: &ExprBlock) -> Result<String> {
-        RustPrinter
-            .print_block(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_block(node)
     }
 
     fn serialize_module(&self, node: &Module) -> Result<String> {
-        RustPrinter
-            .print_module(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_module(node)
     }
 
     fn serialize_value(&self, node: &Value) -> Result<String> {
-        RustPrinter
-            .print_value(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_value(node)
     }
 
     fn serialize_type(&self, node: &AstType) -> Result<String> {
-        RustPrinter
-            .print_type_value(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_type(node)
     }
 
     fn serialize_stmt(&self, node: &Statement) -> Result<String> {
-        RustPrinter
-            .print_statement(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_stmt(node)
     }
 
     fn serialize_function(&self, node: &ValueFunction) -> Result<String> {
-        RustPrinter
-            .print_value_function(node, Visibility::Private)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+        self.printer.serialize_function(node)
     }
 }
 impl AstDeserializer for RustSerde {
     fn deserialize_tree(&self, code: &str) -> Result<AstTree> {
-        let code: syn::File = parse_str(code)?;
-        let path = PathBuf::from("__file__");
-        RustParser::new().parse_file(path, code).map(AstTree::File)
+        self.parser.deserialize_tree(code)
     }
 
     fn deserialize_expr(&self, code: &str) -> Result<AstExpr> {
-        let code: syn::Expr = parse_str(code)?;
-        RustParser::new().parse_expr(code)
+        self.parser.deserialize_expr(code)
     }
 
     fn deserialize_item(&self, code: &str) -> Result<AstItem> {
-        let code: syn::Item = parse_str(code)?;
-        RustParser::new().parse_item(code)
+        self.parser.deserialize_item(code)
     }
 
     fn deserialize_file(&self, path: &std::path::Path) -> Result<AstFile> {
-        RustParser::new().parse_file_recursively(path.to_owned())
+        self.parser.deserialize_file(path)
     }
     fn deserialize_type(&self, code: &str) -> Result<AstType> {
-        let code: syn::Type = parse_str(code)?;
-        RustParser::new().parse_type_value(code)
+        self.parser.deserialize_type(code)
     }
 }
