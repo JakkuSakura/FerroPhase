@@ -5,12 +5,12 @@ use pretty_assertions::assert_eq;
 
 use lang_core::ast::*;
 use lang_core::ctx::Context;
-use lang_core::register_threadlocal_serializer;
 use lang_optimize::pass::InterpreterPass;
-use rust_lang::{shll_parse_expr, shll_parse_value, RustSerde};
+use rust_lang::printer::RustPrinter;
+use rust_lang::{shll_parse_expr, shll_parse_value};
 
 fn interpret_shll_expr(expr: AstExpr) -> Result<Value> {
-    let interpreter = InterpreterPass::new(Arc::new(RustSerde::new()));
+    let interpreter = InterpreterPass::new(Arc::new(RustPrinter::new()));
     let mut ctx = Context::new();
     ctx.value = Arc::new(interpreter.clone());
     ctx.ty = Arc::new(interpreter.clone());
@@ -19,7 +19,7 @@ fn interpret_shll_expr(expr: AstExpr) -> Result<Value> {
 
 #[test]
 fn test_eval_arithmetics() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         1 + 2 * 3
@@ -31,7 +31,7 @@ fn test_eval_arithmetics() -> Result<()> {
 }
 #[test]
 fn test_eval_function_call() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         {
@@ -50,7 +50,7 @@ fn test_eval_function_call() -> Result<()> {
 #[test]
 fn test_eval_function_call_with_main() -> Result<()> {
     setup_logs(LogLevel::Debug)?;
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         {

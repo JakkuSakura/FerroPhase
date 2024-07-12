@@ -3,9 +3,8 @@ use std::sync::Arc;
 use common::*;
 
 use lang_core::ast::Value;
-use lang_core::ast::{AstExpr, AstItem, AstTree, Module};
+use lang_core::ast::{AstExpr, AstItem, AstSerializer, AstTree, Module};
 use lang_core::context::SharedScopedContext;
-use lang_core::AstSerializer;
 
 use crate::pass::{FoldOptimizer, InterpreterPass};
 

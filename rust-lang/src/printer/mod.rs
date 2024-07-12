@@ -616,8 +616,12 @@ impl AstSerializer for RustPrinter {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_function(&self, node: &ValueFunction) -> Result<String> {
+    fn serialize_value_function(&self, node: &ValueFunction) -> Result<String> {
         self.print_value_function(node, Visibility::Private)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+    fn serialize_def_function(&self, node: &DefFunction) -> Result<String> {
+        self.print_def_function(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 }
