@@ -1,9 +1,11 @@
 mod attr;
 mod expr;
 mod item;
+pub mod macros;
 
 use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_block;
+
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
@@ -15,7 +17,7 @@ use lang_core::pat::{
 use quote::ToTokens;
 use std::path::PathBuf;
 use syn::parse::ParseStream;
-use syn::{parse_quote, FieldsNamed, Token};
+use syn::{parse_quote, parse_str, FieldsNamed, Token};
 use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -246,7 +248,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
     match item {
         syn::ImplItem::Fn(m) => {
             let attrs = parse_attrs(m.attrs.clone())?;
-            let expr = parse_value_fn(syn::ItemFn {
+            let func = parse_value_fn(syn::ItemFn {
                 attrs: m.attrs,
                 vis: m.vis.clone(),
                 sig: m.sig,
@@ -254,9 +256,10 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
             })?;
             Ok(AstItem::DefFunction(DefFunction {
                 attrs,
-                name: expr.name.clone().unwrap(),
+                name: func.name.clone().unwrap(),
                 ty: None,
-                value: expr,
+                sig: func.sig,
+                body: func.body,
                 visibility: parse_vis(m.vis),
             }))
         }
@@ -433,7 +436,7 @@ pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
         body: AstExpr::block(parse_block(*f.block)?).into(),
     })
 }
-
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct RustParser {}
 
 impl RustParser {
@@ -480,5 +483,31 @@ impl RustParser {
     }
     pub fn parse_type_value(&self, code: syn::Type) -> Result<AstType> {
         parse_type_value(code)
+    }
+}
+
+impl AstDeserializer for RustParser {
+    fn deserialize_tree(&self, code: &str) -> Result<AstTree> {
+        let code: syn::File = parse_str(code)?;
+        let path = PathBuf::from("__file__");
+        self.parse_file(path, code).map(AstTree::File)
+    }
+
+    fn deserialize_expr(&self, code: &str) -> Result<AstExpr> {
+        let code: syn::Expr = parse_str(code)?;
+        self.parse_expr(code)
+    }
+
+    fn deserialize_item(&self, code: &str) -> Result<AstItem> {
+        let code: syn::Item = parse_str(code)?;
+        self.parse_item(code)
+    }
+
+    fn deserialize_file(&self, path: &std::path::Path) -> Result<AstFile> {
+        self.parse_file_recursively(path.to_owned())
+    }
+    fn deserialize_type(&self, code: &str) -> Result<AstType> {
+        let code: syn::Type = parse_str(code)?;
+        self.parse_type_value(code)
     }
 }

@@ -227,7 +227,8 @@ common_struct! {
         pub attrs: Vec<AstAttribute>,
         pub name: Ident,
         pub ty: Option<TypeFunction>,
-        pub value: ValueFunction,
+        pub sig: FunctionSignature,
+        pub body: BExpr,
         pub visibility: Visibility,
     }
 }
