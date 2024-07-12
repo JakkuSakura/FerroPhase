@@ -227,42 +227,38 @@ impl FoldOptimizer {
         Ok(item)
     }
 
-    pub fn optimize_let(
-        &self,
-        let_: StatementLet,
-        ctx: &SharedScopedContext,
-    ) -> Result<StatementLet> {
+    pub fn optimize_let(&self, let_: StmtLet, ctx: &SharedScopedContext) -> Result<StmtLet> {
         let value = self.optimize_expr(let_.value, ctx)?;
         ctx.insert_expr(
             let_.pat.as_ident().context("Only supports ident")?.clone(),
             value.clone(),
         );
 
-        Ok(StatementLet {
+        Ok(StmtLet {
             pat: let_.pat.clone(),
             value,
         })
     }
-    pub fn optimize_stmt(&self, stmt: Statement, ctx: &SharedScopedContext) -> Result<Statement> {
+    pub fn optimize_stmt(&self, stmt: BlockStmt, ctx: &SharedScopedContext) -> Result<BlockStmt> {
         match stmt {
-            Statement::Expr(x) => {
+            BlockStmt::Expr(x) => {
                 let expr = self.optimize_expr(x, ctx)?;
-                Ok(Statement::Expr(expr))
+                Ok(BlockStmt::Expr(expr))
             }
-            Statement::Item(x) => self
+            BlockStmt::Item(x) => self
                 .optimize_item(*x, ctx)
                 .map(Box::new)
-                .map(Statement::Item),
-            Statement::Any(_) => Ok(stmt),
-            Statement::Let(x) => self.optimize_let(x, ctx).map(Statement::Let),
+                .map(BlockStmt::Item),
+            BlockStmt::Any(_) => Ok(stmt),
+            BlockStmt::Let(x) => self.optimize_let(x, ctx).map(BlockStmt::Let),
             #[allow(unreachable_patterns)]
             _ => bail!("Could not optimize {:?}", stmt),
         }
     }
 
-    fn prescan_stmt(&self, stmt: &Statement, ctx: &SharedScopedContext) -> Result<()> {
+    fn prescan_stmt(&self, stmt: &BlockStmt, ctx: &SharedScopedContext) -> Result<()> {
         match stmt {
-            Statement::Item(x) => self.prescan_item(&**x, ctx),
+            BlockStmt::Item(x) => self.prescan_item(&**x, ctx),
 
             _ => Ok(()),
         }

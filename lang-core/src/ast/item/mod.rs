@@ -15,6 +15,7 @@ common_enum! {
         DefEnum(DefEnum),
         DefType(DefType),
         DefConst(DefConst),
+        DefStatic(DefStatic),
         DefFunction(DefFunction),
         DefTrait(DefTrait),
         DeclType(DeclType),
@@ -219,6 +220,14 @@ common_struct! {
         pub name: Ident,
         pub ty: Option<AstType>,
         pub value: Value,
+        pub visibility: Visibility,
+    }
+}
+common_struct! {
+    pub struct DefStatic {
+        pub name: Ident,
+        pub ty: AstType,
+        pub value: AstExpr,
         pub visibility: Visibility,
     }
 }

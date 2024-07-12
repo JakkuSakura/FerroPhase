@@ -4,10 +4,10 @@ use common::warn;
 use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, BExpr, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInitStruct, ExprInvoke,
+    AstExpr, BExpr, BlockStmt, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInitStruct, ExprInvoke,
     ExprInvokeTarget, ExprLoop, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
-    ExprSelectType, ExprUnOp, Statement, StatementLet, Value, ValueBool, ValueDecimal, ValueInt,
-    ValueString, ValueTuple,
+    ExprSelectType, ExprUnOp, StmtLet, Value, ValueBool, ValueDecimal, ValueInt, ValueString,
+    ValueTuple,
 };
 use lang_core::ops::{BinOpKind, UnOpKind};
 use lang_core::utils::anybox::AnyBox;
@@ -59,20 +59,20 @@ pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
 }
 
 /// returns: statement, with_semicolon
-pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(Statement, bool)> {
+pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
     Ok(match stmt {
         syn::Stmt::Local(l) => (
-            Statement::Let(StatementLet {
+            BlockStmt::Let(StmtLet {
                 pat: parser::parse_pat(l.pat)?,
                 value: parse_expr(*l.init.context("No value")?.expr)?.into(),
             }),
             true,
         ),
-        syn::Stmt::Item(tm) => (parse_item(tm).map(Statement::item)?, true),
+        syn::Stmt::Item(tm) => (parse_item(tm).map(BlockStmt::item)?, true),
         syn::Stmt::Expr(e, semicolon) => {
-            (Statement::Expr(parse_expr(e)?.into()), semicolon.is_some())
+            (BlockStmt::Expr(parse_expr(e)?.into()), semicolon.is_some())
         }
-        syn::Stmt::Macro(raw) => (Statement::any(RawStmtMacro { raw }), true),
+        syn::Stmt::Macro(raw) => (BlockStmt::any(RawStmtMacro { raw }), true),
     })
 }
 
@@ -87,7 +87,7 @@ pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
     }
     let ret = if !last_with_semicolon {
         let expr = match stmts.pop().unwrap() {
-            Statement::Expr(e) => e,
+            BlockStmt::Expr(e) => e,
             x => bail!("Last statement should be expr, but got {:?}", x),
         };
         Some(expr.into())

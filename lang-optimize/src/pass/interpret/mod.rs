@@ -481,7 +481,7 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_let(&self, node: &StatementLet, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_let(&self, node: &StmtLet, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.interpret_expr(&node.value, ctx)?;
         ctx.insert_value(
             node.pat.as_ident().context("Only supports ident")?.as_str(),
@@ -492,20 +492,20 @@ impl InterpreterPass {
 
     pub fn interpret_stmt(
         &self,
-        node: &Statement,
+        node: &BlockStmt,
         ctx: &SharedScopedContext,
     ) -> Result<Option<Value>> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         match node {
-            Statement::Let(n) => self.interpret_let(n, ctx).map(|_| None),
-            Statement::Expr(n) => self.interpret_expr(n, ctx).map(|x| {
+            BlockStmt::Let(n) => self.interpret_let(n, ctx).map(|_| None),
+            BlockStmt::Expr(n) => self.interpret_expr(n, ctx).map(|x| {
                 if matches!(x, Value::Unit(_)) {
                     None
                 } else {
                     Some(x)
                 }
             }),
-            Statement::Item(_) => Ok(None),
+            BlockStmt::Item(_) => Ok(None),
             _ => bail!("Failed to interpret {:?}", node),
         }
     }

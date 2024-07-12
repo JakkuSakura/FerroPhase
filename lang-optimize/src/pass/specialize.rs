@@ -86,7 +86,7 @@ impl SpecializePass {
             }
             let name = name.last().clone();
 
-            let binding = Statement::Let(StatementLet {
+            let binding = BlockStmt::Let(StmtLet {
                 pat: Pattern::Ident(PatternIdent {
                     ident: name,
                     mutability: Some(false),
@@ -152,7 +152,7 @@ impl SpecializePass {
 
         Ok(AstExpr::Block(
             ExprBlock {
-                stmts: vec![Statement::Item(
+                stmts: vec![BlockStmt::Item(
                     AstItem::DefFunction(DefFunction {
                         name: new_name.clone(),
                         ty: None,
