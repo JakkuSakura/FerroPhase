@@ -1,9 +1,11 @@
-use crate::printer::RustPrinter;
 use eyre::{bail, ContextCompat, Result};
 use itertools::Itertools;
 use lang_core::ast::{AstItem, DefConst, DefFunction, DefStruct, DefTrait, DefType, Impl};
 use proc_macro2::TokenStream;
 use quote::quote;
+
+use crate::printer::RustPrinter;
+
 impl RustPrinter {
     pub fn print_items_chunk(&self, items: &[AstItem]) -> Result<TokenStream> {
         let mut stmts = vec![];
@@ -66,7 +68,7 @@ impl RustPrinter {
     }
     pub fn print_def_function(&self, func: &DefFunction) -> Result<TokenStream> {
         let attrs = self.print_attrs(&func.attrs)?;
-        let func = self.print_value_function(&func.value, func.visibility)?;
+        let func = self.print_function(&func.sig, &func.body, func.visibility)?;
         Ok(quote!(
             #attrs
             #func

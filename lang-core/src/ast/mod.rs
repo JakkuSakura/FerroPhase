@@ -1,7 +1,8 @@
 //! AST are trees, so Box<T> is fine
 
 use crate::{common_enum, common_struct};
-use std::path::PathBuf;
+use eyre::Result;
+use std::path::{Path, PathBuf};
 
 pub use deserialize::*;
 pub use serialize::*;
@@ -34,6 +35,14 @@ common_enum! {
 }
 
 pub trait AstProvider {
-    fn get_ast_from_cst(&self, cst: &str) -> AstTree;
-    fn get_ast_from_file(&self, path: &PathBuf) -> AstTree;
+    fn get_ast_from_code(&self, cst: &str) -> Result<AstTree>;
+    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstTree>;
+}
+impl<D: AstDeserializer> AstProvider for D {
+    fn get_ast_from_code(&self, cst: &str) -> Result<AstTree> {
+        self.deserialize_tree(cst)
+    }
+    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstTree> {
+        self.deserialize_file(path).map(AstTree::File)
+    }
 }
