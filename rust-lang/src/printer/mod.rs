@@ -611,7 +611,7 @@ impl AstSerializer for RustPrinter {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_stmt(&self, node: &Statement) -> Result<String> {
+    fn serialize_stmt(&self, node: &BlockStmt) -> Result<String> {
         self.print_statement(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }

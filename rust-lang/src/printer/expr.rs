@@ -2,9 +2,9 @@ use crate::printer::RustPrinter;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget,
-    ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
-    ExprSelectType, Statement, StatementLet,
+    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
+    ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
+    ExprSelect, ExprSelectType, StmtLet,
 };
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
@@ -66,7 +66,7 @@ impl RustPrinter {
         ))
     }
 
-    pub fn print_let(&self, let_: &StatementLet) -> eyre::Result<TokenStream> {
+    pub fn print_let(&self, let_: &StmtLet) -> eyre::Result<TokenStream> {
         let pat = self.print_pattern(&let_.pat)?;
 
         let value = self.print_expr(&let_.value)?;
@@ -104,15 +104,15 @@ impl RustPrinter {
             }
         ))
     }
-    pub fn print_statement(&self, stmt: &Statement) -> eyre::Result<TokenStream> {
+    pub fn print_statement(&self, stmt: &BlockStmt) -> eyre::Result<TokenStream> {
         match stmt {
-            Statement::Item(item) => self.print_item(item),
-            Statement::Let(let_) => self.print_let(let_),
-            Statement::Expr(expr) => self.print_expr(expr),
-            Statement::Any(any) => self.print_any(any),
+            BlockStmt::Item(item) => self.print_item(item),
+            BlockStmt::Let(let_) => self.print_let(let_),
+            BlockStmt::Expr(expr) => self.print_expr(expr),
+            BlockStmt::Any(any) => self.print_any(any),
         }
     }
-    pub fn print_statement_chunk(&self, items: &[Statement]) -> eyre::Result<TokenStream> {
+    pub fn print_statement_chunk(&self, items: &[BlockStmt]) -> eyre::Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
             let item = self.print_statement(item)?;
