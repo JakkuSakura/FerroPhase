@@ -137,7 +137,7 @@ impl AstSerializer for RustSerde {
         self.printer.serialize_type(node)
     }
 
-    fn serialize_stmt(&self, node: &Statement) -> Result<String> {
+    fn serialize_stmt(&self, node: &BlockStmt) -> Result<String> {
         self.printer.serialize_stmt(node)
     }
 

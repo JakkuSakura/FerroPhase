@@ -7,15 +7,15 @@ use crate::pat::Pattern;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 
 common_enum! {
-    pub enum Statement {
+    pub enum BlockStmt {
         Item(BItem),
-        Let(StatementLet),
+        Let(StmtLet),
         Expr(AstExpr),
         Any(AnyBox),
     }
 }
 
-impl Statement {
+impl BlockStmt {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
@@ -33,17 +33,49 @@ impl Statement {
 }
 
 common_struct! {
-    pub struct StatementLet {
+    pub struct StmtLet {
         pub pat: Pattern,
         pub value: AstExpr,
     }
 }
+impl StmtLet {
+    pub fn new_simple(name: &str, value: AstExpr) -> Self {
+        Self {
+            pat: Pattern::Ident(name.into()),
+            value,
+        }
+    }
+    pub fn make_mut(&mut self) {
+        if let Pattern::Ident(name) = &mut self.pat {
+            name.mutability = Some(true);
+        } else {
+            unreachable!("Pattern::Ident expected")
+        }
+    }
+}
 
-pub type StatementChunk = Vec<Statement>;
+pub type StmtChunk = Vec<BlockStmt>;
 
 common_struct! {
     pub struct ExprBlock {
-        pub stmts: StatementChunk,
+        pub stmts: StmtChunk,
         pub ret: Option<BExpr>
+    }
+}
+impl ExprBlock {
+    pub fn new() -> Self {
+        Self {
+            stmts: Vec::new(),
+            ret: None,
+        }
+    }
+    pub fn push_stmt(&mut self, stmt: BlockStmt) {
+        self.stmts.push(stmt);
+    }
+    pub fn push_expr(&mut self, stmt: BExpr) {
+        let prev = self.ret.replace(stmt);
+        if let Some(prev) = prev {
+            self.stmts.push(BlockStmt::Expr(*prev));
+        }
     }
 }
