@@ -1,3 +1,4 @@
+use crate::printer::RustPrinter;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
@@ -8,8 +9,7 @@ use lang_core::ast::{
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
 use quote::quote;
-
-use crate::printer::RustPrinter;
+use syn::LitInt;
 
 impl RustPrinter {
     pub fn print_expr_optimized(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
@@ -19,9 +19,13 @@ impl RustPrinter {
             _ => self.print_expr(node),
         }
     }
-
+    pub fn print_expr_id(&self, id: u64) -> eyre::Result<TokenStream> {
+        let num = LitInt::new(&id.to_string(), proc_macro2::Span::call_site());
+        Ok(quote!(Expr # #num))
+    }
     pub fn print_expr(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
         match node {
+            AstExpr::Id(id) => self.print_expr_id(*id),
             AstExpr::Locator(loc) => self.print_locator(loc),
             AstExpr::Value(n) => self.print_value(n),
             AstExpr::Invoke(n) => self.print_invoke_expr(n),

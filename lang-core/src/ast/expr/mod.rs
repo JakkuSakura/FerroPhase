@@ -20,6 +20,8 @@ pub type BExpr = Box<AstExpr>;
 common_enum! {
     /// Expr is an expression that returns a value, note that a Type is also a Value
     pub enum AstExpr {
+        /// An id for the expression node
+        Id(ExprId),
         Locator(Locator),
         Value(BValue),
         Block(ExprBlock),
