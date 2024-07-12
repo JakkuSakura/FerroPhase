@@ -5,7 +5,6 @@ use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::{Ident, Locator};
 use lang_core::pat::{Pattern, PatternIdent};
-use lang_core::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -70,7 +69,7 @@ impl SpecializePass {
         if !new_params.is_empty() && new_params.len() == func.params.len() {
             warn!(
                 "Couldn't specialize Invoke {} with {}",
-                self.serializer.serialize_function(&func)?,
+                self.serializer.serialize_value_function(&func)?,
                 self.serializer.serialize_args_arena(&args)?,
             );
             ctx.print_values()?;
@@ -137,7 +136,7 @@ impl SpecializePass {
             "Specialized function {} with {} => {}",
             name,
             self.serializer.serialize_args_arena(&args)?,
-            self.serializer.serialize_function(&new_func)?
+            self.serializer.serialize_value_function(&new_func)?
         );
 
         // ctx.root()
@@ -154,9 +153,11 @@ impl SpecializePass {
             ExprBlock {
                 stmts: vec![BlockStmt::Item(
                     AstItem::DefFunction(DefFunction {
+                        attrs: vec![],
                         name: new_name.clone(),
                         ty: None,
-                        value: new_func,
+                        sig: new_func.sig,
+                        body: new_func.body,
                         visibility: Visibility::Private,
                     })
                     .into(),

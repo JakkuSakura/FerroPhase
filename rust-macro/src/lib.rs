@@ -1,13 +1,12 @@
 use common::*;
 
-use lang_core::ast::Expr;
-use lang_core::ast::{File, Module};
 use lang_core::context::SharedScopedContext;
 use lang_optimize::pass::{load_optimizers, FoldOptimizer};
 use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;
-use rust_lang::RustSerde;
+
+use lang_core::ast::{AstExpr, AstFile, Module};
 use std::sync::Arc;
 
 trait Optimizee {
@@ -17,7 +16,7 @@ trait Optimizee {
         ctx: &SharedScopedContext,
     ) -> Result<TokenStream>;
 }
-impl Optimizee for Expr {
+impl Optimizee for AstExpr {
     fn optimize(
         mut self,
         optimizer: Vec<FoldOptimizer>,
@@ -27,7 +26,7 @@ impl Optimizee for Expr {
             self = opt.optimize_expr(self, ctx)?;
         }
 
-        let node = RustPrinter.print_expr(&self)?;
+        let node = RustPrinter::new().print_expr(&self)?;
         Ok(node.into())
     }
 }
@@ -41,11 +40,11 @@ impl Optimizee for Module {
             self = opt.optimize_module(self, ctx, true)?;
         }
 
-        let node = RustPrinter.print_module(&self)?;
+        let node = RustPrinter::new().print_module(&self)?;
         Ok(node.into())
     }
 }
-impl Optimizee for File {
+impl Optimizee for AstFile {
     fn optimize(
         mut self,
         optimizer: Vec<FoldOptimizer>,
@@ -54,13 +53,13 @@ impl Optimizee for File {
         for opt in optimizer {
             self = opt.optimize_file(self, ctx)?;
         }
-        let node = RustPrinter.print_file(&self)?;
+        let node = RustPrinter::new().print_file(&self)?;
         Ok(node.into())
     }
 }
 fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
     let ctx = SharedScopedContext::new();
-    let formatter = RustSerde::new();
+    let formatter = RustPrinter::new();
     let optimizer = load_optimizers(Arc::new(formatter));
     let node = code.optimize(optimizer, &ctx)?;
 

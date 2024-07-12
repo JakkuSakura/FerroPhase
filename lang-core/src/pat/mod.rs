@@ -80,6 +80,14 @@ common_struct! {
         pub mutability: Option<bool>,
     }
 }
+impl PatternIdent {
+    pub fn new(ident: Ident) -> Self {
+        Self {
+            ident,
+            mutability: None,
+        }
+    }
+}
 common_struct! {
     pub struct PatternWildcard {}
 }

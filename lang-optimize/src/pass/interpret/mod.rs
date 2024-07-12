@@ -9,7 +9,6 @@ use lang_core::ctx::{Context, ValueSystem};
 use lang_core::id::{Ident, Locator};
 use lang_core::ops::*;
 use lang_core::utils::conv::TryConv;
-use lang_core::AstSerializer;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -215,7 +214,7 @@ impl InterpreterPass {
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         let name = &def.name;
-        ctx.insert_value_with_ctx(name.clone(), Value::Function(def.value.clone()));
+        ctx.insert_value_with_ctx(name.clone(), Value::Function(def._to_value()));
         Ok(())
     }
     pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &SharedScopedContext) -> Result<()> {

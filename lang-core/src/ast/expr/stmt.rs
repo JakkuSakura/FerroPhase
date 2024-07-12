@@ -3,7 +3,8 @@ use std::hash::Hash;
 use crate::ast::{AstExpr, AstItem, BExpr, BItem};
 use crate::common_enum;
 use crate::common_struct;
-use crate::pat::Pattern;
+use crate::id::Ident;
+use crate::pat::{Pattern, PatternIdent};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 
 common_enum! {
@@ -39,9 +40,9 @@ common_struct! {
     }
 }
 impl StmtLet {
-    pub fn new_simple(name: &str, value: AstExpr) -> Self {
+    pub fn new_simple(name: Ident, value: AstExpr) -> Self {
         Self {
-            pat: Pattern::Ident(name.into()),
+            pat: Pattern::Ident(PatternIdent::new(name)),
             value,
         }
     }

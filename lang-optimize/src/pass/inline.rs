@@ -3,7 +3,6 @@ use common::*;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::Locator;
-use lang_core::AstSerializer;
 use std::sync::Arc;
 
 pub struct InlinePass {
