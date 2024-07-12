@@ -1,8 +1,3 @@
-mod attr;
-mod expr;
-mod item;
-
-use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
@@ -13,9 +8,37 @@ use lang_core::utils::anybox::AnyBox;
 use proc_macro2::{Span, TokenStream};
 use quote::*;
 
-pub struct RustPrinter;
+use crate::{RawExpr, RawExprMacro, RawStmtMacro};
+
+mod attr;
+mod expr;
+mod item;
+pub mod rustfmt;
+
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+pub struct RustPrinter {
+    pub rustfmt: bool,
+}
 
 impl RustPrinter {
+    pub fn new() -> Self {
+        Self { rustfmt: false }
+    }
+    pub fn set_rustfmt(&mut self, rustfmt: bool) {
+        self.rustfmt = rustfmt;
+    }
+    pub fn maybe_rustfmt_token_stream(&self, code: &TokenStream) -> Result<String> {
+        self.maybe_rustfmt(&code.to_string())
+    }
+    pub fn maybe_rustfmt(&self, code: &str) -> Result<String> {
+        if self.rustfmt {
+            if let Ok(ok) = rustfmt::format_code(code) {
+                return Ok(ok);
+            }
+        }
+
+        Ok(code.to_string())
+    }
     pub fn print_ident(&self, i: &Ident) -> TokenStream {
         match i.as_str() {
             "+" => quote!(+),
@@ -221,41 +244,38 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_value_function(
+    pub fn print_function(
         &self,
-        func: &ValueFunction,
+        sig: &FunctionSignature,
+        body: &AstExpr,
         vis: Visibility,
     ) -> Result<TokenStream> {
-        let name = if let Some(name) = &func.sig.name {
+        let name = if let Some(name) = &sig.name {
             self.print_ident(name)
         } else {
             quote!()
         };
-        let ret_type = &func.sig.ret;
+        let ret_type = &sig.ret;
         let ret = self.print_return_type(ret_type)?;
-        let param_names: Vec<_> = func
-            .sig
+        let param_names: Vec<_> = sig
             .params
             .iter()
             .map(|x| self.print_ident(&x.name))
             .collect();
-        let param_types: Vec<_> = func
-            .sig
+        let param_types: Vec<_> = sig
             .params
             .iter()
             .map(|x| self.print_type_value(&x.ty))
             .try_collect()?;
-        let stmts = self.print_expr_optimized(&func.body.get())?;
+        let stmts = self.print_expr_optimized(&body.get())?;
         let gg;
-        if !func.sig.generics_params.is_empty() {
-            let gt: Vec<_> = func
-                .sig
+        if !sig.generics_params.is_empty() {
+            let gt: Vec<_> = sig
                 .generics_params
                 .iter()
                 .map(|x| self.print_ident(&x.name))
                 .collect();
-            let gb: Vec<_> = func
-                .sig
+            let gb: Vec<_> = sig
                 .generics_params
                 .iter()
                 .map(|x| self.print_type_bounds(&x.bounds))
@@ -272,6 +292,15 @@ impl RustPrinter {
                 #stmts
             }
         ));
+    }
+    pub fn print_value_function(
+        &self,
+        fun: &ValueFunction,
+        vis: Visibility,
+    ) -> Result<TokenStream> {
+        let sig = &fun.sig;
+        let body = &fun.body;
+        self.print_function(sig, body, vis)
     }
     pub fn print_func_type_param(&self, param: &FunctionParam) -> Result<TokenStream> {
         let name = self.print_ident(&param.name);
@@ -538,5 +567,57 @@ impl RustPrinter {
             AstTree::Expr(n) => self.print_expr(n),
             AstTree::File(n) => self.print_file(n),
         }
+    }
+}
+
+impl AstSerializer for RustPrinter {
+    fn serialize_tree(&self, node: &AstTree) -> Result<String> {
+        self.print_tree(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_expr(&self, node: &AstExpr) -> Result<String> {
+        self.print_expr(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String> {
+        self.print_invoke(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_item(&self, node: &AstItem) -> Result<String> {
+        self.print_item(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_block(&self, node: &ExprBlock) -> Result<String> {
+        self.print_block(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_module(&self, node: &Module) -> Result<String> {
+        self.print_module(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_value(&self, node: &Value) -> Result<String> {
+        self.print_value(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_type(&self, node: &AstType) -> Result<String> {
+        self.print_type_value(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_stmt(&self, node: &Statement) -> Result<String> {
+        self.print_statement(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    }
+
+    fn serialize_function(&self, node: &ValueFunction) -> Result<String> {
+        self.print_value_function(node, Visibility::Private)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 }
