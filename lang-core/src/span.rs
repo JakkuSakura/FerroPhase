@@ -1,19 +1,15 @@
 use std::path::PathBuf;
 
-pub type SpanId = u64;
+pub type FileId = u64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
-    pub id: SpanId,
+    pub file: FileId,
+    pub lo: u32,
+    pub hi: u32,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FileLocation {
-    pub line: u32,
-    pub column: u32,
-}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SpanData {
+pub struct FileInfo {
     pub file: PathBuf,
-    pub begin: FileLocation,
-    pub end: FileLocation,
 }
