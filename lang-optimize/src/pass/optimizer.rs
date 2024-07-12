@@ -4,7 +4,6 @@ use itertools::Itertools;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::Ident;
-use lang_core::*;
 use std::mem::take;
 use std::sync::Arc;
 
@@ -361,20 +360,21 @@ impl FoldOptimizer {
         mut def: DefFunction,
         ctx: &SharedScopedContext,
     ) -> Result<DefFunction> {
-        def.value = self.optimize_func(def.value, ctx)?;
+        let value = self.optimize_func(def._to_value(), ctx)?;
+        def.body = value.body;
+        def.sig = value.sig;
 
         Ok(def)
     }
     pub fn prescan_def_function(&self, def: &DefFunction, ctx: &SharedScopedContext) -> Result<()> {
-        let def = def.clone();
         match def.name.as_str() {
             _ => {
                 debug!(
                     "Registering function {}",
-                    self.serializer.serialize_function(&def.value)?,
+                    self.serializer.serialize_def_function(def)?,
                 );
 
-                ctx.insert_value_with_ctx(def.name.clone(), Value::Function(def.value.clone()));
+                ctx.insert_value_with_ctx(def.name.clone(), Value::Function(def._to_value()));
                 Ok(())
             }
         }

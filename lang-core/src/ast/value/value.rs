@@ -1,4 +1,4 @@
-use crate::ast::{get_threadlocal_serializer, BExpr};
+use crate::ast::{get_threadlocal_serializer, BExpr, TypeUnit};
 use crate::ast::{AstType, TypeBounds, TypeStruct, Value};
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
@@ -535,6 +535,16 @@ common_struct! {
         pub ret: AstType,
     }
 }
+impl FunctionSignature {
+    pub fn unit() -> Self {
+        Self {
+            name: None,
+            params: vec![],
+            generics_params: vec![],
+            ret: AstType::Unit(TypeUnit),
+        }
+    }
+}
 
 common_struct! {
     pub struct ValueFunction {
@@ -562,7 +572,7 @@ impl DerefMut for ValueFunction {
 impl Display for ValueFunction {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_function(self)
+            .serialize_value_function(self)
             .unwrap();
         f.write_str(&s)
     }
