@@ -241,6 +241,26 @@ common_struct! {
         pub visibility: Visibility,
     }
 }
+impl DefFunction {
+    pub fn new_simple(name: Ident, body: BExpr) -> Self {
+        let mut sig = FunctionSignature::unit();
+        sig.name = Some(name.clone());
+        Self {
+            attrs: Vec::new(),
+            name,
+            ty: None,
+            sig,
+            body,
+            visibility: Visibility::Public,
+        }
+    }
+    pub fn _to_value(&self) -> ValueFunction {
+        ValueFunction {
+            sig: self.sig.clone(),
+            body: self.body.clone(),
+        }
+    }
+}
 common_struct! {
     pub struct DefTrait {
         pub name: Ident,

@@ -431,9 +431,10 @@ pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
 }
 pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
     let sig = parse_fn_sig(f.sig)?;
+    let body = parse_block(*f.block)?;
     Ok(ValueFunction {
         sig,
-        body: AstExpr::block(parse_block(*f.block)?).into(),
+        body: AstExpr::block(body).into(),
     })
 }
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
