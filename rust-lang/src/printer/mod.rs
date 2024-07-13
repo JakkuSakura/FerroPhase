@@ -561,7 +561,7 @@ impl RustPrinter {
         let items = self.print_items_chunk(&file.items)?;
         Ok(quote!(#items))
     }
-    pub fn print_tree(&self, node: &AstNode) -> Result<TokenStream> {
+    pub fn print_node(&self, node: &AstNode) -> Result<TokenStream> {
         match node {
             AstNode::Item(n) => self.print_item(n),
             AstNode::Expr(n) => self.print_expr(n),
@@ -571,8 +571,8 @@ impl RustPrinter {
 }
 
 impl AstSerializer for RustPrinter {
-    fn serialize_tree(&self, node: &AstNode) -> Result<String> {
-        self.print_tree(node)
+    fn serialize_node(&self, node: &AstNode) -> Result<String> {
+        self.print_node(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 

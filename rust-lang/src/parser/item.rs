@@ -2,14 +2,16 @@ use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use lang_core::ast::{
     AstExpr, AstItem, AstType, EnumTypeVariant, ExprSelfType, FunctionParam, ItemDefEnum,
-    ItemDefFunction, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImport, TypeEnum, TypeStruct,
+    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
+    TypeEnum, TypeStruct, Visibility,
 };
-use lang_core::id::{Ident, Path};
+use lang_core::id::{Ident, Locator, Path};
 use lang_core::utils::anybox::AnyBox;
 use syn::{Fields, FnArg, ReturnType};
 
 use crate::parser::attr::parse_attrs;
-use crate::parser::parse_value_fn;
+use crate::parser::expr::parse_expr;
+use crate::parser::{parse_ident, parse_path, parse_type_value, parse_value_fn, parse_vis};
 use crate::{parser, RawItemMacro, RawUse};
 
 pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
@@ -32,7 +34,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
                 .as_ident()
                 .context("No ident")?
                 .clone(),
-            ty: parser::parse_type_value(*t.ty)?,
+            ty: parse_type_value(*t.ty)?,
         },
     })
 }
@@ -40,7 +42,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
 pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
     Ok(match o {
         ReturnType::Default => AstType::unit(),
-        ReturnType::Type(_, t) => parser::parse_type_value(*t)?,
+        ReturnType::Type(_, t) => parse_type_value(*t)?,
     })
 }
 
@@ -50,11 +52,11 @@ pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport, RawUse> {
     loop {
         match tree {
             syn::UseTree::Path(p) => {
-                segments.push(parser::parse_ident(p.ident));
+                segments.push(parse_ident(p.ident));
                 tree = *p.tree;
             }
             syn::UseTree::Name(name) => {
-                segments.push(parser::parse_ident(name.ident));
+                segments.push(parse_ident(name.ident));
                 break;
             }
             syn::UseTree::Glob(_) => {
@@ -65,14 +67,14 @@ pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport, RawUse> {
         }
     }
     Ok(ItemImport {
-        visibility: parser::parse_vis(u.vis),
+        visibility: parse_vis(u.vis),
         path: Path::new(segments),
     })
 }
 
-pub fn parse_item_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
+pub fn parse_type_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
     Ok(TypeStruct {
-        name: parser::parse_ident(s.ident),
+        name: parse_ident(s.ident),
         fields: s
             .fields
             .into_iter()
@@ -82,12 +84,12 @@ pub fn parse_item_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
     })
 }
 
-fn parse_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
+fn parse_item_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
     // TODO: generis params
     let bounds = parser::parse_type_param_bounds(t.supertraits.into_iter().collect())?;
-    let vis = parser::parse_vis(t.vis);
+    let vis = parse_vis(t.vis);
     Ok(ItemDefTrait {
-        name: parser::parse_ident(t.ident),
+        name: parse_ident(t.ident),
         bounds,
         items: t
             .items
@@ -98,80 +100,157 @@ fn parse_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
     })
 }
 
-pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
+fn parse_impl_item(item: syn::ImplItem) -> eyre::Result<AstItem> {
     match item {
-        syn::Item::Fn(f0) => {
-            let visibility = parser::parse_vis(f0.vis.clone());
-            let attrs = parse_attrs(f0.attrs.clone())?;
-            let f = parse_value_fn(f0)?;
-            let d = ItemDefFunction {
+        syn::ImplItem::Fn(m) => {
+            let attrs = parse_attrs(m.attrs.clone())?;
+            let func = parse_value_fn(syn::ItemFn {
+                attrs: m.attrs,
+                vis: m.vis.clone(),
+                sig: m.sig,
+                block: Box::new(m.block),
+            })?;
+            Ok(AstItem::DefFunction(ItemDefFunction {
                 attrs,
-                name: f.name.clone().unwrap(),
+                name: func.name.clone().unwrap(),
                 ty: None,
-                sig: f.sig,
-                body: f.body,
-                visibility,
-            };
-            Ok(AstItem::DefFunction(d))
+                sig: func.sig,
+                body: func.body,
+                visibility: parse_vis(m.vis),
+            }))
         }
-        syn::Item::Impl(im) => Ok(AstItem::Impl(parser::parse_impl(im)?)),
-        syn::Item::Use(u) => Ok(match parse_use(u) {
+        syn::ImplItem::Type(t) => Ok(AstItem::DefType(ItemDefType {
+            name: parse_ident(t.ident),
+            value: parse_type_value(t.ty)?,
+            visibility: parse_vis(t.vis),
+        })),
+        _ => bail!("Does not support impl item {:?}", item),
+    }
+}
+fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
+    let vis = parse_vis(s.vis);
+    let ty = parse_type_value(*s.ty)?;
+    let value = parse_expr(*s.expr)?;
+    Ok(ItemDefStatic {
+        name: parse_ident(s.ident),
+        ty,
+        value,
+        visibility: vis,
+    })
+}
+fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefStatic> {
+    let vis = parse_vis(s.vis);
+    let ty = parse_type_value(*s.ty)?;
+    let value = parse_expr(*s.expr)?;
+    Ok(ItemDefStatic {
+        name: parse_ident(s.ident),
+        ty,
+        value,
+        visibility: vis,
+    })
+}
+fn parse_item_impl(im: syn::ItemImpl) -> eyre::Result<ItemImpl> {
+    Ok(ItemImpl {
+        trait_ty: im
+            .trait_
+            .map(|x| parse_path(x.1))
+            .transpose()?
+            .map(Locator::path),
+        self_ty: AstExpr::value(parse_type_value(*im.self_ty.clone())?.into()),
+        items: im.items.into_iter().map(parse_impl_item).try_collect()?,
+    })
+}
+
+fn parse_item_enum(e: syn::ItemEnum) -> eyre::Result<ItemDefEnum> {
+    let visibility = parse_vis(e.vis.clone());
+    let ident = parse_ident(e.ident.clone());
+    let variants = e
+        .variants
+        .into_iter()
+        .map(|x| {
+            let name = parse_ident(x.ident);
+            let ty = match x.fields {
+                Fields::Named(_) => bail!("Does not support named fields"),
+                Fields::Unnamed(_) => bail!("Does not support unnamed fields"),
+                Fields::Unit => {
+                    // be int or string
+                    AstType::any()
+                }
+            };
+            Ok(EnumTypeVariant { name, value: ty })
+        })
+        .try_collect()?;
+    Ok(ItemDefEnum {
+        name: ident.clone(),
+        value: TypeEnum {
+            name: ident.clone(),
+            variants,
+        },
+        visibility,
+    })
+}
+fn parse_item_fn(f: syn::ItemFn) -> eyre::Result<ItemDefFunction> {
+    let visibility = parse_vis(f.vis.clone());
+    let attrs = parse_attrs(f.attrs.clone())?;
+    let f = parse_value_fn(f)?;
+    let d = ItemDefFunction {
+        attrs,
+        name: f.name.clone().unwrap(),
+        ty: None,
+        sig: f.sig,
+        body: f.body,
+        visibility,
+    };
+    Ok(d)
+}
+pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
+    let item = match item {
+        syn::Item::Fn(f0) => {
+            let f = parse_item_fn(f0)?;
+            AstItem::DefFunction(f)
+        }
+        syn::Item::Impl(im) => AstItem::Impl(parse_item_impl(im)?),
+        syn::Item::Use(u) => match parse_use(u) {
             Ok(i) => AstItem::Import(i),
             Err(r) => AstItem::Any(AnyBox::new(r)),
-        }),
-        syn::Item::Macro(m) => Ok(AstItem::any(RawItemMacro { raw: m })),
+        },
+        syn::Item::Macro(m) => AstItem::any(RawItemMacro { raw: m }),
         syn::Item::Struct(s) => {
-            let visibility = parser::parse_vis(s.vis.clone());
-
-            let struct_type = parse_item_struct(s)?;
-            Ok(AstItem::DefStruct(ItemDefStruct {
-                name: struct_type.name.clone(),
-                value: struct_type,
-                visibility,
-            }))
+            let s = parse_type_struct(s)?;
+            AstItem::DefStruct(ItemDefStruct {
+                name: s.name.clone(),
+                value: s,
+                visibility: Visibility::Private,
+            })
         }
         syn::Item::Enum(e) => {
-            let visibility = parser::parse_vis(e.vis.clone());
-            let ident = parser::parse_ident(e.ident.clone());
-            let variants = e
-                .variants
-                .into_iter()
-                .map(|x| {
-                    let name = parser::parse_ident(x.ident);
-                    let ty = match x.fields {
-                        Fields::Named(_) => bail!("Does not support named fields"),
-                        Fields::Unnamed(_) => bail!("Does not support unnamed fields"),
-                        Fields::Unit => {
-                            // be int or string
-                            AstType::any()
-                        }
-                    };
-                    Ok(EnumTypeVariant { name, value: ty })
-                })
-                .try_collect()?;
-            Ok(AstItem::DefEnum(ItemDefEnum {
-                name: ident.clone(),
-                value: TypeEnum {
-                    name: ident.clone(),
-                    variants,
-                },
-                visibility,
-            }))
+            let e = parse_item_enum(e)?;
+            AstItem::DefEnum(e)
         }
         syn::Item::Type(t) => {
-            let visibility = parser::parse_vis(t.vis.clone());
-            let ty = parser::parse_type_value(*t.ty)?;
-            Ok(AstItem::DefType(ItemDefType {
-                name: parser::parse_ident(t.ident),
+            let visibility = parse_vis(t.vis.clone());
+            let ty = parse_type_value(*t.ty)?;
+            AstItem::DefType(ItemDefType {
+                name: parse_ident(t.ident),
                 value: ty,
                 visibility,
-            }))
+            })
         }
-        syn::Item::Mod(m) => Ok(AstItem::Module(parser::parse_module(m)?)),
+        syn::Item::Mod(m) => AstItem::Module(parser::parse_module(m)?),
         syn::Item::Trait(t) => {
-            let trait_ = parse_trait(t)?;
-            Ok(AstItem::DefTrait(trait_))
+            let trait_ = parse_item_trait(t)?;
+            AstItem::DefTrait(trait_)
+        }
+
+        syn::Item::Const(s) => {
+            let s = parse_item_const(s)?;
+            AstItem::DefStatic(s)
+        }
+        syn::Item::Static(s) => {
+            let s = parse_item_static(s)?;
+            AstItem::DefStatic(s)
         }
         _ => bail!("Does not support item yet: {:?}", item),
-    }
+    };
+    Ok(item)
 }
