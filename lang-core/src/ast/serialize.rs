@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 #[allow(unused_variables)]
 pub trait AstSerializer: Send + Sync {
-    fn serialize_tree(&self, node: &AstNode) -> Result<String> {
+    fn serialize_node(&self, node: &AstNode) -> Result<String> {
         match node {
             AstNode::Item(item) => self.serialize_item(item),
             AstNode::Expr(expr) => self.serialize_expr(expr),

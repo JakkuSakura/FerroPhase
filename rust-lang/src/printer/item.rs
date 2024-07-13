@@ -1,7 +1,8 @@
 use eyre::{bail, ContextCompat, Result};
 use itertools::Itertools;
 use lang_core::ast::{
-    AstItem, ItemDefConst, ItemDefFunction, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl,
+    AstItem, ItemDefConst, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
+    ItemDefType, ItemImpl,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -42,9 +43,17 @@ impl RustPrinter {
     pub fn print_def_const(&self, def: &ItemDefConst) -> Result<TokenStream> {
         let name = self.print_ident(&def.name);
         let ty = self.print_type_value(&def.ty.as_ref().context("No type")?.clone())?;
-        let value = self.print_value(&def.value)?;
+        let value = self.print_expr(&def.value)?;
         return Ok(quote!(
             const #name: #ty = #value;
+        ));
+    }
+    pub fn print_def_static(&self, def: &ItemDefStatic) -> Result<TokenStream> {
+        let name = self.print_ident(&def.name);
+        let ty = self.print_type_value(&def.ty)?;
+        let value = self.print_expr(&def.value)?;
+        return Ok(quote!(x
+            static #name: #ty = #value;
         ));
     }
     pub fn print_def_trait(&self, def: &ItemDefTrait) -> Result<TokenStream> {
@@ -82,7 +91,9 @@ impl RustPrinter {
             AstItem::DefType(n) => self.print_def_type(n),
             AstItem::DefStruct(n) => self.print_def_struct(n),
             AstItem::DefTrait(n) => self.print_def_trait(n),
-            // Item::DefEnum(n) => self.print_def_enum(n),
+            AstItem::DefConst(n) => self.print_def_const(n),
+            AstItem::DefStatic(n) => self.print_def_static(n),
+            // AstItem::DefEnum(n) => self.print_def_enum(n),
             AstItem::Impl(n) => self.print_impl(n),
             AstItem::Module(n) => self.print_module(n),
             AstItem::Import(n) => self.print_import(n),
