@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use common::*;
 use lang_core::ast::*;
-use lang_core::ast::{AstItem, DefFunction, Impl, Visibility};
+use lang_core::ast::{AstItem, ItemDefFunction, ItemImpl, Visibility};
 use lang_core::ast::{AstType, FunctionParam, FunctionSignature, TypePrimitive, ValueFunction};
 use lang_core::id::Locator;
 use lang_core::register_threadlocal_serializer;
@@ -22,7 +22,7 @@ fn test_parse_fn() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstItem::DefFunction(DefFunction {
+        AstItem::DefFunction(ItemDefFunction {
             name: "foo".into(),
             ty: None,
             value: ValueFunction {
@@ -33,7 +33,7 @@ fn test_parse_fn() -> Result<()> {
                         ty: AstType::Primitive(TypePrimitive::i64())
                     }],
                     generics_params: vec![],
-                    ret: AstType::Primitive(TypePrimitive::i64())
+                    ret_ty: AstType::Primitive(TypePrimitive::i64())
                 },
                 body: block.into(),
             },
@@ -55,7 +55,7 @@ fn test_parse_impl_for() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstItem::Impl(Impl {
+        AstItem::Impl(ItemImpl {
             trait_ty: Some(Locator::Ident("Foo".into())),
             self_ty: AstExpr::ident("Bar".into()),
             items: vec![shll_parse_item! {

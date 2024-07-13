@@ -1,6 +1,6 @@
 use crate::ast::{
-    AstExpr, AstFile, AstItem, AstTree, BExpr, BlockStmt, DefFunction, ExprBlock, ExprInvoke,
-    Module,
+    AstExpr, AstFile, AstItem, AstModule, AstNode, BExpr, BlockStmt, ExprBlock, ExprInvoke,
+    ItemDefFunction,
 };
 use crate::ast::{AstType, Value, ValueFunction};
 use common::*;
@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 #[allow(unused_variables)]
 pub trait AstSerializer: Send + Sync {
-    fn serialize_tree(&self, node: &AstTree) -> Result<String> {
+    fn serialize_tree(&self, node: &AstNode) -> Result<String> {
         match node {
-            AstTree::Item(item) => self.serialize_item(item),
-            AstTree::Expr(expr) => self.serialize_expr(expr),
-            AstTree::File(file) => self.serialize_file(file),
+            AstNode::Item(item) => self.serialize_item(item),
+            AstNode::Expr(expr) => self.serialize_expr(expr),
+            AstNode::File(file) => self.serialize_file(file),
         }
     }
     fn serialize_expr(&self, node: &AstExpr) -> Result<String> {
@@ -48,7 +48,7 @@ pub trait AstSerializer: Send + Sync {
     fn serialize_file(&self, node: &AstFile) -> Result<String> {
         bail!("not implemented: serialize_file")
     }
-    fn serialize_module(&self, node: &Module) -> Result<String> {
+    fn serialize_module(&self, node: &AstModule) -> Result<String> {
         bail!("not implemented: serialize_module")
     }
     fn serialize_value(&self, node: &Value) -> Result<String> {
@@ -73,7 +73,7 @@ pub trait AstSerializer: Send + Sync {
     fn serialize_value_function(&self, node: &ValueFunction) -> Result<String> {
         bail!("not implemented: serialize_function")
     }
-    fn serialize_def_function(&self, node: &DefFunction) -> Result<String> {
+    fn serialize_def_function(&self, node: &ItemDefFunction) -> Result<String> {
         bail!("not implemented: serialize_def_function")
     }
 }

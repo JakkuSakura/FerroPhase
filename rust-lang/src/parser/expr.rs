@@ -1,7 +1,7 @@
 use crate::parser::item::parse_item;
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
 use common::warn;
-use eyre::{bail, ContextCompat};
+use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
     AstExpr, BExpr, BlockStmt, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInitStruct, ExprInvoke,
@@ -64,7 +64,11 @@ pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
         syn::Stmt::Local(l) => (
             BlockStmt::Let(StmtLet {
                 pat: parser::parse_pat(l.pat)?,
-                value: parse_expr(*l.init.context("No value")?.expr)?.into(),
+                init: l
+                    .init
+                    .map(|i| parse_expr(*i.expr))
+                    .transpose()?
+                    .map(|x| x.into()),
             }),
             true,
         ),
@@ -85,7 +89,7 @@ pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
         stmts.push(stmt);
         last_with_semicolon = with_semicolon;
     }
-    let ret = if !last_with_semicolon {
+    let expr = if !last_with_semicolon {
         let expr = match stmts.pop().unwrap() {
             BlockStmt::Expr(e) => e,
             x => bail!("Last statement should be expr, but got {:?}", x),
@@ -94,7 +98,7 @@ pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
     } else {
         None
     };
-    Ok(ExprBlock { stmts, ret })
+    Ok(ExprBlock { stmts, expr })
 }
 
 pub fn parse_expr_reference(item: syn::ExprReference) -> eyre::Result<ExprReference> {

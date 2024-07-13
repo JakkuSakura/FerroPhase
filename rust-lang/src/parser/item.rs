@@ -1,8 +1,8 @@
 use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, AstItem, AstType, DefEnum, DefFunction, DefStruct, DefTrait, DefType, EnumTypeVariant,
-    ExprSelfType, FunctionParam, Import, TypeEnum, TypeStruct,
+    AstExpr, AstItem, AstType, EnumTypeVariant, ExprSelfType, FunctionParam, ItemDefEnum,
+    ItemDefFunction, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImport, TypeEnum, TypeStruct,
 };
 use lang_core::id::{Ident, Path};
 use lang_core::utils::anybox::AnyBox;
@@ -44,7 +44,7 @@ pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
     })
 }
 
-pub fn parse_use(u: syn::ItemUse) -> eyre::Result<Import, RawUse> {
+pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport, RawUse> {
     let mut segments = vec![];
     let mut tree = u.tree.clone();
     loop {
@@ -64,7 +64,7 @@ pub fn parse_use(u: syn::ItemUse) -> eyre::Result<Import, RawUse> {
             _ => return Err(RawUse { raw: u }.into()),
         }
     }
-    Ok(Import {
+    Ok(ItemImport {
         visibility: parser::parse_vis(u.vis),
         path: Path::new(segments),
     })
@@ -82,11 +82,11 @@ pub fn parse_item_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
     })
 }
 
-fn parse_trait(t: syn::ItemTrait) -> eyre::Result<DefTrait> {
+fn parse_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
     // TODO: generis params
     let bounds = parser::parse_type_param_bounds(t.supertraits.into_iter().collect())?;
     let vis = parser::parse_vis(t.vis);
-    Ok(DefTrait {
+    Ok(ItemDefTrait {
         name: parser::parse_ident(t.ident),
         bounds,
         items: t
@@ -104,7 +104,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
             let visibility = parser::parse_vis(f0.vis.clone());
             let attrs = parse_attrs(f0.attrs.clone())?;
             let f = parse_value_fn(f0)?;
-            let d = DefFunction {
+            let d = ItemDefFunction {
                 attrs,
                 name: f.name.clone().unwrap(),
                 ty: None,
@@ -124,7 +124,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
             let visibility = parser::parse_vis(s.vis.clone());
 
             let struct_type = parse_item_struct(s)?;
-            Ok(AstItem::DefStruct(DefStruct {
+            Ok(AstItem::DefStruct(ItemDefStruct {
                 name: struct_type.name.clone(),
                 value: struct_type,
                 visibility,
@@ -149,7 +149,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
                     Ok(EnumTypeVariant { name, value: ty })
                 })
                 .try_collect()?;
-            Ok(AstItem::DefEnum(DefEnum {
+            Ok(AstItem::DefEnum(ItemDefEnum {
                 name: ident.clone(),
                 value: TypeEnum {
                     name: ident.clone(),
@@ -161,7 +161,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
         syn::Item::Type(t) => {
             let visibility = parser::parse_vis(t.vis.clone());
             let ty = parser::parse_type_value(*t.ty)?;
-            Ok(AstItem::DefType(DefType {
+            Ok(AstItem::DefType(ItemDefType {
                 name: parser::parse_ident(t.ident),
                 value: ty,
                 visibility,

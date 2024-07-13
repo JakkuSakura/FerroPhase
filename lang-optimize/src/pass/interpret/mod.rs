@@ -25,9 +25,8 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_module(&self, node: &Module, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_items(&self, node: &ItemChunk, ctx: &SharedScopedContext) -> Result<Value> {
         let result: Vec<_> = node
-            .items
             .iter()
             .map(|x| self.interpret_item(x, ctx))
             .try_collect()?;
@@ -86,7 +85,7 @@ impl InterpreterPass {
             kind => bail!("Could not invoke {:?}", kind),
         }
     }
-    pub fn interpret_import(&self, _node: &Import, _ctx: &SharedScopedContext) -> Result<()> {
+    pub fn interpret_import(&self, _node: &ItemImport, _ctx: &SharedScopedContext) -> Result<()> {
         Ok(())
     }
     pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<Value> {
@@ -210,26 +209,30 @@ impl InterpreterPass {
 
     pub fn interpret_def_function(
         &self,
-        def: &DefFunction,
+        def: &ItemDefFunction,
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         let name = &def.name;
         ctx.insert_value_with_ctx(name.clone(), Value::Function(def._to_value()));
         Ok(())
     }
-    pub fn interpret_def_struct(&self, def: &DefStruct, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn interpret_def_struct(
+        &self,
+        def: &ItemDefStruct,
+        ctx: &SharedScopedContext,
+    ) -> Result<()> {
         ctx.insert_value_with_ctx(def.name.clone(), AstType::Struct(def.value.clone()).into());
         Ok(())
     }
-    pub fn interpret_def_enum(&self, def: &DefEnum, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn interpret_def_enum(&self, def: &ItemDefEnum, ctx: &SharedScopedContext) -> Result<()> {
         ctx.insert_value_with_ctx(def.name.clone(), AstType::Enum(def.value.clone()).into());
         Ok(())
     }
-    pub fn interpret_def_type(&self, def: &DefType, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn interpret_def_type(&self, def: &ItemDefType, ctx: &SharedScopedContext) -> Result<()> {
         ctx.insert_value_with_ctx(def.name.clone(), Value::Type(def.value.clone()));
         Ok(())
     }
-    pub fn interpret_def_const(&self, def: &DefConst, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn interpret_def_const(&self, def: &ItemDefConst, ctx: &SharedScopedContext) -> Result<()> {
         ctx.insert_value_with_ctx(def.name.clone(), def.value.clone());
         Ok(())
     }
@@ -353,7 +356,7 @@ impl InterpreterPass {
             name: node.sig.name.clone(),
             params,
             generics_params: node.generics_params.clone(),
-            ret: self.interpret_type(&node.ret, &sub)?,
+            ret_ty: self.interpret_type(&node.ret_ty, &sub)?,
         };
 
         Ok(ValueFunction {
@@ -467,7 +470,7 @@ impl InterpreterPass {
     pub fn interpret_item(&self, node: &AstItem, ctx: &SharedScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
-            AstItem::Module(n) => self.interpret_module(n, ctx),
+            AstItem::Module(n) => self.interpret_items(&n.items, ctx),
             AstItem::DefFunction(n) => self.interpret_def_function(n, ctx).map(|_| Value::unit()),
             AstItem::DefStruct(n) => self.interpret_def_struct(n, ctx).map(|_| Value::unit()),
             AstItem::DefEnum(n) => self.interpret_def_enum(n, ctx).map(|_| Value::unit()),
@@ -481,12 +484,20 @@ impl InterpreterPass {
     }
 
     pub fn interpret_let(&self, node: &StmtLet, ctx: &SharedScopedContext) -> Result<Value> {
-        let value = self.interpret_expr(&node.value, ctx)?;
-        ctx.insert_value(
-            node.pat.as_ident().context("Only supports ident")?.as_str(),
-            value.clone(),
-        );
-        Ok(value)
+        if let Some(init) = &node.init {
+            let value = self.interpret_expr(&init, ctx)?;
+            ctx.insert_value(
+                node.pat.as_ident().context("Only supports ident")?.as_str(),
+                value.clone(),
+            );
+            Ok(value)
+        } else {
+            ctx.insert_value(
+                node.pat.as_ident().context("Only supports ident")?.as_str(),
+                Value::undefined(),
+            );
+            Ok(Value::unit())
+        }
     }
 
     pub fn interpret_stmt(
@@ -509,11 +520,11 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_tree(&self, node: &AstTree, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: &AstNode, ctx: &SharedScopedContext) -> Result<Value> {
         match node {
-            AstTree::Item(item) => self.interpret_item(item, ctx),
-            AstTree::Expr(expr) => self.interpret_expr(expr, ctx),
-            AstTree::File(file) => self.interpret_module(&file.module, ctx),
+            AstNode::Item(item) => self.interpret_item(item, ctx),
+            AstNode::Expr(expr) => self.interpret_expr(expr, ctx),
+            AstNode::File(file) => self.interpret_items(&file.items, ctx),
         }
     }
 }

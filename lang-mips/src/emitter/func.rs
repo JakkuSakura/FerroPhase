@@ -1,6 +1,6 @@
 use eyre::Result;
 
-use lang_core::ast::DefFunction;
+use lang_core::ast::ItemDefFunction;
 use lang_core::context::SharedScopedContext;
 
 use crate::emitter::expr::MipsEmitExprResult;
@@ -15,7 +15,7 @@ impl MipsEmitter {
 
     pub fn emit_def_function(
         &mut self,
-        func: &DefFunction,
+        func: &ItemDefFunction,
         ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
         let mut instructions = Vec::new();
