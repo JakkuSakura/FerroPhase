@@ -3,7 +3,6 @@ mod expr;
 mod item;
 pub mod macros;
 
-use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_block;
 
 use common::*;
@@ -244,44 +243,6 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
-    match item {
-        syn::ImplItem::Fn(m) => {
-            let attrs = parse_attrs(m.attrs.clone())?;
-            let func = parse_value_fn(syn::ItemFn {
-                attrs: m.attrs,
-                vis: m.vis.clone(),
-                sig: m.sig,
-                block: Box::new(m.block),
-            })?;
-            Ok(AstItem::DefFunction(ItemDefFunction {
-                attrs,
-                name: func.name.clone().unwrap(),
-                ty: None,
-                sig: func.sig,
-                body: func.body,
-                visibility: parse_vis(m.vis),
-            }))
-        }
-        syn::ImplItem::Type(t) => Ok(AstItem::DefType(ItemDefType {
-            name: parse_ident(t.ident),
-            value: parse_type_value(t.ty)?,
-            visibility: parse_vis(t.vis),
-        })),
-        _ => bail!("Does not support impl item {:?}", item),
-    }
-}
-fn parse_impl(im: syn::ItemImpl) -> Result<ItemImpl> {
-    Ok(ItemImpl {
-        trait_ty: im
-            .trait_
-            .map(|x| parse_path(x.1))
-            .transpose()?
-            .map(Locator::path),
-        self_ty: AstExpr::value(parse_type_value(*im.self_ty.clone())?.into()),
-        items: im.items.into_iter().map(parse_impl_item).try_collect()?,
-    })
-}
 fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
     Ok(FieldTypeValue {
         name: f
@@ -340,7 +301,7 @@ impl syn::parse::Parse for TypeValueParser {
             if input.peek2(syn::Ident) {
                 let s: syn::ItemStruct = input.parse()?;
                 Ok(TypeValueParser::NamedStruct(
-                    item::parse_item_struct(s).map_err(|err| input.error(err))?,
+                    item::parse_type_struct(s).map_err(|err| input.error(err))?,
                 ))
             } else {
                 Ok(TypeValueParser::UnnamedStruct(
