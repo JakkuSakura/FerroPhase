@@ -145,12 +145,12 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| self.evaluate_type_value(x, &sub))
                     .try_collect()?;
-                let ret = self.evaluate_type_value(&f.ret, &sub)?;
+                let ret_ty = self.evaluate_type_value(&f.ret_ty, &sub)?;
                 return Ok(AstType::Function(
                     TypeFunction {
                         params,
                         generics_params: f.generics_params.clone(),
-                        ret,
+                        ret_ty: ret_ty.into(),
                     }
                     .into(),
                 ));
@@ -223,7 +223,7 @@ impl InterpreterPass {
 
         let callee = self.infer_expr(callee, ctx)?;
         match callee {
-            AstType::Function(f) => return Ok(f.ret),
+            AstType::Function(f) => return Ok(*f.ret_ty),
             _ => {}
         }
 
@@ -236,7 +236,7 @@ impl InterpreterPass {
                     TypeFunction {
                         params: vec![],
                         generics_params: vec![],
-                        ret: AstType::unit(),
+                        ret_ty: AstType::unit().into(),
                     }
                     .into(),
                 ))
@@ -285,7 +285,7 @@ impl InterpreterPass {
             AstExpr::Invoke(invoke) => {
                 let function = self.infer_expr_invoke_target(&invoke.target, ctx)?;
                 match function {
-                    AstType::Function(f) => f.ret,
+                    AstType::Function(f) => *f.ret_ty,
                     _ => bail!("Expected function, got {:?}", function),
                 }
             }
@@ -317,11 +317,11 @@ impl InterpreterPass {
         for p in &func.params {
             params.push(p.ty.clone());
         }
-        let ret = func.ret.clone();
+        let ret_ty = func.ret_ty.clone();
         Ok(TypeFunction {
             params,
             generics_params: func.generics_params.clone(),
-            ret,
+            ret_ty: ret_ty.into(),
         })
     }
 }

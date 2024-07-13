@@ -23,7 +23,11 @@ impl SpecializePass {
         }
     }
 
-    pub fn specialize_import(&self, import: Import, _ctx: &SharedScopedContext) -> Result<Import> {
+    pub fn specialize_import(
+        &self,
+        import: ItemImport,
+        _ctx: &SharedScopedContext,
+    ) -> Result<ItemImport> {
         Ok(import)
     }
 
@@ -90,7 +94,7 @@ impl SpecializePass {
                     ident: name,
                     mutability: Some(false),
                 }),
-                value: AstExpr::value(value),
+                init: Some(AstExpr::value(value)),
             });
             bindings.push(binding);
         }
@@ -98,7 +102,7 @@ impl SpecializePass {
         // let new_body = Expr::block(ExprBlock::prepend(bindings, func.body.get()));
         let new_body = AstExpr::block(ExprBlock {
             stmts: bindings,
-            ret: Some(func.body.clone()),
+            expr: Some(func.body.clone()),
         });
         let new_name = Ident::new(format!(
             "{}_{}",
@@ -106,7 +110,7 @@ impl SpecializePass {
             self.spec_id.fetch_add(1, Ordering::Relaxed)
         ));
 
-        let mut ret = func.ret.clone();
+        let mut ret = func.ret_ty.clone();
         match &ret {
             AstType::Expr(expr) => match &**expr {
                 AstExpr::Locator(Locator::Ident(ident))
@@ -126,7 +130,7 @@ impl SpecializePass {
             name: Some(new_name.clone()),
             params: new_params.clone(),
             generics_params: vec![],
-            ret: ret.clone(),
+            ret_ty: ret.clone(),
         };
         let new_func = ValueFunction {
             sig,
@@ -152,7 +156,7 @@ impl SpecializePass {
         Ok(AstExpr::Block(
             ExprBlock {
                 stmts: vec![BlockStmt::Item(
-                    AstItem::DefFunction(DefFunction {
+                    AstItem::DefFunction(ItemDefFunction {
                         attrs: vec![],
                         name: new_name.clone(),
                         ty: None,
@@ -162,7 +166,7 @@ impl SpecializePass {
                     })
                     .into(),
                 )],
-                ret: Some(
+                expr: Some(
                     AstExpr::Invoke(ExprInvoke {
                         target: ExprInvokeTarget::Function(new_name.into()),
                         args: Default::default(),

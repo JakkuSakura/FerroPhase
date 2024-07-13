@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use common::*;
 
-use lang_core::ast::Value;
-use lang_core::ast::{AstExpr, AstItem, AstSerializer, AstTree, Module};
+use lang_core::ast::{AstExpr, AstItem, AstModule, AstNode, AstSerializer};
+use lang_core::ast::{AstFile, Value};
 use lang_core::context::SharedScopedContext;
 
 use crate::pass::{FoldOptimizer, InterpreterPass};
@@ -24,7 +24,10 @@ impl Interpreter {
             _ => bail!("Failed to extract Value from {}", node),
         }
     }
-    fn extract_module(&self, _node: Module) -> Result<Value> {
+    fn extract_module(&self, _node: AstModule) -> Result<Value> {
+        Ok(Value::unit())
+    }
+    fn extract_file(&self, _node: AstFile) -> Result<Value> {
         Ok(Value::unit())
     }
     fn extract_item(&self, node: AstItem) -> Result<Value> {
@@ -34,14 +37,14 @@ impl Interpreter {
             _ => bail!("Failed to extract Value from {:?}", node),
         }
     }
-    fn extract_tree(&self, node: AstTree) -> Result<Value> {
+    fn extract_tree(&self, node: AstNode) -> Result<Value> {
         match node {
-            AstTree::Expr(expr) => self.extract_expr(expr),
-            AstTree::Item(item) => self.extract_item(item),
-            AstTree::File(file) => self.extract_module(file.module),
+            AstNode::Expr(expr) => self.extract_expr(expr),
+            AstNode::Item(item) => self.extract_item(item),
+            AstNode::File(file) => self.extract_file(file),
         }
     }
-    pub fn interpret_tree(&self, node: AstTree, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn interpret_tree(&self, node: AstNode, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_tree(node, ctx)?;
 
         self.extract_tree(value)

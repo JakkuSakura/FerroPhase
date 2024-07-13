@@ -11,7 +11,7 @@ pub use specialize::*;
 use common::*;
 use lang_core::ast::Value;
 use lang_core::ast::{AstExpr, ControlFlow, ExprInvoke};
-use lang_core::ast::{AstItem, Module};
+use lang_core::ast::{AstItem, AstModule};
 use lang_core::context::SharedScopedContext;
 
 #[allow(unused_variables)]
@@ -29,7 +29,7 @@ pub trait OptimizePass {
         Ok(expr)
     }
 
-    fn optimize_module(&self, module: Module, ctx: &SharedScopedContext) -> Result<Module> {
+    fn optimize_module(&self, module: AstModule, ctx: &SharedScopedContext) -> Result<AstModule> {
         Ok(module)
     }
     fn evaluate_invoke(

@@ -2,6 +2,7 @@ use crate::ast::AstExpr;
 use crate::ast::AstType;
 use crate::id::{Ident, Locator};
 use crate::{common_enum, common_struct};
+pub type BPattern = Box<Pattern>;
 common_enum! {
     pub enum Pattern {
         Ident(PatternIdent),
@@ -20,6 +21,17 @@ impl Pattern {
         match self {
             Pattern::Ident(ident) => Some(&ident.ident),
             _ => None,
+        }
+    }
+    pub fn make_mut(&mut self) {
+        match self {
+            Pattern::Ident(ident) => {
+                ident.mutability = Some(true);
+            }
+            Pattern::Type(PatternType { pat, .. }) => {
+                pat.make_mut();
+            }
+            _ => {}
         }
     }
 }
@@ -68,8 +80,16 @@ common_struct! {
     /// let x: T = expr;
     /// where x: T is PatternType
     pub struct PatternType {
-        pub pat: Box<Pattern>,
+        pub pat: BPattern,
         pub ty: AstType,
+    }
+}
+impl PatternType {
+    pub fn new(pat: Pattern, ty: AstType) -> Self {
+        Self {
+            pat: pat.into(),
+            ty,
+        }
     }
 }
 

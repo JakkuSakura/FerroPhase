@@ -9,20 +9,27 @@ pub type BItem = Box<AstItem>;
 
 common_enum! {
     /// Item is an syntax tree node that "declares" a thing without returning a value
+    ///
+    /// It usually happens at compile time
+    ///
+    /// For run timm declarations, like in Python, `class Foo: pass`, it is not an item,
+    /// rather an Expr
     pub enum AstItem {
-        Module(Module),
-        DefStruct(DefStruct),
-        DefEnum(DefEnum),
-        DefType(DefType),
-        DefConst(DefConst),
-        DefStatic(DefStatic),
-        DefFunction(DefFunction),
-        DefTrait(DefTrait),
-        DeclType(DeclType),
-        DeclConst(DeclConst),
-        DeclFunction(DeclFunction),
-        Import(Import),
-        Impl(Impl),
+        Module(AstModule),
+        DefStruct(ItemDefStruct),
+        DefStructural(ItemDefStructural),
+        DefEnum(ItemDefEnum),
+        DefType(ItemDefType),
+        DefConst(ItemDefConst),
+        DefStatic(ItemDefStatic),
+        DefFunction(ItemDefFunction),
+        DefTrait(ItemDefTrait),
+        DeclType(ItemDeclType),
+        DeclConst(ItemDeclConst),
+        DeclFunction(ItemDeclFunction),
+        Import(ItemImport),
+        Impl(ItemImpl),
+        /// not for direct construction, but for interpretation and optimization
         Expr(AstExpr),
         Any(AnyBox),
     }
@@ -51,55 +58,55 @@ impl AstItem {
         }
         false
     }
-    pub fn as_function(&self) -> Option<&DefFunction> {
+    pub fn as_function(&self) -> Option<&ItemDefFunction> {
         match self {
             Self::DefFunction(define) => Some(define),
             _ => None,
         }
     }
-    pub fn as_struct(&self) -> Option<&DefStruct> {
+    pub fn as_struct(&self) -> Option<&ItemDefStruct> {
         match self {
             Self::DefStruct(define) => Some(define),
             _ => None,
         }
     }
-    pub fn as_enum(&self) -> Option<&DefEnum> {
+    pub fn as_enum(&self) -> Option<&ItemDefEnum> {
         match self {
             Self::DefEnum(define) => Some(define),
             _ => None,
         }
     }
-    pub fn as_type(&self) -> Option<&DefType> {
+    pub fn as_type(&self) -> Option<&ItemDefType> {
         match self {
             Self::DefType(define) => Some(define),
             _ => None,
         }
     }
-    pub fn as_const(&self) -> Option<&DefConst> {
+    pub fn as_const(&self) -> Option<&ItemDefConst> {
         match self {
             Self::DefConst(define) => Some(define),
             _ => None,
         }
     }
-    pub fn as_trait(&self) -> Option<&DefTrait> {
+    pub fn as_trait(&self) -> Option<&ItemDefTrait> {
         match self {
             Self::DefTrait(define) => Some(define),
             _ => None,
         }
     }
-    pub fn as_module(&self) -> Option<&Module> {
+    pub fn as_module(&self) -> Option<&AstModule> {
         match self {
             Self::Module(module) => Some(module),
             _ => None,
         }
     }
-    pub fn as_import(&self) -> Option<&Import> {
+    pub fn as_import(&self) -> Option<&ItemImport> {
         match self {
             Self::Import(import) => Some(import),
             _ => None,
         }
     }
-    pub fn as_impl(&self) -> Option<&Impl> {
+    pub fn as_impl(&self) -> Option<&ItemImpl> {
         match self {
             Self::Impl(impl_) => Some(impl_),
             _ => None,
@@ -124,8 +131,8 @@ impl AstItem {
 pub type ItemChunk = Vec<AstItem>;
 pub trait ItemChunkExt {
     fn find_item(&self, name: &str) -> Option<&AstItem>;
-    fn list_impl_trait(&self, trait_ty: &str) -> Vec<&Impl>;
-    fn list_impl_type(&self, self_ty: &str) -> Vec<&Impl>;
+    fn list_impl_trait(&self, trait_ty: &str) -> Vec<&ItemImpl>;
+    fn list_impl_type(&self, self_ty: &str) -> Vec<&ItemImpl>;
 }
 impl ItemChunkExt for ItemChunk {
     fn find_item(&self, name: &str) -> Option<&AstItem> {
@@ -137,7 +144,7 @@ impl ItemChunkExt for ItemChunk {
             }
         })
     }
-    fn list_impl_trait(&self, trait_ty: &str) -> Vec<&Impl> {
+    fn list_impl_trait(&self, trait_ty: &str) -> Vec<&ItemImpl> {
         self.iter()
             .filter_map(|item| match item {
                 AstItem::Impl(impl_) => {
@@ -155,7 +162,7 @@ impl ItemChunkExt for ItemChunk {
             })
             .collect()
     }
-    fn list_impl_type(&self, self_ty: &str) -> Vec<&Impl> {
+    fn list_impl_type(&self, self_ty: &str) -> Vec<&ItemImpl> {
         self.iter()
             .filter_map(|item| match item {
                 AstItem::Impl(impl_) if impl_.trait_ty.is_none() => {
@@ -175,7 +182,7 @@ impl ItemChunkExt for ItemChunk {
     }
 }
 common_struct! {
-    pub struct Module {
+    pub struct AstModule {
         pub name: Ident,
         pub items: ItemChunk,
         pub visibility: Visibility,
@@ -194,7 +201,7 @@ common_enum! {
 }
 
 common_struct! {
-    pub struct DefStruct {
+    pub struct ItemDefStruct {
         pub name: Ident,
         pub value: TypeStruct,
         pub visibility: Visibility,
@@ -202,21 +209,28 @@ common_struct! {
 }
 
 common_struct! {
-    pub struct DefEnum {
+    pub struct ItemDefStructural {
+        pub name: Ident,
+        pub value: TypeStructural,
+        pub visibility: Visibility,
+    }
+}
+common_struct! {
+    pub struct ItemDefEnum {
         pub name: Ident,
         pub value: TypeEnum,
         pub visibility: Visibility,
     }
 }
 common_struct! {
-    pub struct DefType {
+    pub struct ItemDefType {
         pub name: Ident,
         pub value: AstType,
         pub visibility: Visibility,
     }
 }
 common_struct! {
-    pub struct DefConst {
+    pub struct ItemDefConst {
         pub name: Ident,
         pub ty: Option<AstType>,
         pub value: Value,
@@ -224,7 +238,7 @@ common_struct! {
     }
 }
 common_struct! {
-    pub struct DefStatic {
+    pub struct ItemDefStatic {
         pub name: Ident,
         pub ty: AstType,
         pub value: AstExpr,
@@ -232,7 +246,7 @@ common_struct! {
     }
 }
 common_struct! {
-    pub struct DefFunction {
+    pub struct ItemDefFunction {
         pub attrs: Vec<AstAttribute>,
         pub name: Ident,
         pub ty: Option<TypeFunction>,
@@ -241,7 +255,7 @@ common_struct! {
         pub visibility: Visibility,
     }
 }
-impl DefFunction {
+impl ItemDefFunction {
     pub fn new_simple(name: Ident, body: BExpr) -> Self {
         let mut sig = FunctionSignature::unit();
         sig.name = Some(name.clone());
@@ -262,7 +276,7 @@ impl DefFunction {
     }
 }
 common_struct! {
-    pub struct DefTrait {
+    pub struct ItemDefTrait {
         pub name: Ident,
         pub bounds: TypeBounds,
         pub items: ItemChunk,
@@ -270,14 +284,14 @@ common_struct! {
     }
 }
 common_struct! {
-    pub struct Import {
+    pub struct ItemImport {
         pub visibility: Visibility,
         pub path: Path,
     }
 }
 
 common_struct! {
-    pub struct Impl {
+    pub struct ItemImpl {
         pub trait_ty: Option<Locator>,
         pub self_ty: AstExpr,
         pub items: ItemChunk,
@@ -285,19 +299,19 @@ common_struct! {
 }
 
 common_struct! {
-    pub struct DeclConst {
+    pub struct ItemDeclConst {
         pub name: Ident,
         pub ty: AstType,
     }
 }
 common_struct! {
-    pub struct DeclType {
+    pub struct ItemDeclType {
         pub name: Ident,
         pub bounds: TypeBounds,
     }
 }
 common_struct! {
-    pub struct DeclFunction {
+    pub struct ItemDeclFunction {
         pub name: Ident,
         pub sig: FunctionSignature,
     }

@@ -532,7 +532,7 @@ common_struct! {
         pub name: Option<Ident>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
-        pub ret: AstType,
+        pub ret_ty: AstType,
     }
 }
 impl FunctionSignature {
@@ -541,7 +541,7 @@ impl FunctionSignature {
             name: None,
             params: vec![],
             generics_params: vec![],
-            ret: AstType::Unit(TypeUnit),
+            ret_ty: AstType::Unit(TypeUnit),
         }
     }
 }
