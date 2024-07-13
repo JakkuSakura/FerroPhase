@@ -121,6 +121,7 @@ impl RustPrinter {
                 let expr = self.print_any(any)?;
                 Ok(quote!(#expr;))
             }
+            BlockStmt::Noop => Ok(quote!(;)),
         }
     }
     pub fn print_stmt_chunk(&self, items: &[BlockStmt]) -> eyre::Result<TokenStream> {
@@ -129,7 +130,7 @@ impl RustPrinter {
             let item = self.print_statement(item)?;
             stmts.push(item);
         }
-        Ok(quote!(#(#stmts;) *))
+        Ok(quote!(#(#stmts) *))
     }
     pub fn print_block(&self, n: &ExprBlock) -> eyre::Result<TokenStream> {
         if let Some(expr) = &n.expr {
