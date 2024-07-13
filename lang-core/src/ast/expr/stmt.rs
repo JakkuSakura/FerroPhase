@@ -12,11 +12,16 @@ common_enum! {
         Item(BItem),
         Let(StmtLet),
         Expr(AstExpr),
+        /// really noop
+        Noop,
         Any(AnyBox),
     }
 }
 
 impl BlockStmt {
+    pub fn noop() -> Self {
+        Self::Noop
+    }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
@@ -28,6 +33,7 @@ impl BlockStmt {
         match self {
             Self::Expr(expr) => expr.is_unit(),
             Self::Item(item) => item.is_unit(),
+            Self::Noop => true,
             _ => false,
         }
     }
