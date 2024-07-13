@@ -74,6 +74,11 @@ pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
         ),
         syn::Stmt::Item(tm) => (parse_item(tm).map(BlockStmt::item)?, true),
         syn::Stmt::Expr(e, semicolon) => {
+            if let syn::Expr::Verbatim(v) = &e {
+                if v.is_empty() {
+                    return Ok((BlockStmt::noop().into(), semicolon.is_some()));
+                }
+            }
             (BlockStmt::Expr(parse_expr(e)?.into()), semicolon.is_some())
         }
         syn::Stmt::Macro(raw) => (BlockStmt::any(RawStmtMacro { raw }), true),
