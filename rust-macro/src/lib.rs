@@ -6,7 +6,7 @@ use proc_macro::TokenStream;
 use rust_lang::parser::RustParser;
 use rust_lang::printer::RustPrinter;
 
-use lang_core::ast::{AstExpr, AstFile, Module};
+use lang_core::ast::{AstExpr, AstFile, AstModule};
 use std::sync::Arc;
 
 trait Optimizee {
@@ -30,7 +30,7 @@ impl Optimizee for AstExpr {
         Ok(node.into())
     }
 }
-impl Optimizee for Module {
+impl Optimizee for AstModule {
     fn optimize(
         mut self,
         optimizer: Vec<FoldOptimizer>,
@@ -68,7 +68,9 @@ fn specialize_inner(code: impl Optimizee) -> Result<TokenStream> {
 #[proc_macro]
 pub fn specialize(input: TokenStream) -> TokenStream {
     let input: syn::File = syn::parse(input.into()).unwrap();
-    let input = RustParser::new().parse_file("".into(), input).unwrap();
+    let input = RustParser::new()
+        .parse_file_content("".into(), input)
+        .unwrap();
     specialize_inner(input).unwrap().into()
 }
 

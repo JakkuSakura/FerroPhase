@@ -6,7 +6,7 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 pub type TypeId = u64;
-
+pub type BType = Box<AstType>;
 common_enum! {
     /// TypeValue is a solid type value
     pub enum AstType {
@@ -14,19 +14,19 @@ common_enum! {
         Struct(TypeStruct),
         Structural(TypeStructural),
         Enum(TypeEnum),
-        Function(Box<TypeFunction>),
+        Function(TypeFunction),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
-        Value(Box<ValueType>),
+        Value(ValueType),
         Tuple(TypeTuple),
-        Vec(Box<TypeVec>),
+        Vec(TypeVec),
         Any(TypeAny),
         Unit(TypeUnit),
         Unknown(TypeUnknown),
         Nothing(TypeNothing),
         Type(TypeType),
-        Reference(Box<TypeReference>),
-        Expr(Box<AstExpr>),
+        Reference(TypeReference),
+        Expr(BExpr),
         AnyBox(AnyBox),
     }
 
@@ -199,7 +199,7 @@ impl Display for TypePrimitive {
 
 common_struct! {
     pub struct TypeVec {
-        pub ty: AstType,
+        pub ty: BType,
     }
 }
 
@@ -244,7 +244,7 @@ common_struct! {
     pub struct TypeFunction {
         pub params: Vec<AstType>,
         pub generics_params: Vec<GenericParam>,
-        pub ret: AstType,
+        pub ret_ty: BType,
     }
 }
 common_struct! {
@@ -281,7 +281,7 @@ plain_type! { TypeType }
 
 common_struct! {
     pub struct TypeReference {
-        pub ty: Box<AstType>,
+        pub ty: BType,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
     }
@@ -298,7 +298,7 @@ impl Display for TypeReference {
 
 common_struct! {
     pub struct ValueType {
-        pub value: Value,
+        pub value: BValue,
     }
 }
 impl ValueType {

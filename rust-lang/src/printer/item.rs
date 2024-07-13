@@ -1,6 +1,8 @@
 use eyre::{bail, ContextCompat, Result};
 use itertools::Itertools;
-use lang_core::ast::{AstItem, DefConst, DefFunction, DefStruct, DefTrait, DefType, Impl};
+use lang_core::ast::{
+    AstItem, ItemDefConst, ItemDefFunction, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl,
+};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -16,7 +18,7 @@ impl RustPrinter {
         Ok(quote!(#(#stmts) *))
     }
 
-    pub fn print_def_struct(&self, def: &DefStruct) -> Result<TokenStream> {
+    pub fn print_def_struct(&self, def: &ItemDefStruct) -> Result<TokenStream> {
         let name = self.print_ident(&def.name);
         let fields: Vec<_> = def
             .value
@@ -30,14 +32,14 @@ impl RustPrinter {
             }
         ))
     }
-    pub fn print_def_type(&self, def: &DefType) -> Result<TokenStream> {
+    pub fn print_def_type(&self, def: &ItemDefType) -> Result<TokenStream> {
         let name = self.print_ident(&def.name);
         let ty = self.print_type_value(&def.value)?;
         return Ok(quote!(
             type #name = t!{ #ty };
         ));
     }
-    pub fn print_def_const(&self, def: &DefConst) -> Result<TokenStream> {
+    pub fn print_def_const(&self, def: &ItemDefConst) -> Result<TokenStream> {
         let name = self.print_ident(&def.name);
         let ty = self.print_type_value(&def.ty.as_ref().context("No type")?.clone())?;
         let value = self.print_value(&def.value)?;
@@ -45,7 +47,7 @@ impl RustPrinter {
             const #name: #ty = #value;
         ));
     }
-    pub fn print_def_trait(&self, def: &DefTrait) -> Result<TokenStream> {
+    pub fn print_def_trait(&self, def: &ItemDefTrait) -> Result<TokenStream> {
         let vis = self.print_vis(def.visibility);
         let name = self.print_ident(&def.name);
         let ty = self.print_type_bounds(&def.bounds)?;
@@ -57,7 +59,7 @@ impl RustPrinter {
         ));
     }
 
-    pub fn print_impl(&self, impl_: &Impl) -> Result<TokenStream> {
+    pub fn print_impl(&self, impl_: &ItemImpl) -> Result<TokenStream> {
         let name = self.print_expr(&impl_.self_ty)?;
         let methods = self.print_items_chunk(&impl_.items)?;
         Ok(quote!(
@@ -66,7 +68,7 @@ impl RustPrinter {
             }
         ))
     }
-    pub fn print_def_function(&self, func: &DefFunction) -> Result<TokenStream> {
+    pub fn print_def_function(&self, func: &ItemDefFunction) -> Result<TokenStream> {
         let attrs = self.print_attrs(&func.attrs)?;
         let func = self.print_function(&func.sig, &func.body, func.visibility)?;
         Ok(quote!(

@@ -85,7 +85,7 @@ fn parse_type_value(t: syn::Type) -> Result<AstType> {
                     .map(parse_type_value)
                     .try_collect()?,
                 generics_params: vec![],
-                ret: item::parse_return_type(f.output)?.into(),
+                ret_ty: item::parse_return_type(f.output)?.into(),
             }
             .into(),
         )
@@ -197,14 +197,14 @@ pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
             .map(item::parse_fn_arg)
             .try_collect()?,
         generics_params,
-        ret: item::parse_return_type(sig.output)?,
+        ret_ty: item::parse_return_type(sig.output)?,
     })
 }
 pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
     match f {
         syn::TraitItem::Fn(f) => {
             let name = parse_ident(f.sig.ident.clone());
-            Ok(DeclFunction {
+            Ok(ItemDeclFunction {
                 name,
                 sig: parse_fn_sig(f.sig)?,
             }
@@ -213,12 +213,12 @@ pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
         syn::TraitItem::Type(t) => {
             let name = parse_ident(t.ident);
             let bounds = parse_type_param_bounds(t.bounds.into_iter().collect())?;
-            Ok(DeclType { name, bounds }.into())
+            Ok(ItemDeclType { name, bounds }.into())
         }
         syn::TraitItem::Const(c) => {
             let name = parse_ident(c.ident);
             let ty = parse_type_value(c.ty)?;
-            Ok(DeclConst { name, ty }.into())
+            Ok(ItemDeclConst { name, ty }.into())
         }
         _ => bail!("Does not support trait item {:?}", f),
     }
@@ -254,7 +254,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
-            Ok(AstItem::DefFunction(DefFunction {
+            Ok(AstItem::DefFunction(ItemDefFunction {
                 attrs,
                 name: func.name.clone().unwrap(),
                 ty: None,
@@ -263,7 +263,7 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
                 visibility: parse_vis(m.vis),
             }))
         }
-        syn::ImplItem::Type(t) => Ok(AstItem::DefType(DefType {
+        syn::ImplItem::Type(t) => Ok(AstItem::DefType(ItemDefType {
             name: parse_ident(t.ident),
             value: parse_type_value(t.ty)?,
             visibility: parse_vis(t.vis),
@@ -271,8 +271,8 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
         _ => bail!("Does not support impl item {:?}", item),
     }
 }
-fn parse_impl(im: syn::ItemImpl) -> Result<Impl> {
-    Ok(Impl {
+fn parse_impl(im: syn::ItemImpl) -> Result<ItemImpl> {
+    Ok(ItemImpl {
         trait_ty: im
             .trait_
             .map(|x| parse_path(x.1))
@@ -409,15 +409,11 @@ fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<AstExpr> {
 }
 
 pub fn parse_file(path: PathBuf, file: syn::File) -> Result<AstFile> {
-    let module = Module {
-        name: Ident::new("__file__"),
-        items: file.items.into_iter().map(item::parse_item).try_collect()?,
-        visibility: Visibility::Public,
-    };
-    Ok(AstFile { path, module })
+    let items = file.items.into_iter().map(item::parse_item).try_collect()?;
+    Ok(AstFile { path, items })
 }
-pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
-    Ok(Module {
+pub fn parse_module(m: syn::ItemMod) -> Result<AstModule> {
+    Ok(AstModule {
         name: parse_ident(m.ident),
         items: m
             .content
@@ -464,7 +460,7 @@ impl RustParser {
             path.display(),
             errors_str
         );
-        let file = self.parse_file(path, outputs)?;
+        let file = self.parse_file_content(path, outputs)?;
         Ok(file)
     }
     pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
@@ -476,10 +472,13 @@ impl RustParser {
     pub fn parse_item(&self, code: syn::Item) -> Result<AstItem> {
         item::parse_item(code)
     }
-    pub fn parse_file(&self, path: PathBuf, code: syn::File) -> Result<AstFile> {
+    pub fn parse_items(&self, code: Vec<syn::Item>) -> Result<Vec<AstItem>> {
+        code.into_iter().map(|x| self.parse_item(x)).try_collect()
+    }
+    pub fn parse_file_content(&self, path: PathBuf, code: syn::File) -> Result<AstFile> {
         parse_file(path, code)
     }
-    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
+    pub fn parse_module(&self, code: syn::ItemMod) -> Result<AstModule> {
         parse_module(code)
     }
     pub fn parse_type_value(&self, code: syn::Type) -> Result<AstType> {
@@ -488,10 +487,10 @@ impl RustParser {
 }
 
 impl AstDeserializer for RustParser {
-    fn deserialize_tree(&self, code: &str) -> Result<AstTree> {
+    fn deserialize_node(&self, code: &str) -> Result<AstNode> {
         let code: syn::File = parse_str(code)?;
         let path = PathBuf::from("__file__");
-        self.parse_file(path, code).map(AstTree::File)
+        self.parse_file_content(path, code).map(AstNode::File)
     }
 
     fn deserialize_expr(&self, code: &str) -> Result<AstExpr> {
@@ -504,7 +503,7 @@ impl AstDeserializer for RustParser {
         self.parse_item(code)
     }
 
-    fn deserialize_file(&self, path: &std::path::Path) -> Result<AstFile> {
+    fn deserialize_file_load(&self, path: &std::path::Path) -> Result<AstFile> {
         self.parse_file_recursively(path.to_owned())
     }
     fn deserialize_type(&self, code: &str) -> Result<AstType> {

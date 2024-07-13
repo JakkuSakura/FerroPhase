@@ -14,7 +14,7 @@ use syn::LitInt;
 impl RustPrinter {
     pub fn print_expr_optimized(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
         match node {
-            AstExpr::Block(n) => self.print_statement_chunk(&n.stmts),
+            AstExpr::Block(n) => self.print_stmt_chunk(&n.stmts),
             AstExpr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
@@ -69,11 +69,16 @@ impl RustPrinter {
     pub fn print_let(&self, let_: &StmtLet) -> eyre::Result<TokenStream> {
         let pat = self.print_pattern(&let_.pat)?;
 
-        let value = self.print_expr(&let_.value)?;
-
-        Ok(quote!(
-            let #pat = #value;
-        ))
+        if let Some(init) = &let_.init {
+            let init = self.print_expr(&init)?;
+            Ok(quote!(
+                let #pat = #init;
+            ))
+        } else {
+            Ok(quote!(
+                let #pat;
+            ))
+        }
     }
     pub fn print_assign(&self, assign: &ExprAssign) -> eyre::Result<TokenStream> {
         let target = self.print_expr(&assign.target)?;
@@ -108,23 +113,38 @@ impl RustPrinter {
         match stmt {
             BlockStmt::Item(item) => self.print_item(item),
             BlockStmt::Let(let_) => self.print_let(let_),
-            BlockStmt::Expr(expr) => self.print_expr(expr),
-            BlockStmt::Any(any) => self.print_any(any),
+            BlockStmt::Expr(expr) => {
+                let expr = self.print_expr(expr)?;
+                Ok(quote!(#expr;))
+            }
+            BlockStmt::Any(any) => {
+                let expr = self.print_any(any)?;
+                Ok(quote!(#expr;))
+            }
         }
     }
-    pub fn print_statement_chunk(&self, items: &[BlockStmt]) -> eyre::Result<TokenStream> {
+    pub fn print_stmt_chunk(&self, items: &[BlockStmt]) -> eyre::Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
             let item = self.print_statement(item)?;
             stmts.push(item);
         }
-        Ok(quote!(#(#stmts) *))
+        Ok(quote!(#(#stmts;) *))
     }
     pub fn print_block(&self, n: &ExprBlock) -> eyre::Result<TokenStream> {
-        let chunk = self.print_statement_chunk(&n.stmts)?;
-        Ok(quote!({
-            #chunk
-        }))
+        if let Some(expr) = &n.expr {
+            let chunk = self.print_stmt_chunk(&n.stmts)?;
+            let expr = self.print_expr(expr)?;
+            Ok(quote!({
+                #chunk
+                #expr
+            }))
+        } else {
+            let chunk = self.print_stmt_chunk(&n.stmts)?;
+            Ok(quote!({
+                #chunk
+            }))
+        }
     }
     pub fn print_if(&self, if_: &ExprIf) -> eyre::Result<TokenStream> {
         let cond = self.print_expr(&if_.cond)?;

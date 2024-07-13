@@ -153,16 +153,20 @@ impl FoldOptimizer {
         Ok(expr)
     }
 
-    pub fn optimize_import(&self, import: Import, _ctx: &SharedScopedContext) -> Result<Import> {
+    pub fn optimize_import(
+        &self,
+        import: ItemImport,
+        _ctx: &SharedScopedContext,
+    ) -> Result<ItemImport> {
         Ok(import)
     }
 
     pub fn optimize_module(
         &self,
-        mut module: Module,
+        mut module: AstModule,
         ctx: &SharedScopedContext,
         with_submodule: bool,
-    ) -> Result<Module> {
+    ) -> Result<AstModule> {
         let sub = if with_submodule {
             ctx.child(module.name.clone(), module.visibility, false)
         } else {
@@ -190,7 +194,7 @@ impl FoldOptimizer {
             _ => Ok(()),
         }
     }
-    fn prescan_module(&self, module: &Module, ctx: &SharedScopedContext) -> Result<()> {
+    fn prescan_module(&self, module: &AstModule, ctx: &SharedScopedContext) -> Result<()> {
         let module = module.clone();
         for item in module.items {
             self.prescan_item(&item, ctx)?;
@@ -227,16 +231,24 @@ impl FoldOptimizer {
     }
 
     pub fn optimize_let(&self, let_: StmtLet, ctx: &SharedScopedContext) -> Result<StmtLet> {
-        let value = self.optimize_expr(let_.value, ctx)?;
-        ctx.insert_expr(
-            let_.pat.as_ident().context("Only supports ident")?.clone(),
-            value.clone(),
-        );
+        if let Some(init) = &let_.init {
+            let init = self.optimize_expr(init.clone(), ctx)?;
+            let value = self.pass.try_evaluate_expr(&init, ctx)?;
+            ctx.insert_expr(
+                let_.pat.as_ident().context("Only supports ident")?.clone(),
+                value.clone(),
+            );
 
-        Ok(StmtLet {
-            pat: let_.pat.clone(),
-            value,
-        })
+            Ok(StmtLet {
+                pat: let_.pat.clone(),
+                init: Some(value.into()),
+            })
+        } else {
+            Ok(StmtLet {
+                pat: let_.pat.clone(),
+                init: None,
+            })
+        }
     }
     pub fn optimize_stmt(&self, stmt: BlockStmt, ctx: &SharedScopedContext) -> Result<BlockStmt> {
         match stmt {
@@ -357,16 +369,20 @@ impl FoldOptimizer {
 
     pub fn optimize_def_function(
         &self,
-        mut def: DefFunction,
+        mut def: ItemDefFunction,
         ctx: &SharedScopedContext,
-    ) -> Result<DefFunction> {
+    ) -> Result<ItemDefFunction> {
         let value = self.optimize_func(def._to_value(), ctx)?;
         def.body = value.body;
         def.sig = value.sig;
 
         Ok(def)
     }
-    pub fn prescan_def_function(&self, def: &DefFunction, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn prescan_def_function(
+        &self,
+        def: &ItemDefFunction,
+        ctx: &SharedScopedContext,
+    ) -> Result<()> {
         match def.name.as_str() {
             _ => {
                 debug!(
@@ -380,22 +396,32 @@ impl FoldOptimizer {
         }
     }
     pub fn optimize_file(&self, mut file: AstFile, ctx: &SharedScopedContext) -> Result<AstFile> {
-        file.module = self.optimize_module(file.module, ctx, false)?;
+        file.items = self
+            .optimize_module(
+                AstModule {
+                    name: "__file__".into(),
+                    items: file.items,
+                    visibility: Visibility::Public,
+                },
+                ctx,
+                false,
+            )?
+            .items;
         Ok(file)
     }
-    pub fn optimize_tree(&self, node: AstTree, ctx: &SharedScopedContext) -> Result<AstTree> {
+    pub fn optimize_tree(&self, node: AstNode, ctx: &SharedScopedContext) -> Result<AstNode> {
         match node {
-            AstTree::Item(item) => {
+            AstNode::Item(item) => {
                 let item = self.optimize_item(item, ctx)?;
-                Ok(AstTree::Item(item))
+                Ok(AstNode::Item(item))
             }
-            AstTree::Expr(expr) => {
+            AstNode::Expr(expr) => {
                 let expr = self.optimize_expr(expr, ctx)?;
-                Ok(AstTree::Expr(expr))
+                Ok(AstNode::Expr(expr))
             }
-            AstTree::File(file) => {
+            AstNode::File(file) => {
                 let file = self.optimize_file(file, ctx)?;
-                Ok(AstTree::File(file))
+                Ok(AstNode::File(file))
             }
         }
     }

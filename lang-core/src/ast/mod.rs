@@ -21,13 +21,13 @@ pub use value::*;
 common_struct! {
     pub struct AstFile {
         pub path: PathBuf,
-        pub module: Module,
+        pub items: ItemChunk,
     }
 }
 
 common_enum! {
     /// Tree is any syntax tree element
-    pub enum AstTree {
+    pub enum AstNode {
         Item(AstItem),
         Expr(AstExpr),
         File(AstFile),
@@ -35,14 +35,14 @@ common_enum! {
 }
 
 pub trait AstProvider {
-    fn get_ast_from_code(&self, cst: &str) -> Result<AstTree>;
-    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstTree>;
+    fn get_ast_from_code(&self, cst: &str) -> Result<AstNode>;
+    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstNode>;
 }
 impl<D: AstDeserializer> AstProvider for D {
-    fn get_ast_from_code(&self, cst: &str) -> Result<AstTree> {
-        self.deserialize_tree(cst)
+    fn get_ast_from_code(&self, cst: &str) -> Result<AstNode> {
+        self.deserialize_node(cst)
     }
-    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstTree> {
-        self.deserialize_file(path).map(AstTree::File)
+    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstNode> {
+        self.deserialize_file_load(path).map(AstNode::File)
     }
 }
