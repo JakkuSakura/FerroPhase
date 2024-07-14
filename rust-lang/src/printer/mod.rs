@@ -171,7 +171,12 @@ impl RustPrinter {
                 };
                 Ok(quote!(#name #pattern))
             }
-            _ => todo!(),
+            Pattern::Type(type_) => {
+                let pattern = self.print_pattern(&type_.pat)?;
+                let ty = self.print_type(&type_.ty)?;
+                Ok(quote!(#pattern: #ty))
+            }
+            _ => todo!("pattern not implemented: {:?}", pat),
         }
     }
     // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
