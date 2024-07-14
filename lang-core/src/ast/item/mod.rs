@@ -220,3 +220,20 @@ common_struct! {
         pub items: ItemChunk,
     }
 }
+
+impl ItemImpl {
+    pub fn new_ident(self_ty: Ident, items: ItemChunk) -> Self {
+        Self {
+            trait_ty: None,
+            self_ty: AstExpr::ident(self_ty).into(),
+            items,
+        }
+    }
+    pub fn new(trait_ty: Option<Locator>, self_ty: AstExpr, items: ItemChunk) -> Self {
+        Self {
+            trait_ty,
+            self_ty,
+            items,
+        }
+    }
+}
