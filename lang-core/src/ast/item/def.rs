@@ -1,53 +1,65 @@
 use crate::ast::{
-    AstAttribute, AstType, BExpr, FunctionSignature, ItemChunk, TypeBounds, TypeEnum, TypeFunction,
-    TypeStruct, TypeStructural, ValueFunction, Visibility,
+    AstAttribute, AstType, BExpr, FunctionSignature, ItemChunk, StructuralField, TypeBounds,
+    TypeEnum, TypeFunction, TypeStruct, TypeStructural, ValueFunction, Visibility,
 };
 use crate::common_struct;
 use crate::id::Ident;
 
 common_struct! {
     pub struct ItemDefStruct {
+        pub visibility: Visibility,
         pub name: Ident,
         pub value: TypeStruct,
-        pub visibility: Visibility,
+    }
+}
+impl ItemDefStruct {
+    pub fn new(name: Ident, fields: Vec<StructuralField>) -> Self {
+        Self {
+            visibility: Visibility::Public,
+            value: TypeStruct {
+                name: name.clone(),
+                fields,
+            },
+            name,
+        }
     }
 }
 
 common_struct! {
     pub struct ItemDefStructural {
+        pub visibility: Visibility,
         pub name: Ident,
         pub value: TypeStructural,
-        pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct ItemDefEnum {
+        pub visibility: Visibility,
         pub name: Ident,
         pub value: TypeEnum,
-        pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct ItemDefType {
+        pub visibility: Visibility,
         pub name: Ident,
         pub value: AstType,
-        pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct ItemDefConst {
+        pub visibility: Visibility,
         pub name: Ident,
         pub ty: Option<AstType>,
         pub value: BExpr,
-        pub visibility: Visibility,
     }
 }
 common_struct! {
     pub struct ItemDefStatic {
+        pub visibility: Visibility,
         pub name: Ident,
         pub ty: AstType,
         pub value: BExpr,
-        pub visibility: Visibility,
     }
 }
 common_struct! {
