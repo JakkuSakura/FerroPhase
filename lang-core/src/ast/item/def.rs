@@ -85,6 +85,10 @@ impl ItemDefFunction {
             visibility: Visibility::Public,
         }
     }
+    pub fn with_ret_ty(mut self, ret_ty: AstType) -> Self {
+        self.sig.ret_ty = ret_ty;
+        self
+    }
     pub fn _to_value(&self) -> ValueFunction {
         ValueFunction {
             sig: self.sig.clone(),
