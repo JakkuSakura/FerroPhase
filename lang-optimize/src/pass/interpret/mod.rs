@@ -245,7 +245,7 @@ impl InterpreterPass {
     }
     pub fn interpret_struct_expr(
         &self,
-        node: &ExprInitStruct,
+        node: &ExprStruct,
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
         let value: Value = self.interpret_expr(&node.name.get(), ctx)?.try_conv()?;

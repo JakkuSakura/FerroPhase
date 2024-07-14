@@ -11,7 +11,8 @@ use syn::{Fields, FnArg, ReturnType};
 
 use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_expr;
-use crate::parser::{parse_ident, parse_path, parse_type_value, parse_value_fn, parse_vis};
+use crate::parser::ty::{parse_struct_field, parse_type};
+use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis, ty};
 use crate::{parser, RawItemMacro, RawUse};
 
 pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
@@ -34,7 +35,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
                 .as_ident()
                 .context("No ident")?
                 .clone(),
-            ty: parse_type_value(*t.ty)?,
+            ty: parse_type(*t.ty)?,
         },
     })
 }
@@ -42,7 +43,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
 pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
     Ok(match o {
         ReturnType::Default => AstType::unit(),
-        ReturnType::Type(_, t) => parse_type_value(*t)?,
+        ReturnType::Type(_, t) => parse_type(*t)?,
     })
 }
 
@@ -79,14 +80,14 @@ pub fn parse_type_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
             .fields
             .into_iter()
             .enumerate()
-            .map(|(i, f)| parser::parse_struct_field(i, f))
+            .map(|(i, f)| parse_struct_field(i, f))
             .try_collect()?,
     })
 }
 
 fn parse_item_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
     // TODO: generis params
-    let bounds = parser::parse_type_param_bounds(t.supertraits.into_iter().collect())?;
+    let bounds = ty::parse_type_param_bounds(t.supertraits.into_iter().collect())?;
     let vis = parse_vis(t.vis);
     Ok(ItemDefTrait {
         name: parse_ident(t.ident),
@@ -121,7 +122,7 @@ fn parse_impl_item(item: syn::ImplItem) -> eyre::Result<AstItem> {
         }
         syn::ImplItem::Type(t) => Ok(AstItem::DefType(ItemDefType {
             name: parse_ident(t.ident),
-            value: parse_type_value(t.ty)?,
+            value: parse_type(t.ty)?,
             visibility: parse_vis(t.vis),
         })),
         _ => bail!("Does not support impl item {:?}", item),
@@ -129,7 +130,7 @@ fn parse_impl_item(item: syn::ImplItem) -> eyre::Result<AstItem> {
 }
 fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
     let vis = parse_vis(s.vis);
-    let ty = parse_type_value(*s.ty)?;
+    let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?;
     Ok(ItemDefStatic {
         name: parse_ident(s.ident),
@@ -140,7 +141,7 @@ fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
 }
 fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefStatic> {
     let vis = parse_vis(s.vis);
-    let ty = parse_type_value(*s.ty)?;
+    let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?;
     Ok(ItemDefStatic {
         name: parse_ident(s.ident),
@@ -156,7 +157,7 @@ fn parse_item_impl(im: syn::ItemImpl) -> eyre::Result<ItemImpl> {
             .map(|x| parse_path(x.1))
             .transpose()?
             .map(Locator::path),
-        self_ty: AstExpr::value(parse_type_value(*im.self_ty.clone())?.into()),
+        self_ty: AstExpr::value(parse_type(*im.self_ty.clone())?.into()),
         items: im.items.into_iter().map(parse_impl_item).try_collect()?,
     })
 }
@@ -229,7 +230,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
         }
         syn::Item::Type(t) => {
             let visibility = parse_vis(t.vis.clone());
-            let ty = parse_type_value(*t.ty)?;
+            let ty = parse_type(*t.ty)?;
             AstItem::DefType(ItemDefType {
                 name: parse_ident(t.ident),
                 value: ty,
