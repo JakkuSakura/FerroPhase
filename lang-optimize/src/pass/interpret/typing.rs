@@ -3,7 +3,7 @@ use itertools::Itertools;
 
 use lang_core::ast::{AstExpr, Visibility};
 use lang_core::ast::{
-    AstType, DecimalType, ExprInvokeTarget, FieldTypeValue, ImplTraits, TypeBounds, TypeFunction,
+    AstType, DecimalType, ExprInvokeTarget, ImplTraits, StructuralField, TypeBounds, TypeFunction,
     TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
 };
 use lang_core::context::SharedScopedContext;
@@ -109,7 +109,7 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| {
                         let value = self.evaluate_type_value(&x.value, ctx)?;
-                        Ok::<_, Error>(FieldTypeValue {
+                        Ok::<_, Error>(StructuralField {
                             name: x.name.clone(),
                             value,
                         })
@@ -126,7 +126,7 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| {
                         let value = self.evaluate_type_value(&x.value, ctx)?;
-                        Ok::<_, Error>(FieldTypeValue {
+                        Ok::<_, Error>(StructuralField {
                             name: x.name.clone(),
                             value,
                         })

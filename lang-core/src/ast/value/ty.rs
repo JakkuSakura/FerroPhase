@@ -210,15 +210,20 @@ common_struct! {
 }
 
 common_struct! {
-    pub struct FieldTypeValue {
+    pub struct StructuralField {
         pub name: Ident,
         pub value: AstType,
+    }
+}
+impl StructuralField {
+    pub fn new(name: Ident, value: AstType) -> Self {
+        Self { name, value }
     }
 }
 common_struct! {
     pub struct TypeStruct {
         pub name: Ident,
-        pub fields: Vec<FieldTypeValue>,
+        pub fields: Vec<StructuralField>,
     }
 }
 common_struct! {
@@ -237,7 +242,7 @@ common_struct! {
 
 common_struct! {
     pub struct TypeStructural {
-        pub fields: Vec<FieldTypeValue>,
+        pub fields: Vec<StructuralField>,
     }
 }
 common_struct! {

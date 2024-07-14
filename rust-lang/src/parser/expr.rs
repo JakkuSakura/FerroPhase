@@ -1,13 +1,15 @@
+use crate::parser::expr;
 use crate::parser::item::parse_item;
+use crate::parser::ty::parse_member;
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
 use common::warn;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, BExpr, BlockStmt, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInitStruct, ExprInvoke,
+    AstExpr, BExpr, BlockStmt, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
     ExprInvokeTarget, ExprLoop, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
-    ExprSelectType, ExprUnOp, StmtLet, Value, ValueBool, ValueDecimal, ValueInt, ValueString,
-    ValueTuple,
+    ExprSelectType, ExprStruct, ExprUnOp, FieldValue, StmtLet, Value, ValueBool, ValueDecimal,
+    ValueInt, ValueString, ValueTuple,
 };
 use lang_core::ops::{BinOpKind, UnOpKind};
 use lang_core::utils::anybox::AnyBox;
@@ -204,13 +206,20 @@ pub fn parse_tuple(t: syn::ExprTuple) -> eyre::Result<ValueTuple> {
     Ok(ValueTuple { values })
 }
 
-pub fn parse_expr_struct(s: syn::ExprStruct) -> eyre::Result<ExprInitStruct> {
-    Ok(ExprInitStruct {
+pub fn parse_field_value(fv: syn::FieldValue) -> eyre::Result<FieldValue> {
+    Ok(FieldValue {
+        name: parse_member(fv.member)?,
+        value: Value::expr(expr::parse_expr(fv.expr)?),
+    })
+}
+
+pub fn parse_expr_struct(s: syn::ExprStruct) -> eyre::Result<ExprStruct> {
+    Ok(ExprStruct {
         name: AstExpr::path(parser::parse_path(s.path)?).into(),
         fields: s
             .fields
             .into_iter()
-            .map(|x| parser::parse_field_value(x))
+            .map(|x| parse_field_value(x))
             .try_collect()?,
     })
 }

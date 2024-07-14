@@ -1,18 +1,22 @@
 use common::*;
 use itertools::Itertools;
+use proc_macro2::TokenStream;
+use quote::*;
+
 use lang_core::ast::*;
 use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use lang_core::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
 use lang_core::pat::{Pattern, PatternIdent};
 use lang_core::utils::anybox::AnyBox;
-use proc_macro2::{Span, TokenStream};
-use quote::*;
 
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 
 mod attr;
 mod expr;
 mod item;
+mod ty;
+mod value;
+
 pub mod rustfmt;
 
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -75,34 +79,6 @@ impl RustPrinter {
         ))
     }
 
-    pub fn print_field(&self, field: &FieldTypeValue) -> Result<TokenStream> {
-        let name = self.print_ident(&field.name);
-        let ty = self.print_type_value(&field.value)?;
-        Ok(quote!(pub #name: #ty ))
-    }
-    pub fn print_struct_type(&self, s: &TypeStruct) -> Result<TokenStream> {
-        let name = self.print_ident(&s.name);
-        let fields: Vec<_> = s
-            .fields
-            .iter()
-            .map(|x| self.print_field(&x))
-            .try_collect()?;
-        Ok(quote!(struct #name {
-            #(#fields), *
-        }))
-    }
-    pub fn print_unnamed_struct_type(&self, s: &TypeStructural) -> Result<TokenStream> {
-        let fields: Vec<_> = s
-            .fields
-            .iter()
-            .map(|x| self.print_field(&x))
-            .try_collect()?;
-        Ok(quote!(
-            struct {
-                #(#fields), *
-            }
-        ))
-    }
     pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
         match op {
             BinOpKind::Add => quote!(+),
@@ -123,27 +99,6 @@ impl RustPrinter {
             BinOpKind::BitAnd => quote!(&),
             BinOpKind::BitXor => quote!(^),
         }
-    }
-    pub fn print_invoke_target(&self, target: &ExprInvokeTarget) -> Result<TokenStream> {
-        match target {
-            ExprInvokeTarget::Function(locator) => self.print_locator(locator),
-            ExprInvokeTarget::Type(t) => self.print_type_value(t),
-            ExprInvokeTarget::Method(select) => self.print_select(select),
-            ExprInvokeTarget::Closure(fun) => self.print_func_value(fun),
-            ExprInvokeTarget::BinOp(op) => Ok(self.print_bin_op_kind(op)),
-            ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
-        }
-    }
-    pub fn print_invoke_type(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
-        let fun = self.print_invoke_target(&invoke.target)?;
-        let args: Vec<_> = invoke
-            .args
-            .iter()
-            .map(|x| self.print_expr(&x.get()))
-            .try_collect()?;
-        Ok(quote!(
-            #fun::<#(#args), *>
-        ))
     }
 
     pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
@@ -265,7 +220,7 @@ impl RustPrinter {
         let param_types: Vec<_> = sig
             .params
             .iter()
-            .map(|x| self.print_type_value(&x.ty))
+            .map(|x| self.print_type(&x.ty))
             .try_collect()?;
         let stmts = self.print_expr_optimized(&body.get())?;
         let gg;
@@ -304,14 +259,14 @@ impl RustPrinter {
     }
     pub fn print_func_type_param(&self, param: &FunctionParam) -> Result<TokenStream> {
         let name = self.print_ident(&param.name);
-        let ty = self.print_type_value(&param.ty)?;
+        let ty = self.print_type(&param.ty)?;
         Ok(quote!(#name: #ty))
     }
     pub fn print_return_type(&self, node: &AstType) -> Result<TokenStream> {
         if matches!(node, AstType::Unit(_)) {
             return Ok(quote!());
         }
-        let ty = self.print_type_value(&node)?;
+        let ty = self.print_type(&node)?;
         Ok(quote!(-> #ty))
     }
     pub fn print_func_value(&self, fun: &ValueFunction) -> Result<TokenStream> {
@@ -321,7 +276,7 @@ impl RustPrinter {
         let args: Vec<_> = fun
             .params
             .iter()
-            .map(|x| self.print_type_value(x))
+            .map(|x| self.print_type(x))
             .try_collect()?;
         let node = &fun.ret_ty;
         let ret = self.print_return_type(node)?;
@@ -354,69 +309,12 @@ impl RustPrinter {
         let value = self.print_value(&s.value)?;
         Ok(quote!(#name: #value))
     }
-    pub fn print_struct_value(&self, s: &ValueStruct) -> Result<TokenStream> {
-        let name = self.print_ident(&s.ty.name);
-        let kwargs: Vec<_> = s
-            .structural
-            .fields
-            .iter()
-            .map(|x| self.print_field_value(x))
-            .try_collect()?;
-        Ok(quote!(#name { #(#kwargs), * }))
-    }
-    pub fn print_struct_expr(&self, s: &ExprInitStruct) -> Result<TokenStream> {
-        let name = self.print_expr(&s.name.get())?;
-        let kwargs: Vec<_> = s
-            .fields
-            .iter()
-            .map(|x| self.print_field_value(x))
-            .try_collect()?;
-        Ok(quote!(#name { #(#kwargs), * }))
-    }
+
     pub fn print_builtin_fn(&self, bt: &BuiltinFn) -> Result<TokenStream> {
         match bt.name {
             BuiltinFnName::BinOpKind(ref op) => Ok(self.print_bin_op_kind(op)),
             BuiltinFnName::Name(ref name) => Ok(self.print_ident(name)),
         }
-    }
-    pub fn print_int(&self, n: &ValueInt) -> Result<TokenStream> {
-        let n = syn::LitInt::new(&n.value.to_string(), Span::call_site());
-        Ok(quote!(#n))
-    }
-    pub fn print_bool(&self, n: &ValueBool) -> Result<TokenStream> {
-        let n = n.value;
-        Ok(quote!(#n))
-    }
-    pub fn print_decimal(&self, n: &ValueDecimal) -> Result<TokenStream> {
-        let n = syn::LitFloat::new(&n.value.to_string(), Span::call_site());
-        Ok(quote!(#n))
-    }
-    pub fn print_char(&self, n: &ValueChar) -> Result<TokenStream> {
-        let n = n.value;
-        Ok(quote!(#n))
-    }
-    pub fn print_string(&self, n: &ValueString) -> Result<TokenStream> {
-        let v = &n.value;
-        return if n.owned {
-            Ok(quote!(
-                #v.to_string()
-            ))
-        } else {
-            Ok(quote!(
-                #v
-            ))
-        };
-    }
-    pub fn print_list_expr(&self, n: &[AstExpr]) -> Result<TokenStream> {
-        let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
-        Ok(quote!(vec![#(#n),*]))
-    }
-    pub fn print_list_value(&self, n: &ValueList) -> Result<TokenStream> {
-        let n: Vec<_> = n.values.iter().map(|x| self.print_value(x)).try_collect()?;
-        Ok(quote!(vec![#(#n),*]))
-    }
-    pub fn print_unit(&self, _n: &ValueUnit) -> Result<TokenStream> {
-        Ok(quote!(()))
     }
 
     pub fn print_any(&self, n: &AnyBox) -> Result<TokenStream> {
@@ -434,59 +332,6 @@ impl RustPrinter {
         }
         bail!("Not supported {:?}", n)
     }
-    pub fn print_undefined(&self, _n: &ValueUndefined) -> Result<TokenStream> {
-        Ok(quote!(undefined))
-    }
-    pub fn print_value(&self, v: &Value) -> Result<TokenStream> {
-        match v {
-            Value::Function(f) => self.print_func_value(f),
-            Value::Int(i) => self.print_int(i),
-            Value::Bool(b) => self.print_bool(b),
-            Value::Decimal(d) => self.print_decimal(d),
-            Value::Char(c) => self.print_char(c),
-            Value::String(s) => self.print_string(s),
-            Value::List(l) => self.print_list_value(l),
-            Value::Unit(u) => self.print_unit(u),
-            Value::Type(t) => self.print_type_value(t),
-            Value::Struct(s) => self.print_struct_value(s),
-            Value::Any(n) => self.print_any(n),
-            Value::BinOpKind(op) => Ok(self.print_bin_op_kind(op)),
-            Value::Expr(e) => self.print_expr(&e.get()),
-            Value::Undefined(u) => self.print_undefined(u),
-            Value::None(_) => Ok(quote!(None)),
-            Value::Some(s) => {
-                let s = self.print_value(&s.value)?;
-                Ok(quote!(Some(#s)))
-            }
-            Value::Option(o) => match o.value {
-                Some(ref v) => {
-                    let v = self.print_value(v)?;
-                    Ok(quote!(Some(#v)))
-                }
-                None => Ok(quote!(None)),
-            },
-            _ => bail!("Not supported {:?}", v),
-        }
-    }
-    pub fn print_primitive_type(&self, ty: TypePrimitive) -> Result<TokenStream> {
-        match ty {
-            TypePrimitive::Int(TypeInt::I64) => Ok(quote!(i64)),
-            TypePrimitive::Int(TypeInt::U64) => Ok(quote!(u64)),
-            TypePrimitive::Int(TypeInt::I32) => Ok(quote!(i32)),
-            TypePrimitive::Int(TypeInt::U32) => Ok(quote!(u32)),
-            TypePrimitive::Int(TypeInt::I16) => Ok(quote!(i16)),
-            TypePrimitive::Int(TypeInt::U16) => Ok(quote!(u16)),
-            TypePrimitive::Int(TypeInt::I8) => Ok(quote!(i8)),
-            TypePrimitive::Int(TypeInt::U8) => Ok(quote!(u8)),
-            TypePrimitive::Decimal(DecimalType::F64) => Ok(quote!(f64)),
-            TypePrimitive::Decimal(DecimalType::F32) => Ok(quote!(f32)),
-            TypePrimitive::Bool => Ok(quote!(bool)),
-            TypePrimitive::String => Ok(quote!(String)),
-            TypePrimitive::Char => Ok(quote!(char)),
-            TypePrimitive::List => Ok(quote!(Vec)),
-            _ => bail!("Not supported {:?}", ty),
-        }
-    }
     pub fn print_impl_traits(&self, traits: &ImplTraits) -> Result<TokenStream> {
         let bounds = self.print_type_bounds(&traits.bounds)?;
         Ok(quote!(impl #bounds))
@@ -498,31 +343,6 @@ impl RustPrinter {
             .map(|x| self.print_expr(&x))
             .try_collect()?;
         Ok(quote!(#(#bounds)+ *))
-    }
-    pub fn print_type_value(&self, v: &AstType) -> Result<TokenStream> {
-        match v {
-            AstType::Function(f) => self.print_func_type(f),
-            AstType::Primitive(p) => self.print_primitive_type(*p),
-            AstType::Struct(s) => self.print_struct_type(s),
-            AstType::Structural(s) => self.print_unnamed_struct_type(s),
-            AstType::Expr(e) => self.print_expr(e),
-            AstType::ImplTraits(t) => self.print_impl_traits(t),
-            AstType::TypeBounds(t) => self.print_type_bounds(t),
-            AstType::Unit(_) => Ok(quote!(())),
-            AstType::Any(_) => Ok(quote!(dyn Any)),
-            AstType::Nothing(_) => Ok(quote!(!)),
-            AstType::Unknown(_) => Ok(quote!(_)),
-            AstType::Reference(r) => {
-                let ty = self.print_type_value(&r.ty)?;
-                if r.mutability == Some(true) {
-                    Ok(quote!(&mut #ty))
-                } else {
-                    Ok(quote!(&#ty))
-                }
-            }
-            AstType::Value(v) => self.print_value(&v.value),
-            _ => bail!("Not supported {:?}", v),
-        }
     }
 
     pub fn print_path(&self, path: &Path) -> TokenStream {
@@ -537,7 +357,7 @@ impl RustPrinter {
         let args: Vec<_> = segment
             .args
             .iter()
-            .map(|x| self.print_type_value(x))
+            .map(|x| self.print_type(x))
             .try_collect()?;
         Ok(quote!(#ident::<#(#args), *>))
     }
@@ -611,7 +431,7 @@ impl AstSerializer for RustPrinter {
     }
 
     fn serialize_type(&self, node: &AstType) -> Result<String> {
-        self.print_type_value(node)
+        self.print_type(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
