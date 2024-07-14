@@ -46,7 +46,7 @@ common_struct! {
     }
 }
 impl StmtLet {
-    pub fn new_name_type_value(name: Ident, ty: AstType, value: AstExpr) -> Self {
+    pub fn new_typed(name: Ident, ty: AstType, value: AstExpr) -> Self {
         Self {
             pat: Pattern::Type(PatternType::new(
                 Pattern::Ident(PatternIdent::new(name)),
