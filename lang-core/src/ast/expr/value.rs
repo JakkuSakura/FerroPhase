@@ -1,8 +1,8 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
+use crate::ast::ValueFunction;
 use crate::ast::{get_threadlocal_serializer, AstExpr, AstType, AstValue, BExpr};
-use crate::ast::{FieldValue, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::{common_enum, common_struct};
@@ -125,15 +125,20 @@ common_enum! {
 common_struct! {
     pub struct ExprStruct {
         pub name: BExpr,
-        pub fields: Vec<FieldValue>,
+        pub fields: Vec<ExprFieldValue>,
     }
 }
 common_struct! {
     pub struct ExprStructural {
-        pub fields: Vec<FieldValue>,
+        pub fields: Vec<ExprFieldValue>,
     }
 }
-
+common_struct! {
+    pub struct ExprFieldValue {
+        pub name: Ident,
+        pub value: Option<AstExpr>,
+    }
+}
 common_struct! {
     pub struct ExprBinOp {
         pub kind: BinOpKind,
