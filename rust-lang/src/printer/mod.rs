@@ -309,7 +309,7 @@ impl RustPrinter {
             .collect::<Vec<_>>();
         Ok(quote!(#vis use #(#segments)::*;))
     }
-    pub fn print_field_value(&self, s: &FieldValue) -> Result<TokenStream> {
+    pub fn print_field_value(&self, s: &ValueField) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let value = self.print_value(&s.value)?;
         Ok(quote!(#name: #value))

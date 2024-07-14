@@ -431,11 +431,11 @@ impl ToJson for ValueOption {
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct FieldValue {
+pub struct ValueField {
     pub name: Ident,
     pub value: AstValue,
 }
-impl FieldValue {
+impl ValueField {
     pub fn new(name: Ident, value: AstValue) -> Self {
         Self { name, value }
     }
@@ -448,7 +448,7 @@ common_struct! {
     }
 }
 impl ValueStruct {
-    pub fn new(ty: TypeStruct, fields: Vec<FieldValue>) -> Self {
+    pub fn new(ty: TypeStruct, fields: Vec<ValueField>) -> Self {
         Self {
             ty,
             structural: ValueStructural { fields },
@@ -477,14 +477,14 @@ impl Display for ValueStruct {
 }
 common_struct! {
     pub struct ValueStructural {
-        pub fields: Vec<FieldValue>,
+        pub fields: Vec<ValueField>,
     }
 }
 impl ValueStructural {
-    pub fn new(fields: Vec<FieldValue>) -> Self {
+    pub fn new(fields: Vec<ValueField>) -> Self {
         Self { fields }
     }
-    pub fn get_field(&self, name: &Ident) -> Option<&FieldValue> {
+    pub fn get_field(&self, name: &Ident) -> Option<&ValueField> {
         self.fields.iter().find(|x| &x.name == name)
     }
 }
