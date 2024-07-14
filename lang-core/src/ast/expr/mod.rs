@@ -34,8 +34,8 @@ common_enum! {
         Assign(ExprAssign),
         Select(ExprSelect),
         Index(ExprIndex),
-        InitStruct(ExprInitStruct),
-        InitStructual(ExprInitStructural),
+        InitStruct(ExprStruct),
+        InitStructual(ExprStructural),
         Reference(ExprReference),
 
         /// closured because it's conceptually a closure, not a real one

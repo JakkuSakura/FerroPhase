@@ -2,6 +2,7 @@ mod attr;
 mod expr;
 mod item;
 pub mod macros;
+mod ty;
 
 use crate::parser::expr::parse_block;
 
@@ -16,7 +17,7 @@ use lang_core::pat::{
 use quote::ToTokens;
 use std::path::PathBuf;
 use syn::parse::ParseStream;
-use syn::{parse_quote, parse_str, FieldsNamed, Token};
+use syn::{parse_str, FieldsNamed, Token};
 use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -50,7 +51,7 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
                         a.args
                             .into_iter()
                             .map(|x| match x {
-                                syn::GenericArgument::Type(t) => parse_type_value(t),
+                                syn::GenericArgument::Type(t) => ty::parse_type(t),
                                 syn::GenericArgument::Const(c) => expr::parse_expr(c)
                                     .map(|x| AstType::value(Value::expr(x.get()))),
                                 _ => bail!("Does not support path arguments: {:?}", x),
@@ -73,66 +74,9 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
     return Ok(Locator::parameter_path(path));
 }
 
-fn parse_type_value(t: syn::Type) -> Result<AstType> {
-    let t = match t {
-        syn::Type::BareFn(f) => AstType::Function(
-            TypeFunction {
-                params: f
-                    .inputs
-                    .into_iter()
-                    .map(|x| x.ty)
-                    .map(parse_type_value)
-                    .try_collect()?,
-                generics_params: vec![],
-                ret_ty: item::parse_return_type(f.output)?.into(),
-            }
-            .into(),
-        )
-        .into(),
-        syn::Type::Path(p) => {
-            let s = p.path.to_token_stream().to_string();
-            fn int(ty: TypeInt) -> AstType {
-                AstType::Primitive(TypePrimitive::Int(ty))
-            }
-            fn float(ty: DecimalType) -> AstType {
-                AstType::Primitive(TypePrimitive::Decimal(ty))
-            }
-
-            match s.as_str() {
-                "i64" => int(TypeInt::I64),
-                "i32" => int(TypeInt::I32),
-                "i16" => int(TypeInt::I16),
-                "i8" => int(TypeInt::I8),
-                "u64" => int(TypeInt::U64),
-                "u32" => int(TypeInt::U32),
-                "u16" => int(TypeInt::U16),
-                "u8" => int(TypeInt::U8),
-                "f64" => float(DecimalType::F64),
-                "f32" => float(DecimalType::F32),
-                _ => AstType::locator(parse_locator(p.path)?),
-            }
-        }
-        syn::Type::ImplTrait(im) => AstType::ImplTraits(parse_impl_trait(im)?),
-        syn::Type::Tuple(t) if t.elems.is_empty() => AstType::unit().into(),
-        // types like t!{ }
-        syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
-            AstType::expr(parse_custom_type_expr(m)?)
-        }
-        syn::Type::Reference(r) => AstType::Reference(parse_type_reference(r)?.into()),
-        t => bail!("Type not supported {:?}", t),
-    };
-    Ok(t)
-}
-fn parse_type_reference(r: syn::TypeReference) -> Result<TypeReference> {
-    Ok(TypeReference {
-        ty: Box::new(parse_type_value(*r.elem)?),
-        mutability: r.mutability.map(|_| true),
-        lifetime: r.lifetime.map(|x| parse_ident(x.ident)),
-    })
-}
 pub fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
     Ok(ImplTraits {
-        bounds: parse_type_param_bounds(im.bounds.into_iter().collect())?,
+        bounds: ty::parse_type_param_bounds(im.bounds.into_iter().collect())?,
     })
 }
 
@@ -155,26 +99,12 @@ pub fn parse_pat(p: syn::Pat) -> Result<Pattern> {
         }),
         syn::Pat::Type(p) => Pattern::Type(PatternType {
             pat: parse_pat(*p.pat)?.into(),
-            ty: parse_type_value(*p.ty)?,
+            ty: ty::parse_type(*p.ty)?,
         }),
         _ => bail!("Pattern not supported {}: {:?}", p.to_token_stream(), p),
     })
 }
 
-pub fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<AstExpr> {
-    match b {
-        syn::TypeParamBound::Trait(t) => {
-            let path = parse_path(t.path)?;
-            Ok(AstExpr::path(path))
-        }
-        _ => bail!("Does not support lifetimes {:?}", b),
-    }
-}
-pub fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> Result<TypeBounds> {
-    Ok(TypeBounds {
-        bounds: bs.into_iter().map(parse_type_param_bound).try_collect()?,
-    })
-}
 pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
     let generics_params = sig
         .generics
@@ -183,7 +113,7 @@ pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
         .map(|x| match x {
             syn::GenericParam::Type(t) => Ok(GenericParam {
                 name: parse_ident(t.ident),
-                bounds: parse_type_param_bounds(t.bounds.into_iter().collect())?,
+                bounds: ty::parse_type_param_bounds(t.bounds.into_iter().collect())?,
             }),
             _ => bail!("Does not generic param {:?}", x),
         })
@@ -211,29 +141,16 @@ pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
         }
         syn::TraitItem::Type(t) => {
             let name = parse_ident(t.ident);
-            let bounds = parse_type_param_bounds(t.bounds.into_iter().collect())?;
+            let bounds = ty::parse_type_param_bounds(t.bounds.into_iter().collect())?;
             Ok(ItemDeclType { name, bounds }.into())
         }
         syn::TraitItem::Const(c) => {
             let name = parse_ident(c.ident);
-            let ty = parse_type_value(c.ty)?;
+            let ty = ty::parse_type(c.ty)?;
             Ok(ItemDeclConst { name, ty }.into())
         }
         _ => bail!("Does not support trait item {:?}", f),
     }
-}
-
-fn parse_member(mem: syn::Member) -> Result<Ident> {
-    Ok(match mem {
-        syn::Member::Named(n) => parse_ident(n),
-        syn::Member::Unnamed(_) => bail!("Does not support unnamed field yet {:?}", mem),
-    })
-}
-fn parse_field_value(fv: syn::FieldValue) -> Result<FieldValue> {
-    Ok(FieldValue {
-        name: parse_member(fv.member)?,
-        value: Value::expr(expr::parse_expr(fv.expr)?),
-    })
 }
 
 fn parse_vis(v: syn::Visibility) -> Visibility {
@@ -243,37 +160,27 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-fn parse_struct_field(i: usize, f: syn::Field) -> Result<FieldTypeValue> {
-    Ok(FieldTypeValue {
-        name: f
-            .ident
-            .map(parse_ident)
-            .unwrap_or(Ident::new(format!("{}", i))),
-
-        value: parse_type_value(f.ty)?.into(),
-    })
-}
-struct UnnamedStructTypeParser(TypeStructural);
-impl syn::parse::Parse for UnnamedStructTypeParser {
+struct StructuralTypeParser(TypeStructural);
+impl syn::parse::Parse for StructuralTypeParser {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         input.parse::<Token![struct]>()?;
 
         let fields: FieldsNamed = input.parse()?;
 
-        Ok(UnnamedStructTypeParser(TypeStructural {
+        Ok(StructuralTypeParser(TypeStructural {
             fields: fields
                 .named
                 .into_iter()
                 .enumerate()
-                .map(|(i, f)| parse_struct_field(i, f))
+                .map(|(i, f)| ty::parse_struct_field(i, f))
                 .try_collect()
                 .map_err(|err| input.error(err))?,
         }))
     }
 }
 enum TypeValueParser {
-    UnnamedStruct(TypeStructural),
-    NamedStruct(TypeStruct),
+    Structural(TypeStructural),
+    Struct(TypeStruct),
     Path(Path),
     // Ident(Ident),
 }
@@ -288,8 +195,8 @@ impl Into<AstType> for TypeValueParser {
             //     lhs: o.lhs.into(),
             //     rhs: o.rhs.into(),
             // })),
-            TypeValueParser::UnnamedStruct(s) => AstType::Structural(s),
-            TypeValueParser::NamedStruct(s) => AstType::Struct(s),
+            TypeValueParser::Structural(s) => AstType::Structural(s),
+            TypeValueParser::Struct(s) => AstType::Struct(s),
             TypeValueParser::Path(p) => AstType::path(p),
             // TypeValueParser::Ident(i) => TypeValue::ident(i),
         }
@@ -300,12 +207,12 @@ impl syn::parse::Parse for TypeValueParser {
         if input.peek(Token![struct]) {
             if input.peek2(syn::Ident) {
                 let s: syn::ItemStruct = input.parse()?;
-                Ok(TypeValueParser::NamedStruct(
+                Ok(TypeValueParser::Struct(
                     item::parse_type_struct(s).map_err(|err| input.error(err))?,
                 ))
             } else {
-                Ok(TypeValueParser::UnnamedStruct(
-                    input.parse::<UnnamedStructTypeParser>()?.0,
+                Ok(TypeValueParser::Structural(
+                    input.parse::<StructuralTypeParser>()?.0,
                 ))
             }
         } else {
@@ -442,8 +349,8 @@ impl RustParser {
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<AstModule> {
         parse_module(code)
     }
-    pub fn parse_type_value(&self, code: syn::Type) -> Result<AstType> {
-        parse_type_value(code)
+    pub fn parse_type(&self, code: syn::Type) -> Result<AstType> {
+        ty::parse_type(code)
     }
 }
 
@@ -469,6 +376,6 @@ impl AstDeserializer for RustParser {
     }
     fn deserialize_type(&self, code: &str) -> Result<AstType> {
         let code: syn::Type = parse_str(code)?;
-        self.parse_type_value(code)
+        self.parse_type(code)
     }
 }

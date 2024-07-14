@@ -20,6 +20,7 @@ impl RustPrinter {
     }
 
     pub fn print_def_struct(&self, def: &ItemDefStruct) -> Result<TokenStream> {
+        let vis = self.print_vis(def.visibility);
         let name = self.print_ident(&def.name);
         let fields: Vec<_> = def
             .value
@@ -28,32 +29,35 @@ impl RustPrinter {
             .map(|x| self.print_field(&x))
             .try_collect()?;
         Ok(quote!(
-            struct #name {
+            #vis struct #name {
                 #(#fields), *
             }
         ))
     }
     pub fn print_def_type(&self, def: &ItemDefType) -> Result<TokenStream> {
+        let vis = self.print_vis(def.visibility);
         let name = self.print_ident(&def.name);
-        let ty = self.print_type_value(&def.value)?;
+        let ty = self.print_type(&def.value)?;
         return Ok(quote!(
-            type #name = t!{ #ty };
+            #vis type #name = t!{ #ty };
         ));
     }
     pub fn print_def_const(&self, def: &ItemDefConst) -> Result<TokenStream> {
+        let vis = self.print_vis(def.visibility);
         let name = self.print_ident(&def.name);
-        let ty = self.print_type_value(&def.ty.as_ref().context("No type")?.clone())?;
+        let ty = self.print_type(&def.ty.as_ref().context("No type")?.clone())?;
         let value = self.print_expr(&def.value)?;
         return Ok(quote!(
-            const #name: #ty = #value;
+            #vis const #name: #ty = #value;
         ));
     }
     pub fn print_def_static(&self, def: &ItemDefStatic) -> Result<TokenStream> {
+        let vis = self.print_vis(def.visibility);
         let name = self.print_ident(&def.name);
-        let ty = self.print_type_value(&def.ty)?;
+        let ty = self.print_type(&def.ty)?;
         let value = self.print_expr(&def.value)?;
         return Ok(quote!(x
-            static #name: #ty = #value;
+            #vis static #name: #ty = #value;
         ));
     }
     pub fn print_def_trait(&self, def: &ItemDefTrait) -> Result<TokenStream> {

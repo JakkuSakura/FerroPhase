@@ -4,7 +4,7 @@ use itertools::Itertools;
 use lang_core::ast::{
     AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
     ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
-    ExprSelect, ExprSelectType, StmtLet,
+    ExprSelect, ExprSelectType, ExprStruct, StmtLet,
 };
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
@@ -296,5 +296,25 @@ impl RustPrinter {
             ExprRangeLimit::Exclusive => quote!(..),
         };
         Ok(quote!(#start #dots #end))
+    }
+
+    pub fn print_invoke_target(&self, target: &ExprInvokeTarget) -> eyre::Result<TokenStream> {
+        match target {
+            ExprInvokeTarget::Function(locator) => self.print_locator(locator),
+            ExprInvokeTarget::Type(t) => self.print_type(t),
+            ExprInvokeTarget::Method(select) => self.print_select(select),
+            ExprInvokeTarget::Closure(fun) => self.print_func_value(fun),
+            ExprInvokeTarget::BinOp(op) => Ok(self.print_bin_op_kind(op)),
+            ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
+        }
+    }
+    pub fn print_struct_expr(&self, s: &ExprStruct) -> eyre::Result<TokenStream> {
+        let name = self.print_expr(&s.name.get())?;
+        let kwargs: Vec<_> = s
+            .fields
+            .iter()
+            .map(|x| self.print_field_value(x))
+            .try_collect()?;
+        Ok(quote!(#name { #(#kwargs), * }))
     }
 }
