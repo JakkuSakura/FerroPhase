@@ -237,12 +237,13 @@ impl InterpreterPass {
         Ok(())
     }
     pub fn interpret_def_const(&self, def: &ItemDefConst, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), def.value.clone());
+        let value = self.interpret_expr(&def.value, ctx)?;
+        ctx.insert_value_with_ctx(def.name.clone(), value);
         Ok(())
     }
     pub fn interpret_args(
         &self,
-        node: &[BExpr],
+        node: &[AstExpr],
         ctx: &SharedScopedContext,
     ) -> Result<Vec<AstValue>> {
         let args: Vec<_> = node
@@ -263,9 +264,13 @@ impl InterpreterPass {
             .fields
             .iter()
             .map(|x| {
-                Ok::<_, Error>(FieldValue {
+                Ok::<_, Error>(ValueField {
                     name: x.name.clone(),
-                    value: self.interpret_value(&x.value, ctx, true)?,
+
+                    value: match &x.value {
+                        Some(value) => self.interpret_expr(value, ctx)?,
+                        None => self.interpret_expr(&AstExpr::ident(x.name.clone()), ctx)?,
+                    },
                 })
             })
             .try_collect()?;
@@ -284,7 +289,7 @@ impl InterpreterPass {
             .fields
             .iter()
             .map(|x| {
-                Ok::<_, Error>(FieldValue {
+                Ok::<_, Error>(ValueField {
                     name: x.name.clone(),
                     value: self.interpret_value(&x.value, ctx, true)?,
                 })
@@ -423,7 +428,7 @@ impl InterpreterPass {
     pub fn interpret_invoke_binop(
         &self,
         op: BinOpKind,
-        args: &[BExpr],
+        args: &[AstExpr],
         ctx: &SharedScopedContext,
     ) -> Result<AstValue> {
         let builtin_fn = self.lookup_bin_op_kind(op)?;

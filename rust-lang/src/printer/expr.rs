@@ -2,9 +2,9 @@ use crate::printer::RustPrinter;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprFieldValue, ExprIf, ExprIndex,
-    ExprInvoke, ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit,
-    ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple, StmtLet,
+    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIndex, ExprInvoke,
+    ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
+    ExprSelect, ExprSelectType, ExprStruct, ExprTuple, StmtLet,
 };
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
@@ -314,7 +314,7 @@ impl RustPrinter {
             ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
         }
     }
-    fn print_expr_field_value(&self, field: &ExprFieldValue) -> eyre::Result<TokenStream> {
+    fn print_expr_field_value(&self, field: &ExprField) -> eyre::Result<TokenStream> {
         let name = self.print_ident(&field.name);
         if let Some(value) = &field.value {
             let value = self.print_expr(value)?;
