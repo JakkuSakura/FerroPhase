@@ -202,8 +202,8 @@ pub fn parse_expr_tuple(t: syn::ExprTuple) -> eyre::Result<ExprTuple> {
     Ok(ExprTuple { values })
 }
 
-pub fn parse_expr_field_value(fv: syn::FieldValue) -> eyre::Result<ExprFieldValue> {
-    Ok(ExprFieldValue {
+pub fn parse_expr_field_value(fv: syn::FieldValue) -> eyre::Result<ExprField> {
+    Ok(ExprField {
         name: parse_member(fv.member)?,
         value: parse_expr(fv.expr)?.into(),
     })
