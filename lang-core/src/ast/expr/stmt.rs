@@ -99,8 +99,8 @@ impl ExprBlock {
         self.stmts.push(stmt);
         self.push_up();
     }
-    pub fn push_expr(&mut self, stmt: BExpr) {
+    pub fn push_expr(&mut self, stmt: impl Into<BExpr>) {
         self.push_up();
-        self.expr = Some(stmt);
+        self.expr = Some(stmt.into());
     }
 }
