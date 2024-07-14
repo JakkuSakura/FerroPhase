@@ -1,4 +1,4 @@
-use crate::ast::{get_threadlocal_serializer, AstType, BItem, BValue, Value, ValueUnit};
+use crate::ast::{get_threadlocal_serializer, AstType, AstValue, BItem, BValue, ValueUnit};
 use crate::common_enum;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
@@ -34,9 +34,10 @@ common_enum! {
         Assign(ExprAssign),
         Select(ExprSelect),
         Index(ExprIndex),
-        InitStruct(ExprStruct),
-        InitStructual(ExprStructural),
+        Struct(ExprStruct),
+        Structural(ExprStructural),
         Reference(ExprReference),
+        Tuple(ExprTuple),
 
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosure),
@@ -55,7 +56,7 @@ impl AstExpr {
         self.clone()
     }
     pub fn unit() -> AstExpr {
-        AstExpr::Value(Value::Unit(ValueUnit).into())
+        AstExpr::Value(AstValue::Unit(ValueUnit).into())
     }
     pub fn is_unit(&self) -> bool {
         match self {
@@ -63,11 +64,11 @@ impl AstExpr {
             _ => false,
         }
     }
-    pub fn value(v: Value) -> AstExpr {
+    pub fn value(v: AstValue) -> AstExpr {
         match v {
-            Value::Expr(expr) => *expr,
-            Value::Any(any) => AstExpr::Any(any),
-            Value::Type(AstType::Expr(expr)) => *expr,
+            AstValue::Expr(expr) => *expr,
+            AstValue::Any(any) => AstExpr::Any(any),
+            AstValue::Type(AstType::Expr(expr)) => *expr,
             _ => AstExpr::Value(v.into()),
         }
     }

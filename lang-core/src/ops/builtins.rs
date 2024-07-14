@@ -32,12 +32,12 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    func: Arc<dyn Fn(&[Value], &SharedScopedContext) -> Result<Value> + Send + Sync>,
+    func: Arc<dyn Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue> + Send + Sync>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + Send + Sync + 'static,
+        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
@@ -46,14 +46,14 @@ impl BuiltinFn {
     }
     pub fn new_with_ident(
         name: Ident,
-        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value> + Send + Sync + 'static,
+        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
             func: Arc::new(f),
         }
     }
-    pub fn invoke(&self, args: &[Value], ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn invoke(&self, args: &[AstValue], ctx: &SharedScopedContext) -> Result<AstValue> {
         (self.func)(args, ctx)
     }
 }
@@ -96,8 +96,8 @@ pub fn operate_on_literals(
         let mut args_f64 = vec![];
         for arg in args {
             match arg {
-                Value::Int(x) => args_i64.push(x.value),
-                Value::Decimal(x) => args_f64.push(x.value),
+                AstValue::Int(x) => args_i64.push(x.value),
+                AstValue::Decimal(x) => args_f64.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
@@ -105,10 +105,10 @@ pub fn operate_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(Value::int(op_i64(&args_i64)));
+            return Ok(AstValue::int(op_i64(&args_i64)));
         }
         if !args_f64.is_empty() {
-            return Ok(Value::decimal(op_f64(&args_f64)));
+            return Ok(AstValue::decimal(op_f64(&args_f64)));
         }
         bail!("Does not support argument type {:?}", args)
     })
@@ -126,8 +126,8 @@ pub fn binary_comparison_on_literals(
         let mut args_f64 = vec![];
         for arg in args {
             match arg {
-                Value::Int(x) => args_i64.push(x.value),
-                Value::Decimal(x) => args_f64.push(x.value),
+                AstValue::Int(x) => args_i64.push(x.value),
+                AstValue::Decimal(x) => args_f64.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
@@ -135,10 +135,10 @@ pub fn binary_comparison_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(Value::bool(op_i64(args_i64[0], args_i64[1])));
+            return Ok(AstValue::bool(op_i64(args_i64[0], args_i64[1])));
         }
         if !args_f64.is_empty() {
-            return Ok(Value::bool(op_f64(args_f64[0], args_f64[1])));
+            return Ok(AstValue::bool(op_f64(args_f64[0], args_f64[1])));
         }
 
         bail!("Does not support argument type {:?}", args)
@@ -204,7 +204,7 @@ pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
             .map(|x| se.serialize_value(x))
             .try_collect()?;
         ctx.root().print_str(formatted.join(" "));
-        Ok(Value::unit())
+        Ok(AstValue::unit())
     })
 }
 pub fn builtin_some() -> BuiltinFn {
@@ -212,6 +212,6 @@ pub fn builtin_some() -> BuiltinFn {
         if args.len() != 1 {
             bail!("Some expects 1 argument, got: {:?}", args)
         }
-        Ok(Value::Some(ValueSome::new(args[0].clone().into())))
+        Ok(AstValue::Some(ValueSome::new(args[0].clone().into())))
     })
 }

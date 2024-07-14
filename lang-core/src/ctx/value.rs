@@ -1,15 +1,15 @@
-use crate::ast::Value;
+use crate::ast::AstValue;
 use crate::ast::{AstExpr, ExprId};
 use crate::ctx::Context;
 use eyre::Result;
 
 pub trait ValueSystem {
-    fn get_value_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<Value> {
+    fn get_value_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstValue> {
         let _ = ctx;
         let _ = expr;
         unimplemented!()
     }
-    fn get_value_from_expr_id(&self, ctx: &Context, id: ExprId) -> Result<Value> {
+    fn get_value_from_expr_id(&self, ctx: &Context, id: ExprId) -> Result<AstValue> {
         let _ = ctx;
         let _ = id;
         unimplemented!()

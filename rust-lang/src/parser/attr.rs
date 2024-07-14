@@ -20,7 +20,7 @@ fn parse_attr_meta_list(l: syn::MetaList) -> Result<AstAttrMetaList> {
 }
 fn parse_attr_meta_name_value(nv: syn::MetaNameValue) -> Result<AstAttrMetaNameValue> {
     let name = parse_path(nv.path)?;
-    let value = parse_expr(nv.value)?;
+    let value = parse_expr(nv.value)?.into();
     Ok(AstAttrMetaNameValue { name, value })
 }
 fn parse_attr_meta(m: syn::Meta) -> Result<AstAttrMeta> {

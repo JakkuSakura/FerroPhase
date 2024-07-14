@@ -83,7 +83,7 @@ impl SpecializePass {
         for name in ctx.list_values() {
             let value = ctx.get_value(&name).unwrap();
 
-            if matches!(value, Value::Function(_)) {
+            if matches!(value, AstValue::Function(_)) {
                 warn!("Skipping function {}", name);
                 continue;
             }
@@ -222,11 +222,11 @@ impl OptimizePass for SpecializePass {
     fn optimize_invoke(
         &self,
         invoke: ExprInvoke,
-        func: &Value,
+        func: &AstValue,
         ctx: &SharedScopedContext,
     ) -> Result<AstExpr> {
         match func {
-            Value::Function(func) => self
+            AstValue::Function(func) => self
                 .specialize_invoke_func(invoke, func, ctx)
                 .map(|x| x.into()),
 

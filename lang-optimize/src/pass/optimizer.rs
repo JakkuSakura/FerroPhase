@@ -76,7 +76,7 @@ impl FoldOptimizer {
                 // FIXME: optimize out this clone
                 match func.clone() {
                     AstExpr::Value(value) => match value.into() {
-                        Value::Function(mut f) => {
+                        AstValue::Function(mut f) => {
                             // TODO: when calling function, use context of its own, instead of use current context
 
                             let sub_ctx = closure_context
@@ -96,7 +96,7 @@ impl FoldOptimizer {
 
                             let ret = self.pass.optimize_invoke(
                                 invoke.clone(),
-                                &Value::Function(f),
+                                &AstValue::Function(f),
                                 &sub_ctx,
                             )?;
 
@@ -328,7 +328,7 @@ impl FoldOptimizer {
         }];
         if let Some(elze) = if_.elze {
             cases.push(ExprMatchCase {
-                cond: AstExpr::Value(Value::Bool(ValueBool { value: true }).into()).into(),
+                cond: AstExpr::Value(AstValue::Bool(ValueBool { value: true }).into()).into(),
                 body: elze,
             });
         }
@@ -337,7 +337,7 @@ impl FoldOptimizer {
         let match_ = self.optimize_match(match_, ctx)?;
         if let AstExpr::Match(match_) = match_ {
             if match_.cases.len() == 0 {
-                return Ok(AstExpr::Value(Value::Unit(ValueUnit).into()));
+                return Ok(AstExpr::Value(AstValue::Unit(ValueUnit).into()));
             }
 
             if match_.cases.len() >= 1 {
@@ -390,7 +390,7 @@ impl FoldOptimizer {
                     self.serializer.serialize_def_function(def)?,
                 );
 
-                ctx.insert_value_with_ctx(def.name.clone(), Value::Function(def._to_value()));
+                ctx.insert_value_with_ctx(def.name.clone(), AstValue::Function(def._to_value()));
                 Ok(())
             }
         }

@@ -1,5 +1,5 @@
 use crate::ast::{AstExpr, ExprClosure, Visibility};
-use crate::ast::{AstType, Value, ValueFunction};
+use crate::ast::{AstType, AstValue, ValueFunction};
 use crate::id::{Ident, Path};
 use common::*;
 use dashmap::DashMap;
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 #[derive(Clone, Default)]
 pub struct ValueSlot {
-    value: Option<Value>,
+    value: Option<AstValue>,
     ty: Option<AstType>,
     closure: Option<Arc<ScopedContext>>,
 }
@@ -27,13 +27,13 @@ impl SharedValueSlot {
         let mut storage = self.storage.lock().unwrap();
         func(&mut storage)
     }
-    pub fn value(&self) -> Option<Value> {
+    pub fn value(&self) -> Option<AstValue> {
         self.with_storage(|x| x.value.clone())
     }
     pub fn ty(&self) -> Option<AstType> {
         self.with_storage(|x| x.ty.clone())
     }
-    pub fn set_value(&self, value: Value) {
+    pub fn set_value(&self, value: AstValue) {
         self.with_storage(|x| x.value = Some(value));
     }
     pub fn set_ty(&self, ty: AstType) {
@@ -73,7 +73,7 @@ impl ScopedContext {
         }
     }
 
-    pub fn insert_value(&self, key: impl Into<Ident>, value: Value) {
+    pub fn insert_value(&self, key: impl Into<Ident>, value: AstValue) {
         self.storages
             .entry(key.into())
             .or_default()
@@ -81,7 +81,7 @@ impl ScopedContext {
     }
 
     pub fn insert_expr(&self, key: impl Into<Ident>, value: AstExpr) {
-        self.insert_value(key, Value::expr(value));
+        self.insert_value(key, AstValue::expr(value));
     }
 
     pub fn print_local_values(&self) -> Result<()> {
@@ -89,7 +89,7 @@ impl ScopedContext {
         for key in self.storages.iter() {
             let (k, v) = key.pair();
             v.with_storage(|v| {
-                let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
+                let value = v.value.as_ref().unwrap_or(&AstValue::UNDEFINED);
 
                 let ty = v.ty.as_ref().unwrap_or(&AstType::UNKNOWN);
                 debug!("{}: val:{} ty:{}", k, value, ty)
@@ -137,7 +137,7 @@ impl SharedScopedContext {
     pub fn get_function(&self, key: impl Into<Path>) -> Option<(ValueFunction, Self)> {
         let value = self.get_storage(key, true)?;
         value.with_storage(|value| match value.value.clone()? {
-            Value::Function(func) => Some((func.clone(), Self(value.closure.clone().unwrap()))),
+            AstValue::Function(func) => Some((func.clone(), Self(value.closure.clone().unwrap()))),
             _ => None,
         })
     }
@@ -189,11 +189,11 @@ impl SharedScopedContext {
         let value = this.storages.get(&key[0])?.value().clone();
         Some(value)
     }
-    pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
+    pub fn get_value(&self, key: impl Into<Path>) -> Option<AstValue> {
         let storage = self.get_storage(key, true)?;
         storage.value()
     }
-    pub fn insert_value_with_ctx(&self, key: impl Into<Ident>, value: Value) {
+    pub fn insert_value_with_ctx(&self, key: impl Into<Ident>, value: AstValue) {
         let store = self.storages.entry(key.into()).or_default();
         store.with_storage(|store| {
             store.value = Some(value);
@@ -228,7 +228,7 @@ impl SharedScopedContext {
             .unwrap_or_else(|| self.clone())
     }
     // TODO: integrate it to optimizers
-    pub fn try_get_value_from_expr(&self, expr: &AstExpr) -> Option<Value> {
+    pub fn try_get_value_from_expr(&self, expr: &AstExpr) -> Option<AstValue> {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
             AstExpr::Locator(ident) => self.get_value(ident.to_path()),
@@ -242,14 +242,14 @@ impl SharedScopedContext {
         );
         ret
     }
-    pub fn get_value_recursive(&self, key: impl Into<Path>) -> Option<Value> {
+    pub fn get_value_recursive(&self, key: impl Into<Path>) -> Option<AstValue> {
         let key = key.into();
         info!("get_value_recursive {}", key);
         let expr = self.get_expr(&key)?;
         info!("get_value_recursive {} => {:?}", key, expr);
         match expr {
             AstExpr::Locator(ident) => self.get_value_recursive(ident.to_path()),
-            _ => Some(Value::expr(expr)),
+            _ => Some(AstValue::expr(expr)),
         }
     }
     pub fn get_parent(&self) -> Option<Self> {

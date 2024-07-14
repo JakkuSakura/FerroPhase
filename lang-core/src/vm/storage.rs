@@ -1,4 +1,4 @@
-use crate::ast::{Value, ValueBytes, ValueEscaped, ValuePointer};
+use crate::ast::{AstValue, ValueBytes, ValueEscaped, ValuePointer};
 use crate::vm::VmValue;
 use common::warn;
 use std::collections::BTreeMap;
@@ -24,7 +24,7 @@ impl VmStorage {
         self.count += DEFAULT_ALIGN as i64;
         ptr
     }
-    pub fn alloc(&mut self, value: Value) -> Ptr {
+    pub fn alloc(&mut self, value: AstValue) -> Ptr {
         let ptr = self.alloc_ptr();
         self.memory.insert(ptr, VmValue::new(value));
         ptr
@@ -33,13 +33,13 @@ impl VmStorage {
         let escaped = ValueEscaped::new(size as _, DEFAULT_ALIGN as _);
         let ptr = escaped.ptr;
         self.memory
-            .insert(escaped.ptr, VmValue::new(Value::Escaped(escaped)));
+            .insert(escaped.ptr, VmValue::new(AstValue::Escaped(escaped)));
         ptr
     }
     pub fn alloc_bytes(&mut self, size: usize) -> Ptr {
         let ptr = self.alloc_ptr();
         self.memory
-            .insert(ptr, VmValue::new(Value::Bytes(ValueBytes::zeroed(size))));
+            .insert(ptr, VmValue::new(AstValue::Bytes(ValueBytes::zeroed(size))));
         ptr
     }
 
@@ -47,7 +47,7 @@ impl VmStorage {
         let old = self.memory.remove(&ptr);
         match old {
             Some(VmValue {
-                value: Value::Escaped(escaped),
+                value: AstValue::Escaped(escaped),
             }) => {
                 warn!("dealloc escaped but did not drop: ptr={}", escaped.ptr);
             }
@@ -61,7 +61,7 @@ impl VmStorage {
         let old = self.memory.remove(&ptr);
         match old {
             Some(VmValue {
-                value: Value::Escaped(mut escaped),
+                value: AstValue::Escaped(mut escaped),
             }) => unsafe {
                 escaped.drop_in_place::<T>();
             },
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn test_alloc_dealloc() {
         let mut storage = VmStorage::new();
-        let ptr = storage.alloc(Value::Bytes(ValueBytes::zeroed(10)));
+        let ptr = storage.alloc(AstValue::Bytes(ValueBytes::zeroed(10)));
         assert_eq!(storage.get(ptr).unwrap().as_slice().unwrap().len(), 10);
         storage.dealloc(ptr);
         assert!(storage.get(ptr).is_none());
@@ -107,8 +107,8 @@ mod tests {
     #[test]
     fn test_alloc_dealloc_multiple() {
         let mut storage = VmStorage::new();
-        let ptr1 = storage.alloc(Value::Bytes(ValueBytes::zeroed(10)));
-        let ptr2 = storage.alloc(Value::Bytes(ValueBytes::zeroed(20)));
+        let ptr1 = storage.alloc(AstValue::Bytes(ValueBytes::zeroed(10)));
+        let ptr2 = storage.alloc(AstValue::Bytes(ValueBytes::zeroed(20)));
         assert_eq!(storage.get(ptr1).unwrap().as_slice().unwrap().len(), 10);
         assert_eq!(storage.get(ptr2).unwrap().as_slice().unwrap().len(), 20);
         storage.dealloc(ptr1);

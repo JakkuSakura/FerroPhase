@@ -1,5 +1,5 @@
 use common::*;
-use lang_core::ast::Value;
+use lang_core::ast::AstValue;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_optimize::interpreter::Interpreter;
@@ -8,7 +8,7 @@ use rust_lang::printer::RustPrinter;
 use rust_lang::{shll_parse_expr, shll_parse_value};
 use std::sync::Arc;
 
-fn interpret_shll_expr(expr: AstExpr) -> Result<Value> {
+fn interpret_shll_expr(expr: AstExpr) -> Result<AstValue> {
     let interpreter = Interpreter::new(Arc::new(RustPrinter::new()));
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)

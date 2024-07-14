@@ -1,15 +1,18 @@
-use eyre::bail;
+use eyre::{bail, Context};
 use itertools::Itertools;
-use lang_core::ast::{
-    AstExpr, AstType, DecimalType, StructuralField, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeReference,
-};
-use lang_core::id::Ident;
 use quote::ToTokens;
-use syn::parse_quote;
+use syn::parse::ParseStream;
+use syn::{parse_quote, FieldsNamed, Token};
+
+use lang_core::ast::{
+    AstExpr, AstType, DecimalType, ExprBinOp, StructuralField, TypeBounds, TypeFunction, TypeInt,
+    TypePrimitive, TypeReference, TypeStruct, TypeStructural,
+};
+use lang_core::id::{Ident, Path};
+use lang_core::ops::BinOpKind;
 
 use crate::parser;
-use crate::parser::item;
+use crate::parser::{item, parse_path};
 
 pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
     let t = match t {
@@ -54,7 +57,7 @@ pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
         syn::Type::Tuple(t) if t.elems.is_empty() => AstType::unit().into(),
         // types like t!{ }
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
-            AstType::expr(parser::parse_custom_type_expr(m)?)
+            AstType::expr(parse_custom_type_expr(m)?)
         }
         syn::Type::Reference(r) => AstType::Reference(parse_type_reference(r)?.into()),
         t => bail!("Type not supported {:?}", t),
@@ -73,7 +76,7 @@ fn parse_type_reference(r: syn::TypeReference) -> eyre::Result<TypeReference> {
 pub fn parse_type_param_bound(b: syn::TypeParamBound) -> eyre::Result<AstExpr> {
     match b {
         syn::TypeParamBound::Trait(t) => {
-            let path = parser::parse_path(t.path)?;
+            let path = parse_path(t.path)?;
             Ok(AstExpr::path(path))
         }
         _ => bail!("Does not support lifetimes {:?}", b),
@@ -102,4 +105,120 @@ pub fn parse_struct_field(i: usize, f: syn::Field) -> eyre::Result<StructuralFie
 
         value: parse_type(f.ty)?.into(),
     })
+}
+
+struct StructuralTypeParser(TypeStructural);
+impl syn::parse::Parse for StructuralTypeParser {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        input.parse::<Token![struct]>()?;
+
+        let fields: FieldsNamed = input.parse()?;
+
+        Ok(StructuralTypeParser(TypeStructural {
+            fields: fields
+                .named
+                .into_iter()
+                .enumerate()
+                .map(|(i, f)| parse_struct_field(i, f))
+                .try_collect()
+                .map_err(|err| input.error(err))?,
+        }))
+    }
+}
+enum TypeValueParser {
+    Structural(TypeStructural),
+    Struct(TypeStruct),
+    Path(Path),
+    // Ident(Ident),
+}
+impl Into<AstType> for TypeValueParser {
+    fn into(self) -> AstType {
+        match self {
+            // TypeExprParser::Add(o) => TypeExpr::Op(TypeOp::Add(AddOp {
+            //     lhs: o.lhs.into(),
+            //     rhs: o.rhs.into(),
+            // })),
+            // TypeExprParser::Sub(o) => TypeExpr::Op(TypeOp::Sub(SubOp {
+            //     lhs: o.lhs.into(),
+            //     rhs: o.rhs.into(),
+            // })),
+            TypeValueParser::Structural(s) => AstType::Structural(s),
+            TypeValueParser::Struct(s) => AstType::Struct(s),
+            TypeValueParser::Path(p) => AstType::path(p),
+            // TypeValueParser::Ident(i) => TypeValue::ident(i),
+        }
+    }
+}
+impl syn::parse::Parse for TypeValueParser {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![struct]) {
+            if input.peek2(syn::Ident) {
+                let s: syn::ItemStruct = input.parse()?;
+                Ok(TypeValueParser::Struct(
+                    item::parse_type_struct(s).map_err(|err| input.error(err))?,
+                ))
+            } else {
+                Ok(TypeValueParser::Structural(
+                    input.parse::<StructuralTypeParser>()?.0,
+                ))
+            }
+        } else {
+            let path = input.parse::<syn::Path>()?;
+            Ok(TypeValueParser::Path(
+                parse_path(path).map_err(|err| input.error(err))?,
+            ))
+        }
+    }
+}
+
+enum TypeExprParser {
+    Add { left: AstExpr, right: AstExpr },
+    Value(AstType),
+}
+impl syn::parse::Parse for TypeExprParser {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut lhs = TypeExprParser::Value(input.parse::<TypeValueParser>()?.into());
+        loop {
+            if input.is_empty() {
+                break;
+            }
+            if input.peek(Token![+]) {
+                input.parse::<Token![+]>()?;
+                let rhs: AstType = input.parse::<TypeValueParser>()?.into();
+                lhs = TypeExprParser::Add {
+                    left: lhs.into(),
+                    right: AstExpr::value(rhs.into()),
+                };
+            // } else if input.peek(Token![-]) {
+            //     input.parse::<Token![-]>()?;
+            //     let rhs: TypeValue = input.parse::<TypeValueParser>()?.into();
+            //     lhs = TypeExprParser::Sub {
+            //         left: lhs.into(),
+            //         right: Expr::value(rhs.into()),
+            //     };
+            } else {
+                return Err(input.error("Expected + or -"));
+            }
+        }
+        Ok(lhs)
+    }
+}
+impl Into<AstExpr> for TypeExprParser {
+    fn into(self) -> AstExpr {
+        match self {
+            TypeExprParser::Add { left, right } => AstExpr::BinOp(ExprBinOp {
+                lhs: left.into(),
+                rhs: right.into(),
+                kind: BinOpKind::Add,
+            }),
+            // TypeExprParser::Sub { .. } => {
+            //     unreachable!()
+            // }
+            TypeExprParser::Value(v) => AstExpr::value(v.into()),
+        }
+    }
+}
+fn parse_custom_type_expr(m: syn::TypeMacro) -> eyre::Result<AstExpr> {
+    let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
+    Ok(t.into())
 }
