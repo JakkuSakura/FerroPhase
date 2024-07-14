@@ -519,6 +519,11 @@ common_struct! {
         pub ty: AstType,
     }
 }
+impl FunctionParam {
+    pub fn new(name: Ident, ty: AstType) -> Self {
+        Self { name, ty }
+    }
+}
 
 common_struct! {
     pub struct GenericParam {

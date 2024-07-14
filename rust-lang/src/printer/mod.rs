@@ -222,7 +222,7 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_type(&x.ty))
             .try_collect()?;
-        let stmts = self.print_expr_optimized(&body.get())?;
+        let stmts = self.print_expr_no_braces(&body)?;
         let gg;
         if !sig.generics_params.is_empty() {
             let gt: Vec<_> = sig
