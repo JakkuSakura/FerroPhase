@@ -11,9 +11,9 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 impl RustPrinter {
-    pub fn print_expr_optimized(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
+    pub fn print_expr_no_braces(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
         match node {
-            AstExpr::Block(n) => self.print_stmt_chunk(&n.stmts),
+            AstExpr::Block(n) => self.print_block_no_braces(&n),
             AstExpr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
@@ -102,7 +102,7 @@ impl RustPrinter {
     }
 
     pub fn print_loop(&self, loop_: &ExprLoop) -> eyre::Result<TokenStream> {
-        let body = self.print_expr_optimized(&loop_.body)?;
+        let body = self.print_expr_no_braces(&loop_.body)?;
         Ok(quote!(
             loop {
                 #body
@@ -133,23 +133,29 @@ impl RustPrinter {
         Ok(quote!(#(#stmts) *))
     }
     pub fn print_block(&self, n: &ExprBlock) -> eyre::Result<TokenStream> {
+        let inner = self.print_block_no_braces(n)?;
+        Ok(quote!({
+            #inner
+        }))
+    }
+    pub fn print_block_no_braces(&self, n: &ExprBlock) -> eyre::Result<TokenStream> {
         if let Some(expr) = &n.expr {
             let chunk = self.print_stmt_chunk(&n.stmts)?;
             let expr = self.print_expr(expr)?;
-            Ok(quote!({
+            Ok(quote!(
                 #chunk
                 #expr
-            }))
+            ))
         } else {
             let chunk = self.print_stmt_chunk(&n.stmts)?;
-            Ok(quote!({
+            Ok(quote!(
                 #chunk
-            }))
+            ))
         }
     }
     pub fn print_if(&self, if_: &ExprIf) -> eyre::Result<TokenStream> {
         let cond = self.print_expr(&if_.cond)?;
-        let then = self.print_expr_optimized(&if_.then)?;
+        let then = self.print_expr_no_braces(&if_.then)?;
         let elze = if let Some(elze) = &if_.elze {
             let elze = self.print_expr(elze)?;
             quote!(else #elze)
@@ -170,7 +176,7 @@ impl RustPrinter {
             let node = &c.cond;
             let co = self.print_expr(node)?;
             let node = &c.body;
-            let ex = self.print_expr_optimized(node)?;
+            let ex = self.print_expr_no_braces(node)?;
             ts.push(quote!(
                 if #co => { #ex }
             ))
