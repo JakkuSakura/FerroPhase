@@ -128,6 +128,17 @@ common_struct! {
         pub fields: Vec<ExprFieldValue>,
     }
 }
+impl ExprStruct {
+    pub fn new_ident(name: Ident, fields: Vec<ExprFieldValue>) -> Self {
+        Self {
+            name: AstExpr::ident(name).into(),
+            fields,
+        }
+    }
+    pub fn new(name: BExpr, fields: Vec<ExprFieldValue>) -> Self {
+        Self { name, fields }
+    }
+}
 common_struct! {
     pub struct ExprStructural {
         pub fields: Vec<ExprFieldValue>,
@@ -137,6 +148,17 @@ common_struct! {
     pub struct ExprFieldValue {
         pub name: Ident,
         pub value: Option<AstExpr>,
+    }
+}
+impl ExprFieldValue {
+    pub fn new(name: Ident, value: AstExpr) -> Self {
+        Self {
+            name,
+            value: Some(value),
+        }
+    }
+    pub fn new_no_value(name: Ident) -> Self {
+        Self { name, value: None }
     }
 }
 common_struct! {
