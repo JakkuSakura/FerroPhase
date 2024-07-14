@@ -1,5 +1,5 @@
 use crate::ast::{get_threadlocal_serializer, BExpr, TypeUnit};
-use crate::ast::{AstType, TypeBounds, TypeStruct, Value};
+use crate::ast::{AstType, AstValue, TypeBounds, TypeStruct};
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
@@ -140,11 +140,11 @@ impl Display for ValueString {
 }
 common_struct! {
     pub struct ValueList {
-        pub values: Vec<Value>,
+        pub values: Vec<AstValue>,
     }
 }
 impl ValueList {
-    pub fn new(values: Vec<Value>) -> Self {
+    pub fn new(values: Vec<AstValue>) -> Self {
         Self { values }
     }
 }
@@ -394,11 +394,11 @@ impl ToJson for ValueNone {
 
 common_struct! {
     pub struct ValueSome {
-        pub value: Box<Value>,
+        pub value: Box<AstValue>,
     }
 }
 impl ValueSome {
-    pub fn new(value: Value) -> Self {
+    pub fn new(value: AstValue) -> Self {
         Self {
             value: value.into(),
         }
@@ -411,12 +411,12 @@ impl ToJson for ValueSome {
 }
 common_struct! {
     pub struct ValueOption {
-        pub value: Option<Box<Value>>,
+        pub value: Option<Box<AstValue >>,
     }
 }
 
 impl ValueOption {
-    pub fn new(value: Option<Value>) -> Self {
+    pub fn new(value: Option<AstValue>) -> Self {
         Self {
             value: value.map(|x| x.into()),
         }
@@ -433,10 +433,10 @@ impl ToJson for ValueOption {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct FieldValue {
     pub name: Ident,
-    pub value: Value,
+    pub value: AstValue,
 }
 impl FieldValue {
-    pub fn new(name: Ident, value: Value) -> Self {
+    pub fn new(name: Ident, value: AstValue) -> Self {
         Self { name, value }
     }
 }
@@ -579,11 +579,11 @@ impl Display for ValueFunction {
 }
 common_struct! {
     pub struct ValueTuple {
-        pub values: Vec<Value>,
+        pub values: Vec<AstValue>,
     }
 }
 impl ValueTuple {
-    pub fn new(values: Vec<Value>) -> Self {
+    pub fn new(values: Vec<AstValue>) -> Self {
         Self { values }
     }
 }

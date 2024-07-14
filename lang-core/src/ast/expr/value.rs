@@ -1,10 +1,12 @@
-use crate::ast::{get_threadlocal_serializer, AstExpr, AstType, BExpr, BValue, Value};
+use std::fmt::{Display, Formatter};
+use std::hash::Hash;
+
+use crate::ast::{get_threadlocal_serializer, AstExpr, AstType, AstValue, BExpr};
 use crate::ast::{FieldValue, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::{common_enum, common_struct};
-use std::fmt::{Display, Formatter};
-use std::hash::Hash;
+
 common_enum! {
     pub enum ExprInvokeTarget {
         Function(Locator),
@@ -16,20 +18,20 @@ common_enum! {
     }
 }
 impl ExprInvokeTarget {
-    pub fn expr(expr: BExpr) -> Self {
-        match &*expr {
+    pub fn expr(expr: AstExpr) -> Self {
+        match expr {
             AstExpr::Locator(locator) => Self::Function(locator.clone()),
             AstExpr::Select(select) => Self::Method(select.clone()),
-            AstExpr::Value(value) => Self::value(value.clone()),
-            _ => Self::Expr(expr),
+            AstExpr::Value(value) => Self::value(*value),
+            _ => Self::Expr(expr.into()),
         }
     }
-    pub fn value(value: BValue) -> Self {
-        match &*value {
-            Value::Function(func) => Self::Closure(func.clone()),
-            Value::BinOpKind(kind) => Self::BinOp(kind.clone()),
-            Value::Type(ty) => Self::Type(ty.clone()),
-            Value::Expr(expr) => Self::expr(expr.clone()),
+    pub fn value(value: AstValue) -> Self {
+        match value {
+            AstValue::Function(func) => Self::Closure(func.clone()),
+            AstValue::BinOpKind(kind) => Self::BinOp(kind.clone()),
+            AstValue::Type(ty) => Self::Type(ty.clone()),
+            AstValue::Expr(expr) => Self::expr(*expr),
             _ => panic!("Invalid value for ExprInvokeTarget::value: {}", value),
         }
     }
@@ -38,7 +40,7 @@ impl ExprInvokeTarget {
 common_struct! {
     pub struct ExprInvoke {
         pub target: ExprInvokeTarget,
-        pub args: Vec<BExpr>,
+        pub args: Vec<AstExpr>,
     }
 }
 impl Display for ExprInvoke {
@@ -170,5 +172,11 @@ common_struct! {
         pub limit: ExprRangeLimit,
         pub end: Option<BExpr>,
         pub step: Option<BExpr>,
+    }
+}
+
+common_struct! {
+    pub struct ExprTuple {
+        pub values: Vec<AstExpr>,
     }
 }

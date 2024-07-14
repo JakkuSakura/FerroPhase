@@ -131,7 +131,7 @@ fn parse_impl_item(item: syn::ImplItem) -> eyre::Result<AstItem> {
 fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
     let vis = parse_vis(s.vis);
     let ty = parse_type(*s.ty)?;
-    let value = parse_expr(*s.expr)?;
+    let value = parse_expr(*s.expr)?.into();
     Ok(ItemDefStatic {
         name: parse_ident(s.ident),
         ty,
@@ -142,7 +142,7 @@ fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
 fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefStatic> {
     let vis = parse_vis(s.vis);
     let ty = parse_type(*s.ty)?;
-    let value = parse_expr(*s.expr)?;
+    let value = parse_expr(*s.expr)?.into();
     Ok(ItemDefStatic {
         name: parse_ident(s.ident),
         ty,

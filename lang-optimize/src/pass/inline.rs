@@ -22,11 +22,11 @@ impl InlinePass {
     pub fn inline_invoke(
         &self,
         mut invoke: ExprInvoke,
-        func: &Value,
+        func: &AstValue,
         _ctx: &SharedScopedContext,
     ) -> Result<AstExpr> {
         match func {
-            Value::Function(func) => {
+            AstValue::Function(func) => {
                 if let Some(name) = &func.name {
                     match name.as_str() {
                         "print" => {
@@ -38,7 +38,7 @@ impl InlinePass {
                     };
                 }
             }
-            Value::BinOpKind(kind) => {
+            AstValue::BinOpKind(kind) => {
                 warn!("TODO: inline binop {:?}", kind);
             }
             _ => {}
@@ -59,9 +59,9 @@ impl InlinePass {
             _ => Ok(expr),
         }
     }
-    pub fn inline_value(&self, value: Value, ctx: &SharedScopedContext) -> Result<Value> {
+    pub fn inline_value(&self, value: AstValue, ctx: &SharedScopedContext) -> Result<AstValue> {
         match value {
-            Value::Expr(expr) => self.inline_expr(expr.get(), ctx).map(Value::expr),
+            AstValue::Expr(expr) => self.inline_expr(expr.get(), ctx).map(AstValue::expr),
             _ => Ok(value),
         }
     }
@@ -85,7 +85,7 @@ impl OptimizePass for InlinePass {
     fn optimize_invoke(
         &self,
         invoke: ExprInvoke,
-        func: &Value,
+        func: &AstValue,
         ctx: &SharedScopedContext,
     ) -> Result<AstExpr> {
         self.inline_invoke(invoke, func, ctx)

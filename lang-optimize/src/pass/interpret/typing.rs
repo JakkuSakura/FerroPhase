@@ -3,8 +3,8 @@ use itertools::Itertools;
 
 use lang_core::ast::{AstExpr, Visibility};
 use lang_core::ast::{
-    AstType, DecimalType, ExprInvokeTarget, ImplTraits, StructuralField, TypeBounds, TypeFunction,
-    TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
+    AstType, AstValue, DecimalType, ExprInvokeTarget, ImplTraits, StructuralField, TypeBounds,
+    TypeFunction, TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeType, ValueFunction,
 };
 use lang_core::context::SharedScopedContext;
 use lang_core::ctx::{Context, TypeSystem};
@@ -14,58 +14,58 @@ use lang_core::utils::conv::TryConv;
 use crate::pass::{FoldOptimizer, InterpreterPass};
 
 impl InterpreterPass {
-    pub fn type_check_value(&self, lit: &Value, ty: &AstType) -> Result<()> {
+    pub fn type_check_value(&self, lit: &AstValue, ty: &AstType) -> Result<()> {
         match lit {
-            Value::Int(_) => {
+            AstValue::Int(_) => {
                 ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Int(_))),
                     "Expected i64, got {:?}",
                     lit
                 )
             }
-            Value::Bool(_) => {
+            AstValue::Bool(_) => {
                 ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Bool)),
                     "Expected bool, got {:?}",
                     lit
                 )
             }
-            Value::Decimal(_) => {
+            AstValue::Decimal(_) => {
                 ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Decimal(_))),
                     "Expected f64, got {:?}",
                     lit
                 )
             }
-            Value::Char(_) => {
+            AstValue::Char(_) => {
                 ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Char)),
                     "Expected char, got {:?}",
                     lit
                 )
             }
-            Value::String(_) => {
+            AstValue::String(_) => {
                 ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::String)),
                     "Expected string, got {:?}",
                     lit
                 )
             }
-            Value::List(_) => {
+            AstValue::List(_) => {
                 ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::List)),
                     "Expected list, got {:?}",
                     lit
                 )
             }
-            Value::Unit(_) => {
+            AstValue::Unit(_) => {
                 ensure!(
                     matches!(ty, AstType::Unit(_)),
                     "Expected unit, got {:?}",
                     lit
                 )
             }
-            Value::Type(_) => {
+            AstValue::Type(_) => {
                 ensure!(
                     matches!(ty, AstType::Type(_)),
                     "Expected type, got {:?}",
@@ -272,14 +272,16 @@ impl InterpreterPass {
         let ret = match expr {
             AstExpr::Locator(n) => self.infer_locator(n, ctx)?,
             AstExpr::Value(l) => match l.as_ref() {
-                Value::Int(_) => AstType::Primitive(TypePrimitive::Int(TypeInt::I64)),
-                Value::Decimal(_) => AstType::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
-                Value::Unit(_) => AstType::unit(),
-                Value::Bool(_) => AstType::Primitive(TypePrimitive::Bool),
-                Value::String(_) => AstType::Primitive(TypePrimitive::String),
-                Value::Type(_) => AstType::Type(TypeType {}),
-                Value::Char(_) => AstType::Primitive(TypePrimitive::Char),
-                Value::List(_) => AstType::Primitive(TypePrimitive::List),
+                AstValue::Int(_) => AstType::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                AstValue::Decimal(_) => {
+                    AstType::Primitive(TypePrimitive::Decimal(DecimalType::F64))
+                }
+                AstValue::Unit(_) => AstType::unit(),
+                AstValue::Bool(_) => AstType::Primitive(TypePrimitive::Bool),
+                AstValue::String(_) => AstType::Primitive(TypePrimitive::String),
+                AstValue::Type(_) => AstType::Type(TypeType {}),
+                AstValue::Char(_) => AstType::Primitive(TypePrimitive::Char),
+                AstValue::List(_) => AstType::Primitive(TypePrimitive::List),
                 _ => bail!("Could not infer type of {:?}", l),
             },
             AstExpr::Invoke(invoke) => {
@@ -332,20 +334,20 @@ impl TypeSystem for InterpreterPass {
         let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;
         match expr {
             AstExpr::Value(v) => match v.into() {
-                Value::Type(t) => return Ok(t),
+                AstValue::Type(t) => return Ok(t),
                 v => bail!("Expected type, got {:?}", v),
             },
             _ => bail!("Expected type, got {:?}", expr),
         }
     }
-    fn get_ty_from_value(&self, ctx: &Context, value: &Value) -> Result<AstType> {
+    fn get_ty_from_value(&self, ctx: &Context, value: &AstValue) -> Result<AstType> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
 
         let value = fold.optimize_expr(AstExpr::Value(value.clone().into()), &ctx.values)?;
 
         match value {
             AstExpr::Value(v) => match v.into() {
-                Value::Type(t) => return Ok(t),
+                AstValue::Type(t) => return Ok(t),
                 v => bail!("Expected type, got {:?}", v),
             },
             _ => bail!("Expected type, got {:?}", value),

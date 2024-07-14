@@ -1,7 +1,7 @@
 use eyre::{bail, Result};
 
+use lang_core::ast::{AstValue, Type, TypeInt, TypePrimitive};
 use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprInvoke, ExprInvokeTarget, ExprLoop};
-use lang_core::ast::{Type, TypeInt, TypePrimitive, Value};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
 
@@ -87,18 +87,18 @@ impl MipsEmitter {
     }
     pub fn emit_value(
         &mut self,
-        value: &Value,
+        value: &AstValue,
         _ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
         match value {
-            Value::Int(i) => {
+            AstValue::Int(i) => {
                 if i.value > i16::MAX as i64 {
                     bail!("Value {} is too large for MIPS", i.value);
                 }
                 let ins = self.emit_load_immediate(i.value as i16);
                 Ok(ins)
             }
-            Value::Unit(_) => Ok(MipsEmitExprResult::new(MipsRegisterOwned::zero(), vec![])),
+            AstValue::Unit(_) => Ok(MipsEmitExprResult::new(MipsRegisterOwned::zero(), vec![])),
             _ => bail!("Unsupported value {}", value),
         }
     }
