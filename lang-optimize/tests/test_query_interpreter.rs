@@ -9,7 +9,7 @@ use lang_optimize::pass::InterpreterPass;
 use rust_lang::printer::RustPrinter;
 use rust_lang::{shll_parse_expr, shll_parse_value};
 
-fn interpret_shll_expr(expr: AstExpr) -> Result<Value> {
+fn interpret_shll_expr(expr: AstExpr) -> Result<AstValue> {
     let interpreter = InterpreterPass::new(Arc::new(RustPrinter::new()));
     let mut ctx = Context::new();
     ctx.value = Arc::new(interpreter.clone());

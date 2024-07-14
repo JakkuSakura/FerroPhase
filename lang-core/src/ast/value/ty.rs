@@ -56,11 +56,11 @@ impl AstType {
             _ => AstType::Expr(Box::new(e)),
         }
     }
-    pub fn value(v: impl Into<Value>) -> Self {
+    pub fn value(v: impl Into<AstValue>) -> Self {
         let v = v.into();
         match v {
-            Value::Expr(expr) => Self::expr(*expr),
-            Value::Type(ty) => ty,
+            AstValue::Expr(expr) => Self::expr(*expr),
+            AstValue::Type(ty) => ty,
             _ => AstType::Value(ValueType::new(v).into()),
         }
     }
@@ -307,7 +307,7 @@ common_struct! {
     }
 }
 impl ValueType {
-    pub fn new(value: Value) -> Self {
+    pub fn new(value: AstValue) -> Self {
         Self {
             value: value.into(),
         }

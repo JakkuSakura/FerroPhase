@@ -425,7 +425,7 @@ impl AstSerializer for RustPrinter {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_value(&self, node: &Value) -> Result<String> {
+    fn serialize_value(&self, node: &AstValue) -> Result<String> {
         self.print_value(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }

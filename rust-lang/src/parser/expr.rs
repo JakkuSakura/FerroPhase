@@ -1,4 +1,3 @@
-use crate::parser::expr;
 use crate::parser::item::parse_item;
 use crate::parser::ty::parse_member;
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
@@ -6,16 +5,16 @@ use common::warn;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, BExpr, BlockStmt, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
+    AstExpr, AstValue, BlockStmt, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
     ExprInvokeTarget, ExprLoop, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
-    ExprSelectType, ExprStruct, ExprUnOp, FieldValue, StmtLet, Value, ValueBool, ValueDecimal,
-    ValueInt, ValueString, ValueTuple,
+    ExprSelectType, ExprStruct, ExprTuple, ExprUnOp, FieldValue, StmtLet, ValueBool, ValueDecimal,
+    ValueInt, ValueString,
 };
 use lang_core::ops::{BinOpKind, UnOpKind};
 use lang_core::utils::anybox::AnyBox;
 use quote::ToTokens;
 
-pub fn parse_expr(expr: syn::Expr) -> eyre::Result<BExpr> {
+pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
     let expr = match expr {
         syn::Expr::Binary(b) => parse_expr_binary(b)?,
         syn::Expr::Unary(u) => parse_unary(u)?.into(),
@@ -29,8 +28,8 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<BExpr> {
         syn::Expr::Index(i) => AstExpr::Index(parse_expr_index(i)?),
         syn::Expr::Path(p) => AstExpr::path(parser::parse_path(p.path)?),
         syn::Expr::Reference(r) => AstExpr::Reference(parse_expr_reference(r)?.into()),
-        syn::Expr::Tuple(t) => AstExpr::value(Value::Tuple(parse_tuple(t)?)),
-        syn::Expr::Struct(s) => AstExpr::InitStruct(parse_expr_struct(s)?.into()),
+        syn::Expr::Tuple(t) => AstExpr::Tuple(parse_expr_tuple(t)?),
+        syn::Expr::Struct(s) => AstExpr::Struct(parse_expr_struct(s)?.into()),
         syn::Expr::Paren(p) => AstExpr::Paren(parse_expr_paren(p)?),
         syn::Expr::Range(r) => AstExpr::Range(parse_expr_range(r)?),
         raw => {
@@ -38,14 +37,14 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<BExpr> {
             AstExpr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };
-    Ok(expr.into())
+    Ok(expr)
 }
-pub fn parse_literal(lit: syn::Lit) -> eyre::Result<Value> {
+pub fn parse_literal(lit: syn::Lit) -> eyre::Result<AstValue> {
     Ok(match lit {
-        syn::Lit::Int(i) => Value::Int(ValueInt::new(i.base10_parse()?)),
-        syn::Lit::Float(i) => Value::Decimal(ValueDecimal::new(i.base10_parse()?)),
-        syn::Lit::Str(s) => Value::String(ValueString::new_ref(s.value())),
-        syn::Lit::Bool(b) => Value::Bool(ValueBool::new(b.value)),
+        syn::Lit::Int(i) => AstValue::Int(ValueInt::new(i.base10_parse()?)),
+        syn::Lit::Float(i) => AstValue::Decimal(ValueDecimal::new(i.base10_parse()?)),
+        syn::Lit::Str(s) => AstValue::String(ValueString::new_ref(s.value())),
+        syn::Lit::Bool(b) => AstValue::Bool(ValueBool::new(b.value)),
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
@@ -57,7 +56,10 @@ pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
         syn::UnOp::Not(_) => UnOpKind::Not,
         _ => bail!("Unary op not supported: {:?}", u.op),
     };
-    Ok(ExprUnOp { op, val: expr })
+    Ok(ExprUnOp {
+        op,
+        val: expr.into(),
+    })
 }
 
 /// returns: statement, with_semicolon
@@ -142,17 +144,17 @@ pub fn parse_expr_method_call(call: syn::ExprMethodCall) -> eyre::Result<ExprInv
 
 pub fn parse_expr_index(i: syn::ExprIndex) -> eyre::Result<ExprIndex> {
     Ok(ExprIndex {
-        expr: parse_expr(*i.expr)?,
-        index: parse_expr(*i.index)?,
+        expr: parse_expr(*i.expr)?.into(),
+        index: parse_expr(*i.index)?.into(),
     })
 }
 
 pub fn parse_expr_if(i: syn::ExprIf) -> eyre::Result<ExprIf> {
-    let cond = parse_expr(*i.cond)?;
+    let cond = parse_expr(*i.cond)?.into();
     let then = parse_block(i.then_branch)?;
     let elze;
     if let Some((_, e)) = i.else_branch {
-        elze = Some(parse_expr(*e)?);
+        elze = Some(parse_expr(*e)?.into());
     } else {
         elze = None;
     }
@@ -171,8 +173,8 @@ pub fn parse_expr_loop(l: syn::ExprLoop) -> eyre::Result<ExprLoop> {
 }
 
 pub fn parse_expr_binary(b: syn::ExprBinary) -> eyre::Result<AstExpr> {
-    let lhs = parse_expr(*b.left)?;
-    let rhs = parse_expr(*b.right)?;
+    let lhs = parse_expr(*b.left)?.into();
+    let rhs = parse_expr(*b.right)?.into();
     let (kind, _flatten) = match b.op {
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
@@ -195,21 +197,20 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> eyre::Result<AstExpr> {
     Ok(ExprBinOp { kind, lhs, rhs }.into())
 }
 
-pub fn parse_tuple(t: syn::ExprTuple) -> eyre::Result<ValueTuple> {
+pub fn parse_expr_tuple(t: syn::ExprTuple) -> eyre::Result<ExprTuple> {
     let mut values = vec![];
     for e in t.elems {
         let expr = parse_expr(e)?;
-        let value = Value::expr(*expr);
-        values.push(value);
+        values.push(expr);
     }
 
-    Ok(ValueTuple { values })
+    Ok(ExprTuple { values })
 }
 
 pub fn parse_field_value(fv: syn::FieldValue) -> eyre::Result<FieldValue> {
     Ok(FieldValue {
         name: parse_member(fv.member)?,
-        value: Value::expr(expr::parse_expr(fv.expr)?),
+        value: AstValue::expr(parse_expr(fv.expr)?),
     })
 }
 
@@ -229,12 +230,16 @@ pub fn parse_expr_paren(p: syn::ExprParen) -> eyre::Result<ExprParen> {
     })
 }
 pub fn parse_expr_range(r: syn::ExprRange) -> eyre::Result<ExprRange> {
-    let start = r.start.map(|x| parse_expr(*x)).transpose()?;
+    let start = r
+        .start
+        .map(|x| parse_expr(*x))
+        .transpose()?
+        .map(|x| x.into());
     let limit = match r.limits {
         syn::RangeLimits::HalfOpen(_) => ExprRangeLimit::Exclusive,
         syn::RangeLimits::Closed(_) => ExprRangeLimit::Inclusive,
     };
-    let end = r.end.map(|x| parse_expr(*x)).transpose()?;
+    let end = r.end.map(|x| parse_expr(*x)).transpose()?.map(|x| x.into());
     Ok(ExprRange {
         start,
         limit,
