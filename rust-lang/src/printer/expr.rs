@@ -4,12 +4,11 @@ use itertools::Itertools;
 use lang_core::ast::{
     AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
     ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
-    ExprSelect, ExprSelectType, ExprStruct, StmtLet,
+    ExprSelect, ExprSelectType, ExprStruct, ExprTuple, StmtLet,
 };
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::LitInt;
 
 impl RustPrinter {
     pub fn print_expr_optimized(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
@@ -20,7 +19,7 @@ impl RustPrinter {
         }
     }
     pub fn print_expr_id(&self, id: u64) -> eyre::Result<TokenStream> {
-        let num = LitInt::new(&id.to_string(), proc_macro2::Span::call_site());
+        let num = syn::LitInt::new(&id.to_string(), proc_macro2::Span::call_site());
         Ok(quote!(Expr # #num))
     }
     pub fn print_expr(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
@@ -34,15 +33,16 @@ impl RustPrinter {
             AstExpr::Match(n) => self.print_match(n),
             AstExpr::If(n) => self.print_if(n),
             AstExpr::Block(n) => self.print_block(n),
-            AstExpr::InitStruct(n) => self.print_struct_expr(n),
+            AstExpr::Struct(n) => self.print_struct_expr(n),
             AstExpr::Select(n) => self.print_select(n),
             AstExpr::Reference(n) => self.print_ref(n),
             AstExpr::Assign(n) => self.print_assign(n),
             AstExpr::Index(n) => self.print_index(n),
-            AstExpr::Closured(n) => self.print_expr(&n.expr.get()),
+            AstExpr::Closured(n) => self.print_expr(&n.expr),
             AstExpr::Paren(n) => self.print_paren(n),
             AstExpr::Loop(n) => self.print_loop(n),
             AstExpr::Range(n) => self.print_range(n),
+            AstExpr::Tuple(n) => self.print_expr_tuple(n),
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
@@ -316,5 +316,13 @@ impl RustPrinter {
             .map(|x| self.print_field_value(x))
             .try_collect()?;
         Ok(quote!(#name { #(#kwargs), * }))
+    }
+    pub fn print_expr_tuple(&self, tuple: &ExprTuple) -> eyre::Result<TokenStream> {
+        let args: Vec<_> = tuple
+            .values
+            .iter()
+            .map(|x| self.print_expr(x))
+            .try_collect()?;
+        Ok(quote!((#(#args),*)))
     }
 }

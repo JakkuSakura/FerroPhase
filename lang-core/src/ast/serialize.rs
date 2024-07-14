@@ -2,7 +2,7 @@ use crate::ast::{
     AstExpr, AstFile, AstItem, AstModule, AstNode, BExpr, BlockStmt, ExprBlock, ExprInvoke,
     ItemDefFunction,
 };
-use crate::ast::{AstType, Value, ValueFunction};
+use crate::ast::{AstType, AstValue, ValueFunction};
 use common::*;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -51,10 +51,10 @@ pub trait AstSerializer: Send + Sync {
     fn serialize_module(&self, node: &AstModule) -> Result<String> {
         bail!("not implemented: serialize_module")
     }
-    fn serialize_value(&self, node: &Value) -> Result<String> {
+    fn serialize_value(&self, node: &AstValue) -> Result<String> {
         bail!("not implemented: serialize_value")
     }
-    fn serialize_values(&self, nodes: &[Value]) -> Result<String> {
+    fn serialize_values(&self, nodes: &[AstValue]) -> Result<String> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
             if i > 0 {

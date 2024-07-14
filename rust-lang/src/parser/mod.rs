@@ -10,14 +10,12 @@ use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
 use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use lang_core::ops::BinOpKind;
 use lang_core::pat::{
     Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
 };
 use quote::ToTokens;
 use std::path::PathBuf;
-use syn::parse::ParseStream;
-use syn::{parse_str, FieldsNamed, Token};
+use syn::parse_str;
 use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -53,7 +51,7 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
                             .map(|x| match x {
                                 syn::GenericArgument::Type(t) => ty::parse_type(t),
                                 syn::GenericArgument::Const(c) => expr::parse_expr(c)
-                                    .map(|x| AstType::value(Value::expr(x.get()))),
+                                    .map(|x| AstType::value(AstValue::expr(x.get()))),
                                 _ => bail!("Does not support path arguments: {:?}", x),
                             })
                             .try_collect()?
@@ -160,122 +158,6 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-struct StructuralTypeParser(TypeStructural);
-impl syn::parse::Parse for StructuralTypeParser {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        input.parse::<Token![struct]>()?;
-
-        let fields: FieldsNamed = input.parse()?;
-
-        Ok(StructuralTypeParser(TypeStructural {
-            fields: fields
-                .named
-                .into_iter()
-                .enumerate()
-                .map(|(i, f)| ty::parse_struct_field(i, f))
-                .try_collect()
-                .map_err(|err| input.error(err))?,
-        }))
-    }
-}
-enum TypeValueParser {
-    Structural(TypeStructural),
-    Struct(TypeStruct),
-    Path(Path),
-    // Ident(Ident),
-}
-impl Into<AstType> for TypeValueParser {
-    fn into(self) -> AstType {
-        match self {
-            // TypeExprParser::Add(o) => TypeExpr::Op(TypeOp::Add(AddOp {
-            //     lhs: o.lhs.into(),
-            //     rhs: o.rhs.into(),
-            // })),
-            // TypeExprParser::Sub(o) => TypeExpr::Op(TypeOp::Sub(SubOp {
-            //     lhs: o.lhs.into(),
-            //     rhs: o.rhs.into(),
-            // })),
-            TypeValueParser::Structural(s) => AstType::Structural(s),
-            TypeValueParser::Struct(s) => AstType::Struct(s),
-            TypeValueParser::Path(p) => AstType::path(p),
-            // TypeValueParser::Ident(i) => TypeValue::ident(i),
-        }
-    }
-}
-impl syn::parse::Parse for TypeValueParser {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Token![struct]) {
-            if input.peek2(syn::Ident) {
-                let s: syn::ItemStruct = input.parse()?;
-                Ok(TypeValueParser::Struct(
-                    item::parse_type_struct(s).map_err(|err| input.error(err))?,
-                ))
-            } else {
-                Ok(TypeValueParser::Structural(
-                    input.parse::<StructuralTypeParser>()?.0,
-                ))
-            }
-        } else {
-            let path = input.parse::<syn::Path>()?;
-            Ok(TypeValueParser::Path(
-                parse_path(path).map_err(|err| input.error(err))?,
-            ))
-        }
-    }
-}
-
-enum TypeExprParser {
-    Add { left: AstExpr, right: AstExpr },
-    Value(AstType),
-}
-impl syn::parse::Parse for TypeExprParser {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut lhs = TypeExprParser::Value(input.parse::<TypeValueParser>()?.into());
-        loop {
-            if input.is_empty() {
-                break;
-            }
-            if input.peek(Token![+]) {
-                input.parse::<Token![+]>()?;
-                let rhs: AstType = input.parse::<TypeValueParser>()?.into();
-                lhs = TypeExprParser::Add {
-                    left: lhs.into(),
-                    right: AstExpr::value(rhs.into()),
-                };
-            // } else if input.peek(Token![-]) {
-            //     input.parse::<Token![-]>()?;
-            //     let rhs: TypeValue = input.parse::<TypeValueParser>()?.into();
-            //     lhs = TypeExprParser::Sub {
-            //         left: lhs.into(),
-            //         right: Expr::value(rhs.into()),
-            //     };
-            } else {
-                return Err(input.error("Expected + or -"));
-            }
-        }
-        Ok(lhs)
-    }
-}
-impl Into<AstExpr> for TypeExprParser {
-    fn into(self) -> AstExpr {
-        match self {
-            TypeExprParser::Add { left, right } => AstExpr::BinOp(ExprBinOp {
-                lhs: left.into(),
-                rhs: right.into(),
-                kind: BinOpKind::Add,
-            }),
-            // TypeExprParser::Sub { .. } => {
-            //     unreachable!()
-            // }
-            TypeExprParser::Value(v) => AstExpr::value(v.into()),
-        }
-    }
-}
-fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<AstExpr> {
-    let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
-    Ok(t.into())
-}
-
 pub fn parse_file(path: PathBuf, file: syn::File) -> Result<AstFile> {
     let items = file.items.into_iter().map(item::parse_item).try_collect()?;
     Ok(AstFile { path, items })
@@ -331,8 +213,8 @@ impl RustParser {
         let file = self.parse_file_content(path, outputs)?;
         Ok(file)
     }
-    pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
-        expr::parse_expr(code).map(|x| Value::expr(x.get()))
+    pub fn parse_value(&self, code: syn::Expr) -> Result<AstValue> {
+        expr::parse_expr(code).map(|x| AstValue::expr(x.get()))
     }
     pub fn parse_expr(&self, code: syn::Expr) -> Result<AstExpr> {
         expr::parse_expr(code).map(|x| x.get())

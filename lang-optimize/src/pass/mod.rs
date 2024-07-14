@@ -9,7 +9,7 @@ pub use optimizer::*;
 pub use specialize::*;
 
 use common::*;
-use lang_core::ast::Value;
+use lang_core::ast::AstValue;
 use lang_core::ast::{AstExpr, ControlFlow, ExprInvoke};
 use lang_core::ast::{AstItem, AstModule};
 use lang_core::context::SharedScopedContext;
@@ -42,7 +42,7 @@ pub trait OptimizePass {
     fn optimize_invoke(
         &self,
         invoke: ExprInvoke,
-        func: &Value,
+        func: &AstValue,
         ctx: &SharedScopedContext,
     ) -> Result<AstExpr> {
         Ok(invoke.into())

@@ -1,5 +1,5 @@
 use crate::ast::{AstExpr, ExprId};
-use crate::ast::{AstType, Value};
+use crate::ast::{AstType, AstValue};
 use crate::ctx::Context;
 use eyre::Result;
 
@@ -14,7 +14,7 @@ pub trait TypeSystem {
         let _ = id;
         unimplemented!()
     }
-    fn get_ty_from_value(&self, ctx: &Context, value: &Value) -> Result<AstType> {
+    fn get_ty_from_value(&self, ctx: &Context, value: &AstValue) -> Result<AstType> {
         let _ = ctx;
         let _ = value;
         unimplemented!()

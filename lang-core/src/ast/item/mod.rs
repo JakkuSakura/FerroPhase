@@ -52,12 +52,12 @@ impl AstItem {
         }
     }
     pub fn unit() -> Self {
-        Self::Expr(AstExpr::Value(Value::unit().into()))
+        Self::Expr(AstExpr::Value(AstValue::unit().into()))
     }
     pub fn is_unit(&self) -> bool {
         if let Some(expr) = self.as_expr() {
             if let AstExpr::Value(value) = expr {
-                if let Value::Unit(_) = &**value {
+                if let AstValue::Unit(_) = &**value {
                     return true;
                 }
             }
