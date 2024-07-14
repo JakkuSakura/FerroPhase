@@ -2,9 +2,9 @@ use crate::printer::RustPrinter;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
-    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
-    ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
-    ExprSelect, ExprSelectType, ExprStruct, ExprTuple, StmtLet,
+    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprFieldValue, ExprIf, ExprIndex,
+    ExprInvoke, ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit,
+    ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple, StmtLet,
 };
 use lang_core::ops::BinOpKind;
 use proc_macro2::TokenStream;
@@ -308,12 +308,21 @@ impl RustPrinter {
             ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
         }
     }
+    fn print_expr_field_value(&self, field: &ExprFieldValue) -> eyre::Result<TokenStream> {
+        let name = self.print_ident(&field.name);
+        if let Some(value) = &field.value {
+            let value = self.print_expr(value)?;
+            Ok(quote!(#name: #value))
+        } else {
+            Ok(quote!(#name))
+        }
+    }
     pub fn print_struct_expr(&self, s: &ExprStruct) -> eyre::Result<TokenStream> {
         let name = self.print_expr(&s.name.get())?;
         let kwargs: Vec<_> = s
             .fields
             .iter()
-            .map(|x| self.print_field_value(x))
+            .map(|x| self.print_expr_field_value(x))
             .try_collect()?;
         Ok(quote!(#name { #(#kwargs), * }))
     }
