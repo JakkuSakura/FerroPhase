@@ -125,32 +125,32 @@ common_enum! {
 common_struct! {
     pub struct ExprStruct {
         pub name: BExpr,
-        pub fields: Vec<ExprFieldValue>,
+        pub fields: Vec<ExprField>,
     }
 }
 impl ExprStruct {
-    pub fn new_ident(name: Ident, fields: Vec<ExprFieldValue>) -> Self {
+    pub fn new_ident(name: Ident, fields: Vec<ExprField>) -> Self {
         Self {
             name: AstExpr::ident(name).into(),
             fields,
         }
     }
-    pub fn new(name: BExpr, fields: Vec<ExprFieldValue>) -> Self {
+    pub fn new(name: BExpr, fields: Vec<ExprField>) -> Self {
         Self { name, fields }
     }
 }
 common_struct! {
     pub struct ExprStructural {
-        pub fields: Vec<ExprFieldValue>,
+        pub fields: Vec<ExprField>,
     }
 }
 common_struct! {
-    pub struct ExprFieldValue {
+    pub struct ExprField {
         pub name: Ident,
         pub value: Option<AstExpr>,
     }
 }
-impl ExprFieldValue {
+impl ExprField {
     pub fn new(name: Ident, value: AstExpr) -> Self {
         Self {
             name,
