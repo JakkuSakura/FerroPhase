@@ -29,6 +29,7 @@ fn test_parse_fn() -> Result<()> {
             ty: None,
             sig: FunctionSignature {
                 name: Some("foo".into()),
+                receiver: None,
                 params: vec![FunctionParam {
                     name: "a".into(),
                     ty: AstType::Primitive(TypePrimitive::i64())
@@ -58,6 +59,125 @@ fn test_parse_block_noop() -> Result<()> {
             stmts: vec![BlockStmt::Noop, BlockStmt::Noop, BlockStmt::Noop],
             expr: None,
         })
+    );
+    Ok(())
+}
+#[test]
+fn test_parse_if() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+    let code = shll_parse_expr! {
+        if true {
+
+        }
+    };
+    assert_eq!(
+        code,
+        AstExpr::If(ExprIf {
+            cond: AstExpr::value(AstValue::bool(true)).into(),
+            then: AstExpr::Block(ExprBlock::new()).into(),
+            elze: None,
+        })
+    );
+    let code = shll_parse_expr! {
+        if true {
+
+        } else {
+
+        }
+    };
+    assert_eq!(
+        code,
+        AstExpr::If(ExprIf {
+            cond: AstExpr::value(AstValue::bool(true)).into(),
+            then: AstExpr::Block(ExprBlock::new()).into(),
+            elze: Some(AstExpr::Block(ExprBlock::new()).into()),
+        }),
+    );
+    let code = shll_parse_expr! {
+        if true {
+
+        } else if false {
+
+        }
+    };
+    assert_eq!(
+        code,
+        AstExpr::If(ExprIf {
+            cond: AstExpr::value(AstValue::bool(true)).into(),
+            then: AstExpr::Block(ExprBlock::new()).into(),
+            elze: Some(
+                AstExpr::If(ExprIf {
+                    cond: AstExpr::value(AstValue::bool(false)).into(),
+                    then: AstExpr::Block(ExprBlock::new()).into(),
+                    elze: None,
+                })
+                .into()
+            ),
+        }),
+    );
+    let code = shll_parse_expr! {
+        if true {
+            ()
+        } else if false {
+             ; {}
+        }
+    };
+    assert_eq!(
+        code,
+        AstExpr::If(ExprIf {
+            cond: AstExpr::value(AstValue::bool(true)).into(),
+            then: AstExpr::unit().into(),
+            elze: Some(
+                AstExpr::If(ExprIf {
+                    cond: AstExpr::value(AstValue::bool(false)).into(),
+                    then: AstExpr::Block(
+                        ExprBlock::new_stmts(vec![BlockStmt::Noop])
+                            .with_expr(AstExpr::Block(ExprBlock::new()).into())
+                    )
+                    .into(),
+                    elze: None,
+                })
+                .into()
+            ),
+        }),
+    );
+    Ok(())
+}
+#[test]
+fn test_parse_block_if() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+    // TODO: check for semicolon
+    let code = shll_parse_expr! {
+        {
+            if true {
+            }
+            if true {
+            };
+
+        }
+    };
+
+    // println!("{:?} => {}", code, code);
+    assert_eq!(
+        code,
+        AstExpr::Block(ExprBlock::new_stmts(vec![
+            BlockStmt::Expr(
+                BlockStmtExpr::new(AstExpr::If(ExprIf {
+                    cond: AstExpr::value(AstValue::bool(true)).into(),
+                    then: AstExpr::Block(ExprBlock::new()).into(),
+                    elze: None,
+                }))
+                .with_semicolon(false)
+            ),
+            BlockStmt::Expr(
+                BlockStmtExpr::new(AstExpr::If(ExprIf {
+                    cond: AstExpr::value(AstValue::bool(true)).into(),
+                    then: AstExpr::Block(ExprBlock::new()).into(),
+                    elze: None,
+                }))
+                .with_semicolon(true)
+            ),
+        ],))
     );
     Ok(())
 }

@@ -114,9 +114,25 @@ impl RustPrinter {
         match stmt {
             BlockStmt::Item(item) => self.print_item(item),
             BlockStmt::Let(let_) => self.print_let(let_),
-            BlockStmt::Expr(expr) => {
-                let expr = self.print_expr(expr)?;
-                Ok(quote!(#expr;))
+            BlockStmt::Expr(expr0) => {
+                let expr = self.print_expr(&expr0.expr)?;
+                let with_semicolon;
+
+                if expr0.semicolon == Some(true) {
+                    with_semicolon = true;
+                } else if expr0.semicolon == Some(false) {
+                    with_semicolon = false;
+                } else {
+                    match &*expr0.expr {
+                        AstExpr::Block(_) | AstExpr::If(_) => with_semicolon = false,
+                        _ => with_semicolon = true,
+                    }
+                }
+                if with_semicolon {
+                    Ok(quote!(#expr;))
+                } else {
+                    Ok(quote!(#expr))
+                }
             }
             BlockStmt::Any(any) => {
                 let expr = self.print_any(any)?;
