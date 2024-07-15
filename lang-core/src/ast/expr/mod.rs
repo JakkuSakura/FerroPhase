@@ -37,6 +37,7 @@ common_enum! {
         Struct(ExprStruct),
         Structural(ExprStructural),
         Reference(ExprReference),
+        Dereference(ExprDereference),
         Tuple(ExprTuple),
 
         /// closured because it's conceptually a closure, not a real one
