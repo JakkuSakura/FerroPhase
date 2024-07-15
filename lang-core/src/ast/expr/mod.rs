@@ -6,12 +6,10 @@ use std::fmt::{Debug, Display, Formatter};
 
 mod closure;
 mod stmt;
-mod ty;
 mod value;
 
 pub use closure::*;
 pub use stmt::*;
-pub use ty::*;
 pub use value::*;
 
 pub type ExprId = u64;
@@ -43,7 +41,6 @@ common_enum! {
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosure),
         Paren(ExprParen),
-        SelfType(ExprSelfType),
         Range(ExprRange),
         /// for items in dynamic languages
         Item(BItem),
