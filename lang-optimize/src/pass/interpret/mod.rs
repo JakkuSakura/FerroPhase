@@ -367,6 +367,7 @@ impl InterpreterPass {
             .try_collect()?;
         let sig = FunctionSignature {
             name: node.sig.name.clone(),
+            receiver: None,
             params,
             generics_params: node.generics_params.clone(),
             ret_ty: self.interpret_type(&node.ret_ty, &sub)?,
