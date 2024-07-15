@@ -23,6 +23,7 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
         syn::Expr::Index(i) => AstExpr::Index(parse_expr_index(i)?),
         syn::Expr::Path(p) => AstExpr::path(parser::parse_path(p.path)?),
         syn::Expr::Reference(r) => AstExpr::Reference(parse_expr_reference(r)?.into()),
+        syn::Expr::Tuple(t) if t.elems.is_empty() => AstExpr::unit(),
         syn::Expr::Tuple(t) => AstExpr::Tuple(parse_expr_tuple(t)?),
         syn::Expr::Struct(s) => AstExpr::Struct(parse_expr_struct(s)?.into()),
         syn::Expr::Paren(p) => AstExpr::Paren(parse_expr_paren(p)?),
@@ -79,7 +80,12 @@ pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
                     return Ok((BlockStmt::noop().into(), semicolon.is_some()));
                 }
             }
-            (BlockStmt::Expr(parse_expr(e)?.into()), semicolon.is_some())
+            (
+                BlockStmt::Expr(
+                    BlockStmtExpr::new(parse_expr(e)?).with_semicolon(semicolon.is_some()),
+                ),
+                semicolon.is_some(),
+            )
         }
         syn::Stmt::Macro(raw) => (BlockStmt::any(RawStmtMacro { raw }), true),
     })
@@ -99,7 +105,7 @@ pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
             BlockStmt::Expr(e) => e,
             x => bail!("Last statement should be expr, but got {:?}", x),
         };
-        Some(expr.into())
+        Some(expr.expr.into())
     } else {
         None
     };
