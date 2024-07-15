@@ -49,6 +49,7 @@ pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
     let op = match u.op {
         syn::UnOp::Neg(_) => UnOpKind::Neg,
         syn::UnOp::Not(_) => UnOpKind::Not,
+        syn::UnOp::Deref(_) => UnOpKind::Deref,
         _ => bail!("Unary op not supported: {:?}", u.op),
     };
     Ok(ExprUnOp {
