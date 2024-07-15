@@ -11,7 +11,7 @@ common_enum! {
     pub enum BlockStmt {
         Item(BItem),
         Let(StmtLet),
-        Expr(AstExpr),
+        Expr(BlockStmtExpr),
         /// really noop
         Noop,
         Any(AnyBox),
@@ -31,11 +31,30 @@ impl BlockStmt {
 
     pub fn is_unit(&self) -> bool {
         match self {
-            Self::Expr(expr) => expr.is_unit(),
+            Self::Expr(expr) => expr.expr.is_unit(),
             Self::Item(item) => item.is_unit(),
             Self::Noop => true,
             _ => false,
         }
+    }
+}
+common_struct! {
+    pub struct BlockStmtExpr {
+        pub expr: BExpr,
+        /// default is to keep semicolon, but for some expr like if, the default case is different
+        pub semicolon: Option<bool>,
+    }
+}
+impl BlockStmtExpr {
+    pub fn new(expr: impl Into<BExpr>) -> Self {
+        Self {
+            expr: expr.into(),
+            semicolon: None,
+        }
+    }
+    pub fn with_semicolon(mut self, semicolon: bool) -> Self {
+        self.semicolon = Some(semicolon);
+        self
     }
 }
 
@@ -81,9 +100,17 @@ impl ExprBlock {
             expr: None,
         }
     }
+    pub fn new_stmts(stmts: StmtChunk) -> Self {
+        Self { stmts, expr: None }
+    }
+    pub fn with_expr(mut self, expr: AstExpr) -> Self {
+        self.expr = Some(expr.into());
+        self
+    }
+
     pub fn push_up(&mut self) {
         if let Some(expr) = self.expr.take() {
-            self.stmts.push(BlockStmt::Expr(*expr));
+            self.stmts.push(BlockStmt::Expr(BlockStmtExpr::new(expr)));
         }
     }
     pub fn extend(&mut self, other: ExprBlock) {
@@ -104,8 +131,8 @@ impl ExprBlock {
         self.expr = Some(stmt.into());
     }
     pub fn into_expr(self) -> AstExpr {
-        if self.stmts.is_empty() {
-            self.expr.map(|x| *x).unwrap_or_else(|| AstExpr::unit())
+        if self.stmts.is_empty() && self.expr.is_some() {
+            *self.expr.unwrap()
         } else {
             AstExpr::Block(self)
         }
