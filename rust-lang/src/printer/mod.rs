@@ -5,7 +5,7 @@ use quote::*;
 
 use lang_core::ast::*;
 use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use lang_core::ops::{BinOpKind, BuiltinFn, BuiltinFnName};
+use lang_core::ops::{BuiltinFn, BuiltinFnName};
 use lang_core::pat::{Pattern, PatternIdent};
 use lang_core::utils::anybox::AnyBox;
 
@@ -77,28 +77,6 @@ impl RustPrinter {
         Ok(quote!(
             #name: #bounds
         ))
-    }
-
-    pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
-        match op {
-            BinOpKind::Add => quote!(+),
-            BinOpKind::AddTrait => quote!(+),
-            BinOpKind::Sub => quote!(-),
-            BinOpKind::Mul => quote!(*),
-            BinOpKind::Div => quote!(/),
-            BinOpKind::Mod => quote!(%),
-            BinOpKind::Gt => quote!(>),
-            BinOpKind::Lt => quote!(<),
-            BinOpKind::Ge => quote!(>=),
-            BinOpKind::Le => quote!(<=),
-            BinOpKind::Eq => quote!(==),
-            BinOpKind::Ne => quote!(!=),
-            BinOpKind::Or => quote!(||),
-            BinOpKind::And => quote!(&&),
-            BinOpKind::BitOr => quote!(|),
-            BinOpKind::BitAnd => quote!(&),
-            BinOpKind::BitXor => quote!(^),
-        }
     }
 
     pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
@@ -300,14 +278,10 @@ impl RustPrinter {
         ))
     }
     pub fn print_import(&self, node: &ItemImport) -> Result<TokenStream> {
+        let import: syn::UseTree = syn::parse_str(&node.tree.to_string())?;
         let vis = self.print_vis(node.visibility);
-        let segments = node
-            .path
-            .segments
-            .iter()
-            .map(|x| self.print_ident(x))
-            .collect::<Vec<_>>();
-        Ok(quote!(#vis use #(#segments)::*;))
+
+        Ok(quote!(#vis use #import;))
     }
     pub fn print_field_value(&self, s: &ValueField) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);

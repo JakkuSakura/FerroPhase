@@ -1,14 +1,17 @@
-mod decl;
-mod def;
+use std::hash::Hash;
 
 pub use decl::*;
 pub use def::*;
+pub use import::*;
 
 use crate::ast::*;
-use crate::id::{Ident, Locator, Path};
+use crate::id::{Ident, Locator};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
-use std::hash::Hash;
+
+mod decl;
+mod def;
+mod import;
 
 pub type BItem = Box<AstItem>;
 
@@ -203,13 +206,6 @@ common_enum! {
         Public,
         Private,
         Inherited,
-    }
-}
-
-common_struct! {
-    pub struct ItemImport {
-        pub visibility: Visibility,
-        pub path: Path,
     }
 }
 

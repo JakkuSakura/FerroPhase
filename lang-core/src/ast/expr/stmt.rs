@@ -103,4 +103,11 @@ impl ExprBlock {
         self.push_up();
         self.expr = Some(stmt.into());
     }
+    pub fn into_expr(self) -> AstExpr {
+        if self.stmts.is_empty() {
+            self.expr.map(|x| *x).unwrap_or_else(|| AstExpr::unit())
+        } else {
+            AstExpr::Block(self)
+        }
+    }
 }

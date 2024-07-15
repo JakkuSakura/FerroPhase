@@ -340,4 +340,25 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!((#(#args),*)))
     }
+    pub fn print_bin_op_kind(&self, op: &BinOpKind) -> TokenStream {
+        match op {
+            BinOpKind::Add => quote!(+),
+            BinOpKind::AddTrait => quote!(+),
+            BinOpKind::Sub => quote!(-),
+            BinOpKind::Mul => quote!(*),
+            BinOpKind::Div => quote!(/),
+            BinOpKind::Mod => quote!(%),
+            BinOpKind::Gt => quote!(>),
+            BinOpKind::Lt => quote!(<),
+            BinOpKind::Ge => quote!(>=),
+            BinOpKind::Le => quote!(<=),
+            BinOpKind::Eq => quote!(==),
+            BinOpKind::Ne => quote!(!=),
+            BinOpKind::Or => quote!(||),
+            BinOpKind::And => quote!(&&),
+            BinOpKind::BitOr => quote!(|),
+            BinOpKind::BitAnd => quote!(&),
+            BinOpKind::BitXor => quote!(^),
+        }
+    }
 }

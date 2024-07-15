@@ -1,19 +1,20 @@
 use eyre::{bail, ContextCompat};
 use itertools::Itertools;
+use syn::{Fields, FnArg, ReturnType};
+
 use lang_core::ast::{
     AstExpr, AstItem, AstType, EnumTypeVariant, ExprSelfType, FunctionParam, ItemDefEnum,
     ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
-    TypeEnum, TypeStruct, Visibility,
+    ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, TypeEnum, TypeStruct,
+    Visibility,
 };
-use lang_core::id::{Ident, Locator, Path};
-use lang_core::utils::anybox::AnyBox;
-use syn::{Fields, FnArg, ReturnType};
+use lang_core::id::{Ident, Locator};
 
 use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_expr;
 use crate::parser::ty::{parse_struct_field, parse_type};
 use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis, ty};
-use crate::{parser, RawItemMacro, RawUse};
+use crate::{parser, RawItemMacro};
 
 pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
     Ok(match i {
@@ -47,29 +48,36 @@ pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
     })
 }
 
-pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport, RawUse> {
-    let mut segments = vec![];
-    let mut tree = u.tree.clone();
-    loop {
-        match tree {
-            syn::UseTree::Path(p) => {
-                segments.push(parse_ident(p.ident));
-                tree = *p.tree;
-            }
-            syn::UseTree::Name(name) => {
-                segments.push(parse_ident(name.ident));
-                break;
-            }
-            syn::UseTree::Glob(_) => {
-                segments.push(Ident::new("*"));
-                break;
-            }
-            _ => return Err(RawUse { raw: u }.into()),
+fn parse_use_tree(tree: syn::UseTree) -> eyre::Result<ItemImportTree> {
+    let tree = match tree {
+        syn::UseTree::Path(p) => {
+            let mut path = ItemImportPath::new();
+            path.push(ItemImportTree::Ident(parse_ident(p.ident)));
+            let parsed = parse_use_tree(*p.tree)?;
+            path.extend(parsed.into_path());
+            ItemImportTree::Path(path)
         }
-    }
+        syn::UseTree::Name(name) => ItemImportTree::Ident(parse_ident(name.ident)),
+        syn::UseTree::Rename(rename) => ItemImportTree::Rename(ItemImportRename {
+            from: parse_ident(rename.ident),
+            to: parse_ident(rename.rename),
+        }),
+        syn::UseTree::Glob(_) => ItemImportTree::Glob,
+        syn::UseTree::Group(g) => {
+            let mut group = ItemImportGroup::new();
+            for tree in g.items {
+                group.push(parse_use_tree(tree)?);
+            }
+            ItemImportTree::Group(group)
+        }
+    };
+    Ok(tree)
+}
+pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport> {
+    let tree = parse_use_tree(u.tree)?;
     Ok(ItemImport {
         visibility: parse_vis(u.vis),
-        path: Path::new(segments),
+        tree,
     })
 }
 
@@ -211,10 +219,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
             AstItem::DefFunction(f)
         }
         syn::Item::Impl(im) => AstItem::Impl(parse_item_impl(im)?),
-        syn::Item::Use(u) => match parse_use(u) {
-            Ok(i) => AstItem::Import(i),
-            Err(r) => AstItem::Any(AnyBox::new(r)),
-        },
+        syn::Item::Use(u) => AstItem::Import(parse_use(u)?),
         syn::Item::Macro(m) => AstItem::any(RawItemMacro { raw: m }),
         syn::Item::Struct(s) => {
             let s = parse_type_struct(s)?;
