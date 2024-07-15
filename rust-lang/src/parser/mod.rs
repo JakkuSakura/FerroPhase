@@ -6,6 +6,7 @@ mod ty;
 
 use crate::parser::expr::parse_block;
 
+use crate::parser::item::parse_fn_sig;
 use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
@@ -103,30 +104,6 @@ pub fn parse_pat(p: syn::Pat) -> Result<Pattern> {
     })
 }
 
-pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
-    let generics_params = sig
-        .generics
-        .params
-        .into_iter()
-        .map(|x| match x {
-            syn::GenericParam::Type(t) => Ok(GenericParam {
-                name: parse_ident(t.ident),
-                bounds: ty::parse_type_param_bounds(t.bounds.into_iter().collect())?,
-            }),
-            _ => bail!("Does not generic param {:?}", x),
-        })
-        .try_collect()?;
-    Ok(FunctionSignature {
-        name: Some(parse_ident(sig.ident)),
-        params: sig
-            .inputs
-            .into_iter()
-            .map(item::parse_fn_arg)
-            .try_collect()?,
-        generics_params,
-        ret_ty: item::parse_return_type(sig.output)?,
-    })
-}
 pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
     match f {
         syn::TraitItem::Fn(f) => {

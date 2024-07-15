@@ -54,11 +54,6 @@ impl RustPrinter {
             "==" => quote!(==),
             "!=" => quote!(!=),
             "|" => quote!(|),
-            "&Self" => quote!(&Self),
-            "&mut Self" => quote!(&mut Self),
-            "Self" => quote!(Self),
-            "mut Self" => quote!(mut Self),
-            "unit" => quote!(()),
             a => format_ident!("{}", a).into_token_stream(),
         }
     }
@@ -181,7 +176,15 @@ impl RustPrinter {
             Visibility::Inherited => quote!(),
         }
     }
-
+    pub fn print_receiver(&self, receiver: &FunctionParamReceiver) -> Result<TokenStream> {
+        match receiver {
+            FunctionParamReceiver::Implicit => bail!("Implicit receiver not supported"),
+            FunctionParamReceiver::Value => Ok(quote!(self)),
+            FunctionParamReceiver::Ref => Ok(quote!(&self)),
+            FunctionParamReceiver::RefMut => Ok(quote!(&mut self)),
+            FunctionParamReceiver::MutValue => Ok(quote!(mut self)),
+        }
+    }
     pub fn print_function(
         &self,
         sig: &FunctionSignature,
@@ -195,6 +198,12 @@ impl RustPrinter {
         };
         let ret_type = &sig.ret_ty;
         let ret = self.print_return_type(ret_type)?;
+        let receiver = if let Some(receiver) = &sig.receiver {
+            let rec = self.print_receiver(receiver)?;
+            quote!(#rec,)
+        } else {
+            quote!()
+        };
         let param_names: Vec<_> = sig
             .params
             .iter()
@@ -226,7 +235,7 @@ impl RustPrinter {
         // let attrs = self.print_attrs(&func.attrs)?;
         return Ok(quote!(
             // #attrs
-            #vis fn #name #gg(#(#param_names: #param_types), *) #ret {
+            #vis fn #name #gg(#receiver #(#param_names: #param_types), *) #ret {
                 #stmts
             }
         ));
