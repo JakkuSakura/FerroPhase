@@ -4,9 +4,9 @@ use itertools::Itertools;
 use lang_core::ast::{
     AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIndex, ExprInvoke,
     ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
-    ExprSelect, ExprSelectType, ExprStruct, ExprTuple, StmtLet,
+    ExprSelect, ExprSelectType, ExprStruct, ExprTuple, ExprUnOp, StmtLet,
 };
-use lang_core::ops::BinOpKind;
+use lang_core::ops::{BinOpKind, UnOpKind};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -28,6 +28,7 @@ impl RustPrinter {
             AstExpr::Locator(loc) => self.print_locator(loc),
             AstExpr::Value(n) => self.print_value(n),
             AstExpr::Invoke(n) => self.print_invoke_expr(n),
+            AstExpr::UnOp(op) => self.print_un_op(op),
             AstExpr::BinOp(op) => self.print_bin_op(op),
             AstExpr::Any(n) => self.print_any(n),
             AstExpr::Match(n) => self.print_match(n),
@@ -360,5 +361,18 @@ impl RustPrinter {
             BinOpKind::BitAnd => quote!(&),
             BinOpKind::BitXor => quote!(^),
         }
+    }
+    pub fn print_un_op_kind(&self, op: &UnOpKind) -> TokenStream {
+        match op {
+            UnOpKind::Neg => quote!(-),
+            UnOpKind::Not => quote!(!),
+            UnOpKind::Deref => quote!(*),
+            UnOpKind::Any(any) => self.print_ident(any),
+        }
+    }
+    pub fn print_un_op(&self, expr: &ExprUnOp) -> eyre::Result<TokenStream> {
+        let op = self.print_un_op_kind(&expr.op);
+        let value = self.print_expr(&expr.val)?;
+        Ok(quote!(#op #value))
     }
 }
