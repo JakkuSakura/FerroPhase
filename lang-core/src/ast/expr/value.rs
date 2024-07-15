@@ -82,6 +82,11 @@ common_struct! {
         pub mutable: Option<bool>,
     }
 }
+common_struct! {
+    pub struct ExprDereference {
+        pub referee: BExpr,
+    }
+}
 
 common_struct! {
     pub struct ExprMatch {
