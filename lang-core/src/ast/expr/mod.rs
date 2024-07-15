@@ -79,11 +79,16 @@ impl AstExpr {
         AstExpr::Locator(Locator::path(path))
     }
     pub fn block(block: ExprBlock) -> AstExpr {
-        if block.stmts.len() == 0 {
-            return block.expr.map(|x| *x).unwrap_or(AstExpr::unit());
+        block.into_expr()
+    }
+    pub fn into_block(self) -> ExprBlock {
+        match self {
+            AstExpr::Block(block) => block,
+            _ => ExprBlock {
+                stmts: vec![],
+                expr: Some(Box::new(self)),
+            },
         }
-
-        AstExpr::Block(block)
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
