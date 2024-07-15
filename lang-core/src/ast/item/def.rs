@@ -1,6 +1,7 @@
 use crate::ast::{
-    AstAttribute, AstType, BExpr, FunctionParam, FunctionSignature, ItemChunk, StructuralField,
-    TypeBounds, TypeEnum, TypeFunction, TypeStruct, TypeStructural, ValueFunction, Visibility,
+    AstAttribute, AstType, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature,
+    ItemChunk, StructuralField, TypeBounds, TypeEnum, TypeFunction, TypeStruct, TypeStructural,
+    ValueFunction, Visibility,
 };
 use crate::common_struct;
 use crate::id::Ident;
@@ -84,6 +85,10 @@ impl ItemDefFunction {
             body,
             visibility: Visibility::Public,
         }
+    }
+    pub fn with_receiver(mut self, receiver: FunctionParamReceiver) -> Self {
+        self.sig.receiver = Some(receiver);
+        self
     }
     pub fn with_params(mut self, params: Vec<(Ident, AstType)>) -> Self {
         self.sig.params = params

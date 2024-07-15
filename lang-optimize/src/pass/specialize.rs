@@ -128,6 +128,7 @@ impl SpecializePass {
         }
         let sig = FunctionSignature {
             name: Some(new_name.clone()),
+            receiver: None,
             params: new_params.clone(),
             generics_params: vec![],
             ret_ty: ret.clone(),

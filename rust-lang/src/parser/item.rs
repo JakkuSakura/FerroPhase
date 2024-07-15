@@ -2,13 +2,8 @@ use eyre::{bail, ContextCompat};
 use itertools::Itertools;
 use syn::{Fields, FnArg, ReturnType};
 
-use lang_core::ast::{
-    AstExpr, AstItem, AstType, EnumTypeVariant, ExprSelfType, FunctionParam, ItemDefEnum,
-    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
-    ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, TypeEnum, TypeStruct,
-    Visibility,
-};
-use lang_core::id::{Ident, Locator};
+use lang_core::ast::*;
+use lang_core::id::Locator;
 
 use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_expr;
@@ -16,28 +11,24 @@ use crate::parser::ty::{parse_struct_field, parse_type};
 use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis, ty};
 use crate::{parser, RawItemMacro};
 
-pub fn parse_fn_arg(i: FnArg) -> eyre::Result<FunctionParam> {
+fn parse_fn_arg_receiver(r: syn::Receiver) -> eyre::Result<FunctionParamReceiver> {
+    match (r.reference, r.mutability) {
+        (Some(_), Some(_)) => Ok(FunctionParamReceiver::RefMut),
+        (Some(_), None) => Ok(FunctionParamReceiver::Ref),
+        (None, Some(_)) => Ok(FunctionParamReceiver::MutValue),
+        (None, None) => Ok(FunctionParamReceiver::Value),
+    }
+}
+pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
     Ok(match i {
-        FnArg::Receiver(rev) => FunctionParam {
-            name: Ident::new("self"),
-            ty: {
-                AstType::expr(AstExpr::SelfType(
-                    ExprSelfType {
-                        reference: rev.reference.is_some(),
-                        mutability: rev.mutability.is_some(),
-                    }
-                    .into(),
-                ))
-            },
-        },
-
-        FnArg::Typed(t) => FunctionParam {
+        FnArg::Receiver(_) => None,
+        FnArg::Typed(t) => Some(FunctionParam {
             name: parser::parse_pat(*t.pat)?
                 .as_ident()
                 .context("No ident")?
                 .clone(),
             ty: parse_type(*t.ty)?,
-        },
+        }),
     })
 }
 
@@ -48,6 +39,37 @@ pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
     })
 }
 
+pub fn parse_fn_sig(sig: syn::Signature) -> eyre::Result<FunctionSignature> {
+    let generics_params = sig
+        .generics
+        .params
+        .into_iter()
+        .map(|x| match x {
+            syn::GenericParam::Type(t) => Ok(GenericParam {
+                name: parse_ident(t.ident),
+                bounds: ty::parse_type_param_bounds(t.bounds.into_iter().collect())?,
+            }),
+            _ => bail!("Does not generic param {:?}", x),
+        })
+        .try_collect()?;
+    let receiver = match sig.inputs.first() {
+        Some(FnArg::Receiver(r)) => Some(parse_fn_arg_receiver(r.clone())?),
+        _ => None,
+    };
+    let mut params = vec![];
+    for arg in sig.inputs.into_iter().skip(receiver.is_some() as usize) {
+        if let Some(p) = parse_fn_arg(arg.clone())? {
+            params.push(p);
+        }
+    }
+    Ok(FunctionSignature {
+        name: Some(parse_ident(sig.ident)),
+        receiver,
+        params,
+        generics_params,
+        ret_ty: parse_return_type(sig.output)?,
+    })
+}
 fn parse_use_tree(tree: syn::UseTree) -> eyre::Result<ItemImportTree> {
     let tree = match tree {
         syn::UseTree::Path(p) => {

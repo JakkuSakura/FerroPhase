@@ -512,6 +512,18 @@ impl Display for ValueStructural {
         write!(f, "}}")
     }
 }
+// receiver worth its special treatment
+// in C++ and Java, they are emitted
+common_enum! {
+    pub enum FunctionParamReceiver {
+        // case in C++
+        Implicit,
+        Value,
+        MutValue,
+        Ref,
+        RefMut
+    }
+}
 
 common_struct! {
     pub struct FunctionParam {
@@ -525,16 +537,18 @@ impl FunctionParam {
     }
 }
 
+// TODO: make it enum to support lifetimes, type bounds and const
 common_struct! {
     pub struct GenericParam {
         pub name: Ident,
         pub bounds: TypeBounds,
     }
-
 }
+
 common_struct! {
     pub struct FunctionSignature {
         pub name: Option<Ident>,
+        pub receiver: Option<FunctionParamReceiver>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
         pub ret_ty: AstType,
@@ -544,6 +558,7 @@ impl FunctionSignature {
     pub fn unit() -> Self {
         Self {
             name: None,
+            receiver: None,
             params: vec![],
             generics_params: vec![],
             ret_ty: AstType::Unit(TypeUnit),
