@@ -24,7 +24,15 @@ common_struct! {
         pub items: ItemChunk,
     }
 }
-
+impl std::fmt::Display for AstFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "File: {}", self.path.display())?;
+        for item in &self.items {
+            writeln!(f, "{}", item)?;
+        }
+        Ok(())
+    }
+}
 common_enum! {
     /// Tree is any syntax tree element
     pub enum AstNode {
