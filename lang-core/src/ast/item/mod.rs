@@ -1,8 +1,5 @@
+use std::fmt::Formatter;
 use std::hash::Hash;
-
-pub use decl::*;
-pub use def::*;
-pub use import::*;
 
 use crate::ast::*;
 use crate::id::{Ident, Locator};
@@ -12,6 +9,10 @@ use crate::{common_enum, common_struct};
 mod decl;
 mod def;
 mod import;
+
+pub use decl::*;
+pub use def::*;
+pub use import::*;
 
 pub type BItem = Box<AstItem>;
 
@@ -41,6 +42,13 @@ common_enum! {
         /// not for direct construction, but for interpretation and optimization
         Expr(AstExpr),
         Any(AnyBox),
+    }
+}
+
+impl std::fmt::Display for AstItem {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let serializer = get_threadlocal_serializer();
+        write!(f, "{}", serializer.serialize_item(self).unwrap())
     }
 }
 
