@@ -32,13 +32,6 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
     })
 }
 
-pub fn parse_return_type(o: ReturnType) -> eyre::Result<AstType> {
-    Ok(match o {
-        ReturnType::Default => AstType::unit(),
-        ReturnType::Type(_, t) => parse_type(*t)?,
-    })
-}
-
 pub fn parse_fn_sig(sig: syn::Signature) -> eyre::Result<FunctionSignature> {
     let generics_params = sig
         .generics
@@ -67,7 +60,10 @@ pub fn parse_fn_sig(sig: syn::Signature) -> eyre::Result<FunctionSignature> {
         receiver,
         params,
         generics_params,
-        ret_ty: parse_return_type(sig.output)?,
+        ret_ty: match sig.output {
+            ReturnType::Default => None,
+            ReturnType::Type(_, t) => Some(parse_type(*t)?),
+        },
     })
 }
 fn parse_use_tree(tree: syn::UseTree) -> eyre::Result<ItemImportTree> {

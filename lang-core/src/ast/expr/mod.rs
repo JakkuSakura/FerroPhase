@@ -26,6 +26,7 @@ common_enum! {
         Match(ExprMatch),
         If(ExprIf),
         Loop(ExprLoop),
+        While(ExprWhile),
         Invoke(ExprInvoke),
         BinOp(ExprBinOp),
         UnOp(ExprUnOp),
@@ -37,9 +38,11 @@ common_enum! {
         Reference(ExprReference),
         Dereference(ExprDereference),
         Tuple(ExprTuple),
-
+        Try(ExprTry),
+        Let(ExprLet),
+        Closure(ExprClosure),
         /// closured because it's conceptually a closure, not a real one
-        Closured(ExprClosure),
+        Closured(ExprClosured),
         Paren(ExprParen),
         Range(ExprRange),
         /// for items in dynamic languages

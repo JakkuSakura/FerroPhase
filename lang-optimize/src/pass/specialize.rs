@@ -89,12 +89,12 @@ impl SpecializePass {
             }
             let name = name.last().clone();
 
-            let binding = BlockStmt::Let(StmtLet {
+            let binding = BlockStmt::Let(ExprLet {
                 pat: Pattern::Ident(PatternIdent {
                     ident: name,
                     mutability: Some(false),
                 }),
-                init: Some(AstExpr::value(value)),
+                expr: Some(AstExpr::value(value)),
             });
             bindings.push(binding);
         }
