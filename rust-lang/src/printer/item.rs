@@ -56,7 +56,7 @@ impl RustPrinter {
         let name = self.print_ident(&def.name);
         let ty = self.print_type(&def.ty)?;
         let value = self.print_expr(&def.value)?;
-        return Ok(quote!(x
+        return Ok(quote!(
             #vis static #name: #ty = #value;
         ));
     }

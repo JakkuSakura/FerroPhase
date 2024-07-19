@@ -109,7 +109,7 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| {
                         let value = self.evaluate_type_value(&x.value, ctx)?;
-                        Ok::<_, Error>(StructuralField {
+                        eyre::Ok(StructuralField {
                             name: x.name.clone(),
                             value,
                         })
@@ -145,12 +145,16 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| self.evaluate_type_value(x, &sub))
                     .try_collect()?;
-                let ret_ty = self.evaluate_type_value(&f.ret_ty, &sub)?;
+
+                let ret_ty = match &f.ret_ty {
+                    Some(t) => Some(self.evaluate_type_value(t, &sub)?.into()),
+                    None => None,
+                };
                 return Ok(AstType::Function(
                     TypeFunction {
                         params,
                         generics_params: f.generics_params.clone(),
-                        ret_ty: ret_ty.into(),
+                        ret_ty,
                     }
                     .into(),
                 ));
@@ -223,7 +227,12 @@ impl InterpreterPass {
 
         let callee = self.infer_expr(callee, ctx)?;
         match callee {
-            AstType::Function(f) => return Ok(*f.ret_ty),
+            AstType::Function(f) => {
+                return match f.ret_ty {
+                    Some(t) => Ok(*t),
+                    None => Ok(AstType::unit()),
+                }
+            }
             _ => {}
         }
 
@@ -236,7 +245,7 @@ impl InterpreterPass {
                     TypeFunction {
                         params: vec![],
                         generics_params: vec![],
-                        ret_ty: AstType::unit().into(),
+                        ret_ty: None,
                     }
                     .into(),
                 ))
@@ -287,7 +296,11 @@ impl InterpreterPass {
             AstExpr::Invoke(invoke) => {
                 let function = self.infer_expr_invoke_target(&invoke.target, ctx)?;
                 match function {
-                    AstType::Function(f) => *f.ret_ty,
+                    AstType::Function(TypeFunction { ret_ty: None, .. }) => AstType::unit(),
+                    AstType::Function(TypeFunction {
+                        ret_ty: Some(t), ..
+                    }) => *t,
+
                     _ => bail!("Expected function, got {:?}", function),
                 }
             }
@@ -323,7 +336,7 @@ impl InterpreterPass {
         Ok(TypeFunction {
             params,
             generics_params: func.generics_params.clone(),
-            ret_ty: ret_ty.into(),
+            ret_ty: ret_ty.map(|x| x.into()),
         })
     }
 }

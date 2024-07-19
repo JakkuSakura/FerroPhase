@@ -1,7 +1,7 @@
-use common::{bail, Itertools, Result};
+use common::bail;
+use eyre::Result;
+use lang_core::ast::{AstSerializer, EnumTypeVariant, TypeEnum, TypeValue};
 use lang_core::id::Ident;
-use lang_core::ty::{EnumTypeVariant, TypeEnum, TypeValue};
-use lang_core::Serializer;
 use std::cell::RefCell;
 use std::io::{Cursor, Write};
 use std::rc::Rc;
@@ -83,7 +83,7 @@ impl TsPrinter {
         Ok(self.writer.take_string())
     }
 }
-impl Serializer for TsPrinter {
+impl AstSerializer for TsPrinter {
     fn serialize_type(&self, node: &TypeValue) -> Result<String> {
         match node {
             TypeValue::Enum(decl) => {

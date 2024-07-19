@@ -6,12 +6,13 @@ use syn::{parse_quote, FieldsNamed, Token};
 
 use lang_core::ast::{
     AstExpr, AstType, DecimalType, ExprBinOp, StructuralField, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeReference, TypeStruct, TypeStructural,
+    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
 };
 use lang_core::id::{Ident, Path};
 use lang_core::ops::BinOpKind;
 
 use crate::parser;
+use crate::parser::item::parse_impl_trait;
 use crate::parser::{item, parse_path};
 
 pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
@@ -56,8 +57,9 @@ pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
                 _ => AstType::locator(parser::parse_locator(p.path)?),
             }
         }
-        syn::Type::ImplTrait(im) => AstType::ImplTraits(parser::parse_impl_trait(im)?),
+        syn::Type::ImplTrait(im) => AstType::ImplTraits(parse_impl_trait(im)?),
         syn::Type::Tuple(t) if t.elems.is_empty() => AstType::unit().into(),
+        syn::Type::Slice(s) => parse_type_slice(s)?,
         // types like t!{ }
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
             AstType::expr(parse_custom_type_expr(m)?)
@@ -67,7 +69,11 @@ pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
     };
     Ok(t)
 }
-
+fn parse_type_slice(s: syn::TypeSlice) -> eyre::Result<AstType> {
+    Ok(AstType::Slice(TypeSlice {
+        elem: parse_type(*s.elem)?.into(),
+    }))
+}
 fn parse_type_reference(r: syn::TypeReference) -> eyre::Result<TypeReference> {
     Ok(TypeReference {
         ty: Box::new(parse_type(*r.elem)?),

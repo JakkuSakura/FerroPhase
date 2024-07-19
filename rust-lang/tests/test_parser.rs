@@ -206,3 +206,22 @@ fn test_parse_impl_for() -> Result<()> {
     );
     Ok(())
 }
+#[test]
+fn test_parse_static() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    let code = shll_parse_item! {
+        static FOO: i64 = 1;
+    };
+    assert_eq!(
+        code,
+        AstItem::DefStatic(ItemDefStatic {
+            name: "FOO".into(),
+            ty: AstType::Primitive(TypePrimitive::i64()),
+            value: AstExpr::value(AstValue::int(1)).into(),
+            visibility: Visibility::Private,
+        })
+    );
+    println!("{}", code);
+    Ok(())
+}

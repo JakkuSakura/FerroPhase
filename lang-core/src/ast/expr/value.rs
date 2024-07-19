@@ -239,3 +239,8 @@ common_struct! {
         pub body: BExpr,
     }
 }
+common_struct! {
+    pub struct ExprArray {
+        pub values: Vec<AstExpr>,
+    }
+}
