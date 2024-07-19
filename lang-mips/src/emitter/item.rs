@@ -1,6 +1,6 @@
 use eyre::Result;
 
-use lang_core::ast::Item;
+use lang_core::ast::AstItem;
 use lang_core::context::SharedScopedContext;
 
 use crate::emitter::expr::MipsEmitExprResult;
@@ -9,12 +9,12 @@ use crate::emitter::MipsEmitter;
 impl MipsEmitter {
     pub fn emit_item(
         &mut self,
-        item: &Item,
+        item: &AstItem,
         ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
         match item {
-            Item::Expr(expr) => self.emit_expr(expr, ctx),
-            Item::DefFunction(f) => self.emit_def_function(f, ctx),
+            AstItem::Expr(expr) => self.emit_expr(expr, ctx),
+            AstItem::DefFunction(f) => self.emit_def_function(f, ctx),
             _ => unimplemented!("emit_item: {:?}", item),
         }
     }

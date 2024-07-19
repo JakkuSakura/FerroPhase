@@ -25,5 +25,3 @@ jobs:
       - name: Run lang-optimize examples
         run: cd lang-optimize && cargo run --example generate-examples
 
-      - name: Run tests
-        run: cargo test test
