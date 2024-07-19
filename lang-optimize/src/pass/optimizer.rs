@@ -239,22 +239,19 @@ impl FoldOptimizer {
                 value.clone(),
             );
 
-            Ok(StmtLet {
-                pat: let_.pat.clone(),
-                init: Some(value.into()),
-            })
+            Ok(StmtLet::new(let_.pat.clone(), value.into(), None))
         } else {
-            Ok(StmtLet {
-                pat: let_.pat.clone(),
-                init: None,
-            })
+            Ok(StmtLet::new(let_.pat.clone(), None, None))
         }
     }
     pub fn optimize_stmt(&self, stmt: BlockStmt, ctx: &SharedScopedContext) -> Result<BlockStmt> {
         match stmt {
             BlockStmt::Expr(x) => {
-                let expr = self.optimize_expr(x, ctx)?;
-                Ok(BlockStmt::Expr(expr))
+                let expr = self.optimize_expr(*x.expr, ctx)?;
+                Ok(BlockStmt::Expr(BlockStmtExpr {
+                    expr: expr.into(),
+                    semicolon: x.semicolon,
+                }))
             }
             BlockStmt::Item(x) => self
                 .optimize_item(*x, ctx)

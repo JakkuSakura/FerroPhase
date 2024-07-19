@@ -25,7 +25,10 @@ pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
                     .map(parse_type)
                     .try_collect()?,
                 generics_params: vec![],
-                ret_ty: item::parse_return_type(f.output)?.into(),
+                ret_ty: match f.output {
+                    syn::ReturnType::Default => None,
+                    syn::ReturnType::Type(_, t) => Some(parse_type(*t)?.into()),
+                },
             }
             .into(),
         )

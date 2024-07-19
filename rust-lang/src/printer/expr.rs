@@ -1,28 +1,32 @@
-use crate::printer::RustPrinter;
 use eyre::bail;
+use eyre::Result;
 use itertools::Itertools;
-use lang_core::ast::{
-    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprField, ExprIf, ExprIndex, ExprInvoke,
-    ExprInvokeTarget, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
-    ExprSelect, ExprSelectType, ExprStruct, ExprTuple, ExprUnOp, StmtLet,
-};
-use lang_core::ops::{BinOpKind, UnOpKind};
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use lang_core::ast::{
+    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField, ExprIf,
+    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprLet, ExprLoop, ExprMatch, ExprParen, ExprRange,
+    ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple, ExprUnOp,
+    ExprWhile, StmtLet,
+};
+use lang_core::ops::{BinOpKind, UnOpKind};
+
+use crate::printer::RustPrinter;
+
 impl RustPrinter {
-    pub fn print_expr_no_braces(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
+    pub fn print_expr_no_braces(&self, node: &AstExpr) -> Result<TokenStream> {
         match node {
             AstExpr::Block(n) => self.print_block_no_braces(&n),
             AstExpr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
     }
-    pub fn print_expr_id(&self, id: u64) -> eyre::Result<TokenStream> {
+    pub fn print_expr_id(&self, id: u64) -> Result<TokenStream> {
         let num = syn::LitInt::new(&id.to_string(), proc_macro2::Span::call_site());
         Ok(quote!(Expr # #num))
     }
-    pub fn print_expr(&self, node: &AstExpr) -> eyre::Result<TokenStream> {
+    pub fn print_expr(&self, node: &AstExpr) -> Result<TokenStream> {
         match node {
             AstExpr::Id(id) => self.print_expr_id(*id),
             AstExpr::Locator(loc) => self.print_locator(loc),
@@ -44,18 +48,23 @@ impl RustPrinter {
             AstExpr::Loop(n) => self.print_loop(n),
             AstExpr::Range(n) => self.print_range(n),
             AstExpr::Tuple(n) => self.print_expr_tuple(n),
+            AstExpr::Try(n) => self.print_expr_try(&n.expr),
+            AstExpr::While(n) => self.print_while(n),
+            AstExpr::Let(n) => self.print_expr_let(n),
+            AstExpr::Closure(n) => self.print_expr_closure(n),
+
             _ => bail!("Unable to serialize {:?}", node),
         }
     }
 
-    pub fn print_bin_op(&self, binop: &ExprBinOp) -> eyre::Result<TokenStream> {
+    fn print_bin_op(&self, binop: &ExprBinOp) -> Result<TokenStream> {
         let lhs = self.print_expr(&binop.lhs.get())?;
         let rhs = self.print_expr(&binop.rhs.get())?;
         let op = self.print_bin_op_kind(&binop.kind);
         Ok(quote!(#lhs #op #rhs))
     }
 
-    pub fn print_invoke_expr(&self, invoke: &ExprInvoke) -> eyre::Result<TokenStream> {
+    fn print_invoke_expr(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
         let fun = self.print_invoke_target(&invoke.target)?;
         let args: Vec<_> = invoke
             .args
@@ -66,14 +75,26 @@ impl RustPrinter {
             #fun(#(#args), *)
         ))
     }
-
-    pub fn print_let(&self, let_: &StmtLet) -> eyre::Result<TokenStream> {
+    fn print_expr_let(&self, let_: &ExprLet) -> Result<TokenStream> {
+        let pat = self.print_pattern(&let_.pat)?;
+        let init = self.print_expr(&let_.expr)?;
+        Ok(quote!(
+            let #pat = #init
+        ))
+    }
+    pub fn print_stmt_let(&self, let_: &StmtLet) -> Result<TokenStream> {
         let pat = self.print_pattern(&let_.pat)?;
 
         if let Some(init) = &let_.init {
             let init = self.print_expr(&init)?;
+            let elze = if let Some(elze) = &let_.diverge {
+                let elze = self.print_expr(elze)?;
+                quote!(else #elze)
+            } else {
+                quote!()
+            };
             Ok(quote!(
-                let #pat = #init;
+                let #pat = #init #elze;
             ))
         } else {
             Ok(quote!(
@@ -81,28 +102,28 @@ impl RustPrinter {
             ))
         }
     }
-    pub fn print_assign(&self, assign: &ExprAssign) -> eyre::Result<TokenStream> {
+    pub fn print_assign(&self, assign: &ExprAssign) -> Result<TokenStream> {
         let target = self.print_expr(&assign.target)?;
         let value = self.print_expr(&assign.value)?;
         Ok(quote!(
             #target = #value;
         ))
     }
-    pub fn print_index(&self, index: &ExprIndex) -> eyre::Result<TokenStream> {
+    pub fn print_index(&self, index: &ExprIndex) -> Result<TokenStream> {
         let expr = self.print_expr(&index.expr.get())?;
         let index = self.print_expr(&index.index.get())?;
         Ok(quote!(
             #expr[#index]
         ))
     }
-    pub fn print_paren(&self, paren: &ExprParen) -> eyre::Result<TokenStream> {
+    pub fn print_paren(&self, paren: &ExprParen) -> Result<TokenStream> {
         let expr = self.print_expr(&paren.expr.get())?;
         Ok(quote!(
             (#expr)
         ))
     }
 
-    pub fn print_loop(&self, loop_: &ExprLoop) -> eyre::Result<TokenStream> {
+    pub fn print_loop(&self, loop_: &ExprLoop) -> Result<TokenStream> {
         let body = self.print_expr_no_braces(&loop_.body)?;
         Ok(quote!(
             loop {
@@ -110,10 +131,28 @@ impl RustPrinter {
             }
         ))
     }
-    pub fn print_statement(&self, stmt: &BlockStmt) -> eyre::Result<TokenStream> {
+    // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
+    //     let name = self.print_ident(&for_each.variable);
+    //     let iter = self.print_expr(&for_each.iterable)?;
+    //     let body = self.print_block(&for_each.body)?;
+    //     Ok(quote!(
+    //         for #name in #iter
+    //             #body
+    //     ))
+    // }
+    fn print_while(&self, while_: &ExprWhile) -> Result<TokenStream> {
+        let cond = self.print_expr(&while_.cond)?;
+        let body = self.print_expr_no_braces(&while_.body)?;
+        Ok(quote!(
+            while #cond {
+                #body
+            }
+        ))
+    }
+    pub fn print_statement(&self, stmt: &BlockStmt) -> Result<TokenStream> {
         match stmt {
             BlockStmt::Item(item) => self.print_item(item),
-            BlockStmt::Let(let_) => self.print_let(let_),
+            BlockStmt::Let(let_) => self.print_stmt_let(let_),
             BlockStmt::Expr(expr0) => {
                 let expr = self.print_expr(&expr0.expr)?;
                 let with_semicolon;
@@ -141,7 +180,7 @@ impl RustPrinter {
             BlockStmt::Noop => Ok(quote!(;)),
         }
     }
-    pub fn print_stmt_chunk(&self, items: &[BlockStmt]) -> eyre::Result<TokenStream> {
+    pub fn print_stmt_chunk(&self, items: &[BlockStmt]) -> Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
             let item = self.print_statement(item)?;
@@ -149,13 +188,13 @@ impl RustPrinter {
         }
         Ok(quote!(#(#stmts) *))
     }
-    pub fn print_block(&self, n: &ExprBlock) -> eyre::Result<TokenStream> {
+    pub fn print_block(&self, n: &ExprBlock) -> Result<TokenStream> {
         let inner = self.print_block_no_braces(n)?;
         Ok(quote!({
             #inner
         }))
     }
-    pub fn print_block_no_braces(&self, n: &ExprBlock) -> eyre::Result<TokenStream> {
+    pub fn print_block_no_braces(&self, n: &ExprBlock) -> Result<TokenStream> {
         if let Some(expr) = &n.expr {
             let chunk = self.print_stmt_chunk(&n.stmts)?;
             let expr = self.print_expr(expr)?;
@@ -170,7 +209,7 @@ impl RustPrinter {
             ))
         }
     }
-    pub fn print_if(&self, if_: &ExprIf) -> eyre::Result<TokenStream> {
+    fn print_if(&self, if_: &ExprIf) -> Result<TokenStream> {
         let cond = self.print_expr(&if_.cond)?;
         let then = self.print_expr_no_braces(&if_.then)?;
         let elze = if let Some(elze) = &if_.elze {
@@ -187,7 +226,7 @@ impl RustPrinter {
         ))
     }
 
-    pub fn print_match(&self, m: &ExprMatch) -> eyre::Result<TokenStream> {
+    pub fn print_match(&self, m: &ExprMatch) -> Result<TokenStream> {
         let mut ts = vec![];
         for (_i, c) in m.cases.iter().enumerate() {
             let node = &c.cond;
@@ -204,7 +243,7 @@ impl RustPrinter {
         }))
     }
 
-    pub fn print_invoke(&self, node: &ExprInvoke) -> eyre::Result<TokenStream> {
+    pub fn print_invoke(&self, node: &ExprInvoke) -> Result<TokenStream> {
         let fun = self.print_invoke_target(&node.target)?;
         let args: Vec<_> = node
             .args
@@ -282,7 +321,7 @@ impl RustPrinter {
         Ok(code)
     }
 
-    pub fn print_ref(&self, n: &ExprReference) -> eyre::Result<TokenStream> {
+    pub fn print_ref(&self, n: &ExprReference) -> Result<TokenStream> {
         let referee = self.print_expr(&n.referee.get())?;
         if n.mutable == Some(true) {
             Ok(quote!(&mut #referee))
@@ -291,7 +330,7 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_select(&self, select: &ExprSelect) -> eyre::Result<TokenStream> {
+    fn print_select(&self, select: &ExprSelect) -> Result<TokenStream> {
         let obj = self.print_expr(&select.obj.get())?;
         let field = self.print_ident(&select.field);
         match select.select {
@@ -303,11 +342,12 @@ impl RustPrinter {
             )),
         }
     }
-    pub fn print_args(&self, node: &Vec<AstExpr>) -> eyre::Result<TokenStream> {
-        let args: Vec<_> = node.iter().map(|x| self.print_expr(x)).try_collect()?;
-        Ok(quote!((#(#args),*)))
+    fn print_expr_try(&self, node: &AstExpr) -> Result<TokenStream> {
+        let expr = self.print_expr(node)?;
+        Ok(quote!(#expr?))
     }
-    pub fn print_range(&self, range: &ExprRange) -> eyre::Result<TokenStream> {
+
+    fn print_range(&self, range: &ExprRange) -> Result<TokenStream> {
         let start = range
             .start
             .as_ref()
@@ -321,7 +361,7 @@ impl RustPrinter {
         Ok(quote!(#start #dots #end))
     }
 
-    pub fn print_invoke_target(&self, target: &ExprInvokeTarget) -> eyre::Result<TokenStream> {
+    pub fn print_invoke_target(&self, target: &ExprInvokeTarget) -> Result<TokenStream> {
         match target {
             ExprInvokeTarget::Function(locator) => self.print_locator(locator),
             ExprInvokeTarget::Type(t) => self.print_type(t),
@@ -331,7 +371,7 @@ impl RustPrinter {
             ExprInvokeTarget::Expr(expr) => self.print_expr(expr),
         }
     }
-    fn print_expr_field_value(&self, field: &ExprField) -> eyre::Result<TokenStream> {
+    fn print_expr_field_value(&self, field: &ExprField) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
         if let Some(value) = &field.value {
             let value = self.print_expr(value)?;
@@ -340,7 +380,7 @@ impl RustPrinter {
             Ok(quote!(#name))
         }
     }
-    pub fn print_struct_expr(&self, s: &ExprStruct) -> eyre::Result<TokenStream> {
+    pub fn print_struct_expr(&self, s: &ExprStruct) -> Result<TokenStream> {
         let name = self.print_expr(&s.name.get())?;
         let kwargs: Vec<_> = s
             .fields
@@ -349,7 +389,7 @@ impl RustPrinter {
             .try_collect()?;
         Ok(quote!(#name { #(#kwargs), * }))
     }
-    pub fn print_expr_tuple(&self, tuple: &ExprTuple) -> eyre::Result<TokenStream> {
+    pub fn print_expr_tuple(&self, tuple: &ExprTuple) -> Result<TokenStream> {
         let args: Vec<_> = tuple
             .values
             .iter()
@@ -386,9 +426,24 @@ impl RustPrinter {
             UnOpKind::Any(any) => self.print_ident(any),
         }
     }
-    pub fn print_un_op(&self, expr: &ExprUnOp) -> eyre::Result<TokenStream> {
+    pub fn print_un_op(&self, expr: &ExprUnOp) -> Result<TokenStream> {
         let op = self.print_un_op_kind(&expr.op);
         let value = self.print_expr(&expr.val)?;
         Ok(quote!(#op #value))
+    }
+    fn print_expr_closure(&self, closure: &ExprClosure) -> Result<TokenStream> {
+        let movability = if closure.movability == Some(true) {
+            quote!(move)
+        } else {
+            quote!()
+        };
+        let params: Vec<_> = closure
+            .params
+            .iter()
+            .map(|x| self.print_pattern(x))
+            .try_collect()?;
+        let ret = self.print_return_type(closure.ret_ty.as_deref())?;
+        let body = self.print_expr(&closure.body)?;
+        Ok(quote!(#movability |#(#params),*| #ret #body))
     }
 }

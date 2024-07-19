@@ -1,10 +1,11 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
-use crate::ast::ValueFunction;
 use crate::ast::{get_threadlocal_serializer, AstExpr, AstType, AstValue, BExpr};
+use crate::ast::{BType, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
+use crate::pat::{BPattern, Pattern};
 use crate::{common_enum, common_struct};
 
 common_enum! {
@@ -107,7 +108,12 @@ common_struct! {
         pub body: BExpr,
     }
 }
-
+common_struct! {
+    pub struct ExprWhile {
+        pub cond: BExpr,
+        pub body: BExpr,
+    }
+}
 common_struct! {
     pub struct ExprMatchCase {
         pub cond: BExpr,
@@ -210,5 +216,26 @@ common_struct! {
 common_struct! {
     pub struct ExprTuple {
         pub values: Vec<AstExpr>,
+    }
+}
+
+common_struct! {
+    pub struct ExprTry {
+        pub expr: BExpr,
+    }
+}
+
+common_struct! {
+    pub struct ExprLet {
+        pub pat: BPattern,
+        pub expr: BExpr,
+    }
+}
+common_struct! {
+    pub struct ExprClosure {
+        pub params: Vec<Pattern>,
+        pub ret_ty: Option<BType>,
+        pub movability: Option<bool>,
+        pub body: BExpr,
     }
 }

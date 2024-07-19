@@ -62,9 +62,14 @@ common_struct! {
     pub struct StmtLet {
         pub pat: Pattern,
         pub init: Option<AstExpr>,
+        pub diverge: Option<AstExpr>,
     }
 }
 impl StmtLet {
+    pub fn new(pat: Pattern, init: Option<AstExpr>, diverge: Option<AstExpr>) -> Self {
+        assert!(diverge.is_none() || init.is_some(), "diverge without init");
+        Self { pat, init, diverge }
+    }
     pub fn new_typed(name: Ident, ty: AstType, value: AstExpr) -> Self {
         Self {
             pat: Pattern::Type(PatternType::new(
@@ -72,12 +77,14 @@ impl StmtLet {
                 ty,
             )),
             init: Some(value),
+            diverge: None,
         }
     }
     pub fn new_simple(name: Ident, value: AstExpr) -> Self {
         Self {
             pat: Pattern::Ident(PatternIdent::new(name)),
             init: Some(value),
+            diverge: None,
         }
     }
     pub fn make_mut(&mut self) {
