@@ -1,13 +1,14 @@
 use common::*;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
-use lang_core::register_threadlocal_serializer;
+
 use lang_mips::emitter::MipsEmitter;
 use lang_mips::instruction::MipsInstruction;
-use rust_lang::{shll_parse_expr, RustSerde};
+use rust_lang::printer::RustPrinter;
+use rust_lang::shll_parse_expr;
 use std::sync::Arc;
 
-fn emit_mips_shll_expr(expr: Expr) -> Result<Vec<MipsInstruction>> {
+fn emit_mips_shll_expr(expr: AstExpr) -> Result<Vec<MipsInstruction>> {
     let ctx = SharedScopedContext::new();
     let mut emitter = MipsEmitter::new();
 
@@ -21,7 +22,7 @@ fn emit_mips_shll_expr(expr: Expr) -> Result<Vec<MipsInstruction>> {
 
 #[test]
 fn test_mips_emit_add() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         1 + 2 * 3
@@ -33,7 +34,7 @@ fn test_mips_emit_add() -> Result<()> {
 
 #[test]
 fn test_mips_emit_loop() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         loop {}
@@ -44,7 +45,7 @@ fn test_mips_emit_loop() -> Result<()> {
 }
 #[test]
 fn test_mips_emit_if() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         if 1 {
@@ -60,7 +61,7 @@ fn test_mips_emit_if() -> Result<()> {
 
 #[test]
 fn test_mips_emit_loop_if() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         loop {
@@ -78,7 +79,7 @@ fn test_mips_emit_loop_if() -> Result<()> {
 
 #[test]
 fn test_mips_emit_comp() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         1 < 2
@@ -90,7 +91,7 @@ fn test_mips_emit_comp() -> Result<()> {
 
 #[test]
 fn test_mips_emit_func() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         {
