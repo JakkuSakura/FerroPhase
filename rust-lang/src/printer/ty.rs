@@ -3,10 +3,11 @@ use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::{
     AstType, DecimalType, ExprInvoke, StructuralField, TypeInt, TypePrimitive, TypeReference,
-    TypeStruct, TypeStructural,
+    TypeSlice, TypeStruct, TypeStructural,
 };
 use proc_macro2::TokenStream;
 use quote::quote;
+
 impl RustPrinter {
     pub fn print_type(&self, v: &AstType) -> eyre::Result<TokenStream> {
         let ty = match v {
@@ -15,6 +16,7 @@ impl RustPrinter {
             AstType::Struct(s) => self.print_struct_type(s)?,
             AstType::Structural(s) => self.print_structural_type(s)?,
             AstType::Expr(e) => self.print_expr(e)?,
+            AstType::Slice(t) => self.print_type_slice(t)?,
             AstType::ImplTraits(t) => self.print_impl_traits(t)?,
             AstType::TypeBounds(t) => self.print_type_bounds(t)?,
             AstType::Unit(_) => quote!(()),
@@ -96,5 +98,9 @@ impl RustPrinter {
         Ok(quote!(
             #fun::<#(#args), *>
         ))
+    }
+    pub fn print_type_slice(&self, ty: &TypeSlice) -> eyre::Result<TokenStream> {
+        let elem = self.print_type(&*ty.elem)?;
+        Ok(quote!([#elem]))
     }
 }

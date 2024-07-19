@@ -17,7 +17,7 @@ common_enum! {
         Function(TypeFunction),
         ImplTraits(ImplTraits),
         TypeBounds(TypeBounds),
-        Value(ValueType),
+        Value(TypeValue),
         Tuple(TypeTuple),
         Vec(TypeVec),
         Any(TypeAny),
@@ -26,6 +26,7 @@ common_enum! {
         Nothing(TypeNothing),
         Type(TypeType),
         Reference(TypeReference),
+        Slice(TypeSlice),
         Expr(BExpr),
         AnyBox(AnyBox),
     }
@@ -61,7 +62,7 @@ impl AstType {
         match v {
             AstValue::Expr(expr) => Self::expr(*expr),
             AstValue::Type(ty) => ty,
-            _ => AstType::Value(ValueType::new(v).into()),
+            _ => AstType::Value(TypeValue::new(v).into()),
         }
     }
     pub fn path(path: crate::id::Path) -> AstType {
@@ -302,19 +303,25 @@ impl Display for TypeReference {
 }
 
 common_struct! {
-    pub struct ValueType {
+    pub struct TypeValue {
         pub value: BValue,
     }
 }
-impl ValueType {
+impl TypeValue {
     pub fn new(value: AstValue) -> Self {
         Self {
             value: value.into(),
         }
     }
 }
-impl Display for ValueType {
+impl Display for TypeValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(&self.value, f)
+    }
+}
+
+common_struct! {
+    pub struct TypeSlice {
+        pub elem: BType,
     }
 }

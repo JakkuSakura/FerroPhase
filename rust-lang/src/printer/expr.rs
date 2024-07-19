@@ -5,10 +5,10 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use lang_core::ast::{
-    AstExpr, BlockStmt, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField, ExprIf,
-    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprLet, ExprLoop, ExprMatch, ExprParen, ExprRange,
-    ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple, ExprUnOp,
-    ExprWhile, StmtLet,
+    AstExpr, BlockStmt, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField,
+    ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprLet, ExprLoop, ExprMatch, ExprParen,
+    ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple,
+    ExprUnOp, ExprWhile, StmtLet,
 };
 use lang_core::ops::{BinOpKind, UnOpKind};
 
@@ -52,6 +52,7 @@ impl RustPrinter {
             AstExpr::While(n) => self.print_while(n),
             AstExpr::Let(n) => self.print_expr_let(n),
             AstExpr::Closure(n) => self.print_expr_closure(n),
+            AstExpr::Array(n) => self.print_expr_array(n),
 
             _ => bail!("Unable to serialize {:?}", node),
         }
@@ -445,5 +446,13 @@ impl RustPrinter {
         let ret = self.print_return_type(closure.ret_ty.as_deref())?;
         let body = self.print_expr(&closure.body)?;
         Ok(quote!(#movability |#(#params),*| #ret #body))
+    }
+    fn print_expr_array(&self, array: &ExprArray) -> Result<TokenStream> {
+        let values: Vec<_> = array
+            .values
+            .iter()
+            .map(|x| self.print_expr(x))
+            .try_collect()?;
+        Ok(quote!([#(#values),*]))
     }
 }

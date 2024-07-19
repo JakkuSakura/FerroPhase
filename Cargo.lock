@@ -982,6 +982,7 @@ name = "javascript-lang"
 version = "0.1.0"
 dependencies = [
  "common",
+ "eyre",
  "lang-core",
  "swc_ecma_ast",
  "swc_ecma_codegen",

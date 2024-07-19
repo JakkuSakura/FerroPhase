@@ -4,7 +4,6 @@ use itertools::{zip_eq, Itertools};
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
 use lang_core::id::{Ident, Locator};
-use lang_core::pat::{Pattern, PatternIdent};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -89,13 +88,7 @@ impl SpecializePass {
             }
             let name = name.last().clone();
 
-            let binding = BlockStmt::Let(ExprLet {
-                pat: Pattern::Ident(PatternIdent {
-                    ident: name,
-                    mutability: Some(false),
-                }),
-                expr: Some(AstExpr::value(value)),
-            });
+            let binding = BlockStmt::Let(StmtLet::new_simple(name, AstExpr::value(value).into()));
             bindings.push(binding);
         }
 
@@ -112,7 +105,7 @@ impl SpecializePass {
 
         let mut ret = func.ret_ty.clone();
         match &ret {
-            AstType::Expr(expr) => match &**expr {
+            Some(AstType::Expr(expr)) => match &**expr {
                 AstExpr::Locator(Locator::Ident(ident))
                     if func
                         .generics_params
