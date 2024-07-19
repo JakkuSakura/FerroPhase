@@ -152,23 +152,7 @@ impl RustPrinter {
             _ => todo!("pattern not implemented: {:?}", pat),
         }
     }
-    // pub fn print_for_each(&self, for_each: &ExprForEach) -> Result<TokenStream> {
-    //     let name = self.print_ident(&for_each.variable);
-    //     let iter = self.print_expr(&for_each.iterable)?;
-    //     let body = self.print_block(&for_each.body)?;
-    //     Ok(quote!(
-    //         for #name in #iter
-    //             #body
-    //     ))
-    // }
-    // pub fn print_while(&self, while_: &ExprWhile) -> Result<TokenStream> {
-    //     let cond = self.print_expr(&while_.cond)?;
-    //     let body = self.print_block(&while_.body)?;
-    //     Ok(quote!(
-    //         while #cond
-    //             #body
-    //     ))
-    // }
+
     pub fn print_vis(&self, vis: Visibility) -> TokenStream {
         match vis {
             Visibility::Public => quote!(pub),
@@ -196,8 +180,7 @@ impl RustPrinter {
         } else {
             quote!()
         };
-        let ret_type = &sig.ret_ty;
-        let ret = self.print_return_type(ret_type)?;
+        let ret = self.print_return_type(sig.ret_ty.as_ref())?;
         let receiver = if let Some(receiver) = &sig.receiver {
             let rec = self.print_receiver(receiver)?;
             quote!(#rec,)
@@ -254,12 +237,13 @@ impl RustPrinter {
         let ty = self.print_type(&param.ty)?;
         Ok(quote!(#name: #ty))
     }
-    pub fn print_return_type(&self, node: &AstType) -> Result<TokenStream> {
-        if matches!(node, AstType::Unit(_)) {
-            return Ok(quote!());
+    pub fn print_return_type(&self, node: Option<&AstType>) -> Result<TokenStream> {
+        if let Some(node) = node {
+            let ty = self.print_type(node)?;
+            Ok(quote!(-> #ty))
+        } else {
+            Ok(quote!())
         }
-        let ty = self.print_type(&node)?;
-        Ok(quote!(-> #ty))
     }
     pub fn print_func_value(&self, fun: &ValueFunction) -> Result<TokenStream> {
         self.print_value_function(fun, Visibility::Private)
@@ -270,8 +254,7 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_type(x))
             .try_collect()?;
-        let node = &fun.ret_ty;
-        let ret = self.print_return_type(node)?;
+        let ret = self.print_return_type(fun.ret_ty.as_deref())?;
         Ok(quote!(
             fn(#(#args), *) #ret
         ))

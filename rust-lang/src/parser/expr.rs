@@ -1,10 +1,12 @@
 use crate::parser::item::parse_item;
-use crate::parser::ty::parse_member;
+use crate::parser::parse_pat;
+use crate::parser::ty::{parse_member, parse_type};
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
 use common::warn;
 use eyre::bail;
 use itertools::Itertools;
 use lang_core::ast::*;
+use lang_core::id::Ident;
 use lang_core::ops::{BinOpKind, UnOpKind};
 use lang_core::utils::anybox::AnyBox;
 use quote::ToTokens;
@@ -28,12 +30,64 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
         syn::Expr::Struct(s) => AstExpr::Struct(parse_expr_struct(s)?.into()),
         syn::Expr::Paren(p) => AstExpr::Paren(parse_expr_paren(p)?),
         syn::Expr::Range(r) => AstExpr::Range(parse_expr_range(r)?),
+        syn::Expr::Field(f) => AstExpr::Select(parse_expr_field(f)?.into()),
+        syn::Expr::Try(t) => AstExpr::Try(parse_expr_try(t)?),
+        syn::Expr::While(w) => AstExpr::While(parse_expr_while(w)?),
+        syn::Expr::Let(l) => AstExpr::Let(parse_expr_let(l)?),
+        syn::Expr::Closure(c) => AstExpr::Closure(parse_expr_closure(c)?),
         raw => {
             warn!("RawExpr {:?}", raw);
             AstExpr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };
     Ok(expr)
+}
+fn parse_expr_closure(c: syn::ExprClosure) -> eyre::Result<ExprClosure> {
+    let movability = c.movability.is_some();
+    let params: Vec<_> = c.inputs.into_iter().map(|x| parse_pat(x)).try_collect()?;
+    let ret_ty = match c.output {
+        syn::ReturnType::Default => None,
+        syn::ReturnType::Type(_, ty) => Some(parse_type(*ty)?.into()),
+    };
+    let body = parse_expr(*c.body)?.into();
+    Ok(ExprClosure {
+        movability: Some(movability),
+        params,
+        ret_ty,
+        body,
+    })
+}
+fn parse_expr_let(l: syn::ExprLet) -> eyre::Result<ExprLet> {
+    Ok(ExprLet {
+        pat: parse_pat(*l.pat)?.into(),
+        expr: parse_expr(*l.expr)?.into(),
+    })
+}
+fn parse_expr_while(w: syn::ExprWhile) -> eyre::Result<ExprWhile> {
+    Ok(ExprWhile {
+        cond: parse_expr(*w.cond)?.into(),
+        body: AstExpr::Block(parse_block(w.body)?).into(),
+    })
+}
+fn parse_expr_try(t: syn::ExprTry) -> eyre::Result<ExprTry> {
+    Ok(ExprTry {
+        expr: parse_expr(*t.expr)?.into(),
+    })
+}
+fn parse_expr_field(f: syn::ExprField) -> eyre::Result<ExprSelect> {
+    let obj = parse_expr(*f.base)?.into();
+    let field = parse_field_member(f.member);
+    Ok(ExprSelect {
+        obj,
+        field,
+        select: ExprSelectType::Field,
+    })
+}
+pub fn parse_field_member(f: syn::Member) -> Ident {
+    match f {
+        syn::Member::Named(n) => parser::parse_ident(n),
+        syn::Member::Unnamed(n) => Ident::new(n.index.to_string()),
+    }
 }
 pub fn parse_literal(lit: syn::Lit) -> eyre::Result<AstValue> {
     Ok(match lit {
@@ -62,17 +116,18 @@ pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
 /// returns: statement, with_semicolon
 pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
     Ok(match stmt {
-        syn::Stmt::Local(l) => (
-            BlockStmt::Let(StmtLet {
-                pat: parser::parse_pat(l.pat)?,
-                init: l
-                    .init
-                    .map(|i| parse_expr(*i.expr))
-                    .transpose()?
-                    .map(|x| x.into()),
-            }),
-            true,
-        ),
+        syn::Stmt::Local(l) => {
+            let pat = parse_pat(l.pat)?;
+            let (init, diverge) = match l.init {
+                Some(init) => {
+                    let init1 = parse_expr(*init.expr)?;
+                    let diverge = init.diverge.map(|x| parse_expr(*x.1)).transpose()?;
+                    (Some(init1), diverge)
+                }
+                None => (None, None),
+            };
+            (BlockStmt::Let(StmtLet { pat, init, diverge }), true)
+        }
         syn::Stmt::Item(tm) => (parse_item(tm).map(BlockStmt::item)?, true),
         syn::Stmt::Expr(e, semicolon) => {
             if let syn::Expr::Verbatim(v) = &e {

@@ -1,4 +1,4 @@
-use crate::ast::{AstExpr, ExprClosure, Visibility};
+use crate::ast::{AstExpr, ExprClosured, Visibility};
 use crate::ast::{AstType, AstValue, ValueFunction};
 use crate::id::{Ident, Path};
 use common::*;
@@ -213,7 +213,7 @@ impl SharedScopedContext {
         storage.with_storage(|storage| {
             let expr = storage.value.clone().map(AstExpr::value)?;
             if let Some(closure) = storage.closure.clone() {
-                return Some(ExprClosure::new(Self(closure), expr.into()).into());
+                return Some(ExprClosured::new(Self(closure), expr.into()).into());
             }
             Some(expr)
         })
