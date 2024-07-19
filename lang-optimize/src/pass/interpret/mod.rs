@@ -505,8 +505,8 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_let(&self, node: &StmtLet, ctx: &SharedScopedContext) -> Result<AstValue> {
-        if let Some(init) = &node.init {
+    pub fn interpret_let(&self, node: &ExprLet, ctx: &SharedScopedContext) -> Result<AstValue> {
+        if let Some(init) = &node.expr {
             let value = self.interpret_expr(&init, ctx)?;
             ctx.insert_value(
                 node.pat.as_ident().context("Only supports ident")?.as_str(),
@@ -530,11 +530,11 @@ impl InterpreterPass {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         match node {
             BlockStmt::Let(n) => self.interpret_let(n, ctx).map(|_| None),
-            BlockStmt::Expr(n) => self.interpret_expr(n, ctx).map(|x| {
-                if matches!(x, AstValue::Unit(_)) {
-                    None
-                } else {
+            BlockStmt::Expr(n) => self.interpret_expr(&n.expr, ctx).map(|x| {
+                if n.semicolon == Some(false) {
                     Some(x)
+                } else {
+                    None
                 }
             }),
             BlockStmt::Item(_) => Ok(None),

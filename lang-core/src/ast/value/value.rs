@@ -1,16 +1,18 @@
-use crate::ast::{get_threadlocal_serializer, BExpr, TypeUnit};
-use crate::ast::{AstType, AstValue, TypeBounds, TypeStruct};
-use crate::id::Ident;
-use crate::utils::to_json::ToJson;
-use crate::{common_enum, common_struct};
+use std::fmt::{Debug, Display, Formatter};
+use std::hash::{Hash, Hasher};
+use std::ops::{Add, Deref, DerefMut, Mul, Sub};
+
 use bytes::BytesMut;
 use common::*;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::ops::{Add, Deref, DerefMut, Mul, Sub};
+
+use crate::ast::{get_threadlocal_serializer, BExpr};
+use crate::ast::{AstType, AstValue, TypeBounds, TypeStruct};
+use crate::id::Ident;
+use crate::utils::to_json::ToJson;
+use crate::{common_enum, common_struct};
 
 /// wrap struct declare with derive Debug, Clone, Serialize, Deserialize,
 /// PartialEq, Eq,
@@ -551,7 +553,7 @@ common_struct! {
         pub receiver: Option<FunctionParamReceiver>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
-        pub ret_ty: AstType,
+        pub ret_ty: Option<AstType>,
     }
 }
 impl FunctionSignature {
@@ -561,7 +563,7 @@ impl FunctionSignature {
             receiver: None,
             params: vec![],
             generics_params: vec![],
-            ret_ty: AstType::Unit(TypeUnit),
+            ret_ty: None,
         }
     }
 }

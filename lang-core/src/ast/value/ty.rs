@@ -249,7 +249,7 @@ common_struct! {
     pub struct TypeFunction {
         pub params: Vec<AstType>,
         pub generics_params: Vec<GenericParam>,
-        pub ret_ty: BType,
+        pub ret_ty: Option<BType>,
     }
 }
 common_struct! {
