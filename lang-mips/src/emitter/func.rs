@@ -40,7 +40,7 @@ impl MipsEmitter {
         }
 
         // emit function body
-        let ret = self.emit_expr(&func.value.body, ctx)?;
+        let ret = self.emit_expr(&func.body, ctx)?;
         instructions.extend(ret.instructions);
         // push return value to stack
         // instructions.extend(self.emit_push_stack(ret.ret.get()));
