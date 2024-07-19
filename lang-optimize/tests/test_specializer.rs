@@ -1,13 +1,13 @@
 use common::*;
 use lang_core::ast::*;
 use lang_core::context::SharedScopedContext;
-use lang_core::register_threadlocal_serializer;
 use lang_optimize::pass::{FoldOptimizer, SpecializePass};
-use rust_lang::{shll_parse_expr, RustSerde};
+use rust_lang::printer::RustPrinter;
+use rust_lang::shll_parse_expr;
 use std::sync::Arc;
 
 fn specialize_shll_expr(mut expr: AstExpr) -> Result<AstExpr> {
-    let serializer = Arc::new(RustSerde::new());
+    let serializer = Arc::new(RustPrinter::new());
     let optimizer = FoldOptimizer::new(
         serializer.clone(),
         Box::new(SpecializePass::new(serializer.clone())),
@@ -20,7 +20,7 @@ fn specialize_shll_expr(mut expr: AstExpr) -> Result<AstExpr> {
 
 #[test]
 fn test_specialize_arithmetics() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
         1 + 2 * 3
@@ -32,7 +32,7 @@ fn test_specialize_arithmetics() -> Result<()> {
 }
 #[test]
 fn test_specialize_function_call() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {{
         fn foo(a: i64, b: i64) -> i64 {
@@ -59,7 +59,7 @@ fn test_specialize_function_call() -> Result<()> {
 }
 #[test]
 fn test_specialize_function_call_in_main() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustSerde::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {{
         fn foo(a: i64, b: i64) -> i64 {

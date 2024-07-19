@@ -9,6 +9,8 @@ edition = "2021"
 lang-core = { path = "../lang-core" }
 common = { workspace = true }
 eyre = "0.6.12"
+itertools = "0.13.0"
+
 swc_ecma_ast = "0.110"
 swc_ecma_quote = "0.57"
 swc_ecma_codegen = "0.146"

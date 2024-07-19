@@ -1,7 +1,7 @@
 use eyre::{bail, Result};
 
-use lang_core::ast::{AstValue, Type, TypeInt, TypePrimitive};
-use lang_core::ast::{Expr, ExprBinOp, ExprBlock, ExprIf, ExprInvoke, ExprInvokeTarget, ExprLoop};
+use lang_core::ast::{AstExpr, AstType, AstValue, TypeInt, TypePrimitive};
+use lang_core::ast::{ExprBinOp, ExprBlock, ExprIf, ExprInvoke, ExprInvokeTarget, ExprLoop};
 use lang_core::context::SharedScopedContext;
 use lang_core::ops::BinOpKind;
 
@@ -75,11 +75,11 @@ impl MipsEmitter {
         op: BinOpKind,
         lhs: MipsRegisterOwned,
         rhs: MipsRegisterOwned,
-        ty: Type,
+        ty: AstType,
         _ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
         match ty {
-            Type::Primitive(TypePrimitive::Int(TypeInt::I32)) => {
+            AstType::Primitive(TypePrimitive::Int(TypeInt::I32)) => {
                 self.emit_binop_int(op, lhs, rhs, _ctx)
             }
             _ => bail!("Unsupported type {}", ty),
@@ -114,7 +114,7 @@ impl MipsEmitter {
             binop.kind.clone(),
             lhs.ret,
             rhs.ret,
-            Type::Primitive(TypePrimitive::Int(TypeInt::I32)),
+            AstType::Primitive(TypePrimitive::Int(TypeInt::I32)),
             ctx,
         )?;
         let result = MipsEmitExprResult::new(
@@ -190,8 +190,8 @@ impl MipsEmitter {
         for stmt in &block.stmts {
             ins.extend(self.emit_statement(stmt, ctx)?.instructions);
         }
-        let ret = if let Some(ret) = &block.ret {
-            self.emit_expr(ret, ctx)?
+        let ret = if let Some(expr) = &block.expr {
+            self.emit_expr(&*expr, ctx)?
         } else {
             MipsEmitExprResult::new(MipsRegisterOwned::zero(), vec![])
         };
@@ -211,16 +211,16 @@ impl MipsEmitter {
 
     pub fn emit_expr(
         &mut self,
-        expr: &Expr,
+        expr: &AstExpr,
         ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
         match expr {
-            Expr::Value(value) => self.emit_value(value, ctx),
-            Expr::BinOp(op) => self.emit_binop(op, ctx),
-            Expr::Loop(l) => self.emit_loop(l, ctx),
-            Expr::If(if_) => self.emit_if(if_, ctx),
-            Expr::Block(b) => self.emit_block(b, ctx),
-            Expr::Invoke(x) => self.emit_invoke(x, ctx),
+            AstExpr::Value(value) => self.emit_value(value, ctx),
+            AstExpr::BinOp(op) => self.emit_binop(op, ctx),
+            AstExpr::Loop(l) => self.emit_loop(l, ctx),
+            AstExpr::If(if_) => self.emit_if(if_, ctx),
+            AstExpr::Block(b) => self.emit_block(b, ctx),
+            AstExpr::Invoke(x) => self.emit_invoke(x, ctx),
             _ => bail!("Unsupported expr {}", expr),
         }
     }

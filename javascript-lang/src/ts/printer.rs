@@ -1,28 +1,30 @@
+use std::io::{Cursor, Write};
+use std::sync::{Arc, Mutex};
+
 use common::bail;
 use eyre::Result;
-use lang_core::ast::{AstSerializer, EnumTypeVariant, TypeEnum, TypeValue};
-use lang_core::id::Ident;
-use std::cell::RefCell;
-use std::io::{Cursor, Write};
-use std::rc::Rc;
+use itertools::Itertools;
 use swc_ecma_ast::{Script, TsEnumDecl, TsEnumMemberId};
 use swc_ecma_codegen::text_writer::JsWriter;
 use swc_ecma_codegen::Emitter;
 use swc_ecma_quote::swc_common::sync::Lrc;
 use swc_ecma_quote::swc_common::{SourceMap, DUMMY_SP};
 
+use lang_core::ast::{AstSerializer, AstType, EnumTypeVariant, TypeEnum};
+use lang_core::id::Ident;
+
 #[derive(Clone)]
 struct SharedWriter {
-    wr: Rc<RefCell<Cursor<Vec<u8>>>>,
+    wr: Arc<Mutex<Cursor<Vec<u8>>>>,
 }
 impl SharedWriter {
     pub fn new() -> Self {
         Self {
-            wr: Rc::new(RefCell::new(Cursor::new(Vec::new()))),
+            wr: Arc::new(Mutex::new(Cursor::new(Vec::new()))),
         }
     }
     pub fn take_string(&self) -> String {
-        let vec = std::mem::take(self.wr.borrow_mut().get_mut());
+        let vec = std::mem::take(self.wr.lock().unwrap().get_mut());
         String::from_utf8(vec).unwrap()
     }
 }
@@ -32,11 +34,11 @@ impl Write for SharedWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.wr.borrow_mut().flush()
+        self.wr.lock().unwrap().flush()
     }
 }
 pub struct TsPrinter {
-    emitter: RefCell<Emitter<'static, JsWriter<'static, SharedWriter>, SourceMap>>,
+    emitter: Mutex<Emitter<'static, JsWriter<'static, SharedWriter>, SourceMap>>,
     writer: SharedWriter,
 }
 impl TsPrinter {
@@ -44,7 +46,7 @@ impl TsPrinter {
         let writer = SharedWriter::new();
         let source_map = Lrc::new(SourceMap::default());
         Self {
-            emitter: RefCell::new(Emitter {
+            emitter: Mutex::new(Emitter {
                 cfg: Default::default(),
                 cm: source_map.clone(),
                 comments: None,
@@ -79,14 +81,14 @@ impl TsPrinter {
         })
     }
     pub fn print_script(&self, script: &Script) -> Result<String> {
-        self.emitter.borrow_mut().emit_script(script)?;
+        self.emitter.lock().unwrap().emit_script(script)?;
         Ok(self.writer.take_string())
     }
 }
 impl AstSerializer for TsPrinter {
-    fn serialize_type(&self, node: &TypeValue) -> Result<String> {
+    fn serialize_type(&self, node: &AstType) -> Result<String> {
         match node {
-            TypeValue::Enum(decl) => {
+            AstType::Enum(decl) => {
                 let decl = self.to_enum(decl)?;
 
                 self.print_script(&Script {
