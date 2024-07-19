@@ -2,6 +2,7 @@ mod attr;
 mod expr;
 mod item;
 pub mod macros;
+mod pat;
 mod ty;
 
 use crate::parser::expr::parse_block;
@@ -11,10 +12,7 @@ use common::*;
 use itertools::Itertools;
 use lang_core::ast::*;
 use lang_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use lang_core::pat::{
-    Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
-};
-use quote::ToTokens;
+
 use std::path::PathBuf;
 use syn::parse_str;
 use syn_inline_mod::InlinerBuilder;
@@ -71,61 +69,6 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
     }
     let path = parse_parameter_path(p.clone())?;
     return Ok(Locator::parameter_path(path));
-}
-
-pub fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
-    Ok(ImplTraits {
-        bounds: ty::parse_type_param_bounds(im.bounds.into_iter().collect())?,
-    })
-}
-
-pub fn parse_pat_ident(i: syn::PatIdent) -> Result<PatternIdent> {
-    Ok(PatternIdent {
-        ident: parse_ident(i.ident),
-        mutability: Some(i.mutability.is_some()),
-    })
-}
-pub fn parse_pat(p: syn::Pat) -> Result<Pattern> {
-    Ok(match p {
-        syn::Pat::Ident(ident) => parse_pat_ident(ident)?.into(),
-        syn::Pat::Wild(_) => Pattern::Wildcard(PatternWildcard {}),
-        syn::Pat::TupleStruct(t) => Pattern::TupleStruct(PatternTupleStruct {
-            name: parse_locator(t.path)?,
-            patterns: t.elems.into_iter().map(parse_pat).try_collect()?,
-        }),
-        syn::Pat::Tuple(t) => Pattern::Tuple(PatternTuple {
-            patterns: t.elems.into_iter().map(parse_pat).try_collect()?,
-        }),
-        syn::Pat::Type(p) => Pattern::Type(PatternType {
-            pat: parse_pat(*p.pat)?.into(),
-            ty: ty::parse_type(*p.ty)?,
-        }),
-        _ => bail!("Pattern not supported {}: {:?}", p.to_token_stream(), p),
-    })
-}
-
-pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
-    match f {
-        syn::TraitItem::Fn(f) => {
-            let name = parse_ident(f.sig.ident.clone());
-            Ok(ItemDeclFunction {
-                name,
-                sig: parse_fn_sig(f.sig)?,
-            }
-            .into())
-        }
-        syn::TraitItem::Type(t) => {
-            let name = parse_ident(t.ident);
-            let bounds = ty::parse_type_param_bounds(t.bounds.into_iter().collect())?;
-            Ok(ItemDeclType { name, bounds }.into())
-        }
-        syn::TraitItem::Const(c) => {
-            let name = parse_ident(c.ident);
-            let ty = ty::parse_type(c.ty)?;
-            Ok(ItemDeclConst { name, ty }.into())
-        }
-        _ => bail!("Does not support trait item {:?}", f),
-    }
 }
 
 fn parse_vis(v: syn::Visibility) -> Visibility {

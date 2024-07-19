@@ -41,6 +41,7 @@ common_enum! {
         Try(ExprTry),
         Let(ExprLet),
         Closure(ExprClosure),
+        Array(ExprArray),
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosured),
         Paren(ExprParen),

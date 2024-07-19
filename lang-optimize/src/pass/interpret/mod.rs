@@ -370,7 +370,11 @@ impl InterpreterPass {
             receiver: None,
             params,
             generics_params: node.generics_params.clone(),
-            ret_ty: self.interpret_type(&node.ret_ty, &sub)?,
+            ret_ty: if let Some(ret_ty) = &node.sig.ret_ty {
+                Some(self.interpret_type(ret_ty, &sub)?)
+            } else {
+                None
+            },
         };
 
         Ok(ValueFunction {
@@ -505,8 +509,8 @@ impl InterpreterPass {
         }
     }
 
-    pub fn interpret_let(&self, node: &ExprLet, ctx: &SharedScopedContext) -> Result<AstValue> {
-        if let Some(init) = &node.expr {
+    pub fn interpret_let(&self, node: &StmtLet, ctx: &SharedScopedContext) -> Result<AstValue> {
+        if let Some(init) = &node.init {
             let value = self.interpret_expr(&init, ctx)?;
             ctx.insert_value(
                 node.pat.as_ident().context("Only supports ident")?.as_str(),
