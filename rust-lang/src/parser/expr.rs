@@ -1,5 +1,5 @@
 use crate::parser::item::parse_item;
-use crate::parser::parse_pat;
+use crate::parser::pat::parse_pat;
 use crate::parser::ty::{parse_member, parse_type};
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
 use common::warn;
@@ -35,12 +35,18 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
         syn::Expr::While(w) => AstExpr::While(parse_expr_while(w)?),
         syn::Expr::Let(l) => AstExpr::Let(parse_expr_let(l)?),
         syn::Expr::Closure(c) => AstExpr::Closure(parse_expr_closure(c)?),
+        syn::Expr::Array(a) => AstExpr::Array(parse_expr_array(a)?),
         raw => {
             warn!("RawExpr {:?}", raw);
             AstExpr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };
     Ok(expr)
+}
+fn parse_expr_array(a: syn::ExprArray) -> eyre::Result<ExprArray> {
+    Ok(ExprArray {
+        values: a.elems.into_iter().map(parse_expr).try_collect()?,
+    })
 }
 fn parse_expr_closure(c: syn::ExprClosure) -> eyre::Result<ExprClosure> {
     let movability = c.movability.is_some();

@@ -7,8 +7,9 @@ use lang_core::id::Locator;
 
 use crate::parser::attr::parse_attrs;
 use crate::parser::expr::parse_expr;
-use crate::parser::ty::{parse_struct_field, parse_type};
-use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis, ty};
+use crate::parser::pat::parse_pat;
+use crate::parser::ty::{parse_struct_field, parse_type, parse_type_param_bounds};
+use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis};
 use crate::{parser, RawItemMacro};
 
 fn parse_fn_arg_receiver(r: syn::Receiver) -> eyre::Result<FunctionParamReceiver> {
@@ -23,10 +24,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
     Ok(match i {
         FnArg::Receiver(_) => None,
         FnArg::Typed(t) => Some(FunctionParam {
-            name: parser::parse_pat(*t.pat)?
-                .as_ident()
-                .context("No ident")?
-                .clone(),
+            name: parse_pat(*t.pat)?.as_ident().context("No ident")?.clone(),
             ty: parse_type(*t.ty)?,
         }),
     })
@@ -40,7 +38,7 @@ pub fn parse_fn_sig(sig: syn::Signature) -> eyre::Result<FunctionSignature> {
         .map(|x| match x {
             syn::GenericParam::Type(t) => Ok(GenericParam {
                 name: parse_ident(t.ident),
-                bounds: ty::parse_type_param_bounds(t.bounds.into_iter().collect())?,
+                bounds: parse_type_param_bounds(t.bounds.into_iter().collect())?,
             }),
             _ => bail!("Does not generic param {:?}", x),
         })
@@ -113,7 +111,7 @@ pub fn parse_type_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
 
 fn parse_item_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
     // TODO: generis params
-    let bounds = ty::parse_type_param_bounds(t.supertraits.into_iter().collect())?;
+    let bounds = parse_type_param_bounds(t.supertraits.into_iter().collect())?;
     let vis = parse_vis(t.vis);
     Ok(ItemDefTrait {
         name: parse_ident(t.ident),
@@ -121,7 +119,7 @@ fn parse_item_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
         items: t
             .items
             .into_iter()
-            .map(|x| parser::parse_trait_item(x))
+            .map(|x| parse_trait_item(x))
             .try_collect()?,
         visibility: vis,
     })
@@ -165,13 +163,13 @@ fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
         visibility: vis,
     })
 }
-fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefStatic> {
+fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefConst> {
     let vis = parse_vis(s.vis);
     let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?.into();
-    Ok(ItemDefStatic {
+    Ok(ItemDefConst {
         name: parse_ident(s.ident),
-        ty,
+        ty: ty.into(),
         value,
         visibility: vis,
     })
@@ -268,7 +266,7 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
 
         syn::Item::Const(s) => {
             let s = parse_item_const(s)?;
-            AstItem::DefStatic(s)
+            AstItem::DefConst(s)
         }
         syn::Item::Static(s) => {
             let s = parse_item_static(s)?;
@@ -277,4 +275,33 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
         _ => bail!("Does not support item yet: {:?}", item),
     };
     Ok(item)
+}
+
+pub fn parse_impl_trait(im: syn::TypeImplTrait) -> eyre::Result<ImplTraits> {
+    Ok(ImplTraits {
+        bounds: parse_type_param_bounds(im.bounds.into_iter().collect())?,
+    })
+}
+pub fn parse_trait_item(f: syn::TraitItem) -> eyre::Result<AstItem> {
+    match f {
+        syn::TraitItem::Fn(f) => {
+            let name = parse_ident(f.sig.ident.clone());
+            Ok(ItemDeclFunction {
+                name,
+                sig: parse_fn_sig(f.sig)?,
+            }
+            .into())
+        }
+        syn::TraitItem::Type(t) => {
+            let name = parse_ident(t.ident);
+            let bounds = parse_type_param_bounds(t.bounds.into_iter().collect())?;
+            Ok(ItemDeclType { name, bounds }.into())
+        }
+        syn::TraitItem::Const(c) => {
+            let name = parse_ident(c.ident);
+            let ty = parse_type(c.ty)?;
+            Ok(ItemDeclConst { name, ty }.into())
+        }
+        _ => bail!("Does not support trait item {:?}", f),
+    }
 }
