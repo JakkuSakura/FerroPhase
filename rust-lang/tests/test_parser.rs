@@ -146,7 +146,7 @@ fn test_parse_if() -> Result<()> {
 #[test]
 fn test_parse_block_if() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    // TODO: check for semicolon
+
     let code = shll_parse_expr! {
         {
             if true {
@@ -223,5 +223,52 @@ fn test_parse_static() -> Result<()> {
         })
     );
     println!("{}", code);
+    Ok(())
+}
+#[test]
+fn test_parse_fn_self() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+    let code = shll_parse_item! {
+        fn foo(&self) {}
+    };
+
+    assert_eq!(
+        code,
+        AstItem::DefFunction(ItemDefFunction {
+            attrs: vec![],
+            name: "foo".into(),
+            ty: None,
+            sig: FunctionSignature {
+                name: Some("foo".into()),
+                receiver: Some(FunctionParamReceiver::Ref),
+                params: vec![],
+                generics_params: vec![],
+                ret_ty: None
+            },
+            body: AstExpr::Block(ExprBlock::new()).into(),
+            visibility: Visibility::Private,
+        })
+    );
+    let code = shll_parse_item! {
+        fn foo(&'static self) {}
+    };
+
+    assert_eq!(
+        code,
+        AstItem::DefFunction(ItemDefFunction {
+            attrs: vec![],
+            name: "foo".into(),
+            ty: None,
+            sig: FunctionSignature {
+                name: Some("foo".into()),
+                receiver: Some(FunctionParamReceiver::RefStatic),
+                params: vec![],
+                generics_params: vec![],
+                ret_ty: None
+            },
+            body: AstExpr::Block(ExprBlock::new()).into(),
+            visibility: Visibility::Private,
+        })
+    );
     Ok(())
 }

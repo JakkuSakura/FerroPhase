@@ -13,11 +13,18 @@ use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis};
 use crate::{parser, RawItemMacro};
 
 fn parse_fn_arg_receiver(r: syn::Receiver) -> eyre::Result<FunctionParamReceiver> {
-    match (r.reference, r.mutability) {
-        (Some(_), Some(_)) => Ok(FunctionParamReceiver::RefMut),
-        (Some(_), None) => Ok(FunctionParamReceiver::Ref),
+    // let ty = parse_type(*r.ty)?;
+    // TODO: check if ty is correct
+    match (&r.reference, &r.mutability) {
+        (Some((_, None)), Some(_)) => Ok(FunctionParamReceiver::RefMut),
+        (Some((_, Some(lf))), Some(_)) if lf.ident == "static" => {
+            Ok(FunctionParamReceiver::RefMutStatic)
+        }
+        (Some((_, None)), None) => Ok(FunctionParamReceiver::Ref),
+        (Some((_, Some(lf))), None) if lf.ident == "static" => Ok(FunctionParamReceiver::RefStatic),
         (None, Some(_)) => Ok(FunctionParamReceiver::MutValue),
         (None, None) => Ok(FunctionParamReceiver::Value),
+        _ => bail!("Does not support receiver {:?}", r),
     }
 }
 pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
