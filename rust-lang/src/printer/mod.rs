@@ -164,9 +164,11 @@ impl RustPrinter {
         match receiver {
             FunctionParamReceiver::Implicit => bail!("Implicit receiver not supported"),
             FunctionParamReceiver::Value => Ok(quote!(self)),
-            FunctionParamReceiver::Ref => Ok(quote!(&self)),
-            FunctionParamReceiver::RefMut => Ok(quote!(&mut self)),
             FunctionParamReceiver::MutValue => Ok(quote!(mut self)),
+            FunctionParamReceiver::Ref => Ok(quote!(&self)),
+            FunctionParamReceiver::RefStatic => Ok(quote!(&'static self)),
+            FunctionParamReceiver::RefMut => Ok(quote!(&mut self)),
+            FunctionParamReceiver::RefMutStatic => Ok(quote!(&'static mut self)),
         }
     }
     pub fn print_function(
