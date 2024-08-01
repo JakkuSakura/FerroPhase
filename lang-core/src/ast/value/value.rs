@@ -523,7 +523,9 @@ common_enum! {
         Value,
         MutValue,
         Ref,
-        RefMut
+        RefStatic,
+        RefMut,
+        RefMutStatic
     }
 }
 
