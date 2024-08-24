@@ -2,7 +2,7 @@ use eyre::bail;
 use eyre::Result;
 use itertools::Itertools;
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 use lang_core::ast::{
     AstExpr, BlockStmt, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField,
@@ -23,8 +23,8 @@ impl RustPrinter {
         }
     }
     pub fn print_expr_id(&self, id: u64) -> Result<TokenStream> {
-        let num = syn::LitInt::new(&id.to_string(), proc_macro2::Span::call_site());
-        Ok(quote!(Expr # #num))
+        let ident = format_ident!("_expr_{}", id);
+        Ok(quote!(#ident))
     }
     pub fn print_expr(&self, node: &AstExpr) -> Result<TokenStream> {
         match node {
@@ -111,7 +111,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_index(&self, index: &ExprIndex) -> Result<TokenStream> {
-        let expr = self.print_expr(&index.expr.get())?;
+        let expr = self.print_expr(&index.obj.get())?;
         let index = self.print_expr(&index.index.get())?;
         Ok(quote!(
             #expr[#index]
