@@ -72,7 +72,7 @@ common_struct! {
 
 common_struct! {
     pub struct ExprIndex {
-        pub expr: BExpr,
+        pub obj: BExpr,
         pub index: BExpr,
     }
 }

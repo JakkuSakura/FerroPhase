@@ -198,16 +198,16 @@ pub fn parse_expr_method_call(call: syn::ExprMethodCall) -> eyre::Result<ExprInv
                 field: parser::parse_ident(call.method),
                 select: ExprSelectType::Method,
             }
-            .into(),
+                .into(),
         )
-        .into(),
+            .into(),
         args: call.args.into_iter().map(parse_expr).try_collect()?,
     })
 }
 
 pub fn parse_expr_index(i: syn::ExprIndex) -> eyre::Result<ExprIndex> {
     Ok(ExprIndex {
-        expr: parse_expr(*i.expr)?.into(),
+        obj: parse_expr(*i.expr)?.into(),
         index: parse_expr(*i.index)?.into(),
     })
 }
