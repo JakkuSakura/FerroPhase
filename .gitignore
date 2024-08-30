@@ -9,3 +9,5 @@ target
 .vscode
 project/project
 .metals
+.DS_Store
+
