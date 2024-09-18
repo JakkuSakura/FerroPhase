@@ -187,10 +187,10 @@ impl MipsEmitter {
         ctx: &SharedScopedContext,
     ) -> Result<MipsEmitExprResult> {
         let mut ins = vec![];
-        for stmt in &block.stmts {
+        for stmt in block.first_stmts() {
             ins.extend(self.emit_statement(stmt, ctx)?.instructions);
         }
-        let ret = if let Some(expr) = &block.expr {
+        let ret = if let Some(expr) = &block.last_expr() {
             self.emit_expr(&*expr, ctx)?
         } else {
             MipsEmitExprResult::new(MipsRegisterOwned::zero(), vec![])

@@ -94,15 +94,14 @@ impl InterpreterPass {
     }
     pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<AstValue> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
-        for (i, stmt) in node.stmts.iter().enumerate() {
-            let ret = self.interpret_stmt(&stmt, &ctx)?;
-            if let Some(ret) = ret {
-                if i == node.stmts.len() - 1 {
-                    return Ok(ret);
-                }
-            }
+        for stmt in node.first_stmts() {
+            self.interpret_stmt(&stmt, &ctx)?;
         }
-        Ok(AstValue::unit())
+        if let Some(expr) = node.last_expr() {
+            self.interpret_expr(&expr, &ctx)
+        } else {
+            Ok(AstValue::unit())
+        }
     }
 
     pub fn interpret_cond(&self, node: &ExprMatch, ctx: &SharedScopedContext) -> Result<AstValue> {
@@ -141,7 +140,7 @@ impl InterpreterPass {
         ctx: &SharedScopedContext,
         resolve: bool,
     ) -> Result<AstValue> {
-        return match ident.as_str() {
+        match ident.as_str() {
             // TODO: can we remove these?
             "+" if resolve => Ok(AstValue::any(builtin_add())),
             "-" if resolve => Ok(AstValue::any(builtin_sub())),
@@ -165,7 +164,7 @@ impl InterpreterPass {
                 ctx.get_value_recursive(ident)
                     .with_context(|| format!("could not find {:?} in context", ident.name))
             }
-        };
+        }
     }
     pub fn lookup_bin_op_kind(&self, op: BinOpKind) -> Result<BuiltinFn> {
         match op {
@@ -534,13 +533,17 @@ impl InterpreterPass {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         match node {
             BlockStmt::Let(n) => self.interpret_let(n, ctx).map(|_| None),
-            BlockStmt::Expr(n) => self.interpret_expr(&n.expr, ctx).map(|x| {
-                if n.semicolon == Some(false) {
-                    Some(x)
-                } else {
-                    None
-                }
-            }),
+            BlockStmt::Expr(n) => {
+                self.interpret_expr(&n.expr, ctx).map(
+                    |x| {
+                        if n.has_value() {
+                            Some(x)
+                        } else {
+                            None
+                        }
+                    },
+                )
+            }
             BlockStmt::Item(_) => Ok(None),
             _ => bail!("Failed to interpret {:?}", node),
         }

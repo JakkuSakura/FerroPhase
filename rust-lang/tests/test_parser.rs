@@ -57,7 +57,6 @@ fn test_parse_block_noop() -> Result<()> {
         code,
         AstExpr::Block(ExprBlock {
             stmts: vec![BlockStmt::Noop, BlockStmt::Noop, BlockStmt::Noop],
-            expr: None,
         })
     );
     Ok(())
@@ -130,10 +129,10 @@ fn test_parse_if() -> Result<()> {
             elze: Some(
                 AstExpr::If(ExprIf {
                     cond: AstExpr::value(AstValue::bool(false)).into(),
-                    then: AstExpr::Block(
-                        ExprBlock::new_stmts(vec![BlockStmt::Noop])
-                            .with_expr(AstExpr::Block(ExprBlock::new()).into())
-                    )
+                    then: AstExpr::Block(ExprBlock::new_stmts_expr(
+                        vec![BlockStmt::Noop,],
+                        AstExpr::Block(ExprBlock::new())
+                    ))
                     .into(),
                     elze: None,
                 })
