@@ -155,22 +155,13 @@ pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
 pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
     // info!("Parsing block {:?}", block);
     let mut stmts = vec![];
-    let mut last_with_semicolon = true;
+
     for stmt in block.stmts.into_iter() {
-        let (stmt, with_semicolon) = parse_stmt(stmt)?;
+        let (stmt, _with_semicolon) = parse_stmt(stmt)?;
         stmts.push(stmt);
-        last_with_semicolon = with_semicolon;
     }
-    let expr = if !last_with_semicolon {
-        let expr = match stmts.pop().unwrap() {
-            BlockStmt::Expr(e) => e,
-            x => bail!("Last statement should be expr, but got {:?}", x),
-        };
-        Some(expr.expr.into())
-    } else {
-        None
-    };
-    Ok(ExprBlock { stmts, expr })
+
+    Ok(ExprBlock::new_stmts(stmts))
 }
 
 pub fn parse_expr_reference(item: syn::ExprReference) -> eyre::Result<ExprReference> {
@@ -198,9 +189,9 @@ pub fn parse_expr_method_call(call: syn::ExprMethodCall) -> eyre::Result<ExprInv
                 field: parser::parse_ident(call.method),
                 select: ExprSelectType::Method,
             }
-                .into(),
-        )
             .into(),
+        )
+        .into(),
         args: call.args.into_iter().map(parse_expr).try_collect()?,
     })
 }
