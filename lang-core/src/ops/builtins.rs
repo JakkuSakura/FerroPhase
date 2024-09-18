@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
-#[derive(Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub enum BuiltinFnName {
     BinOpKind(BinOpKind),
     Name(Ident),

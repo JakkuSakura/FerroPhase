@@ -209,7 +209,7 @@ impl DerefMut for ValueBytes {
     }
 }
 common_enum! {
-    #[derive(Copy, PartialOrd, Ord)]
+    #[derive(Copy, PartialOrd, Ord, Eq)]
     pub enum ValuePointerKind {
         Unspecified,
         Managed,
@@ -217,7 +217,7 @@ common_enum! {
     }
 }
 common_struct! {
-    #[derive(Copy, PartialOrd, Ord)]
+    #[derive(Copy, PartialOrd, Ord, Eq)]
     pub struct ValuePointer {
         pub value: i64,
         pub kind: ValuePointerKind,
@@ -432,7 +432,7 @@ impl ToJson for ValueOption {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]
 pub struct ValueField {
     pub name: Ident,
     pub value: AstValue,
