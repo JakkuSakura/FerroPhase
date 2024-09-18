@@ -4,8 +4,8 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-pub trait AnyBoxable: Any + Debug + Clone + PartialEq + Eq + Send + Sync + 'static {}
-impl<T: Any + Debug + Clone + PartialEq + Eq + Send + Sync + 'static> AnyBoxable for T {}
+pub trait AnyBoxable: Any + Debug + Clone + PartialEq + Send + Sync + 'static {}
+impl<T: Any + Debug + Clone + PartialEq + Send + Sync + 'static> AnyBoxable for T {}
 // TODO: make it constant
 pub struct AnyBoxVTable {
     pub debug: fn(&dyn Any) -> String,
