@@ -30,7 +30,7 @@ impl SharedWriter {
 }
 impl Write for SharedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.wr.borrow_mut().write(buf)
+        self.wr.lock().unwrap().write(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -85,6 +85,8 @@ impl TsPrinter {
         Ok(self.writer.take_string())
     }
 }
+unsafe impl Send for TsPrinter {}
+unsafe impl Sync for TsPrinter {}
 impl AstSerializer for TsPrinter {
     fn serialize_type(&self, node: &AstType) -> Result<String> {
         match node {

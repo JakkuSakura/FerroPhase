@@ -92,11 +92,7 @@ impl SpecializePass {
             bindings.push(binding);
         }
 
-        // let new_body = Expr::block(ExprBlock::prepend(bindings, func.body.get()));
-        let new_body = AstExpr::block(ExprBlock {
-            stmts: bindings,
-            expr: Some(func.body.clone()),
-        });
+        let new_body = AstExpr::block(ExprBlock::new_stmts_expr(bindings, func.body.clone()));
         let new_name = Ident::new(format!(
             "{}_{}",
             name,
@@ -146,30 +142,24 @@ impl SpecializePass {
         if invoke.args.is_empty() {
             return Ok(new_func.body.into());
         }
-
-        Ok(AstExpr::Block(
-            ExprBlock {
-                stmts: vec![BlockStmt::Item(
-                    AstItem::DefFunction(ItemDefFunction {
-                        attrs: vec![],
-                        name: new_name.clone(),
-                        ty: None,
-                        sig: new_func.sig,
-                        body: new_func.body,
-                        visibility: Visibility::Private,
-                    })
-                    .into(),
-                )],
-                expr: Some(
-                    AstExpr::Invoke(ExprInvoke {
-                        target: ExprInvokeTarget::Function(new_name.into()),
-                        args: Default::default(),
-                    })
-                    .into(),
-                ),
-            }
-            .into(),
-        ))
+        let block = ExprBlock::new_stmts_expr(
+            vec![BlockStmt::Item(
+                AstItem::DefFunction(ItemDefFunction {
+                    attrs: vec![],
+                    name: new_name.clone(),
+                    ty: None,
+                    sig: new_func.sig,
+                    body: new_func.body,
+                    visibility: Visibility::Private,
+                })
+                .into(),
+            )],
+            AstExpr::Invoke(ExprInvoke {
+                target: ExprInvokeTarget::Function(new_name.into()),
+                args: Default::default(),
+            }),
+        );
+        Ok(AstExpr::Block(block))
     }
 
     pub fn specialize_invoke_func(

@@ -56,6 +56,9 @@ impl BlockStmtExpr {
         self.semicolon = Some(semicolon);
         self
     }
+    pub fn has_value(&self) -> bool {
+        self.semicolon != Some(true)
+    }
 }
 
 common_struct! {
@@ -97,51 +100,87 @@ pub type StmtChunk = Vec<BlockStmt>;
 common_struct! {
     pub struct ExprBlock {
         pub stmts: StmtChunk,
-        pub expr: Option<BExpr>
     }
 }
 impl ExprBlock {
     pub fn new() -> Self {
-        Self {
-            stmts: Vec::new(),
-            expr: None,
-        }
+        Self { stmts: Vec::new() }
     }
     pub fn new_stmts(stmts: StmtChunk) -> Self {
-        Self { stmts, expr: None }
+        Self { stmts }
     }
-    pub fn with_expr(mut self, expr: AstExpr) -> Self {
-        self.expr = Some(expr.into());
-        self
+    pub fn new_stmts_expr(stmts: StmtChunk, expr: impl Into<BExpr>) -> Self {
+        let mut this = Self { stmts };
+        this.push_expr(expr);
+        this
     }
-
-    pub fn push_up(&mut self) {
-        if let Some(expr) = self.expr.take() {
-            self.stmts.push(BlockStmt::Expr(BlockStmtExpr::new(expr)));
+    pub fn new_expr(expr: AstExpr) -> Self {
+        Self {
+            stmts: vec![BlockStmt::Expr(BlockStmtExpr::new(expr))],
+        }
+    }
+    pub fn seal(&mut self) {
+        if let Some(expr) = self.stmts.last_mut() {
+            if let BlockStmt::Expr(expr) = expr {
+                if expr.semicolon == Some(false) {
+                    expr.semicolon = Some(true);
+                }
+            }
         }
     }
     pub fn extend(&mut self, other: ExprBlock) {
-        self.push_up();
+        self.seal();
         self.stmts.extend(other.stmts);
-        self.expr = other.expr;
     }
     pub fn extend_chunk(&mut self, chunk: StmtChunk) {
-        self.push_up();
+        self.seal();
         self.stmts.extend(chunk);
     }
     pub fn push_stmt(&mut self, stmt: BlockStmt) {
         self.stmts.push(stmt);
-        self.push_up();
+        self.seal();
     }
     pub fn push_expr(&mut self, stmt: impl Into<BExpr>) {
-        self.push_up();
-        self.expr = Some(stmt.into());
+        self.seal();
+        self.push_stmt(BlockStmt::Expr(
+            BlockStmtExpr::new(stmt).with_semicolon(false),
+        ));
     }
-    pub fn into_expr(self) -> AstExpr {
-        if self.stmts.is_empty() && self.expr.is_some() {
-            *self.expr.unwrap()
+    pub fn last_expr(&self) -> Option<&AstExpr> {
+        let stmt = self.stmts.last()?;
+        let BlockStmt::Expr(expr) = stmt else {
+            return None;
+        };
+        if !expr.has_value() {
+            return None;
+        }
+        Some(&*expr.expr)
+    }
+    pub fn last_expr_mut(&mut self) -> Option<&mut AstExpr> {
+        let stmt = self.stmts.last_mut()?;
+        let BlockStmt::Expr(expr) = stmt else {
+            return None;
+        };
+        if !expr.has_value() {
+            return None;
+        }
+        Some(&mut expr.expr)
+    }
+    pub fn into_expr(mut self) -> AstExpr {
+        if self.stmts.len() == 1 {
+            if let Some(expr) = self.last_expr_mut() {
+                return std::mem::replace(expr, AstExpr::unit());
+            }
+        }
+
+        AstExpr::Block(self)
+    }
+    /// returns the first few stmts, leaving behind the last expr
+    pub fn first_stmts(&self) -> &[BlockStmt] {
+        if self.last_expr().is_some() {
+            &self.stmts[..self.stmts.len() - 1]
         } else {
-            AstExpr::Block(self)
+            &self.stmts
         }
     }
 }

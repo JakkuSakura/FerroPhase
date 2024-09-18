@@ -124,9 +124,7 @@ impl FoldOptimizer {
                     }
                 }
             }
-            ControlFlow::Continue => {
-                return Ok(AstExpr::Invoke(invoke.into()));
-            }
+            ControlFlow::Continue => Ok(AstExpr::Invoke(invoke.into())),
             _ => bail!("Cannot handle control flow {:?}", control),
         }
     }
@@ -277,22 +275,15 @@ impl FoldOptimizer {
             .iter()
             .try_for_each(|x| self.prescan_stmt(x, &ctx))?;
 
-        let mut stmts: Vec<_> = b
+        let stmts: Vec<_> = b
             .stmts
             .into_iter()
             .map(|x| self.optimize_stmt(x, &ctx))
             .try_collect()?;
-        stmts.retain(|x| !x.is_unit());
-        // FIXME: is it correct to remove unit statements with side effects?
-        // stmts.retain(|x| {
-        //     !matches!(
-        //         x,
-        //         Statement::SideEffect(SideEffect {
-        //             expr: Expr::Value(Value::Unit(_))
-        //         })
-        //     )
-        // });
+        // stmts.retain(|x| !x.is_unit());
+
         b.stmts = stmts;
+
         Ok(AstExpr::block(b))
     }
     pub fn optimize_match(&self, b: ExprMatch, ctx: &SharedScopedContext) -> Result<AstExpr> {

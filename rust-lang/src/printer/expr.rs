@@ -196,19 +196,10 @@ impl RustPrinter {
         }))
     }
     pub fn print_block_no_braces(&self, n: &ExprBlock) -> Result<TokenStream> {
-        if let Some(expr) = &n.expr {
-            let chunk = self.print_stmt_chunk(&n.stmts)?;
-            let expr = self.print_expr(expr)?;
-            Ok(quote!(
-                #chunk
-                #expr
-            ))
-        } else {
-            let chunk = self.print_stmt_chunk(&n.stmts)?;
-            Ok(quote!(
-                #chunk
-            ))
-        }
+        let chunk = self.print_stmt_chunk(&n.stmts)?;
+        Ok(quote!(
+            #chunk
+        ))
     }
     fn print_if(&self, if_: &ExprIf) -> Result<TokenStream> {
         let cond = self.print_expr(&if_.cond)?;
