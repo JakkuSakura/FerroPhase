@@ -86,10 +86,7 @@ impl AstExpr {
     pub fn into_block(self) -> ExprBlock {
         match self {
             AstExpr::Block(block) => block,
-            _ => ExprBlock {
-                stmts: vec![],
-                expr: Some(Box::new(self)),
-            },
+            _ => ExprBlock::new_expr(self),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
