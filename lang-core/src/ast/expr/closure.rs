@@ -5,7 +5,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
 /// A special Closure expression that captures the current context
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct ExprClosured {
     pub ctx: SharedScopedContext,
     pub expr: BExpr,

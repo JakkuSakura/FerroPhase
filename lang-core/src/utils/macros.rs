@@ -7,7 +7,7 @@ macro_rules! common_struct {
         $(#[$attr:meta])*
         pub struct $name:ident { $($t:tt)* }
     ) => {
-        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Hash)]
         $(#[$attr])*
         pub struct $name {
             $($t)*
@@ -43,7 +43,7 @@ macro_rules! common_enum {
         $(#[$attr:meta])*
         pub enum $name:ident { $($t:tt)* }
     ) => {
-        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash, derive_more::From, derive_more::TryInto)]
+        #[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Hash, derive_more::From, derive_more::TryInto)]
         $(#[$attr])*
         pub enum $name {
             $($t)*
