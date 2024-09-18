@@ -1,21 +1,21 @@
 use crate::ast::{AstValue, ValueBytes, ValueEscaped, ValuePointer};
 use crate::vm::VmValue;
 use common::warn;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 pub type Ptr = ValuePointer;
 const DEFAULT_ALIGN: usize = 8;
 
 pub struct VmStorage {
     count: i64,
-    memory: BTreeMap<Ptr, VmValue>,
+    memory: HashMap<Ptr, VmValue>,
     stack: Vec<Ptr>,
 }
 impl VmStorage {
     pub fn new() -> Self {
         Self {
             count: DEFAULT_ALIGN as i64,
-            memory: BTreeMap::new(),
+            memory: HashMap::new(),
             stack: vec![],
         }
     }
