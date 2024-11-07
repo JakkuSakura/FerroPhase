@@ -68,7 +68,7 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
         return Ok(Locator::path(path));
     }
     let path = parse_parameter_path(p.clone())?;
-    return Ok(Locator::parameter_path(path));
+    Ok(Locator::parameter_path(path))
 }
 
 fn parse_vis(v: syn::Visibility) -> Visibility {
