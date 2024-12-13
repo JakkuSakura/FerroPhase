@@ -533,11 +533,28 @@ common_struct! {
     pub struct FunctionParam {
         pub name: Ident,
         pub ty: AstType,
+        pub default: Option<AstValue>,
+        /// in Python, *args
+        pub as_tuple: bool,
+        /// in Python, **kwargs
+        pub as_dict: bool,
+        /// in Python, parameters before `/`
+        pub positional_only: bool,
+        /// in Python, parameters after `*`
+        pub keyword_only: bool,
     }
 }
 impl FunctionParam {
     pub fn new(name: Ident, ty: AstType) -> Self {
-        Self { name, ty }
+        Self {
+            name,
+            ty,
+            default: None,
+            as_tuple: false,
+            as_dict: false,
+            positional_only: false,
+            keyword_only: false,
+        }
     }
 }
 
