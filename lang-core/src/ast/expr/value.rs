@@ -244,3 +244,17 @@ common_struct! {
         pub values: Vec<AstExpr>,
     }
 }
+common_struct! {
+    /// To "splat" or expand an iterable.
+    /// For example, in Python, `*a` will expand `a` into the arguments of a function
+    pub struct ExprSplat {
+        pub iter: AstExpr,
+    }
+}
+common_struct! {
+    /// To "splat" or expand a dict.
+    /// For example, in Python, `**d` will expand `d` into the keyword arguments of a function
+    pub struct ExprSplatDict {
+        pub dict: AstExpr,
+    }
+}
