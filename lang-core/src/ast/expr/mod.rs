@@ -46,6 +46,9 @@ common_enum! {
         Closured(ExprClosured),
         Paren(ExprParen),
         Range(ExprRange),
+
+        Splat(ExprSplat),
+        SplatDict(ExprSplatDict),
         /// for items in dynamic languages
         Item(BItem),
         Any(AnyBox),
