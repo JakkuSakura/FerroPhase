@@ -30,10 +30,10 @@ fn parse_fn_arg_receiver(r: syn::Receiver) -> eyre::Result<FunctionParamReceiver
 pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
     Ok(match i {
         FnArg::Receiver(_) => None,
-        FnArg::Typed(t) => Some(FunctionParam {
-            name: parse_pat(*t.pat)?.as_ident().context("No ident")?.clone(),
-            ty: parse_type(*t.ty)?,
-        }),
+        FnArg::Typed(t) => Some(FunctionParam::new(
+            parse_pat(*t.pat)?.as_ident().context("No ident")?.clone(),
+            parse_type(*t.ty)?,
+        )),
     })
 }
 
