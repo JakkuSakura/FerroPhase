@@ -30,10 +30,10 @@ fn test_parse_fn() -> Result<()> {
             sig: FunctionSignature {
                 name: Some("foo".into()),
                 receiver: None,
-                params: vec![FunctionParam {
-                    name: "a".into(),
-                    ty: AstType::Primitive(TypePrimitive::i64())
-                }],
+                params: vec![FunctionParam::new(
+                    "a".into(),
+                    AstType::Primitive(TypePrimitive::i64())
+                )],
                 generics_params: vec![],
                 ret_ty: Some(AstType::Primitive(TypePrimitive::i64()))
             },
