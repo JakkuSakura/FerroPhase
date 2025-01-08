@@ -358,10 +358,10 @@ impl InterpreterPass {
             .params
             .iter()
             .map(|x| {
-                Ok::<_, Error>(FunctionParam {
-                    name: x.name.clone(),
-                    ty: self.interpret_type(&x.ty, &sub)?,
-                })
+                Ok::<_, Error>(FunctionParam::new(
+                    x.name.clone(),
+                    self.interpret_type(&x.ty, &sub)?,
+                ))
             })
             .try_collect()?;
         let sig = FunctionSignature {
