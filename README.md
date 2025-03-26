@@ -1,4 +1,4 @@
-# SHLL: Staged High Level Language
+# FerroPhase: Staged High Level Language
 
 This language explores staging in Rust, but also leave space for transpilation.
 
@@ -7,6 +7,16 @@ Goal: Readability without compromising performance
 It adds high-level generics and codegen to Rust.
 
 See rust-lang/examples/main_02.rs for example.
+
+## Name Origin
+
+The name "FerroPhase" is derived from two key concepts that define this language:
+
+1. **Ferro-**: From the Latin word "ferrum" meaning iron, establishing a connection to Rust (which is iron oxide). This acknowledges FerroPhase's foundation in Rust syntax and semantics, while suggesting the strength and stability of iron.
+
+2. **-Phase**: Represents the staged compilation process that transforms high-level code through multiple optimization phases. This highlights the language's key innovation: the ability to express code at a high level and systematically transform it into highly optimized low-level code.
+
+Together, "FerroPhase" captures both the language's Rust heritage and its distinctive staged transformation approach that sets it apart from traditional compiled languages.
 
 When it comes to abstraction, even Rust and C++ claim they provide zero-cost abstraction, but they also have their
 problems.
@@ -20,7 +30,7 @@ problems.
 - macros(in Rust/Scala/C) is hard to debug, and limited to decorate a function/struct(or text replacement in C)
 - lisp is powerful in metaprogramming, but it's an interpreter language
 
-The ideal solution is the SHLL language, which specialize code into low level languages:
+The ideal solution is the FerroPhase language, which specialize code into low level languages:
 
 - Write declarative/high level code, and then the optimizer will optimize it into imperative code.
 
@@ -91,7 +101,7 @@ fast compilation, or even use interpretation mode.
 
 ### Type System
 
-Hope to bring some of typescript's type system to SHLL. It verifies and infer types at compile time, and then generate
+Hope to bring some of typescript's type system to FerroPhase. It verifies and infer types at compile time, and then generate
 solid types in Rust.
 It should also be available as a cli tool and standalone library.
 
@@ -191,7 +201,7 @@ type LinkedList<T> = struct {
 Struct is (partly) similar to GoLang and Zig
 Similar to Zig's comptime system, but aims to do more than Zig with less and simpler
 code. https://kristoff.it/blog/what-is-zig-comptime/
-Interesting article describes biformity which SHLL aims to solve:
+Interesting article describes biformity which FerroPhase aims to solve:
 https://hirrolot.github.io/posts/why-static-languages-suffer-from-complexity.html
 
 ## TODO
