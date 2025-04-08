@@ -1,10 +1,10 @@
-# FerroPhase: Staged High Level Language
+# FerroPhase: High-Level Extension Language for Rust
 
-This language explores staging in Rust, but also leave space for transpilation.
+This language explores higher-level abstractions for Rust through staged compilation and rich type manipulation.
 
-Goal: Readability without compromising performance
+Goal: Expressiveness and safety while leveraging Rust's performance
 
-It adds high-level generics and codegen to Rust.
+It adds advanced type capabilities and meta-programming to the Rust ecosystem.
 
 See rust-lang/examples/main_02.rs for example.
 
@@ -12,11 +12,20 @@ See rust-lang/examples/main_02.rs for example.
 
 The name "FerroPhase" is derived from two key concepts that define this language:
 
-1. **Ferro-**: From the Latin word "ferrum" meaning iron, establishing a connection to Rust (which is iron oxide). This acknowledges FerroPhase's foundation in Rust syntax and semantics, while suggesting the strength and stability of iron.
+1. **Ferro-**: From the Latin word "ferrum" meaning iron, establishing a connection to Rust (which is iron oxide). This acknowledges FerroPhase's foundation in Rust syntax and semantics.
 
-2. **-Phase**: Represents the staged compilation process that transforms high-level code through multiple optimization phases. This highlights the language's key innovation: the ability to express code at a high level and systematically transform it into highly optimized low-level code.
+2. **-Phase**: Represents the staged compilation process that transforms high-level abstractions into valid Rust code. This highlights the language's role as a phase in the development process that feeds into the Rust compiler.
 
-Together, "FerroPhase" captures both the language's Rust heritage and its distinctive staged transformation approach that sets it apart from traditional compiled languages.
+Together, "FerroPhase" captures both the language's Rust heritage and its role as a complementary layer that enhances Rust development.
+
+## Vision: Complementing Rust
+
+FerroPhase aims to be a complement to Rust rather than a replacement. While Rust excels at performance and safety, it can be verbose and lacks certain high-level abstractions. FerroPhase addresses this gap by:
+
+- Providing advanced type system features inspired by TypeScript
+- Enabling powerful meta-programming capabilities
+- Simplifying complex patterns through higher-level abstractions
+- Transpiling to clean, idiomatic Rust code
 
 When it comes to abstraction, even Rust and C++ claim they provide zero-cost abstraction, but they also have their
 problems.
@@ -30,23 +39,24 @@ problems.
 - macros(in Rust/Scala/C) is hard to debug, and limited to decorate a function/struct(or text replacement in C)
 - lisp is powerful in metaprogramming, but it's an interpreter language
 
-The ideal solution is the FerroPhase language, which specialize code into low level languages:
+The ideal solution is the FerroPhase language, which provides high-level abstractions that transpile to Rust:
 
-- Write declarative/high level code, and then the optimizer will optimize it into imperative code.
+- Write declarative/high level code, and let Rust handle the performance aspects
+- Leverage Rust's ecosystem and optimization capabilities
 
-To sum up: make the language simple yet expressive, and produces fast low-level code
+To sum up: make the language simple yet expressive, and produces clean, idiomatic Rust code
 
 ## Syntax
 
 ## Frontend
 
-Same as rust
+Same as rust with extensions for advanced type operations and meta-programming
 
 ## Optimization
 
-Then AST gets passed through multiple optimization phrases, while maintaining the same semantics.
+Then AST gets passed through multiple transformation phases, maintaining the same semantics while generating optimal Rust code.
 
-Current optimization phrases:
+Current transformation phases:
 
 - [x] Specialization and inlining
 - [ ] Flow analysis
@@ -54,56 +64,28 @@ Current optimization phrases:
 
 ### Specialization
 
-- Constant evaluation
-  Unless the function is too big, inlining does not perform
-
-- Loop unrolling
-
-
-- [ ] Zig's comptime, like rust macros but supports comptime inspection and is to replace templates
--
-
 ### Flow analysis
-
-Graph-based(and effects and contexts):
-
-- [x] build a graph of data flow
-- [x] build a graph of control flow
-- [ ] Falliblity: The effect of a section of code failing to complete and evaluate to its expected value (in Rust, think
-  Result)
-- [ ] Multiplicity: The effect of a section of code being evaluated multiple times, yielding many values or operating
-  over many values (in Rust, think Iterator)
-- [ ] Asynchrony: The effect of a section of code yielding control when it cannot immediately progress, to allow other
-  sections of code to progress instead (in Rust, think Future)
-- [ ] Pureness: The effect of a function having no side effects
-- [ ] Safeness(sorry to toss you in): The effect of a section of code being unsafe, to use `unsafe { }` to suppress. And
-  many other types of safeness
-- [ ] Deprecation
-- [ ] Some Rust ideas: Ref, MutRef
-
-Readings
-https://boats.gitlab.io/blog/post/the-problem-of-effects/
-https://internals.rust-lang.org/t/can-we-make-a-rusty-effect-system/11697
 
 ### Dead code elimination
 
-- [ ] use graph-based data flow to eliminate dead code
-- [ ] combine data flow and control flow to eliminate dead code
-
 ## Backend
 
-Then AST gets transpiled into a low level language, which is either Rust for performance or natively scala. FFI is not
-an issue as we compile at source code level
+AST gets transpiled into Rust as the primary target language. This approach leverages:
 
-The language aims to experiment simple syntax, maximum runtime performance.
-Compile time is not a concern, as we maintain the same semantics between phrases, some optimization can be disabled for
-fast compilation, or even use interpretation mode.
+- Full interoperability with existing Rust code
+- The entire Rust ecosystem
+- Rust's sophisticated optimizations
+- Zero runtime overhead compared to hand-written Rust
+- Easy integration into existing Rust projects
+
+Scala remains as an experimental alternative target.
+
+The language aims to experiment with simple syntax and expressive capabilities.
+Compile time is not a concern, as we maintain the same semantics between phases.
 
 ### Type System
 
-Hope to bring some of typescript's type system to FerroPhase. It verifies and infer types at compile time, and then generate
-solid types in Rust.
-It should also be available as a cli tool and standalone library.
+FerroPhase brings TypeScript-inspired type features to the Rust ecosystem:
 
 ```rust
 // structural typing, solid type
@@ -196,6 +178,16 @@ type LinkedList<T> = struct {
 }
 ```
 
+## Use Cases
+
+FerroPhase is particularly valuable for:
+
+1. **API Design**: Create expressive, type-safe APIs with minimal boilerplate
+2. **Domain-Specific Languages**: Build custom DSLs that compile to efficient Rust
+3. **Complex Data Processing**: Express algorithms at a higher level
+4. **Type-Heavy Systems**: Work with sophisticated type relationships more easily
+5. **Code Generation**: Generate specialized implementations from high-level descriptions
+
 ## References
 
 Struct is (partly) similar to GoLang and Zig
@@ -207,6 +199,95 @@ https://hirrolot.github.io/posts/why-static-languages-suffer-from-complexity.htm
 ## TODO
 
 - [ ] Use miette for error handling
-- [ ] Refer to rustc's demand-driven compilation. i.e. use trait instead of passes where possible. this it already WIP
+- [ ] Refer to rustc's demand-driven compilation. i.e. use trait instead of passes where possible. this is already WIP
 - [ ] Use tree-sitter for CST
-- [ ] TypeScript's type system
+- [ ] Implement checks using passes, similar to mutations
+- [ ] Implement TypeScript-inspired type system
+- [ ] Create seamless Rust integration
+- [ ] Build language server for IDE support
+
+## Development Roadmap
+
+### Phase 1: Core Language Foundation (Short-term)
+1. **Enhanced Type System**
+   - Implement structural typing
+   - Add union and intersection types
+   - Develop type inference engine
+   - Support type-level computation
+
+2. **Metaprogramming Foundation**
+   - Implement compile-time evaluation
+   - Create AST manipulation utilities
+   - Support code generation from types
+
+3. **Rust Integration**
+   - Seamless import of Rust types and functions
+   - Clean Rust code generation
+   - Type-preserving translation
+
+4. **Developer Experience**
+   - Implement helpful error messages
+   - Create basic IDE support
+   - Build documentation tools
+
+### Phase 2: Advanced Features (Medium-term)
+1. **Extended Type System**
+   - Add effect tracking
+   - Implement advanced type inference
+   - Support higher-kinded types
+   - Create standard type utilities
+
+2. **Pattern Libraries**
+   - Functional programming patterns
+   - Common design patterns
+   - Domain-specific abstractions
+
+3. **Tooling Ecosystem**
+   - Full-featured language server
+   - Integration with popular IDEs
+   - Build system integration
+
+4. **Standard Library**
+   - High-level data structures
+   - Functional utilities
+   - Common abstractions
+
+### Phase 3: Ecosystem Growth (Long-term)
+1. **Community Building**
+   - Documentation and tutorials
+   - Example projects
+   - Community packages
+
+2. **Integration with Rust Ecosystem**
+   - Crates.io compatibility
+   - Cargo plugin
+   - Seamless workflow with Rust projects
+
+3. **Enterprise Features**
+   - Large project support
+   - Performance profiling
+   - Migration tools from pure Rust
+
+### Contributors Guide
+
+1. **Getting Started**
+   - Set up the development environment
+   - Understand the compiler architecture
+   - Pick beginner-friendly issues
+
+2. **Areas Needing Help**
+   - Parser improvements and syntax design
+   - Type system implementation
+   - Optimization algorithms
+   - Backend code generation
+   - Testing infrastructure
+   - Documentation
+
+3. **Development Process**
+   - Fork the repository
+   - Make changes in a feature branch
+   - Submit pull requests with tests
+   - Participate in code reviews
+
+By focusing on complementing Rust rather than replacing it, FerroPhase can carve out a valuable niche in the programming language ecosystem, similar to how TypeScript extends JavaScript or how Kotlin enhances Java.
+`
