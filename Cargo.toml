@@ -1,12 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "lang-core",
-    "lang-optimize",
-    "lang-mips",
-    "rust-lang",
-    "rust-macro",
-    "javascript-lang",
+    "crates/*"
 ]
 exclude = []
 
