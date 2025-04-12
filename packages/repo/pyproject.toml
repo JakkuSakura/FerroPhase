@@ -1,0 +1,129 @@
+[build-system]
+requires = ["uv_build>=0.6,<0.7"]
+build-backend = "uv_build"
+
+[project]
+name = "repo"
+version = "0.1.0"
+description = "Manage Repos"
+authors = [
+    { name = "JakkuSakura", email = "qjk2001@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "pydantic",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "coverage>=7.5",
+    "pyright>=1.1",
+    "ruff>=0.9",
+    "pytest-cov>=6.0",
+]
+
+[project.scripts]
+repo = "repo.repo:main"
+
+[tool.uv]
+
+[tool.setuptools]
+
+[tool.ruff]
+line-length = 99
+target-version = "py310"
+fix = true
+unsafe-fixes = true
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "B",
+    "I",
+    "RUF100",
+    "PGH004",
+    "UP",
+    "C4",
+    "SIM201",
+    "SIM202",
+    "RET501",
+    "RET502",
+]
+ignore = [
+    "B007",
+    "B011",
+    "B023",
+    "E402",
+    "E501",
+    "E721",
+    "E731",
+    "E741",
+    "UP031",
+    "UP032",
+    "C416",
+]
+unfixable = [
+    "F841",
+    "F601",
+    "F602",
+    "B018",
+    "UP036",
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+extra-standard-library = [
+    "typing_extensions",
+]
+
+[tool.pyright]
+include = ["src", "ui", "tests", "bin"]
+exclude = [
+    "**/node_modules",
+    "**/__pycache__",
+    "src/experimental",
+    "src/typestubs"
+]
+ignore = []
+defineConstant = { DEBUG = true }
+#stubPath = "src/stubs"
+
+reportMissingImports = "error"
+reportMissingTypeStubs = false
+
+
+
+[tool.pytest.ini_options]
+minversion = "7.0.0"
+testpaths = [
+    "tests",
+]
+python_files = "test_*.py"
+
+[tool.coverage.run]
+branch = true
+source = [
+    "exchange_test",
+]
+
+[tool.coverage.report]
+format = "markdown"
+show_missing = true
+skip_covered = false
+omit = [
+    "tests/*",
+]
+exclude_lines = [
+    "# pragma: no cover",
+    "raise AssertionError\\b",
+    "raise NotImplementedError\\b",
+    "return NotImplemented\\b",
+    "raise$",
+    "assert False\\b",
+    "if __name__ == ['\"]__main__['\"]:$",
+]
