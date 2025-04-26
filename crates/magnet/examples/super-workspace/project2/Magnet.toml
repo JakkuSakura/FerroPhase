@@ -1,0 +1,23 @@
+# Magnet.toml for Project 2
+# This file is used by the magnet CLI tool to manage workspace dependencies
+
+[project]
+name = "project2"
+version = "0.1.0"
+description = "Project 2 with magnet super-workspace"
+authors = ["Example User <user@example.com>"]
+
+[workspace]
+members = ["crates/*"]
+exclude = []
+resolver = "2"
+
+# Auto-detect shared crates across projects
+# This will automatically find and use path dependencies without explicitly defining paths
+[dependencies]
+shared-types = { auto = true }
+shared-utils = { auto = true }
+tokio = { version = "1.0", features = ["full", "time"] }
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+chrono = "0.4"
