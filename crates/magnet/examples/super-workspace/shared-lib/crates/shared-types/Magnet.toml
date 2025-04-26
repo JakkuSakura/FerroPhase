@@ -1,0 +1,19 @@
+# Magnet.toml for the shared-types crate
+# This demonstrates a crate-level configuration within the shared-lib workspace
+
+[project]
+name = "shared-types"
+version = "0.1.0"
+description = "Shared types used across projects in the super-workspace"
+
+# Dependencies specific to this crate
+[dependencies]
+# Use the workspace-defined version and features of serde
+serde = { workspace = true }
+# Crate-specific configuration for uuid
+uuid = { version = "1.3", features = ["v4", "serde"] }
+
+# Build configuration specific to this crate
+[build]
+# Example of a crate-specific build setting
+optimize = true

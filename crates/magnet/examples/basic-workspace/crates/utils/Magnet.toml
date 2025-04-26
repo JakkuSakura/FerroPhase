@@ -1,0 +1,17 @@
+# Magnet.toml for the utils crate
+# This shows how individual crates can have their own magnet configuration
+
+[project]
+name = "utils-crate"
+version = "0.1.0"
+description = "Utility functions for the example project"
+
+# Dependencies specific to this crate
+[dependencies]
+# Automatically detect and use path dependency for core-crate
+core-crate = { auto = true }
+# Shared dependencies defined in the workspace
+log = { workspace = true }
+chrono = { workspace = true }
+# Crate-specific dependency configuration
+serde_json = { version = "1.0", features = ["preserve_order"] }
