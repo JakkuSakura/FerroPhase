@@ -1,0 +1,10 @@
+[package]
+name = "project1-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared-types = "0.1.0"
+shared-utils = "0.1.0"
+anyhow = "1.0"
+log = "0.4"
