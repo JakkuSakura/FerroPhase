@@ -1,0 +1,18 @@
+[package]
+name = "rust-macro"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2"
+quote = "1"
+proc-macro2 = "1"
+fp-rust-lang = { path = "../fp-rust-lang" }
+common = { workspace = true }
+fp-core = { path = "../fp-core" }
+fp-optimize = { path = "../fp-optimize" }
