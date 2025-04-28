@@ -36,6 +36,7 @@ fn main() -> Result<()> {
         Some(Commands::Generate { config }) => commands::generate(&config),
         Some(Commands::Check { config }) => commands::check(&config),
         Some(Commands::List { config }) => commands::list(&config),
+        Some(Commands::Tree { config, dependencies }) => commands::tree(&config, dependencies),
         None => {
             println!("No command specified. Run with --help for usage information.");
             Ok(())
@@ -84,5 +85,14 @@ enum Commands {
         /// Path to the Magnet.toml file
         #[arg(default_value = "Magnet.toml")]
         config: PathBuf,
+    },
+    /// Display workspace hierarchy as a tree
+    Tree {
+        /// Path to the Magnet.toml file
+        #[arg(default_value = "Magnet.toml")]
+        config: PathBuf,
+        /// Show dependency relationships between crates
+        #[arg(short, long)]
+        dependencies: bool,
     },
 }
