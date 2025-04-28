@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shared-types = "0.1.0"
-shared-utils = "0.1.0"
+shared-types = { auto = true }
+shared-utils = { auto = true }
 tokio = { version = "1.0", features = ["full"] }
 log = "0.4"

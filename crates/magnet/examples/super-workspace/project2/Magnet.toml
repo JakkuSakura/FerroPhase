@@ -12,12 +12,3 @@ members = ["crates/*"]
 exclude = []
 resolver = "2"
 
-# Auto-detect shared crates across projects
-# This will automatically find and use path dependencies without explicitly defining paths
-[dependencies]
-shared-types = { auto = true }
-shared-utils = { auto = true }
-tokio = { version = "1.0", features = ["full", "time"] }
-log = "0.4"
-serde = { version = "1.0", features = ["derive"] }
-chrono = "0.4"
