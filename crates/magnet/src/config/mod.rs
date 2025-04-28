@@ -3,18 +3,49 @@
 //! This module provides structures and functionality for parsing,
 //! validating, and managing Magnet.toml configuration files.
 
+mod nexus;
+mod workspace;
+mod package;
+mod dependencies;
+pub use nexus::*;
+pub use package::*;
+pub use workspace::*;
+pub use dependencies::*;
+
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+/// Type of Magnet.toml configuration file
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MagnetConfigType {
+    /// Nexus configuration (top-level, manages multiple workspaces)
+    Nexus,
+    /// Workspace configuration (manages multiple packages)
+    Workspace,
+    /// Package configuration (individual package)
+    Package,
+}
 
+impl Default for MagnetConfigType {
+    fn default() -> Self {
+        Self::Package
+    }
+}
 /// The main configuration structure representing a Magnet.toml file
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MagnetConfig {
     /// Project metadata
+    #[serde(default)]
     pub project: ProjectConfig,
     /// Workspace configuration
+    #[serde(default)]
     pub workspace: WorkspaceConfig,
+    /// Nexus configuration (for top-level nexus configs)
+    #[serde(default)]
+    pub nexus: Option<NexusConfig>,
     /// Dependencies shared across workspace members
     #[serde(default)]
     pub dependencies: DependencyMap,
@@ -28,113 +59,11 @@ pub struct MagnetConfig {
     #[allow(dead_code)]
     #[serde(skip)]
     pub source_path: Option<PathBuf>,
+    /// Type of configuration
+    #[serde(skip)]
+    pub config_type: MagnetConfigType,
 }
 
-/// Project metadata configuration
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ProjectConfig {
-    /// Name of the project
-    pub name: Option<String>,
-    /// Version of the project
-    pub version: Option<String>,
-    /// Description of the project
-    #[serde(default)]
-    pub description: Option<String>,
-    /// Authors of the project
-    #[serde(default)]
-    pub authors: Vec<String>,
-    /// Project homepage
-    #[serde(default)]
-    pub homepage: Option<String>,
-    /// Project repository
-    #[serde(default)]
-    pub repository: Option<String>,
-    /// Project documentation URL
-    #[serde(default)]
-    pub documentation: Option<String>,
-    /// Project license
-    #[serde(default)]
-    pub license: Option<String>,
-    /// Custom metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-/// Workspace configuration
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WorkspaceConfig {
-    /// Workspace members (glob patterns)
-    #[serde(default)]
-    pub members: Vec<String>,
-    /// Excluded workspace members (glob patterns)
-    #[serde(default)]
-    pub exclude: Vec<String>,
-    /// Cargo resolver version (1 or 2)
-    #[serde(default)]
-    pub resolver: Option<String>,
-    /// Search paths for related workspaces
-    #[serde(default)]
-    pub search_paths: Option<HashMap<String, PathBuf>>,
-    /// Path overrides for specific dependencies
-    #[serde(default)]
-    pub paths: Option<HashMap<String, PathBuf>>,
-    /// Custom workspace metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-/// Map of dependency name to configuration
-pub type DependencyMap = HashMap<String, DependencyConfig>;
-
-/// Configuration for a single dependency
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum DependencyConfig {
-    /// Simple version string: e.g., "1.0.0"
-    Simple(String),
-    /// Detailed dependency configuration
-    Detailed(DetailedDependency),
-}
-
-/// Detailed dependency configuration
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct DetailedDependency {
-    /// Dependency version
-    pub version: Option<String>,
-    /// Path to local dependency
-    pub path: Option<PathBuf>,
-    /// Automatically resolve path to this dependency if found in any workspace
-    pub auto: Option<bool>,
-    /// Git repository URL
-    pub git: Option<String>,
-    /// Git branch
-    pub branch: Option<String>,
-    /// Git tag
-    pub tag: Option<String>,
-    /// Git revision
-    pub rev: Option<String>,
-    /// Dependency features to enable
-    pub features: Option<Vec<String>>,
-    /// Whether all features should be enabled
-    pub all_features: Option<bool>,
-    /// Whether default features should be enabled
-    pub default_features: Option<bool>,
-    /// Whether to use the version defined in the workspace
-    pub workspace: Option<bool>,
-    /// Optional dependency
-    pub optional: Option<bool>,
-    /// Package name (if different from dependency name)
-    pub package: Option<String>,
-    /// Registry to use
-    pub registry: Option<String>,
-    /// Artifact to use
-    pub artifact: Option<String>,
-    /// Target to use
-    pub target: Option<String>,
-    /// Custom dependency metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
 #[allow(dead_code)]
 #[allow(clippy::trivially_copy_pass_by_ref)]
 impl MagnetConfig {
@@ -170,6 +99,50 @@ impl MagnetConfig {
         Ok(())
     }
 
+    /// Create a new configuration with the specified type
+    pub fn new_with_type(config_type: MagnetConfigType) -> Self {
+        let mut config = Self::new();
+        
+        // Set the configuration type
+        config.config_type = config_type;
+        
+        // Based on the type, ensure appropriate sections exist
+        match config_type {
+            MagnetConfigType::Nexus => {
+                // Initialize nexus-specific fields
+                config.nexus = Some(NexusConfig::default());
+            },
+            MagnetConfigType::Workspace => {
+                // Workspace type already has defaults in the WorkspaceConfig
+            },
+            MagnetConfigType::Package => {
+                // Package type is the default
+            }
+        }
+        
+        config
+    }
+    
+    /// Parse a MagnetConfig from a TOML string
+    pub fn from_toml_str(toml_str: &str) -> Result<Self> {
+        // Parse the TOML
+        let mut config: Self = toml::from_str(toml_str)
+            .context("Failed to parse Magnet.toml from string")?;
+            
+        Ok(config)
+    }
+    
+    /// Get the configuration type based on which sections are defined
+    pub fn config_type(&self) -> MagnetConfigType {
+        if self.nexus.is_some() {
+            MagnetConfigType::Nexus
+        } else if !self.workspace.members.is_empty() || self.workspace.search_paths.is_some() {
+            MagnetConfigType::Workspace
+        } else {
+            MagnetConfigType::Package
+        }
+    }
+
     /// Create a new empty configuration
     pub fn new() -> Self {
         Self {
@@ -192,10 +165,12 @@ impl MagnetConfig {
                 paths: None,
                 custom: HashMap::new(),
             },
+            nexus: None,
             dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
             build_dependencies: HashMap::new(),
             source_path: None,
+            config_type: MagnetConfigType::default(),
         }
     }
 
@@ -300,27 +275,18 @@ impl MagnetConfig {
     }
 }
 
+/// Get workspace members from a config
+pub fn get_workspace_members(config: &MagnetConfig) -> Vec<String> {
+    config.workspace.members.clone()
+}
+
+/// Get search paths from a config
+pub fn get_search_paths(config: &MagnetConfig) -> Option<HashMap<String, PathBuf>> {
+    config.workspace.search_paths.clone()
+}
+
 impl Default for MagnetConfig {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Implement conversion from SimpleVersion to DetailedDependency
-impl From<&str> for DependencyConfig {
-    fn from(version: &str) -> Self {
-        DependencyConfig::Simple(version.to_string())
-    }
-}
-
-impl From<String> for DependencyConfig {
-    fn from(version: String) -> Self {
-        DependencyConfig::Simple(version)
-    }
-}
-
-impl From<DetailedDependency> for DependencyConfig {
-    fn from(dep: DetailedDependency) -> Self {
-        DependencyConfig::Detailed(dep)
     }
 }
