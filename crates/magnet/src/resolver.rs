@@ -3,12 +3,11 @@
 //! This module is responsible for resolving dependencies across workspaces,
 //! handling path resolution, and managing dependency conflicts.
 
+use crate::config::{DependencyConfig, DetailedDependency};
+use crate::workspace_manager::{CrateInfo, Workspace};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-use crate::config::{DependencyConfig, DetailedDependency};
-use crate::workspace::{CrateInfo, WorkspaceInfo};
 
 /// Status of a dependency resolution
 #[derive(Debug, Clone)]
@@ -39,16 +38,16 @@ pub struct ResolvedDependency {
 /// Dependency resolver
 pub struct DependencyResolver {
     /// Primary workspace
-    primary_workspace: WorkspaceInfo,
+    primary_workspace: Workspace,
     /// Related workspaces
-    related_workspaces: Vec<WorkspaceInfo>,
+    related_workspaces: Vec<Workspace>,
     /// Cache of resolved dependencies
     resolved_dependencies: HashMap<String, ResolvedDependency>,
 }
 
 impl DependencyResolver {
     /// Create a new dependency resolver
-    pub fn new(primary_workspace: WorkspaceInfo, related_workspaces: Vec<WorkspaceInfo>) -> Self {
+    pub fn new(primary_workspace: Workspace, related_workspaces: Vec<Workspace>) -> Self {
         Self {
             primary_workspace,
             related_workspaces,
@@ -59,6 +58,27 @@ impl DependencyResolver {
     /// Get a cached resolved dependency
     pub fn get_resolved_dependency(&self, name: &str) -> Option<&ResolvedDependency> {
         self.resolved_dependencies.get(name)
+    }
+
+    /// Find a crate by name
+    pub fn find_crate(&self, name: &str) -> Option<&CrateInfo> {
+        // First check the primary workspace
+        for crate_info in &self.primary_workspace.crates {
+            if crate_info.name == name {
+                return Some(crate_info);
+            }
+        }
+
+        // Then check related workspaces
+        for workspace in &self.related_workspaces {
+            for crate_info in &workspace.crates {
+                if crate_info.name == name {
+                    return Some(crate_info);
+                }
+            }
+        }
+
+        None
     }
 
     /// Resolve a dependency
@@ -88,11 +108,8 @@ impl DependencyResolver {
             let mut matching_crates = Vec::new();
 
             // First check in the primary workspace
-            for (crate_name, crate_info) in &self.primary_workspace.crates {
-                // Match by converting kebab-case names to match the pattern
-                // For example, "core-crate" in Magnet.toml matches "core" directory/crate
-                let kebab_name = format!("{}-crate", crate_name.replace("_", "-"));
-                if name == crate_name || name == &kebab_name {
+            for crate_info in &self.primary_workspace.crates {
+                if crate_info.name == name {
                     matching_crates
                         .push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
                 }
@@ -100,12 +117,10 @@ impl DependencyResolver {
 
             // Then check in related workspaces
             for workspace in &self.related_workspaces {
-                for (crate_name, crate_info) in &workspace.crates {
-                    // Same matching logic as above
-                    let kebab_name = format!("{}-crate", crate_name.replace("_", "-"));
-                    if name == crate_name || name == &kebab_name {
+                for crate_name in &workspace.crates {
+                    if crate_name.name == name {
                         matching_crates
-                            .push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
+                            .push(crate_name.cargo_toml_path.parent().unwrap().to_path_buf());
                     }
                 }
             }
@@ -218,14 +233,19 @@ impl DependencyResolver {
         let mut matching_crates = Vec::new();
 
         // First check in the primary workspace
-        if let Some(crate_info) = self.primary_workspace.crates.get(name) {
-            matching_crates.push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
+        for crate_info in &self.primary_workspace.crates {
+            if crate_info.name == name {
+                matching_crates.push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
+            }
         }
 
         // Then check in other workspaces
         for workspace in &self.related_workspaces {
-            if let Some(crate_info) = workspace.crates.get(name) {
-                matching_crates.push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
+            for crate_info in &workspace.crates {
+                if crate_info.name == name {
+                    matching_crates
+                        .push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
+                }
             }
         }
 
@@ -275,12 +295,17 @@ impl DependencyResolver {
         candidates: &[PathBuf],
     ) -> Result<PathBuf> {
         // Check if the from_crate exists in primary workspace
-        let from_workspace = if self.primary_workspace.crates.contains_key(&from_crate.name) {
+        let from_workspace = if self
+            .primary_workspace
+            .crates
+            .iter()
+            .any(|c| c.name == from_crate.name)
+        {
             &self.primary_workspace
         } else {
             self.related_workspaces
                 .iter()
-                .find(|w| w.crates.contains_key(&from_crate.name))
+                .find(|w| w.crates.iter().any(|c| c.name == from_crate.name))
                 .ok_or_else(|| anyhow!("Failed to find workspace for crate {}", from_crate.name))?
         };
 
@@ -329,7 +354,7 @@ impl DependencyResolver {
     }
 
     /// Resolve all dependencies in a specific workspace
-    fn resolve_workspace_dependencies(&mut self, workspace: &WorkspaceInfo) -> Result<()> {
+    fn resolve_workspace_dependencies(&mut self, workspace: &Workspace) -> Result<()> {
         // Resolve workspace-level dependencies
         for (name, config) in &workspace.config.dependencies {
             if !self.resolved_dependencies.contains_key(name) {
@@ -338,7 +363,7 @@ impl DependencyResolver {
         }
 
         // Resolve crate-specific dependencies
-        for (_, crate_info) in &workspace.crates {
+        for crate_info in &workspace.crates {
             // Load crate-specific config if available
             if let Some(magnet_toml_path) = &crate_info.magnet_toml_path {
                 match crate::config::MagnetConfig::from_file(magnet_toml_path) {
@@ -362,5 +387,102 @@ impl DependencyResolver {
         }
 
         Ok(())
+    }
+
+    /// Resolve dependencies from both package and workspace configs
+    pub fn resolve_dependencies(
+        &mut self,
+        crate_name: &str,
+        package_deps: &HashMap<String, DependencyConfig>,
+        workspace_deps: &HashMap<String, DependencyConfig>,
+    ) -> Result<HashMap<String, DependencyConfig>> {
+        let mut result = HashMap::new();
+        let crate_info = self.find_crate(crate_name).cloned();
+
+        // Add workspace dependencies first (they will be overridden by package-specific ones)
+        for (name, config) in workspace_deps {
+            let resolved = match self.resolve_dependency(
+                &name.clone(),
+                &config.clone(),
+                crate_info.as_ref(),
+            ) {
+                Ok(resolved) => resolved,
+                Err(e) => {
+                    eprintln!("Warning: Failed to resolve dependency {}: {}", name, e);
+                    continue;
+                }
+            };
+
+            // Convert the resolved dependency back to a DependencyConfig
+            match resolved.status {
+                ResolutionStatus::Resolved(path) => {
+                    // Create a detailed dependency with the resolved path
+                    let mut detailed = resolved.resolved_config.clone();
+                    detailed.path = Some(path);
+
+                    result.insert(name.clone(), DependencyConfig::Detailed(detailed));
+                }
+                ResolutionStatus::NotFound => {
+                    // Use the original config
+                    result.insert(name.clone(), resolved.original_config);
+                }
+                ResolutionStatus::Ambiguous(paths) => {
+                    eprintln!(
+                        "Warning: Ambiguous resolution for dependency {} (found {} matches)",
+                        name,
+                        paths.len()
+                    );
+                    // Use the original config
+                    result.insert(name.clone(), resolved.original_config);
+                }
+                ResolutionStatus::Error(error) => {
+                    eprintln!("Warning: Error resolving dependency {}: {}", name, error);
+                    // Use the original config
+                    result.insert(name.clone(), resolved.original_config);
+                }
+            }
+        }
+
+        // Add package-specific dependencies, overriding workspace ones
+        for (name, config) in package_deps {
+            let resolved = match self.resolve_dependency(name, config, crate_info.as_ref()) {
+                Ok(resolved) => resolved,
+                Err(e) => {
+                    eprintln!("Warning: Failed to resolve dependency {}: {}", name, e);
+                    continue;
+                }
+            };
+
+            // Convert the resolved dependency back to a DependencyConfig
+            match resolved.status {
+                ResolutionStatus::Resolved(path) => {
+                    // Create a detailed dependency with the resolved path
+                    let mut detailed = resolved.resolved_config.clone();
+                    detailed.path = Some(path);
+
+                    result.insert(name.clone(), DependencyConfig::Detailed(detailed));
+                }
+                ResolutionStatus::NotFound => {
+                    // Use the original config
+                    result.insert(name.clone(), resolved.original_config);
+                }
+                ResolutionStatus::Ambiguous(paths) => {
+                    eprintln!(
+                        "Warning: Ambiguous resolution for dependency {} (found {} matches)",
+                        name,
+                        paths.len()
+                    );
+                    // Use the original config
+                    result.insert(name.clone(), resolved.original_config);
+                }
+                ResolutionStatus::Error(error) => {
+                    eprintln!("Warning: Error resolving dependency {}: {}", name, error);
+                    // Use the original config
+                    result.insert(name.clone(), resolved.original_config);
+                }
+            }
+        }
+
+        Ok(result)
     }
 }

@@ -1,9 +1,0 @@
-[package]
-name = "utils-crate"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-core-crate = "0.1.0"
-log = "0.4"
-chrono = "0.4"

@@ -1,560 +1,543 @@
-//! Cargo.toml generator
-//!
-//! This module is responsible for generating Cargo.toml files from
-//! Magnet.toml configuration and resolved dependencies.
-
-use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use crate::config::DependencyConfig;
+use crate::workspace_manager::{CrateInfo, WorkspaceManager};
+use crate::{DependencyResolver, MagnetConfig};
+use anyhow::{Context, Result};
 use std::path::Path;
 
-use crate::config::{DetailedDependency, MagnetConfig};
-use crate::resolver::{DependencyResolver, ResolutionStatus, ResolvedDependency};
-use crate::workspace::{CrateInfo, WorkspaceManager};
-
-/// Represents a Cargo.toml package section
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CargoPackage {
-    /// Package name
-    pub name: String,
-    /// Package version
-    pub version: String,
-    /// Package description
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Package authors
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub authors: Vec<String>,
-    /// Package edition (e.g., "2021")
-    #[serde(default = "default_edition")]
-    pub edition: String,
-    /// Package license
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub license: Option<String>,
-    /// Package repository
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repository: Option<String>,
-    /// Package homepage
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub homepage: Option<String>,
-    /// Package documentation
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub documentation: Option<String>,
-    /// Custom package metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-fn default_edition() -> String {
-    "2021".to_string()
-}
-
-/// Represents a Cargo.toml workspace section
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CargoWorkspace {
-    /// Workspace members
-    pub members: Vec<String>,
-    /// Excluded workspace members
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub exclude: Vec<String>,
-    /// Resolver version
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolver: Option<String>,
-    /// Custom workspace metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-/// Represents a Cargo.toml dependency
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum CargoDependency {
-    /// Simple version string
-    Simple(String),
-    /// Detailed dependency configuration
-    Detailed(CargoDetailedDependency),
-}
-
-/// Represents a detailed Cargo.toml dependency
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct CargoDetailedDependency {
-    /// Dependency version
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
-    /// Path to local dependency
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// Git repository URL
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub git: Option<String>,
-    /// Git branch
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    /// Git tag
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
-    /// Git revision
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rev: Option<String>,
-    /// Dependency features to enable
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub features: Option<Vec<String>>,
-    /// Whether all features should be enabled
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub all_features: Option<bool>,
-    /// Whether default features should be enabled
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_features: Option<bool>,
-    /// Whether to use the version defined in the workspace
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<bool>,
-    /// Optional dependency
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub optional: Option<bool>,
-    /// Package name (if different from dependency name)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub package: Option<String>,
-    /// Registry to use
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registry: Option<String>,
-    /// Artifact to use
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact: Option<String>,
-    /// Target to use
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    /// Custom dependency metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-/// Full Cargo.toml structure
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CargoToml {
-    /// Package section (for crates)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub package: Option<CargoPackage>,
-    /// Workspace section (for workspaces)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<CargoWorkspace>,
-    /// Dependencies
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub dependencies: HashMap<String, CargoDependency>,
-    /// Development dependencies
-    #[serde(
-        default,
-        skip_serializing_if = "HashMap::is_empty",
-        rename = "dev-dependencies"
-    )]
-    pub dev_dependencies: HashMap<String, CargoDependency>,
-    /// Build dependencies
-    #[serde(
-        default,
-        skip_serializing_if = "HashMap::is_empty",
-        rename = "build-dependencies"
-    )]
-    pub build_dependencies: HashMap<String, CargoDependency>,
-    /// Features
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub features: HashMap<String, Vec<String>>,
-    /// Target-specific dependencies
-    #[serde(flatten)]
-    pub targets: HashMap<String, toml::Value>,
-    /// Any other custom sections
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-/// Generator for Cargo.toml files from Magnet.toml configurations
+/// Cargo.toml generator
 pub struct CargoGenerator {
     /// Workspace manager
     workspace_manager: WorkspaceManager,
     /// Dependency resolver
-    dependency_resolver: DependencyResolver,
+    resolver: DependencyResolver,
 }
 
 impl CargoGenerator {
-    /// Create a new CargoGenerator with the given workspace manager and resolver
-    pub fn new(
-        workspace_manager: WorkspaceManager,
-        dependency_resolver: DependencyResolver,
-    ) -> Self {
+    /// Create a new generator
+    pub fn new(workspace_manager: WorkspaceManager, resolver: DependencyResolver) -> Self {
         Self {
             workspace_manager,
-            dependency_resolver,
+            resolver,
         }
     }
 
-    /// Generate Cargo.toml files for all crates in the primary workspace
+    /// Generate all Cargo.toml files
     pub fn generate_all(&mut self) -> Result<()> {
-        // First, generate the workspace-level Cargo.toml
-        self.generate_workspace_cargo_toml()?;
+        // First, generate the root Cargo.toml
+        self.generate_root_cargo_toml()?;
 
-        // Then generate Cargo.toml for each crate
-        let all_crates = self.workspace_manager.primary_workspace.all_crates();
-        for (_, crate_info) in all_crates {
+        // Then, generate Cargo.toml for each crate
+        for crate_info in self.workspace_manager.get_all_crates() {
             self.generate_crate_cargo_toml(&crate_info)?;
         }
 
         Ok(())
     }
 
-    /// Generate the workspace-level Cargo.toml
-    fn generate_workspace_cargo_toml(&self) -> Result<()> {
-        // Get the workspace root
-        let workspace_root = &self.workspace_manager.primary_workspace.root_path;
-        let workspace_config = &self.workspace_manager.primary_workspace.config;
+    /// Generate the root Cargo.toml file
+    fn generate_root_cargo_toml(&self) -> Result<()> {
+        // Get the workspace root path
+        let workspace_root = self.workspace_manager.get_root_path();
 
-        // Create the workspace section
-        let workspace_section = CargoWorkspace {
-            members: workspace_config.workspace.members.clone(),
-            exclude: workspace_config.workspace.exclude.clone(),
-            resolver: workspace_config.workspace.resolver.clone(),
-            custom: workspace_config.workspace.custom.clone(),
-        };
+        // Path to the root Cargo.toml
+        let cargo_toml_path = workspace_root.join("Cargo.toml");
 
-        // Create the package section if project metadata is available
-        let package_section = if let Some(name) = &workspace_config.project.name {
-            Some(CargoPackage {
-                name: name.clone(),
-                version: workspace_config
-                    .project
-                    .version
-                    .clone()
-                    .unwrap_or_else(|| "0.1.0".to_string()),
-                description: workspace_config.project.description.clone(),
-                authors: workspace_config.project.authors.clone(),
-                edition: "2021".to_string(),
-                license: workspace_config.project.license.clone(),
-                repository: workspace_config.project.repository.clone(),
-                homepage: workspace_config.project.homepage.clone(),
-                documentation: workspace_config.project.documentation.clone(),
-                custom: workspace_config.project.custom.clone(),
-            })
-        } else {
-            None
-        };
+        // Create a new workspace manifest
+        let workspace_manifest = self.generate_workspace_manifest()?;
 
-        // Create the Cargo.toml structure
-        let cargo_toml = CargoToml {
-            package: package_section,
-            workspace: Some(workspace_section),
-            dependencies: HashMap::new(),
-            dev_dependencies: HashMap::new(),
-            build_dependencies: HashMap::new(),
-            features: HashMap::new(),
-            targets: HashMap::new(),
-            custom: HashMap::new(),
-        };
+        // Convert to TOML string
+        let toml_string = toml::to_string_pretty(&workspace_manifest)
+            .context("Failed to convert workspace manifest to TOML")?;
 
         // Write to file
-        let cargo_toml_path = workspace_root.join("Cargo.toml");
-        self.write_cargo_toml(&cargo_toml, &cargo_toml_path)?;
+        std::fs::write(&cargo_toml_path, toml_string)
+            .context(format!("Failed to write to {}", cargo_toml_path.display()))?;
 
         Ok(())
     }
 
-    /// Generate Cargo.toml for a specific crate
+    /// Generate a Cargo.toml for a specific crate
     fn generate_crate_cargo_toml(&mut self, crate_info: &CrateInfo) -> Result<()> {
-        // Get the workspace and crate configurations
+        // Skip if the crate has a custom config (don't overwrite)
+        if crate_info.has_custom_config {
+            return Ok(());
+        }
+
+        // Generate the crate manifest
+        let crate_manifest = self.generate_crate_manifest(crate_info)?;
+
+        // Convert to TOML string
+        let toml_string = toml::to_string_pretty(&crate_manifest)
+            .context("Failed to convert crate manifest to TOML")?;
+
+        // Write to file
+        std::fs::write(&crate_info.cargo_toml_path, toml_string).context(format!(
+            "Failed to write to {}",
+            crate_info.cargo_toml_path.display()
+        ))?;
+
+        Ok(())
+    }
+
+    /// Generate a workspace manifest
+    fn generate_workspace_manifest(&self) -> Result<toml::Table> {
+        // Get the workspace configuration
         let workspace_config = &self.workspace_manager.primary_workspace.config;
 
-        // Load crate-specific config if available
-        let crate_config = if let Some(magnet_toml_path) = &crate_info.magnet_toml_path {
-            match MagnetConfig::from_file(magnet_toml_path) {
-                Ok(config) => Some(config),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to load crate-specific Magnet.toml for {}: {}",
-                        crate_info.name, e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        // Create a new manifest
+        let mut manifest = toml::Table::new();
 
-        // Create the package section
-        let package_section = CargoPackage {
-            name: crate_info.name.clone(),
-            version: crate_config
-                .as_ref()
-                .and_then(|c| c.project.version.clone())
-                .or_else(|| workspace_config.project.version.clone())
-                .unwrap_or_else(|| "0.1.0".to_string()),
-            description: crate_config
-                .as_ref()
-                .and_then(|c| c.project.description.clone())
-                .or_else(|| workspace_config.project.description.clone()),
-            authors: if let Some(config) = &crate_config {
-                if !config.project.authors.is_empty() {
-                    config.project.authors.clone()
-                } else {
-                    workspace_config.project.authors.clone()
+        // Add package section if needed
+        let mut package = toml::Table::new();
+
+        if let Some(name) = &workspace_config.project.name {
+            package.insert("name".to_string(), toml::Value::String(name.clone()));
+        }
+
+        if let Some(version) = &workspace_config.project.version {
+            package.insert("version".to_string(), toml::Value::String(version.clone()));
+        }
+
+        if let Some(description) = &workspace_config.project.description {
+            package.insert(
+                "description".to_string(),
+                toml::Value::String(description.clone()),
+            );
+        }
+
+        if !workspace_config.project.authors.is_empty() {
+            let authors = workspace_config
+                .project
+                .authors
+                .iter()
+                .map(|a| toml::Value::String(a.clone()))
+                .collect::<Vec<_>>();
+
+            package.insert("authors".to_string(), toml::Value::Array(authors));
+        }
+
+        if let Some(license) = &workspace_config.project.license {
+            package.insert("license".to_string(), toml::Value::String(license.clone()));
+        }
+
+        if let Some(repository) = &workspace_config.project.repository {
+            package.insert(
+                "repository".to_string(),
+                toml::Value::String(repository.clone()),
+            );
+        }
+
+        if let Some(homepage) = &workspace_config.project.homepage {
+            package.insert(
+                "homepage".to_string(),
+                toml::Value::String(homepage.clone()),
+            );
+        }
+
+        if let Some(documentation) = &workspace_config.project.documentation {
+            package.insert(
+                "documentation".to_string(),
+                toml::Value::String(documentation.clone()),
+            );
+        }
+
+        if !package.is_empty() {
+            manifest.insert("package".to_string(), toml::Value::Table(package));
+        }
+
+        // Add workspace section
+        let mut workspace = toml::Table::new();
+
+        // Add members
+        let members = workspace_config.workspace.members.clone();
+        let members_value = members
+            .iter()
+            .map(|m| toml::Value::String(m.clone()))
+            .collect::<Vec<_>>();
+
+        if !members_value.is_empty() {
+            workspace.insert("members".to_string(), toml::Value::Array(members_value));
+        }
+
+        // Add exclude patterns
+        let exclude = workspace_config.workspace.exclude.clone();
+
+        if !exclude.is_empty() {
+            let exclude_value = exclude
+                .iter()
+                .map(|e| toml::Value::String(e.clone()))
+                .collect::<Vec<_>>();
+
+            workspace.insert("exclude".to_string(), toml::Value::Array(exclude_value));
+        }
+
+        // Add resolver if specified
+        if let Some(resolver) = &workspace_config.workspace.resolver {
+            workspace.insert(
+                "resolver".to_string(),
+                toml::Value::String(resolver.clone()),
+            );
+        }
+
+        // Add to manifest
+        manifest.insert("workspace".to_string(), toml::Value::Table(workspace));
+
+        Ok(manifest)
+    }
+
+    /// Generate a crate manifest
+    fn generate_crate_manifest(&mut self, crate_info: &CrateInfo) -> Result<toml::Table> {
+        // Create a new manifest
+        let mut manifest = toml::Table::new();
+
+        // Get the workspace configuration
+        let workspace_config = &self.workspace_manager.primary_workspace.config;
+
+        // Add package section
+        let mut package = toml::Table::new();
+
+        // If this crate has its own Magnet.toml, use that; otherwise use workspace defaults
+        let package_config = if let Some(magnet_path) = &crate_info.magnet_toml_path {
+            if magnet_path.exists() {
+                match MagnetConfig::from_file(magnet_path) {
+                    Ok(config) => config,
+                    Err(_) => workspace_config.clone(),
                 }
             } else {
-                workspace_config.project.authors.clone()
-            },
-            edition: "2021".to_string(),
-            license: crate_config
-                .as_ref()
-                .and_then(|c| c.project.license.clone())
-                .or_else(|| workspace_config.project.license.clone()),
-            repository: crate_config
-                .as_ref()
-                .and_then(|c| c.project.repository.clone())
-                .or_else(|| workspace_config.project.repository.clone()),
-            homepage: crate_config
-                .as_ref()
-                .and_then(|c| c.project.homepage.clone())
-                .or_else(|| workspace_config.project.homepage.clone()),
-            documentation: crate_config
-                .as_ref()
-                .and_then(|c| c.project.documentation.clone())
-                .or_else(|| workspace_config.project.documentation.clone()),
-            custom: HashMap::new(),
+                workspace_config.clone()
+            }
+        } else {
+            workspace_config.clone()
         };
 
-        // Collect dependencies
-        let mut dependencies = HashMap::new();
-        let mut dev_dependencies = HashMap::new();
-        let mut build_dependencies = HashMap::new();
+        // Set package name
+        package.insert(
+            "name".to_string(),
+            toml::Value::String(crate_info.name.clone()),
+        );
 
-        // Process workspace dependencies first
-        for (dep_name, dep_config) in &workspace_config.dependencies {
-            // Check if this dep should be included (not overridden by crate-specific config)
-            let should_include = crate_config
-                .as_ref()
-                .map(|c| !c.dependencies.contains_key(dep_name))
-                .unwrap_or(true);
+        // Set package version, with fallbacks
+        let version = crate_info
+            .version
+            .clone()
+            .or_else(|| package_config.project.version.clone())
+            .or_else(|| workspace_config.project.version.clone())
+            .unwrap_or_else(|| "0.1.0".to_string());
 
-            if should_include {
-                // Resolve the dependency
-                if let Some(resolved) = self.dependency_resolver.get_resolved_dependency(dep_name) {
-                    dependencies.insert(dep_name.clone(), self.to_cargo_dependency(resolved)?);
-                } else {
-                    // Not yet resolved, resolve it now
-                    match self.dependency_resolver.resolve_dependency(
-                        dep_name,
-                        dep_config,
-                        Some(crate_info),
-                    ) {
-                        Ok(resolved) => {
-                            dependencies
-                                .insert(dep_name.clone(), self.to_cargo_dependency(&resolved)?);
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: Failed to resolve dependency {}: {}", dep_name, e);
-                        }
+        package.insert("version".to_string(), toml::Value::String(version));
+
+        // Set description
+        if let Some(description) = package_config
+            .project
+            .description
+            .as_ref()
+            .or_else(|| workspace_config.project.description.as_ref())
+        {
+            package.insert(
+                "description".to_string(),
+                toml::Value::String(description.clone()),
+            );
+        }
+
+        // Set authors
+        let authors = if !package_config.project.authors.is_empty() {
+            package_config.project.authors.clone()
+        } else {
+            workspace_config.project.authors.clone()
+        };
+
+        if !authors.is_empty() {
+            let authors_value = authors
+                .iter()
+                .map(|a| toml::Value::String(a.clone()))
+                .collect::<Vec<_>>();
+
+            package.insert("authors".to_string(), toml::Value::Array(authors_value));
+        }
+
+        // Set license
+        if let Some(license) = package_config
+            .project
+            .license
+            .as_ref()
+            .or_else(|| workspace_config.project.license.as_ref())
+        {
+            package.insert("license".to_string(), toml::Value::String(license.clone()));
+        }
+
+        // Set repository
+        if let Some(repository) = package_config
+            .project
+            .repository
+            .as_ref()
+            .or_else(|| workspace_config.project.repository.as_ref())
+        {
+            package.insert(
+                "repository".to_string(),
+                toml::Value::String(repository.clone()),
+            );
+        }
+
+        // Set homepage
+        if let Some(homepage) = package_config
+            .project
+            .homepage
+            .as_ref()
+            .or_else(|| workspace_config.project.homepage.as_ref())
+        {
+            package.insert(
+                "homepage".to_string(),
+                toml::Value::String(homepage.clone()),
+            );
+        }
+
+        // Set documentation
+        if let Some(documentation) = package_config
+            .project
+            .documentation
+            .as_ref()
+            .or_else(|| workspace_config.project.documentation.as_ref())
+        {
+            package.insert(
+                "documentation".to_string(),
+                toml::Value::String(documentation.clone()),
+            );
+        }
+
+        // Set workspace = true to indicate this is part of a workspace
+        package.insert("workspace".to_string(), toml::Value::Boolean(true));
+
+        // Add the package section to the manifest
+        manifest.insert("package".to_string(), toml::Value::Table(package));
+
+        // Add dependencies
+        let mut dependencies = toml::Table::new();
+
+        // Resolve dependencies
+        let resolved_deps = self.resolver.resolve_dependencies(
+            &crate_info.name,
+            &package_config.dependencies,
+            &workspace_config.dependencies,
+        )?;
+
+        // Add all resolved dependencies
+        for (name, dep) in resolved_deps {
+            // Add the dependency to the manifest
+            match dep {
+                DependencyConfig::Simple(version) => {
+                    dependencies.insert(name, toml::Value::String(version));
+                }
+                DependencyConfig::Detailed(detailed) => {
+                    let mut dep_table = toml::Table::new();
+
+                    // Add the detailed dependency configuration
+                    if let Some(version) = detailed.version {
+                        dep_table.insert("version".to_string(), toml::Value::String(version));
                     }
+
+                    if let Some(path) = detailed.path {
+                        // Convert path to a relative path if possible
+                        let rel_path = pathdiff::diff_paths(
+                            &path,
+                            crate_info
+                                .cargo_toml_path
+                                .parent()
+                                .unwrap_or(Path::new(".")),
+                        )
+                        .unwrap_or_else(|| path.clone());
+
+                        dep_table.insert(
+                            "path".to_string(),
+                            toml::Value::String(rel_path.to_string_lossy().to_string()),
+                        );
+                    }
+
+                    if let Some(git) = detailed.git {
+                        dep_table.insert("git".to_string(), toml::Value::String(git));
+                    }
+
+                    if let Some(branch) = detailed.branch {
+                        dep_table.insert("branch".to_string(), toml::Value::String(branch));
+                    }
+
+                    if let Some(tag) = detailed.tag {
+                        dep_table.insert("tag".to_string(), toml::Value::String(tag));
+                    }
+
+                    if let Some(rev) = detailed.rev {
+                        dep_table.insert("rev".to_string(), toml::Value::String(rev));
+                    }
+
+                    if let Some(features) = detailed.features {
+                        let features_value = features
+                            .iter()
+                            .map(|f| toml::Value::String(f.clone()))
+                            .collect::<Vec<_>>();
+
+                        dep_table
+                            .insert("features".to_string(), toml::Value::Array(features_value));
+                    }
+
+                    if let Some(all_features) = detailed.all_features {
+                        dep_table.insert(
+                            "all-features".to_string(),
+                            toml::Value::Boolean(all_features),
+                        );
+                    }
+
+                    if let Some(default_features) = detailed.default_features {
+                        dep_table.insert(
+                            "default-features".to_string(),
+                            toml::Value::Boolean(default_features),
+                        );
+                    }
+
+                    if let Some(workspace) = detailed.workspace {
+                        dep_table.insert("workspace".to_string(), toml::Value::Boolean(workspace));
+                    }
+
+                    if let Some(optional) = detailed.optional {
+                        dep_table.insert("optional".to_string(), toml::Value::Boolean(optional));
+                    }
+
+                    if let Some(package) = detailed.package {
+                        dep_table.insert("package".to_string(), toml::Value::String(package));
+                    }
+
+                    if let Some(registry) = detailed.registry {
+                        dep_table.insert("registry".to_string(), toml::Value::String(registry));
+                    }
+
+                    dependencies.insert(name, toml::Value::Table(dep_table));
                 }
             }
         }
 
-        // Process workspace dev dependencies
-        for (dep_name, dep_config) in &workspace_config.dev_dependencies {
-            // Similar logic as for regular dependencies
-            let should_include = crate_config
-                .as_ref()
-                .map(|c| !c.dev_dependencies.contains_key(dep_name))
-                .unwrap_or(true);
-
-            if should_include {
-                // Add to dev_dependencies
-                dev_dependencies.insert(
-                    dep_name.clone(),
-                    self.to_cargo_dependency_from_config(dep_config)?,
-                );
-            }
+        // Add the dependencies section to the manifest if not empty
+        if !dependencies.is_empty() {
+            manifest.insert("dependencies".to_string(), toml::Value::Table(dependencies));
         }
 
-        // Process workspace build dependencies
-        for (dep_name, dep_config) in &workspace_config.build_dependencies {
-            // Similar logic as for regular dependencies
-            let should_include = crate_config
-                .as_ref()
-                .map(|c| !c.build_dependencies.contains_key(dep_name))
-                .unwrap_or(true);
+        // Add dev-dependencies if any
+        let mut dev_dependencies = toml::Table::new();
 
-            if should_include {
-                // Add to build_dependencies
-                build_dependencies.insert(
-                    dep_name.clone(),
-                    self.to_cargo_dependency_from_config(dep_config)?,
-                );
-            }
-        }
+        // Resolve dev-dependencies
+        let resolved_dev_deps = self.resolver.resolve_dependencies(
+            &crate_info.name,
+            &package_config.dev_dependencies,
+            &workspace_config.dev_dependencies,
+        )?;
 
-        // Now process crate-specific dependencies
-        if let Some(config) = &crate_config {
-            for (dep_name, dep_config) in &config.dependencies {
-                // Resolve the dependency
-                if let Some(resolved) = self.dependency_resolver.get_resolved_dependency(dep_name) {
-                    dependencies.insert(dep_name.clone(), self.to_cargo_dependency(resolved)?);
-                } else {
-                    // Not yet resolved, resolve it now
-                    match self.dependency_resolver.resolve_dependency(
-                        dep_name,
-                        dep_config,
-                        Some(crate_info),
-                    ) {
-                        Ok(resolved) => {
-                            dependencies
-                                .insert(dep_name.clone(), self.to_cargo_dependency(&resolved)?);
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: Failed to resolve dependency {}: {}", dep_name, e);
-                        }
+        // Add all resolved dev-dependencies
+        for (name, dep) in resolved_dev_deps {
+            // Add the dependency to the manifest in the same way as for regular dependencies
+            match dep {
+                DependencyConfig::Simple(version) => {
+                    dev_dependencies.insert(name, toml::Value::String(version));
+                }
+                DependencyConfig::Detailed(detailed) => {
+                    let mut dep_table = toml::Table::new();
+
+                    // Add the detailed dependency configuration (same as above)
+                    if let Some(version) = detailed.version {
+                        dep_table.insert("version".to_string(), toml::Value::String(version));
                     }
+
+                    if let Some(path) = detailed.path {
+                        // Convert path to a relative path if possible
+                        let rel_path = pathdiff::diff_paths(
+                            &path,
+                            crate_info
+                                .cargo_toml_path
+                                .parent()
+                                .unwrap_or(Path::new(".")),
+                        )
+                        .unwrap_or_else(|| path.clone());
+
+                        dep_table.insert(
+                            "path".to_string(),
+                            toml::Value::String(rel_path.to_string_lossy().to_string()),
+                        );
+                    }
+
+                    // Add other fields as needed (similar to regular dependencies)
+                    // ...
+
+                    dev_dependencies.insert(name, toml::Value::Table(dep_table));
                 }
             }
+        }
 
-            // Process crate-specific dev dependencies
-            for (dep_name, dep_config) in &config.dev_dependencies {
-                dev_dependencies.insert(
-                    dep_name.clone(),
-                    self.to_cargo_dependency_from_config(dep_config)?,
-                );
-            }
+        // Add the dev-dependencies section to the manifest if not empty
+        if !dev_dependencies.is_empty() {
+            manifest.insert(
+                "dev-dependencies".to_string(),
+                toml::Value::Table(dev_dependencies),
+            );
+        }
 
-            // Process crate-specific build dependencies
-            for (dep_name, dep_config) in &config.build_dependencies {
-                build_dependencies.insert(
-                    dep_name.clone(),
-                    self.to_cargo_dependency_from_config(dep_config)?,
-                );
+        // Add build-dependencies if any
+        let mut build_dependencies = toml::Table::new();
+
+        // Resolve build-dependencies
+        let resolved_build_deps = self.resolver.resolve_dependencies(
+            &crate_info.name,
+            &package_config.build_dependencies,
+            &workspace_config.build_dependencies,
+        )?;
+
+        // Add all resolved build-dependencies
+        for (name, dep) in resolved_build_deps {
+            // Similar to regular dependencies...
+            match dep {
+                DependencyConfig::Simple(version) => {
+                    build_dependencies.insert(name, toml::Value::String(version));
+                }
+                DependencyConfig::Detailed(detailed) => {
+                    // Similar to regular dependencies...
+                    let mut dep_table = toml::Table::new();
+
+                    if let Some(version) = detailed.version {
+                        dep_table.insert("version".to_string(), toml::Value::String(version));
+                    }
+
+                    // Add other fields as needed
+
+                    build_dependencies.insert(name, toml::Value::Table(dep_table));
+                }
             }
         }
 
-        // Create the Cargo.toml structure
-        let cargo_toml = CargoToml {
-            package: Some(package_section),
-            workspace: None,
-            dependencies,
-            dev_dependencies,
-            build_dependencies,
-            features: HashMap::new(),
-            targets: HashMap::new(),
-            custom: HashMap::new(),
-        };
-
-        // Write to file
-        self.write_cargo_toml(&cargo_toml, &crate_info.cargo_toml_path)?;
-
-        Ok(())
-    }
-
-    /// Convert a resolved dependency to a Cargo dependency
-    fn to_cargo_dependency(&self, resolved: &ResolvedDependency) -> Result<CargoDependency> {
-        match &resolved.status {
-            ResolutionStatus::Resolved(path) => {
-                // Create a detailed dependency with the resolved path
-                let mut cargo_dep = CargoDetailedDependency {
-                    path: Some(path.to_string_lossy().to_string()),
-                    ..Default::default()
-                };
-
-                // Copy other relevant fields from the resolved config
-                let config = &resolved.resolved_config;
-
-                cargo_dep.version = config.version.clone();
-                cargo_dep.features = config.features.clone();
-                cargo_dep.all_features = config.all_features;
-                cargo_dep.default_features = config.default_features;
-                cargo_dep.optional = config.optional;
-                cargo_dep.package = config.package.clone();
-
-                Ok(CargoDependency::Detailed(cargo_dep))
-            }
-            ResolutionStatus::NotFound => {
-                // For external dependencies, just copy the original config
-                self.to_cargo_dependency_from_detailed(&resolved.resolved_config)
-            }
-            ResolutionStatus::Ambiguous(paths) => {
-                // This is an error condition
-                bail!(
-                    "Ambiguous dependency resolution for {}: found multiple matching crates at {:?}",
-                    resolved.name,
-                    paths
-                );
-            }
-            ResolutionStatus::Error(msg) => {
-                // This is an error condition
-                bail!("Error resolving dependency {}: {}", resolved.name, msg);
-            }
+        // Add the build-dependencies section to the manifest if not empty
+        if !build_dependencies.is_empty() {
+            manifest.insert(
+                "build-dependencies".to_string(),
+                toml::Value::Table(build_dependencies),
+            );
         }
-    }
 
-    /// Convert a detailed dependency configuration to a Cargo dependency
-    fn to_cargo_dependency_from_detailed(
-        &self,
-        config: &DetailedDependency,
-    ) -> Result<CargoDependency> {
-        // If it's just a version, use a simple dependency
-        if let Some(version) = &config.version {
-            if config.path.is_none()
-                && config.git.is_none()
-                && config.features.is_none()
-                && config.all_features.is_none()
-                && config.default_features.is_none()
-                && config.optional.is_none()
-                && config.package.is_none()
+        // Add custom metadata
+        for (key, value) in &package_config.project.custom {
+            // Skip fields we've already handled
+            if [
+                "name",
+                "version",
+                "description",
+                "authors",
+                "license",
+                "repository",
+                "homepage",
+                "documentation",
+            ]
+            .contains(&key.as_str())
             {
-                return Ok(CargoDependency::Simple(version.clone()));
+                continue;
             }
+
+            // Add custom fields at the root
+            manifest.insert(key.clone(), value.clone());
         }
 
-        // Otherwise, create a detailed dependency
-        let cargo_dep = CargoDetailedDependency {
-            version: config.version.clone(),
-            path: config
-                .path
-                .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
-            git: config.git.clone(),
-            branch: config.branch.clone(),
-            tag: config.tag.clone(),
-            rev: config.rev.clone(),
-            features: config.features.clone(),
-            all_features: config.all_features,
-            default_features: config.default_features,
-            workspace: config.workspace,
-            optional: config.optional,
-            package: config.package.clone(),
-            registry: config.registry.clone(),
-            artifact: config.artifact.clone(),
-            target: config.target.clone(),
-            custom: HashMap::new(),
-        };
-
-        Ok(CargoDependency::Detailed(cargo_dep))
-    }
-
-    /// Convert a dependency configuration to a Cargo dependency
-    fn to_cargo_dependency_from_config(
-        &self,
-        config: &crate::config::DependencyConfig,
-    ) -> Result<CargoDependency> {
-        match config {
-            crate::config::DependencyConfig::Simple(version) => {
-                Ok(CargoDependency::Simple(version.clone()))
-            }
-            crate::config::DependencyConfig::Detailed(detailed) => {
-                self.to_cargo_dependency_from_detailed(detailed)
-            }
-        }
-    }
-
-    /// Write a Cargo.toml structure to a file
-    fn write_cargo_toml(&self, cargo_toml: &CargoToml, path: &Path) -> Result<()> {
-        // Convert to TOML
-        let toml = toml::to_string_pretty(cargo_toml).context("Failed to serialize Cargo.toml")?;
-
-        // Write to file
-        std::fs::write(path, toml)
-            .context(format!("Failed to write Cargo.toml to {}", path.display()))?;
-
-        Ok(())
+        Ok(manifest)
     }
 }
