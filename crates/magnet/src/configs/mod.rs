@@ -3,15 +3,15 @@
 //! This module provides structures and functionality for parsing,
 //! validating, and managing Magnet.toml configuration files.
 
-mod nexus;
-mod workspace;
-mod package;
 mod dependencies;
+mod nexus;
+mod package;
+mod workspace;
+
+pub use dependencies::*;
 pub use nexus::*;
 pub use package::*;
 pub use workspace::*;
-pub use dependencies::*;
-
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -111,10 +111,10 @@ impl MagnetConfig {
             MagnetConfigType::Nexus => {
                 // Initialize nexus-specific fields
                 config.nexus = Some(NexusConfig::default());
-            },
+            }
             MagnetConfigType::Workspace => {
                 // Workspace type already has defaults in the WorkspaceConfig
-            },
+            }
             MagnetConfigType::Package => {
                 // Package type is the default
             }
@@ -126,8 +126,8 @@ impl MagnetConfig {
     /// Parse a MagnetConfig from a TOML string
     pub fn from_toml_str(toml_str: &str) -> Result<Self> {
         // Parse the TOML
-        let config: Self = toml::from_str(toml_str)
-            .context("Failed to parse Magnet.toml from string")?;
+        let config: Self =
+            toml::from_str(toml_str).context("Failed to parse Magnet.toml from string")?;
 
         Ok(config)
     }
