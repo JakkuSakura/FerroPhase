@@ -37,7 +37,7 @@ pub struct Workspace {
 }
 
 /// Workspace manager
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkspaceManager {
     /// Primary workspace
     pub primary_workspace: Workspace,
