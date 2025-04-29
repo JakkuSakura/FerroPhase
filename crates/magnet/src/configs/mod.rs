@@ -102,10 +102,10 @@ impl MagnetConfig {
     /// Create a new configuration with the specified type
     pub fn new_with_type(config_type: MagnetConfigType) -> Self {
         let mut config = Self::new();
-        
+
         // Set the configuration type
         config.config_type = config_type;
-        
+
         // Based on the type, ensure appropriate sections exist
         match config_type {
             MagnetConfigType::Nexus => {
@@ -119,19 +119,19 @@ impl MagnetConfig {
                 // Package type is the default
             }
         }
-        
+
         config
     }
-    
+
     /// Parse a MagnetConfig from a TOML string
     pub fn from_toml_str(toml_str: &str) -> Result<Self> {
         // Parse the TOML
-        let mut config: Self = toml::from_str(toml_str)
+        let config: Self = toml::from_str(toml_str)
             .context("Failed to parse Magnet.toml from string")?;
-            
+
         Ok(config)
     }
-    
+
     /// Get the configuration type based on which sections are defined
     pub fn config_type(&self) -> MagnetConfigType {
         if self.nexus.is_some() {
@@ -273,16 +273,6 @@ impl MagnetConfig {
             None => None,
         }
     }
-}
-
-/// Get workspace members from a config
-pub fn get_workspace_members(config: &MagnetConfig) -> Vec<String> {
-    config.workspace.members.clone()
-}
-
-/// Get search paths from a config
-pub fn get_search_paths(config: &MagnetConfig) -> Option<HashMap<String, PathBuf>> {
-    config.workspace.search_paths.clone()
 }
 
 impl Default for MagnetConfig {
