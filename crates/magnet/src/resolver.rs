@@ -3,7 +3,7 @@
 //! This module is responsible for resolving dependencies across workspaces,
 //! handling path resolution, and managing dependency conflicts.
 
-use crate::config::{DependencyConfig, DetailedDependency};
+use crate::configs::{DependencyConfig, DetailedDependency};
 use crate::workspace_manager::{CrateInfo, Workspace};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
@@ -366,7 +366,7 @@ impl DependencyResolver {
         for crate_info in &workspace.crates {
             // Load crate-specific config if available
             if let Some(magnet_toml_path) = &crate_info.magnet_toml_path {
-                match crate::config::MagnetConfig::from_file(magnet_toml_path) {
+                match crate::configs::MagnetConfig::from_file(magnet_toml_path) {
                     Ok(config) => {
                         // Resolve all dependencies from this config
                         for (name, dep_config) in &config.dependencies {
