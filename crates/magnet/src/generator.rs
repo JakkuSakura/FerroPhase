@@ -1,4 +1,4 @@
-use crate::config::DependencyConfig;
+use crate::configs::DependencyConfig;
 use crate::workspace_manager::{CrateInfo, WorkspaceManager};
 use crate::{DependencyResolver, MagnetConfig};
 use anyhow::{Context, Result};

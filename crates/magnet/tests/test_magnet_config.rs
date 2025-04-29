@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use tempfile::tempdir;
 
-use magnet::config::MagnetConfig;
+use magnet::configs::MagnetConfig;
 
 #[test]
 fn test_magnet_config_create_and_parse() -> Result<()> {

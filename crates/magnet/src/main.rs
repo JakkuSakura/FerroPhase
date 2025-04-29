@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use log::debug;
 use std::path::PathBuf;
 
-mod config;
+mod configs;
 
 use magnet::commands;
 
