@@ -2,7 +2,7 @@
 
 use crate::configs::MagnetConfig;
 use crate::workspace_manager::{CrateInfo, WorkspaceManager};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use glob;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,7 +28,7 @@ fn get_configured_members(config_path: &Path, base_dir: &Path) -> Result<Vec<Pat
                 } else {
                     base_dir.join(path)
                 };
-                
+
                 if abs_path.exists() {
                     result.push(abs_path);
                 }
@@ -61,47 +61,24 @@ fn get_configured_members(config_path: &Path, base_dir: &Path) -> Result<Vec<Pat
 fn expand_workspace_member_pattern(base_dir: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
     let mut result = Vec::new();
     let full_pattern = format!("{}/{}", base_dir.display(), pattern);
-    
+
     for entry in glob::glob(&full_pattern)? {
         if let Ok(path) = entry {
             if path.is_dir() {
                 result.push(path);
             } else if let Some(parent) = path.parent() {
                 // For patterns that match files (like */Cargo.toml), use the parent directory
-                if path.file_name().map_or(false, |name| name == "Cargo.toml" || name == "Magnet.toml") {
+                if path
+                    .file_name()
+                    .map_or(false, |name| name == "Cargo.toml" || name == "Magnet.toml")
+                {
                     result.push(parent.to_path_buf());
                 }
             }
         }
     }
-    
-    Ok(result)
-}
 
-/// Determine if a directory should be included in the workspace
-fn should_include_in_workspace(dir: &Path, workspace_config: &MagnetConfig) -> bool {
-    // Check if the directory is explicitly mentioned in the workspace members
-    for pattern in &workspace_config.workspace.members {
-        // Create a relative path for matching
-        if let Ok(rel_path) = dir.strip_prefix(workspace_config.project.path.as_ref().unwrap_or(&PathBuf::new())) {
-            let rel_path_str = rel_path.to_string_lossy();
-            
-            // Check if the pattern matches this directory
-            if let Ok(glob_pattern) = glob::Pattern::new(pattern) {
-                if glob_pattern.matches(&rel_path_str) {
-                    return true;
-                }
-            }
-            
-            // Also check for direct matches
-            if pattern == &rel_path_str {
-                return true;
-            }
-        }
-    }
-    
-    // Also check if it's a crate with Cargo.toml
-    dir.join("Cargo.toml").exists()
+    Ok(result)
 }
 
 /// Display workspace hierarchy as a tree
@@ -161,11 +138,10 @@ pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
         std::fs::read_dir(&base_dir)?
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| {
-                p.is_dir() && (
-                    p.join("Cargo.toml").exists() || 
-                    p.join("Magnet.toml").exists() ||
-                    has_nested_project_files(p).unwrap_or(false)
-                )
+                p.is_dir()
+                    && (p.join("Cargo.toml").exists()
+                        || p.join("Magnet.toml").exists()
+                        || has_nested_project_files(p).unwrap_or(false))
             })
             .collect()
     };
@@ -254,6 +230,34 @@ fn build_workspace_relationship_map(
                         .entry(workspace_dir.to_path_buf())
                         .or_insert_with(Vec::new)
                         .push(absolute_path);
+                }
+            }
+        }
+
+        // For nexus configuration, also check nexus.search_paths
+        if let Some(nexus) = &config.nexus {
+            if let Some(search_paths) = &nexus.search_paths {
+                for related_path in search_paths.values() {
+                    let absolute_path = if related_path.is_absolute() {
+                        related_path.clone()
+                    } else {
+                        // Resolve relative path
+                        workspace_dir.join(related_path)
+                    };
+
+                    // Normalize path
+                    let absolute_path = absolute_path
+                        .canonicalize()
+                        .unwrap_or_else(|_| absolute_path);
+
+                    // Check if this path contains a Magnet.toml
+                    if absolute_path.join("Magnet.toml").exists() {
+                        // Add to relationship map
+                        result
+                            .entry(workspace_dir.to_path_buf())
+                            .or_insert_with(Vec::new)
+                            .push(absolute_path);
+                    }
                 }
             }
         }
@@ -381,7 +385,7 @@ fn print_unified_tree(
 
     println!("{}{} {}", current_prefix, node_type, node_name);
 
-    // Get subdirectories based on configuration 
+    // Get subdirectories based on configuration
     let mut subdirs = if has_magnet_toml {
         // If this directory has a Magnet.toml, read its configuration to determine children
         let members = get_configured_members(&magnet_toml_path, current_dir)?;
