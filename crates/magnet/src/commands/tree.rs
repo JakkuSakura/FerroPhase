@@ -1,7 +1,7 @@
 //! Command implementation for displaying workspace hierarchy as a tree
 
 use crate::configs::MagnetConfig;
-use crate::workspace_manager::{CrateInfo, WorkspaceManager};
+use crate::workspace_manager::WorkspaceManager;
 use anyhow::{Result, anyhow};
 use glob;
 use std::collections::HashMap;
@@ -553,46 +553,6 @@ fn get_node_name(
     }
 
     Ok(display_path.to_string())
-}
-
-/// Get crate information from a Cargo.toml file
-fn get_crate_info(cargo_toml_path: &Path) -> Result<Option<CrateInfo>> {
-    // Read the Cargo.toml file
-    let content = std::fs::read_to_string(cargo_toml_path)?;
-    let cargo_toml: toml::Value = toml::from_str(&content)?;
-
-    // Extract the crate name and version
-    let name = cargo_toml
-        .get("package")
-        .and_then(|p| p.get("name"))
-        .and_then(|n| n.as_str())
-        .map(|s| s.to_string());
-
-    let version = cargo_toml
-        .get("package")
-        .and_then(|p| p.get("version"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    if let Some(name) = name {
-        let crate_path = cargo_toml_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .to_path_buf();
-
-        let crate_info = CrateInfo {
-            name: name.clone(),
-            version,
-            path: crate_path,
-            cargo_toml_path: cargo_toml_path.to_path_buf(),
-            magnet_toml_path: None,
-            has_custom_config: false,
-        };
-
-        return Ok(Some(crate_info));
-    }
-
-    Ok(None)
 }
 
 /// Print the dependencies of a workspace crate
