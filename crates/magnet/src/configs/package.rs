@@ -2,17 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::configs::DependencyMap;
 
 /// Package-specific configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct PackageConfig {
     /// Name of the package
-    pub name: Option<String>,
+    pub name: String,
     /// Version of the package
-    pub version: Option<String>,
+    pub version: String,
     /// Description of the package
     #[serde(default)]
-    pub description: Option<String>,
+    pub description: String,
+    pub edition: Option<String>,
     /// Authors of the package
     #[serde(default)]
     pub authors: Vec<String>,
@@ -32,49 +34,30 @@ pub struct PackageConfig {
     #[serde(flatten)]
     pub custom: HashMap<String, toml::Value>,
 }
-
-/// Project metadata configuration (legacy)
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ProjectConfig {
-    /// Name of the project
-    pub name: Option<String>,
-    /// Version of the project
-    pub version: Option<String>,
-    /// Description of the project
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CargoPackageConfig {
+    /// Name of the package
+    pub name: String,
+    /// Version of the package
+    pub version: String,
+    pub edition: String,
+    /// Description of the package
     #[serde(default)]
-    pub description: Option<String>,
-    /// Authors of the project
+    pub description: String,
+    /// Authors of the package
     #[serde(default)]
     pub authors: Vec<String>,
-    /// Project homepage
+    /// Package homepage
     #[serde(default)]
     pub homepage: Option<String>,
-    /// Project repository
+    /// Package repository
     #[serde(default)]
     pub repository: Option<String>,
-    /// Project documentation URL
+    /// Package documentation URL
     #[serde(default)]
     pub documentation: Option<String>,
-    /// Project license
+    /// Package license
     #[serde(default)]
     pub license: Option<String>,
-    /// Custom metadata
-    #[serde(flatten)]
-    pub custom: HashMap<String, toml::Value>,
-}
-
-impl Default for ProjectConfig {
-    fn default() -> Self {
-        Self {
-            name: None,
-            version: None,
-            description: None,
-            authors: Vec::new(),
-            homepage: None,
-            repository: None,
-            documentation: None,
-            license: None,
-            custom: HashMap::new(),
-        }
-    }
+    pub dependencies: DependencyMap,
 }

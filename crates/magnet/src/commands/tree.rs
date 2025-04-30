@@ -1,85 +1,10 @@
 //! Command implementation for displaying workspace hierarchy as a tree
 
 use crate::configs::MagnetConfig;
-use crate::workspace_manager::WorkspaceManager;
-use anyhow::{Result, anyhow};
-use glob;
+use crate::manager::WorkspaceManager;
+use eyre::{Result, eyre};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-// Create additional helper functions to parse configs and process workspaces
-
-/// Get configured member paths from a Magnet.toml or Cargo.toml configuration
-fn get_configured_members(config_path: &Path, base_dir: &Path) -> Result<Vec<PathBuf>> {
-    if !config_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    // Load the configuration
-    let config = MagnetConfig::from_file(config_path)?;
-    let mut result = Vec::new();
-
-    // For nexus configuration, check nexus.search_paths
-    if config.nexus.is_some() {
-        if let Some(search_paths) = &config.nexus.as_ref().unwrap().search_paths {
-            for path in search_paths.values() {
-                let abs_path = if path.is_absolute() {
-                    path.clone()
-                } else {
-                    base_dir.join(path)
-                };
-
-                if abs_path.exists() {
-                    result.push(abs_path);
-                }
-            }
-        }
-    }
-
-    // For workspace configuration, check workspace.members
-    if !config.workspace.members.is_empty() {
-        for pattern in &config.workspace.members {
-            // Process the glob pattern to find actual directory paths
-            match expand_workspace_member_pattern(base_dir, pattern) {
-                Ok(paths) => result.extend(paths),
-                Err(_) => {
-                    // If glob fails, try a direct path
-                    let dir_path = base_dir.join(pattern);
-                    if dir_path.exists() && dir_path.is_dir() {
-                        result.push(dir_path);
-                    }
-                }
-            }
-        }
-    }
-
-    // Return all discovered paths
-    Ok(result)
-}
-
-/// Expand a workspace member pattern into a list of matching directories
-fn expand_workspace_member_pattern(base_dir: &Path, pattern: &str) -> Result<Vec<PathBuf>> {
-    let mut result = Vec::new();
-    let full_pattern = format!("{}/{}", base_dir.display(), pattern);
-
-    for entry in glob::glob(&full_pattern)? {
-        if let Ok(path) = entry {
-            if path.is_dir() {
-                result.push(path);
-            } else if let Some(parent) = path.parent() {
-                // For patterns that match files (like */Cargo.toml), use the parent directory
-                if path
-                    .file_name()
-                    .map_or(false, |name| name == "Cargo.toml" || name == "Magnet.toml")
-                {
-                    result.push(parent.to_path_buf());
-                }
-            }
-        }
-    }
-
-    Ok(result)
-}
 
 /// Display workspace hierarchy as a tree
 pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
@@ -91,11 +16,8 @@ pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
     };
 
     // Make sure the config file exists
-    if !config_path.exists() {
-        return Err(anyhow!(
-            "Magnet.toml not found at {}",
-            config_path.display()
-        ));
+    if !MagnetConfig::exists_at(&config_path) {
+        return Err(eyre!("Magnet.toml not found at {}", config_path.display()));
     }
 
     // Load the configuration
@@ -105,18 +27,17 @@ pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
     let base_dir = config_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     // Create a workspace manager to help us identify relationships
-    let mut workspace_manager = WorkspaceManager::new(config.clone(), base_dir.clone())?;
+    let mut workspace_manager = WorkspaceManager::new(config.clone(), &base_dir)?;
     workspace_manager.discover_related_workspaces()?;
 
     // First, collect all Magnet.toml files in the directory tree
-    let mut magnet_files = Vec::new();
-    find_all_magnet_files(&base_dir, &mut magnet_files)?;
+    let magnet_files = MagnetConfig::find_all_in_directory(&base_dir)?;
 
     // Map out workspace relationships
     let workspace_map = build_workspace_relationship_map(&magnet_files, &workspace_manager)?;
 
     // Get nexus information for the root node display
-    let nexus_name = if let Some(project_name) = config.project.name {
+    let nexus_name = if let Some(project_name) = config.get_name() {
         project_name
     } else {
         base_dir
@@ -130,7 +51,7 @@ pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
     println!("🧲 nexus: {} (Magnet.toml)", nexus_name);
 
     // Get configured member directories
-    let configured_members = get_configured_members(&config_path, &base_dir)?;
+    let configured_members = config.get_configured_members(&base_dir)?;
     let mut subdirs = if !configured_members.is_empty() {
         configured_members
     } else {
@@ -139,9 +60,9 @@ pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| {
                 p.is_dir()
-                    && (p.join("Cargo.toml").exists()
-                        || p.join("Magnet.toml").exists()
-                        || has_nested_project_files(p).unwrap_or(false))
+                    && (MagnetConfig::has_cargo_toml(p)
+                        || MagnetConfig::has_magnet_toml(p)
+                        || MagnetConfig::has_project_files(p).unwrap_or(false))
             })
             .collect()
     };
@@ -163,34 +84,6 @@ pub fn tree(config_path: &Path, show_dependencies: bool) -> Result<()> {
             &workspace_manager,
             show_dependencies,
         )?;
-    }
-
-    Ok(())
-}
-
-/// Find all Magnet.toml files in a directory tree
-fn find_all_magnet_files(dir: &Path, result: &mut Vec<PathBuf>) -> Result<()> {
-    // Check for Magnet.toml in current directory
-    let magnet_path = dir.join("Magnet.toml");
-    if magnet_path.exists() {
-        result.push(magnet_path);
-    }
-
-    // Scan subdirectories
-    if dir.is_dir() {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            // Skip hidden directories
-            if path.is_dir() {
-                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-                if !file_name.starts_with('.') {
-                    find_all_magnet_files(&path, result)?;
-                }
-            }
-        }
     }
 
     Ok(())
@@ -224,7 +117,7 @@ fn build_workspace_relationship_map(
                     .unwrap_or_else(|_| absolute_path);
 
                 // Check if this path contains a Magnet.toml
-                if absolute_path.join("Magnet.toml").exists() {
+                if MagnetConfig::has_magnet_toml(&absolute_path) {
                     // Add to relationship map
                     result
                         .entry(workspace_dir.to_path_buf())
@@ -251,7 +144,7 @@ fn build_workspace_relationship_map(
                         .unwrap_or_else(|_| absolute_path);
 
                     // Check if this path contains a Magnet.toml
-                    if absolute_path.join("Magnet.toml").exists() {
+                    if MagnetConfig::has_magnet_toml(&absolute_path) {
                         // Add to relationship map
                         result
                             .entry(workspace_dir.to_path_buf())
@@ -292,8 +185,8 @@ fn print_unified_tree(
     let magnet_toml_path = current_dir.join("Magnet.toml");
 
     // Check what files exist
-    let has_cargo_toml = cargo_toml_path.exists();
-    let has_magnet_toml = magnet_toml_path.exists();
+    let has_cargo_toml = MagnetConfig::has_cargo_toml(current_dir);
+    let has_magnet_toml = MagnetConfig::has_magnet_toml(current_dir);
 
     // Get the display path
     let display_path = if current_dir == root_dir {
@@ -305,11 +198,19 @@ fn print_unified_tree(
             .to_string()
     };
 
-    // Determine node type and label
-    let (node_type, node_name) = if has_magnet_toml {
-        // Determine the type based on the Magnet.toml content
+    // Print the current node with its prefix
+    let current_prefix = if current_dir == root_dir {
+        "└── ".to_string()
+    } else if is_last {
+        format!("{}└── ", prefix)
+    } else {
+        format!("{}├── ", prefix)
+    };
+
+    // Get node name using the MagnetConfig helper
+    let node_name = if has_magnet_toml {
         if let Ok(config) = MagnetConfig::from_file(&magnet_toml_path) {
-            let (config_type, config_label) = if config.nexus.is_some() {
+            let config_type = if config.nexus.is_some() {
                 ("🧲", "nexus") // Nexus uses magnet icon
             } else if !config.workspace.members.is_empty()
                 || config.workspace.search_paths.is_some()
@@ -319,6 +220,8 @@ fn print_unified_tree(
                 ("📄", "package") // Package uses document icon
             };
 
+            let display_name = config.get_node_display_name(current_dir);
+
             // For root directory, use different naming
             if current_dir == root_dir {
                 let file_name = magnet_toml_path
@@ -326,73 +229,66 @@ fn print_unified_tree(
                     .unwrap_or_default()
                     .to_string_lossy();
 
-                // Get name for nexus - use project name if available, otherwise use parent directory name
-                let nexus_name = if let Some(project_name) = config.project.name {
-                    project_name
-                } else {
-                    // Use parent directory name if project name is missing
-                    current_dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string()
-                };
-
                 (
-                    config_type,
-                    format!("{}: {} ({})", config_label, nexus_name, file_name),
+                    config_type.0,
+                    format!("{}: {} ({})", config_type.1, display_name, file_name),
                 )
             } else {
-                let dir_name = dir_name.to_string();
                 (
-                    config_type,
-                    format!(
-                        "{} ({})",
-                        config.project.name.unwrap_or_else(|| dir_name.clone()),
-                        config_label
-                    ),
+                    config_type.0,
+                    format!("{} ({})", display_name, config_type.1),
                 )
             }
         } else {
-            (
-                "🧲",
-                get_node_name(
-                    current_dir,
-                    Some(&magnet_toml_path),
-                    cargo_path_opt(&cargo_toml_path),
-                )?,
-            )
+            // Fallback if we can't read the config
+            ("🧲", dir_name.to_string())
         }
     } else if has_cargo_toml {
         // Only Cargo.toml exists - it's a crate
-        (
-            "",
-            get_node_name(current_dir, None, Some(&cargo_toml_path))?,
-        )
+        if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
+            if let Ok(cargo_toml) = toml::from_str::<toml::Value>(&content) {
+                if let Some(package) = cargo_toml.get("package") {
+                    if let Some(name) = package.get("name") {
+                        if let Some(name_str) = name.as_str() {
+                            ("", name_str.to_string())
+                        } else {
+                            ("", dir_name.to_string())
+                        }
+                    } else {
+                        ("", dir_name.to_string())
+                    }
+                } else {
+                    ("", dir_name.to_string())
+                }
+            } else {
+                ("", dir_name.to_string())
+            }
+        } else {
+            ("", dir_name.to_string())
+        }
     } else {
         // Regular directory
         ("", display_path)
     };
 
-    // Print the current node
-    let current_prefix = if current_dir == root_dir {
-        "└── ".to_string()
-    } else if is_last {
-        format!("{}└── ", prefix)
-    } else {
-        format!("{}├── ", prefix)
-    };
-
-    println!("{}{} {}", current_prefix, node_type, node_name);
+    println!("{}{} {}", current_prefix, node_name.0, node_name.1);
 
     // Get subdirectories based on configuration
     let mut subdirs = if has_magnet_toml {
         // If this directory has a Magnet.toml, read its configuration to determine children
-        let members = get_configured_members(&magnet_toml_path, current_dir)?;
-        if !members.is_empty() {
-            members
+        if let Ok(config) = MagnetConfig::from_file(&magnet_toml_path) {
+            let members = config.get_configured_members(current_dir)?;
+            if !members.is_empty() {
+                members
+            } else {
+                // Fall back to scanning all directories if no members are configured
+                std::fs::read_dir(current_dir)?
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.is_dir())
+                    .collect()
+            }
         } else {
-            // Fall back to scanning all directories if no members are configured
+            // Fallback if we can't read the config
             std::fs::read_dir(current_dir)?
                 .filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|p| p.is_dir())
@@ -428,9 +324,9 @@ fn print_unified_tree(
             true
         } else {
             // Otherwise, check if it has project files
-            subdir.join("Cargo.toml").exists()
-                || subdir.join("Magnet.toml").exists()
-                || has_nested_project_files(subdir)?
+            MagnetConfig::has_cargo_toml(subdir)
+                || MagnetConfig::has_magnet_toml(subdir)
+                || MagnetConfig::has_project_files(subdir)?
         };
 
         if should_show {
@@ -454,145 +350,17 @@ fn print_unified_tree(
     Ok(())
 }
 
-/// Check if a directory contains nested Cargo.toml or Magnet.toml files
-fn has_nested_project_files(dir: &Path) -> Result<bool> {
-    if !dir.is_dir() {
-        return Ok(false);
-    }
-
-    // Directly check common project directories first for performance
-    for common_dir in &["src", "crates", "packages"] {
-        let test_path = dir.join(common_dir);
-        if test_path.is_dir() {
-            return Ok(true);
-        }
-    }
-
-    // Scan the directory (but not recursively) for Cargo.toml or Magnet.toml
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_dir() {
-            // Skip hidden directories
-            if let Some(name) = path.file_name() {
-                if let Some(name_str) = name.to_str() {
-                    if name_str.starts_with('.') {
-                        continue;
-                    }
-                }
-            }
-
-            // Check if this subdirectory has project files
-            if path.join("Cargo.toml").exists() || path.join("Magnet.toml").exists() {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
-/// Helper function to check if a cargo_toml exists and return it as an Option
-fn cargo_path_opt(cargo_toml_path: &Path) -> Option<&Path> {
-    if cargo_toml_path.exists() {
-        Some(cargo_toml_path)
-    } else {
-        None
-    }
-}
-
-/// Get the name for a node in the tree (from Cargo.toml, Magnet.toml, or directory name)
-fn get_node_name(
-    dir: &Path,
-    magnet_path: Option<&Path>,
-    cargo_path: Option<&Path>,
-) -> Result<String> {
-    // Try to get name from Magnet.toml first
-    if let Some(magnet_path) = magnet_path {
-        if magnet_path.exists() {
-            if let Ok(config) = MagnetConfig::from_file(magnet_path) {
-                // For nexus and workspace, use the project name
-                if let Some(project_name) = config.project.name {
-                    let dir_name = dir
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or_else(|| dir.to_str().unwrap_or("[invalid-path]"));
-
-                    return Ok(format!("{} ({})", project_name, dir_name));
-                }
-            }
-        }
-    }
-
-    // Try to get name from Cargo.toml if Magnet.toml didn't have what we need
-    if let Some(cargo_path) = cargo_path {
-        if cargo_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(cargo_path) {
-                if let Ok(cargo_toml) = toml::from_str::<toml::Value>(&content) {
-                    if let Some(package) = cargo_toml.get("package") {
-                        if let Some(name) = package.get("name") {
-                            if let Some(name_str) = name.as_str() {
-                                return Ok(name_str.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Fall back to directory name
-    let display_path = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_else(|| dir.to_str().unwrap_or("[invalid-path]"));
-
-    if dir.to_string_lossy() == "." {
-        return Ok("./".to_string());
-    }
-
-    Ok(display_path.to_string())
-}
-
 /// Print the dependencies of a workspace crate
 fn print_workspace_dependencies(
     cargo_toml_path: &Path,
     workspace_manager: &WorkspaceManager,
     prefix: &str,
 ) -> Result<()> {
-    // Read the Cargo.toml file
-    let content = match std::fs::read_to_string(cargo_toml_path) {
-        Ok(content) => content,
-        Err(_) => return Ok(()),
+    // Get dependencies using our utility function
+    let deps = match MagnetConfig::get_cargo_dependencies(cargo_toml_path) {
+        Ok(deps) if !deps.is_empty() => deps,
+        _ => return Ok(()),
     };
-
-    let cargo_toml: toml::Value = match toml::from_str(&content) {
-        Ok(toml) => toml,
-        Err(_) => return Ok(()),
-    };
-
-    // Extract the crate name
-    let crate_name = cargo_toml
-        .get("package")
-        .and_then(|p| p.get("name"))
-        .and_then(|n| n.as_str())
-        .map(|s| s.to_string());
-
-    if crate_name.is_none() {
-        return Ok(());
-    }
-
-    // Extract dependencies
-    let deps = cargo_toml
-        .get("dependencies")
-        .and_then(|d| d.as_table())
-        .map(|t| t.keys().cloned().collect::<Vec<String>>())
-        .unwrap_or_default();
-
-    if deps.is_empty() {
-        return Ok(());
-    }
 
     // Print each dependency that is within our workspaces
     let mut workspace_deps = Vec::new();

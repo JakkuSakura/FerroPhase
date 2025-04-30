@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use anyhow::Result;
+use eyre::Result;
 use tempfile::tempdir;
 
 use magnet::configs::MagnetConfig;
@@ -13,8 +13,8 @@ fn test_magnet_config_create_and_parse() -> Result<()> {
     
     // Create a basic configuration
     let mut config = MagnetConfig::new();
-    config.project.name = Some("test-project".to_string());
-    config.project.version = Some("0.1.0".to_string());
+    config.package.name = Some("test-project".to_string());
+    config.package.version = Some("0.1.0".to_string());
     config.workspace.members = vec!["crates/*".to_string()];
     config.dependencies.insert("serde".to_string(), "1.0.0".into());
     
@@ -25,8 +25,8 @@ fn test_magnet_config_create_and_parse() -> Result<()> {
     let read_config = MagnetConfig::from_file(&config_path)?;
     
     // Verify it matches what we wrote
-    assert_eq!(read_config.project.name, Some("test-project".to_string()));
-    assert_eq!(read_config.project.version, Some("0.1.0".to_string()));
+    assert_eq!(read_config.package.name, Some("test-project".to_string()));
+    assert_eq!(read_config.package.version, Some("0.1.0".to_string()));
     assert_eq!(read_config.workspace.members, vec!["crates/*".to_string()]);
     assert!(read_config.dependencies.contains_key("serde"));
     
@@ -43,7 +43,7 @@ fn test_workspace_crate_detection() -> Result<()> {
     // Create a Magnet.toml file
     let config_path = workspace_dir.join("Magnet.toml");
     let mut config = MagnetConfig::new();
-    config.project.name = Some("test-workspace".to_string());
+    config.package.name = Some("test-workspace".to_string());
     config.workspace.members = vec!["crates/*".to_string()];
     config.to_file(&config_path)?;
     
