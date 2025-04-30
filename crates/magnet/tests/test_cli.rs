@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use anyhow::Result;
+use eyre::Result;
 use tempfile::tempdir;
 
 #[test]

@@ -2,9 +2,9 @@
 
 use crate::configs::MagnetConfig;
 use crate::generator::CargoGenerator;
+use crate::manager::WorkspaceManager;
 use crate::resolver::DependencyResolver;
-use crate::workspace_manager::WorkspaceManager;
-use anyhow::{Context, Result, anyhow};
+use eyre::{Context, Result, eyre};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -19,10 +19,7 @@ pub fn generate(config_path: &Path) -> Result<()> {
 
     // Make sure the config file exists
     if !config_path.exists() {
-        return Err(anyhow!(
-            "Magnet.toml not found at {}",
-            config_path.display()
-        ));
+        return Err(eyre!("Magnet.toml not found at {}", config_path.display()));
     }
 
     // Process the root configuration file and recursively generate all nested workspaces
@@ -59,7 +56,7 @@ fn generate_recursively(
 
     // Create a workspace manager for this config
     let mut workspace_manager =
-        WorkspaceManager::new(config.clone(), base_dir.clone()).context(format!(
+        WorkspaceManager::new(config.clone(), &base_dir).context(format!(
             "Failed to create workspace manager for {}",
             config_path.display()
         ))?;
