@@ -30,15 +30,16 @@
 
 // Public modules
 pub mod configs;
-pub mod workspace_manager;
+pub mod manager;
 pub mod generator;
 pub mod resolver;
 pub mod commands;
 pub mod utils;
+pub mod models;
 
 // Re-export commonly used items
 pub use configs::MagnetConfig;
-pub use workspace_manager::WorkspaceManager;
+pub use manager::WorkspaceManager;
 pub use generator::CargoGenerator;
 pub use resolver::DependencyResolver;
 

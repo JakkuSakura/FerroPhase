@@ -1,7 +1,7 @@
 //! Utility functions for the magnet CLI tool
 
 use std::path::{Path, PathBuf};
-use anyhow::Result;
+use eyre::Result;
 
 /// Returns the path to the closest Magnet.toml file, starting from the given directory
 /// and looking upwards through parent directories
@@ -37,11 +37,11 @@ pub fn extract_package_info(cargo_toml_path: &Path) -> Result<(String, Option<St
     
     // Extract package info
     let package = parsed.get("package")
-        .ok_or_else(|| anyhow::anyhow!("No [package] section found in {}", cargo_toml_path.display()))?;
+        .ok_or_else(|| eyre::eyre!("No [package] section found in {}", cargo_toml_path.display()))?;
     
     let name = package.get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("No name field in [package] section in {}", cargo_toml_path.display()))?
+        .ok_or_else(|| eyre::eyre!("No name field in [package] section in {}", cargo_toml_path.display()))?
         .to_string();
     
     let version = package.get("version")

@@ -3,9 +3,9 @@
 //! This module is responsible for resolving dependencies across workspaces,
 //! handling path resolution, and managing dependency conflicts.
 
-use crate::configs::{DependencyConfig, DetailedDependency};
-use crate::workspace_manager::{CrateInfo, Workspace};
-use anyhow::{Result, anyhow};
+use crate::configs::{DependencyConfig, DependencyMap, DetailedDependency};
+use crate::models::{CrateModel, WorkspaceModel};
+use eyre::{Result, eyre};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -38,16 +38,16 @@ pub struct ResolvedDependency {
 /// Dependency resolver
 pub struct DependencyResolver {
     /// Primary workspace
-    primary_workspace: Workspace,
+    primary_workspace: WorkspaceModel,
     /// Related workspaces
-    related_workspaces: Vec<Workspace>,
+    related_workspaces: Vec<WorkspaceModel>,
     /// Cache of resolved dependencies
     resolved_dependencies: HashMap<String, ResolvedDependency>,
 }
 
 impl DependencyResolver {
     /// Create a new dependency resolver
-    pub fn new(primary_workspace: Workspace, related_workspaces: Vec<Workspace>) -> Self {
+    pub fn new(primary_workspace: WorkspaceModel, related_workspaces: Vec<WorkspaceModel>) -> Self {
         Self {
             primary_workspace,
             related_workspaces,
@@ -61,7 +61,7 @@ impl DependencyResolver {
     }
 
     /// Find a crate by name
-    pub fn find_crate(&self, name: &str) -> Option<&CrateInfo> {
+    pub fn find_crate(&self, name: &str) -> Option<&CrateModel> {
         // First check the primary workspace
         for crate_info in &self.primary_workspace.crates {
             if crate_info.name == name {
@@ -86,7 +86,7 @@ impl DependencyResolver {
         &mut self,
         name: &str,
         config: &DependencyConfig,
-        from_crate: Option<&CrateInfo>,
+        from_crate: Option<&CrateModel>,
     ) -> Result<ResolvedDependency> {
         // If already resolved, return from cache
         if let Some(resolved) = self.resolved_dependencies.get(name) {
@@ -170,7 +170,7 @@ impl DependencyResolver {
             } else if let Some(crate_info) = from_crate {
                 // Resolve relative to the crate directory
                 let crate_dir = crate_info.cargo_toml_path.parent().ok_or_else(|| {
-                    anyhow!(
+                    eyre!(
                         "Failed to get parent directory of {}",
                         crate_info.cargo_toml_path.display()
                     )
@@ -178,7 +178,7 @@ impl DependencyResolver {
                 crate_dir.join(path)
             } else {
                 // Resolve relative to workspace root
-                let workspace_root = &self.primary_workspace.root_path;
+                let workspace_root = self.primary_workspace.root_path();
                 workspace_root.join(path)
             };
 
@@ -291,7 +291,7 @@ impl DependencyResolver {
     fn select_closest_match(
         &self,
         _name: &str,
-        from_crate: &CrateInfo,
+        from_crate: &CrateModel,
         candidates: &[PathBuf],
     ) -> Result<PathBuf> {
         // Check if the from_crate exists in primary workspace
@@ -306,14 +306,14 @@ impl DependencyResolver {
             self.related_workspaces
                 .iter()
                 .find(|w| w.crates.iter().any(|c| c.name == from_crate.name))
-                .ok_or_else(|| anyhow!("Failed to find workspace for crate {}", from_crate.name))?
+                .ok_or_else(|| eyre!("Failed to find workspace for crate {}", from_crate.name))?
         };
 
         // First, prefer crates in the same workspace
         let same_workspace_candidates: Vec<_> = candidates
             .iter()
             .filter(|p| {
-                let rel_path = p.strip_prefix(&from_workspace.root_path).ok();
+                let rel_path = p.strip_prefix(from_workspace.root_path()).ok();
                 rel_path.is_some()
             })
             .collect();
@@ -334,7 +334,7 @@ impl DependencyResolver {
         let most_specific = candidates
             .iter()
             .max_by_key(|p| p.components().count())
-            .ok_or_else(|| anyhow!("Failed to select a dependency from candidates"))?;
+            .ok_or_else(|| eyre!("Failed to select a dependency from candidates"))?;
 
         Ok(most_specific.clone())
     }
@@ -354,9 +354,9 @@ impl DependencyResolver {
     }
 
     /// Resolve all dependencies in a specific workspace
-    fn resolve_workspace_dependencies(&mut self, workspace: &Workspace) -> Result<()> {
+    fn resolve_workspace_dependencies(&mut self, workspace: &WorkspaceModel) -> Result<()> {
         // Resolve workspace-level dependencies
-        for (name, config) in &workspace.config.dependencies {
+        for (name, config) in &workspace.dependencies {
             if !self.resolved_dependencies.contains_key(name) {
                 let _ = self.resolve_dependency(name, config, None)?;
             }
@@ -393,9 +393,9 @@ impl DependencyResolver {
     pub fn resolve_dependencies(
         &mut self,
         crate_name: &str,
-        package_deps: &HashMap<String, DependencyConfig>,
-        workspace_deps: &HashMap<String, DependencyConfig>,
-    ) -> Result<HashMap<String, DependencyConfig>> {
+        package_deps: &DependencyMap,
+        workspace_deps: &DependencyMap,
+    ) -> Result<DependencyMap> {
         let mut result = HashMap::new();
         let crate_info = self.find_crate(crate_name).cloned();
 

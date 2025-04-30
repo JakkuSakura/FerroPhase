@@ -1,6 +1,6 @@
 //! API functionality for Project 1
 
-use anyhow::Result;
+use eyre::Result;
 use shared_types::{User, CommonError};
 use shared_utils::{format_user, with_timestamp};
 
