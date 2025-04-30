@@ -1,7 +1,7 @@
 //! Command implementation for initializing Magnet.toml files
 
 use crate::configs::{MagnetConfig, MagnetConfigType};
-use anyhow::{Context, Result};
+use eyre::{Context, Result};
 use std::path::Path;
 
 /// Initialize a new Magnet.toml file at the specified path

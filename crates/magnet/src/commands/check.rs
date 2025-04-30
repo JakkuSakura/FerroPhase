@@ -1,8 +1,8 @@
 //! Command implementation for checking Magnet.toml for issues
 
 use crate::configs::MagnetConfig;
-use crate::workspace_manager::WorkspaceManager;
-use anyhow::{anyhow, Context, Result};
+use crate::manager::WorkspaceManager;
+use eyre::{Context, Result, eyre};
 use std::path::Path;
 
 /// Check Magnet.toml for issues
@@ -16,10 +16,7 @@ pub fn check(config_path: &Path) -> Result<()> {
 
     // Make sure the config file exists
     if !config_path.exists() {
-        return Err(anyhow!(
-            "Magnet.toml not found at {}",
-            config_path.display()
-        ));
+        return Err(eyre!("Magnet.toml not found at {}", config_path.display()));
     }
 
     // Load the configuration
@@ -29,7 +26,7 @@ pub fn check(config_path: &Path) -> Result<()> {
     let base_dir = config_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     // Create a workspace manager
-    let workspace_manager = WorkspaceManager::new(config, base_dir)?;
+    let workspace_manager = WorkspaceManager::new(config, &base_dir)?;
 
     // Count the crates found
     let crates = workspace_manager.get_all_crates();
@@ -43,25 +40,19 @@ pub fn check(config_path: &Path) -> Result<()> {
         println!("\nDetailed information for troubleshooting:");
         println!(
             "  Workspace root: {}",
-            workspace_manager.get_root_path().display()
+            workspace_manager.root_path().display()
         );
         println!("  Patterns searched:");
-        for pattern in &workspace_manager.primary_workspace.config.workspace.members {
+        for pattern in &workspace_manager.primary_workspace.members {
             let full_pattern = format!(
                 "{}/{}/Cargo.toml",
-                workspace_manager.get_root_path().display(),
+                workspace_manager.root_path().display(),
                 pattern
             );
             println!("    - {}", full_pattern);
         }
 
-        if workspace_manager
-            .primary_workspace
-            .config
-            .workspace
-            .members
-            .is_empty()
-        {
+        if workspace_manager.primary_workspace.members.is_empty() {
             println!(
                 "\nYour 'workspace.members' array is empty. You need to add glob patterns to find your crates."
             );
@@ -76,14 +67,14 @@ pub fn check(config_path: &Path) -> Result<()> {
             println!("  2. The crates directory doesn't exist or is in a different location");
             println!("  3. Your crates don't have Cargo.toml files");
             println!("\nTry running this command to see all directories in the workspace root:");
-            println!("  ls -la {}", workspace_manager.get_root_path().display());
+            println!("  ls -la {}", workspace_manager.root_path().display());
         }
     } else {
         println!("Found {} workspace members", crates.len());
     }
 
     // Check if there's a mismatch between Magnet.toml and Cargo.toml
-    let cargo_toml_path = workspace_manager.get_root_path().join("Cargo.toml");
+    let cargo_toml_path = workspace_manager.root_path().join("Cargo.toml");
 
     if cargo_toml_path.exists() {
         let cargo_content = std::fs::read_to_string(&cargo_toml_path).context(format!(
@@ -105,7 +96,7 @@ pub fn check(config_path: &Path) -> Result<()> {
                     .map(|s| s.to_string())
                     .collect();
 
-                let magnet_members = &workspace_manager.primary_workspace.config.workspace.members;
+                let magnet_members = &workspace_manager.primary_workspace.members;
 
                 if &cargo_members != magnet_members {
                     println!(
