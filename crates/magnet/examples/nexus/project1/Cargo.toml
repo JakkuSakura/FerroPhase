@@ -1,3 +1,4 @@
-members = []
+[workspace]
+members = ["crates/*"]
 exclude = []
 resolver = "2"

@@ -1,1 +1,16 @@
-[workspace]
+[package]
+name = "project1-api"
+version = "0.1.0"
+edition = "2024"
+description = ""
+authors = []
+
+[dependencies]
+log = "*"
+eyre = "*"
+
+[dependencies.shared-utils]
+auto = true
+
+[dependencies.shared-types]
+auto = true

@@ -11,6 +11,8 @@ pub struct NexusConfig {
     pub name: Option<String>,
     /// Version of the nexus
     pub version: Option<String>,
+    pub members: Vec<String>,
+    pub exclude: Vec<String>,
     /// Description of the nexus
     #[serde(default)]
     pub description: Option<String>,

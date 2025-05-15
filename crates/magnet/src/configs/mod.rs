@@ -44,7 +44,7 @@ pub struct MagnetConfig {
     pub nexus: Option<NexusConfig>,
     /// Workspace configuration
     #[serde(default)]
-    pub workspace: WorkspaceConfig,
+    pub workspace: Option<WorkspaceConfig>,
 
     /// Package metadata (alternative to project)
     #[serde(default)]
@@ -82,13 +82,13 @@ impl MagnetConfig {
     /// Actually load the file from disk (no caching)
     fn load_file(path: &Path) -> Result<Self> {
         // Read the file content
-        let content = std::fs::read_to_string(path).context(format!(
+        let content = std::fs::read_to_string(path).with_context(||format!(
             "Failed to read Magnet.toml from {}",
             path.display()
         ))?;
 
         // Parse the TOML
-        let mut config: Self = toml::from_str(&content).context(format!(
+        let mut config: Self = toml::from_str(&content).with_context(|| format!(
             "Failed to parse Magnet.toml from {}",
             path.display()
         ))?;
@@ -224,10 +224,8 @@ impl MagnetConfig {
                 }
             }
         }
-
-        // For workspace configuration, check workspace.members
-        if !self.workspace.members.is_empty() {
-            for pattern in &self.workspace.members {
+        if let Some(workspace) = &self.workspace {
+             for pattern in &workspace.members {
                 // Process the glob pattern to find actual directory paths
                 match Self::expand_workspace_member_pattern(base_dir, pattern) {
                     Ok(paths) => result.extend(paths),
@@ -241,6 +239,7 @@ impl MagnetConfig {
                 }
             }
         }
+
 
         // Return all discovered paths
         Ok(result)
@@ -319,10 +318,12 @@ impl MagnetConfig {
     pub fn config_type(&self) -> MagnetConfigType {
         if self.nexus.is_some() {
             MagnetConfigType::Nexus
-        } else if !self.workspace.members.is_empty() || self.workspace.search_paths.is_some() {
+        } else if self.workspace.is_some() {
             MagnetConfigType::Workspace
-        } else {
+        } else if self.package.is_some() {
             MagnetConfigType::Package
+        } else {
+            panic!("Magnet config type is undefined: {:?}", self.source_path)
         }
     }
 
@@ -330,14 +331,7 @@ impl MagnetConfig {
     pub fn new() -> Self {
         Self {
             package: None,
-            workspace: WorkspaceConfig {
-                members: Vec::new(),
-                exclude: Vec::new(),
-                resolver: None,
-                search_paths: None,
-                paths: None,
-                custom: HashMap::new(),
-            },
+            workspace: None,
             nexus: None,
             dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),

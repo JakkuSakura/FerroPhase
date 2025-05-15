@@ -1,9 +1,9 @@
 //! Domain model for a Workspace, which is a collection of packages.
 
 use crate::MagnetConfig;
-use crate::configs::{DependencyMap, WorkspaceConfig};
+use crate::configs::DependencyMap;
 use crate::models::{CrateModel, PackageModel};
-use eyre::Result;
+use eyre::{ContextCompat, Result};
 use glob::glob;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,61 +28,65 @@ pub struct WorkspaceModel {
     /// Custom workspace metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyMap,
+    pub root_path: PathBuf,
     /// Source path of the workspace configuration
-    pub source_file: Option<PathBuf>,
+    pub source_path: PathBuf,
     pub crates: Vec<CrateModel>,
     pub packages: Vec<PackageModel>,
-}
-
-impl Default for WorkspaceModel {
-    fn default() -> Self {
-        Self {
-            name: "unnamed-workspace".to_string(),
-            description: None,
-            members: Vec::new(),
-            exclude: Vec::new(),
-            resolver: None,
-            search_paths: HashMap::new(),
-            paths: HashMap::new(),
-            custom: HashMap::new(),
-            dependencies: Default::default(),
-            source_file: None,
-            crates: vec![],
-            packages: vec![],
-        }
-    }
-}
-impl From<WorkspaceConfig> for WorkspaceModel {
-    fn from(config: WorkspaceConfig) -> Self {
-        Self {
-            name: "".to_string(),
-            description: None,
-            members: config.members,
-            exclude: config.exclude,
-            resolver: config.resolver,
-            search_paths: config.search_paths.unwrap_or_default(),
-            paths: config.paths.unwrap_or_default(),
-            custom: config.custom,
-            dependencies: Default::default(),
-            source_file: None,
-            crates: vec![],
-            packages: vec![],
-        }
-    }
+    pub nexus_path: Option<PathBuf>,
 }
 
 impl WorkspaceModel {
-    /// Create a new workspace model with the given name
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            ..Default::default()
+    pub fn from_root_path(root_path: &Path) -> Result<Self> {
+        if !root_path.exists() {
+            eyre::bail!(
+                "Root path doesn't exist in the current directory: {}",
+                root_path.display()
+            )
         }
-    }
-    pub fn from_config_file(config: &MagnetConfig, source_path: &Path) -> Result<Self> {
-        let mut model = Self::from(config.workspace.clone());
-        model.dependencies = config.dependencies.clone();
-        model.source_file = Some(source_path.to_path_buf());
+        let source_path = if root_path.join("Magnet.toml").exists() {
+            root_path.join("Magnet.toml")
+        } else if root_path.join("Cargo.toml").exists() {
+            root_path.join("Cargo.toml")
+        } else {
+            eyre::bail!(
+                "Root path must point to Cargo.toml or Magnet.toml: {}",
+                root_path.display()
+            )
+        };
+        let config = MagnetConfig::from_file(&source_path)?;
+        let config1 = config
+            .workspace
+            .clone()
+            .with_context(|| format!("No workspace found in {}", source_path.display()))?;
+        let root_path = source_path
+            .parent()
+            .unwrap()
+            .canonicalize()?
+            .to_owned();
+        let name = root_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        let model = WorkspaceModel {
+            name,
+            description: None,
+            members: config1.members,
+            exclude: config1.exclude,
+            resolver: config1.resolver,
+            search_paths: config1.search_paths.unwrap_or_default(),
+            paths: config1.paths.unwrap_or_default(),
+            custom: config1.custom,
+            dependencies: config.dependencies.clone(),
+            source_path: source_path.to_path_buf(),
+            root_path,
+            crates: vec![],
+            packages: vec![],
+            nexus_path: config1.nexus_path,
+        };
+
         Ok(model)
     }
 
@@ -91,11 +95,7 @@ impl WorkspaceModel {
         self.crates.iter().find(|c| c.name == name)
     }
     pub fn root_path(&self) -> &Path {
-        self.source_file
-            .as_ref()
-            .expect("No source file found")
-            .parent()
-            .expect("No parent directory found")
+        self.root_path.as_path()
     }
     pub fn get_members(&self) -> Result<Vec<String>> {
         let mut all_members = vec![];
