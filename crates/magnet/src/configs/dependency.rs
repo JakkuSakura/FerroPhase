@@ -29,8 +29,8 @@ impl Display for DependencyConfig {
                 if let Some(path) = &dep.path {
                     write!(f, "path = {:?}, ", path.display())?;
                 }
-                if let Some(auto) = &dep.nexus {
-                    write!(f, "auto = {}, ", auto)?;
+                if let Some(nexus) = &dep.nexus {
+                    write!(f, "nexus = {}, ", nexus)?;
                 }
                 if let Some(git) = &dep.git {
                     write!(f, "git = {:?}, ", git)?;
