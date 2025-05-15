@@ -2,3 +2,4 @@
 members = ["crates/*"]
 exclude = []
 resolver = "2"
+nexus-path = ".."

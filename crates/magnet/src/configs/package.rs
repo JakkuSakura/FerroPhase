@@ -59,5 +59,9 @@ pub struct CargoPackageConfig {
     /// Package license
     #[serde(default)]
     pub license: Option<String>,
+}
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CargoPackageConfigWrapper {
+    pub package: CargoPackageConfig,
     pub dependencies: DependencyMap,
 }

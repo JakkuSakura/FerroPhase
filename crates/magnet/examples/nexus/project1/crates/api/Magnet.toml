@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 shared-types = { auto = true }
 shared-utils = { auto = true }
-eyre = "1.0"
-log = "0.4"
+eyre = "*"
+log = "*"

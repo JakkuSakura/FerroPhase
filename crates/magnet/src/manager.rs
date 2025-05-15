@@ -1,137 +1,100 @@
-//! WorkspaceModel management and discovery
+//! Workspace management and discovery
 //!
 //! This module handles workspace discovery, relationship management,
 //! and tracking crates across projects in a nexus.
 
-use crate::configs::DependencyMap;
-use crate::models::{CrateModel, WorkspaceModel};
 use crate::MagnetConfig;
-use eyre::{bail, Result};
+use crate::configs::DependencyMap;
+use crate::models::{CrateModel, NexusModel, WorkspaceModel};
+use eyre::{Result, bail};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-// TODO: rename it to NexusManager
-/// WorkspaceModel manager
+/// Nexus manager
 #[derive(Debug, Clone)]
-pub struct WorkspaceManager {
-    /// Primary workspace
-    pub primary_workspace: WorkspaceModel,
-    /// Related workspaces
-    pub related_workspaces: HashMap<String, WorkspaceModel>,
+pub struct NexusManager {
+    /// All workspaces in the nexus
+    pub workspaces: HashMap<String, WorkspaceModel>,
+    /// Path to the nexus root directory
+    pub nexus_path: PathBuf,
+    pub nexus_model: NexusModel,
 }
 
-impl WorkspaceManager {
-    /// Create a new workspace manager
-    pub fn new(config: MagnetConfig, workspace_config_path: &Path) -> Result<Self> {
-        if !workspace_config_path.exists() {
+impl NexusManager {
+    /// Create a new nexus manager from a workspace
+    pub fn from_workspace(workspace_path: &Path) -> Result<Self> {
+        // Create the initial workspace
+        let workspace = WorkspaceModel::from_root_path(workspace_path)?;
+        let Some(nexus_path) = workspace.nexus_path.clone() else {
             bail!(
-                "Root path doesn't exist in the current directory: {}",
-                workspace_config_path.display()
+                "Nexus path not found in the workspace configuration: {}",
+                workspace_path.display()
             )
-        }
-        if workspace_config_path.file_name() != Some("Cargo.toml".as_ref())
-            && workspace_config_path.file_name() != Some("Magnet.toml".as_ref())
-        {
-            bail!(
-                "Root path point to Cargo.toml or Magnet.toml: {}",
-                workspace_config_path.display()
-            )
-        }
+        };
 
-        // Create the primary workspace
-        let primary_workspace = WorkspaceModel::from_config_file(&config, workspace_config_path)?;
-        // TODO: resolve crates & packages
-        Ok(Self {
-            primary_workspace,
-            related_workspaces: HashMap::new(),
-        })
+        // Create the manager
+        let manager = Self::from_nexus(&nexus_path)?;
+
+        Ok(manager)
+    }
+    pub fn from_nexus(nexus_path: &Path) -> Result<Self> {
+        if !nexus_path.exists() {
+            bail!("Does not exist: {}", nexus_path.display())
+        }
+        let config_path = nexus_path.join("Magnet.toml");
+        let nexus_config = MagnetConfig::from_file(&config_path)?;
+
+        let nexus_model = NexusModel::from_config(nexus_config.nexus.unwrap(), &config_path);
+
+        // Create the manager
+        let mut manager = Self {
+            workspaces: HashMap::new(),
+            nexus_path: nexus_model.root_path.clone(),
+            nexus_model,
+        };
+
+        // Discover related workspaces during initialization
+        manager.discover_workspaces()?;
+
+        Ok(manager)
     }
 
-    /// Get the root path of the primary workspace
-    pub fn root_path(&self) -> &Path {
-        self.primary_workspace.root_path()
+    /// Get a workspace by name
+    pub fn get_workspace(&self, workspace_name: &str) -> Option<&WorkspaceModel> {
+        self.workspaces.get(workspace_name)
     }
 
-    /// Discover related workspaces
-    pub fn discover_related_workspaces(&mut self) -> Result<()> {
-        // Clear existing related workspaces
-        self.related_workspaces.clear();
+    /// Get the root path of the specified workspace
+    pub fn root_path(&self, workspace_name: &str) -> Option<&Path> {
+        self.get_workspace(workspace_name).map(|w| w.root_path())
+    }
 
-        // Get search paths from config
-        let model = &self.primary_workspace;
-        let search_paths = model.search_paths.clone();
-
-        if !search_paths.is_empty() {
-            // Resolve and load each related workspace
-            for (name, rel_path) in search_paths {
-                let abs_path = if rel_path.is_absolute() {
-                    rel_path
-                } else {
-                    self.primary_workspace
-                        .source_file
-                        .as_ref()
-                        .unwrap()
-                        .join(&rel_path)
-                };
-
-                // Check if the path exists
-                if !abs_path.exists() {
-                    eprintln!(
-                        "Warning: Related workspace path does not exist: {}",
-                        abs_path.display()
-                    );
-                    continue;
-                }
-
-                // Check for Magnet.toml
-                let magnet_toml_path = abs_path.join("Magnet.toml");
-                if !magnet_toml_path.exists() {
-                    eprintln!(
-                        "Warning: No Magnet.toml found in related workspace: {}",
-                        abs_path.display()
-                    );
-                    continue;
-                }
-
-                // Load the configuration
-                let config = match MagnetConfig::from_file(&magnet_toml_path) {
-                    Ok(config) => config,
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to load Magnet.toml from related workspace {}: {}",
-                            abs_path.display(),
-                            e
-                        );
-                        continue;
-                    }
-                };
-
-                // Create the workspace
-                match WorkspaceModel::from_config_file(&config, abs_path.as_ref()) {
-                    Ok(workspace) => {
-                        self.related_workspaces.insert(name, workspace);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to load related workspace {}: {}",
-                            abs_path.display(),
-                            e
-                        );
-                    }
-                }
-            }
+    /// Discover related workspaces from a specific workspace
+    /// This is now private as it's automatically called during initialization
+    fn discover_workspaces(&mut self) -> Result<()> {
+        for path in &self.nexus_model.members {
+            let workspace_path = self.nexus_path.join(path);
+            let workspace = WorkspaceModel::from_root_path(&workspace_path)?;
+            self.workspaces.insert(workspace.name.clone(), workspace);
+            
         }
 
         Ok(())
     }
-    pub fn get_package_path(&self, name: &str) -> Option<&Path> {
-        // Check the primary workspace first
-        if let Some(crate_info) = self.primary_workspace.find_crate(name) {
-            return Some(&crate_info.path);
+
+    pub fn get_package_path(&self, name: &str, workspace_name: Option<&str>) -> Option<&Path> {
+        // If a workspace is specified, check only that workspace
+        if let Some(ws_name) = workspace_name {
+            if let Some(workspace) = self.get_workspace(ws_name) {
+                if let Some(crate_info) = workspace.find_crate(name) {
+                    return Some(&crate_info.path);
+                }
+            }
+            return None;
         }
 
-        // Then check related workspaces
-        for workspace in self.related_workspaces.values() {
+        // Otherwise, check all workspaces
+        for workspace in self.workspaces.values() {
             if let Some(crate_info) = workspace.find_crate(name) {
                 return Some(&crate_info.path);
             }
@@ -142,24 +105,37 @@ impl WorkspaceManager {
 
     /// Get all crates across all workspaces
     pub fn get_all_crates(&self) -> Vec<CrateModel> {
-        let mut all_crates = self.primary_workspace.crates.clone();
+        let mut all_crates = Vec::new();
 
-        for workspace in self.related_workspaces.values() {
+        for workspace in self.workspaces.values() {
             all_crates.extend(workspace.crates.clone());
         }
 
         all_crates
     }
 
-    /// Find a crate by name across all workspaces
-    pub fn find_crate(&self, name: &str) -> Option<CrateModel> {
-        // First look in the primary workspace
-        if let Some(crate_info) = self.primary_workspace.find_crate(name) {
-            return Some(crate_info.clone());
+    /// Get crates in a specific workspace
+    pub fn get_workspace_crates(&self, workspace_name: &str) -> Vec<CrateModel> {
+        match self.get_workspace(workspace_name) {
+            Some(ws) => ws.crates.clone(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Find a crate by name across all workspaces or in a specific workspace
+    pub fn find_crate(&self, name: &str, workspace_name: Option<&str>) -> Option<CrateModel> {
+        // If a workspace is specified, check only that workspace
+        if let Some(ws_name) = workspace_name {
+            if let Some(workspace) = self.get_workspace(ws_name) {
+                if let Some(crate_info) = workspace.find_crate(name) {
+                    return Some(crate_info.clone());
+                }
+            }
+            return None;
         }
 
-        // Then look in related workspaces
-        for workspace in self.related_workspaces.values() {
+        // Otherwise, check all workspaces
+        for workspace in self.workspaces.values() {
             if let Some(crate_info) = workspace.find_crate(name) {
                 return Some(crate_info.clone());
             }
@@ -168,21 +144,36 @@ impl WorkspaceManager {
         None
     }
 
-    /// Get all external workspaces
-    pub fn get_external_workspaces(&self) -> Vec<&WorkspaceModel> {
-        self.related_workspaces.values().collect()
+    /// Get all workspaces except the specified one
+    pub fn get_other_workspaces(&self, workspace_name: &str) -> Vec<&WorkspaceModel> {
+        self.workspaces
+            .iter()
+            .filter(|(name, _)| *name != workspace_name)
+            .map(|(_, ws)| ws)
+            .collect()
     }
+
+    /// Get all workspaces
+    pub fn get_all_workspaces(&self) -> Vec<&WorkspaceModel> {
+        self.workspaces.values().collect()
+    }
+
     pub fn get_all_dependencies(&self) -> DependencyMap {
         let mut all_dependencies = DependencyMap::new();
 
-        // Get dependencies from the primary workspace
-        all_dependencies.extend(self.primary_workspace.dependencies.clone());
-
-        // Get dependencies from related workspaces
-        for workspace in self.related_workspaces.values() {
+        // Get dependencies from all workspaces
+        for workspace in self.workspaces.values() {
             all_dependencies.extend(workspace.dependencies.clone());
         }
 
         all_dependencies
+    }
+
+    /// Get dependencies for a specific workspace
+    pub fn get_workspace_dependencies(&self, workspace_name: &str) -> DependencyMap {
+        match self.get_workspace(workspace_name) {
+            Some(ws) => ws.dependencies.clone(),
+            None => DependencyMap::new(),
+        }
     }
 }

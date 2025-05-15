@@ -1,7 +1,7 @@
-use eyre::{Context, Result};
 use clap::{Parser, Subcommand};
+use common::{LogLevel, setup_logs};
+use eyre::{Context, Result};
 use std::path::PathBuf;
-use common::{setup_logs, LogLevel};
 use tracing::debug;
 
 mod configs;
@@ -31,8 +31,7 @@ fn main() -> Result<()> {
         Some(Commands::Init { path }) => commands::init(&path),
         Some(Commands::Generate { config }) => commands::generate(&config),
         Some(Commands::Check { config }) => commands::check(&config),
-        Some(Commands::List { config }) => commands::list(&config),
-        Some(Commands::Tree { config, dependencies }) => commands::tree(&config, dependencies),
+        Some(Commands::Tree { config }) => commands::tree(&config),
         None => {
             println!("No command specified. Run with --help for usage information.");
             Ok(())
@@ -67,28 +66,19 @@ enum Commands {
     /// Generate or update Cargo.toml files from Magnet.toml
     Generate {
         /// Path to the Magnet.toml file
-        #[arg(default_value = "Magnet.toml")]
+        #[arg(default_value = ".")]
         config: PathBuf,
     },
     /// Check Magnet.toml for issues
     Check {
         /// Path to the Magnet.toml file
-        #[arg(default_value = "Magnet.toml")]
-        config: PathBuf,
-    },
-    /// List all crates in the workspace
-    List {
-        /// Path to the Magnet.toml file
-        #[arg(default_value = "Magnet.toml")]
+        #[arg(default_value = ".")]
         config: PathBuf,
     },
     /// Display workspace hierarchy as a tree
     Tree {
         /// Path to the Magnet.toml file
-        #[arg(default_value = "Magnet.toml")]
+        #[arg(default_value = ".")]
         config: PathBuf,
-        /// Show dependency relationships between crates
-        #[arg(short, long)]
-        dependencies: bool,
     },
 }
