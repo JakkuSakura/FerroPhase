@@ -4,17 +4,17 @@ This directory contains examples demonstrating how to use the `magnet` CLI tool 
 
 ## Key Features Demonstrated
 
-### 1. Automatic Path Resolution with `auto = true`
+### 1. Automatic Path Resolution with `nexus = true`
 
-The `magnet` tool can automatically detect and resolve path dependencies for crates across workspaces using the `auto = true` configuration:
+The `magnet` tool can automatically detect and resolve path dependencies for crates across workspaces using the `nexus = true` configuration:
 
 ```toml
 # Example of automatic path resolution
 [dependencies]
-shared-types = { auto = true }
+shared-types = { nexus = true }
 ```
 
-When `auto = true` is specified, `magnet` will:
+When `nexus = true` is specified, `magnet` will:
 - Search for the specified crate in all workspaces
 - Automatically set up the correct relative path dependency
 - Update all Cargo.toml files accordingly
@@ -92,7 +92,7 @@ super-workspace/
 ```
 
 Key features demonstrated:
-- Auto-detection of crates across projects with `auto = true`
+- Auto-detection of crates across projects with `nexus = true`
 - Creating a super-workspace spanning multiple projects
 - Consistent dependency management across separate codebases
 
@@ -112,7 +112,7 @@ magnet generate
 
 This will:
 - Read the configuration from `Magnet.toml`
-- Automatically detect crates marked with `auto = true`
+- Automatically detect crates marked with `nexus = true`
 - Generate or update all Cargo.toml files with proper path dependencies
 
 ### 2. Checking Workspace Consistency
@@ -138,12 +138,12 @@ magnet list
 A super-workspace spans multiple separate projects, allowing them to share code while maintaining independent project structures:
 
 1. Each project has its own `Magnet.toml`
-2. Projects reference shared crates with `auto = true`
+2. Projects reference shared crates with `nexus = true`
 3. `magnet` automatically sets up path dependencies between projects
 
 ### Automatic Path Resolution
 
-When `auto = true` is specified for a dependency, `magnet` automatically:
+When `nexus = true` is specified for a dependency, `magnet` automatically:
 
 1. Searches for the crate in all workspaces it can find
 2. Calculates the correct relative path between crates
@@ -161,4 +161,4 @@ When `auto = true` is specified for a dependency, `magnet` automatically:
 1. Examine the `Magnet.toml` files in each example
 2. Run `magnet generate` in different directories to see how path dependencies are resolved
 3. Add new dependencies and see how they propagate
-4. Create your own crate and use `auto = true` to automatically link it
+4. Create your own crate and use `nexus = true` to automatically link it
