@@ -13,9 +13,9 @@ serde_json = "1.0"
 eyre = "0.6"
 thiserror = "1.0"
 glob = "0.3"
-log = "0.4"
-env_logger = "0.10"
 pathdiff = "0.2"
+tracing = "0.1"
+common = { git = "https://github.com/JakkuSakura/common-rs" }
 
 [dev-dependencies]
 tempfile = "3.4"
