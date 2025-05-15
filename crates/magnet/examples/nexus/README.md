@@ -24,14 +24,14 @@ super-workspace/
 
 ## Key Features Demonstrated
 
-### 1. Automatic Path Resolution with `auto = true`
+### 1. Automatic Path Resolution with `nexus = true`
 
-In the `project1/Magnet.toml` and `project2/Magnet.toml` files, shared dependencies are specified with `auto = true`:
+In the `project1/Magnet.toml` and `project2/Magnet.toml` files, shared dependencies are specified with `nexus = true`:
 
 ```toml
 [dependencies]
-shared-types = { auto = true }
-shared-utils = { auto = true }
+shared-types = { nexus = true }
+shared-utils = { nexus = true }
 ```
 
 This tells `magnet` to:
@@ -59,7 +59,7 @@ This example shows how configuration can be managed at multiple levels:
 Examine the Magnet.toml files in each project to understand how dependencies are defined:
 
 - `shared-lib/Magnet.toml`: Base workspace with common dependencies
-- `project1/Magnet.toml`: Project using `auto = true` for shared crates
+- `project1/Magnet.toml`: Project using `nexus = true` for shared crates
 - `shared-lib/crates/shared-types/Magnet.toml`: Crate-specific configuration
 
 ### Step 2: Generate Cargo.toml Files
@@ -127,7 +127,7 @@ You can mix automatic and explicit path configurations:
 ```toml
 [dependencies]
 # Automatically detected
-shared-types = { auto = true }
+shared-types = { nexus = true }
 
 # Explicitly defined path
 special-crate = { path = "../other-project/crates/special" }

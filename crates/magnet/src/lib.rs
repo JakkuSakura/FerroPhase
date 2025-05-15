@@ -9,7 +9,7 @@
 //! ## Features
 //!
 //! - **Nexus**: Manage dependencies across multiple separate projects and workspaces
-//! - **Automatic path resolution**: Automatically find and link local packages with `auto = true`
+//! - **Automatic path resolution**: Automatically find and link local packages with `nexus = true`
 //! - **Multi-level configuration**: Manage dependencies at workspace and package levels
 //! - **Consistency checking**: Verify dependencies are properly synchronized
 //!
@@ -29,19 +29,12 @@
 //! - `commands`: CLI command implementations
 
 // Public modules
-pub mod configs;
-pub mod manager;
-pub mod generator;
-pub mod resolver;
 pub mod commands;
-pub mod utils;
+pub mod configs;
+pub mod generator;
+pub mod manager;
 pub mod models;
-
-// Re-export commonly used items
-pub use configs::MagnetConfig;
-pub use manager::NexusManager;
-pub use generator::CargoGenerator;
-pub use resolver::DependencyResolver;
+pub mod utils;
 
 // Export version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

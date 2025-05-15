@@ -1,5 +1,4 @@
-use crate::configs::DependencyMap;
-use crate::MagnetConfig;
+use crate::configs::{DependencyMap, MagnetConfig};
 use eyre::Result;
 use eyre::ContextCompat;
 use std::collections::HashMap;
@@ -33,6 +32,7 @@ pub struct PackageModel {
 }
 impl PackageModel {
     pub fn from_root_path(root_path: &Path) -> Result<Self> {
+        let root_path = root_path.canonicalize()?;
         if !root_path.exists() {
             eyre::bail!(
                 "Root path doesn't exist in the current directory: {}",

@@ -3,12 +3,12 @@
 //! This module provides structures and functionality for parsing,
 //! validating, and managing Magnet.toml configuration files.
 
-mod dependencies;
+mod dependency;
 mod nexus;
 mod package;
 mod workspace;
 
-pub use dependencies::*;
+pub use dependency::*;
 pub use nexus::*;
 pub use package::*;
 pub use workspace::*;
@@ -81,8 +81,12 @@ impl MagnetConfig {
 
     /// Actually load the file from disk (no caching)
     fn load_file(path: &Path) -> Result<Self> {
+        let path = path.canonicalize().with_context(|| format!(
+            "Failed to canonicalize path for Magnet.toml: {}",
+            path.display()
+        ))?;
         // Read the file content
-        let content = std::fs::read_to_string(path).with_context(||format!(
+        let content = std::fs::read_to_string(&path).with_context(||format!(
             "Failed to read Magnet.toml from {}",
             path.display()
         ))?;
@@ -94,7 +98,7 @@ impl MagnetConfig {
         ))?;
 
         // Store the source path
-        config.source_path = Some(path.to_path_buf());
+        config.source_path = Some(path);
 
         Ok(config)
     }
@@ -344,7 +348,7 @@ impl MagnetConfig {
     /// Check if a dependency is configured for auto path resolution
     pub fn is_auto_dependency(&self, name: &str) -> bool {
         match self.dependencies.get(name) {
-            Some(DependencyConfig::Detailed(dep)) => dep.auto.unwrap_or(false),
+            Some(DependencyConfig::Detailed(dep)) => dep.nexus.unwrap_or(false),
             _ => false,
         }
     }

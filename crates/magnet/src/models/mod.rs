@@ -8,11 +8,13 @@ mod crate_;
 mod nexus;
 mod package;
 mod workspace;
+mod dependency;
 
 pub use crate_::*;
 pub use nexus::*;
 pub use package::*;
 pub use workspace::*;
+pub use dependency::*;
 
 pub enum MagnetModel {
     Nexus(NexusModel),

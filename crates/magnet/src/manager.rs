@@ -3,12 +3,12 @@
 //! This module handles workspace discovery, relationship management,
 //! and tracking crates across projects in a nexus.
 
-use crate::MagnetConfig;
-use crate::configs::DependencyMap;
-use crate::models::{CrateModel, NexusModel, WorkspaceModel};
+use crate::configs::{DependencyConfig, DependencyMap, DetailedDependency};
+use crate::models::{NexusModel, PackageModel, WorkspaceModel};
 use eyre::{Result, bail};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// Nexus manager
 #[derive(Debug, Clone)]
@@ -38,13 +38,7 @@ impl NexusManager {
         Ok(manager)
     }
     pub fn from_nexus(nexus_path: &Path) -> Result<Self> {
-        if !nexus_path.exists() {
-            bail!("Does not exist: {}", nexus_path.display())
-        }
-        let config_path = nexus_path.join("Magnet.toml");
-        let nexus_config = MagnetConfig::from_file(&config_path)?;
-
-        let nexus_model = NexusModel::from_config(nexus_config.nexus.unwrap(), &config_path);
+        let nexus_model = NexusModel::from_root_path(nexus_path)?;
 
         // Create the manager
         let mut manager = Self {
@@ -76,81 +70,9 @@ impl NexusManager {
             let workspace_path = self.nexus_path.join(path);
             let workspace = WorkspaceModel::from_root_path(&workspace_path)?;
             self.workspaces.insert(workspace.name.clone(), workspace);
-            
         }
 
         Ok(())
-    }
-
-    pub fn get_package_path(&self, name: &str, workspace_name: Option<&str>) -> Option<&Path> {
-        // If a workspace is specified, check only that workspace
-        if let Some(ws_name) = workspace_name {
-            if let Some(workspace) = self.get_workspace(ws_name) {
-                if let Some(crate_info) = workspace.find_crate(name) {
-                    return Some(&crate_info.path);
-                }
-            }
-            return None;
-        }
-
-        // Otherwise, check all workspaces
-        for workspace in self.workspaces.values() {
-            if let Some(crate_info) = workspace.find_crate(name) {
-                return Some(&crate_info.path);
-            }
-        }
-
-        None
-    }
-
-    /// Get all crates across all workspaces
-    pub fn get_all_crates(&self) -> Vec<CrateModel> {
-        let mut all_crates = Vec::new();
-
-        for workspace in self.workspaces.values() {
-            all_crates.extend(workspace.crates.clone());
-        }
-
-        all_crates
-    }
-
-    /// Get crates in a specific workspace
-    pub fn get_workspace_crates(&self, workspace_name: &str) -> Vec<CrateModel> {
-        match self.get_workspace(workspace_name) {
-            Some(ws) => ws.crates.clone(),
-            None => Vec::new(),
-        }
-    }
-
-    /// Find a crate by name across all workspaces or in a specific workspace
-    pub fn find_crate(&self, name: &str, workspace_name: Option<&str>) -> Option<CrateModel> {
-        // If a workspace is specified, check only that workspace
-        if let Some(ws_name) = workspace_name {
-            if let Some(workspace) = self.get_workspace(ws_name) {
-                if let Some(crate_info) = workspace.find_crate(name) {
-                    return Some(crate_info.clone());
-                }
-            }
-            return None;
-        }
-
-        // Otherwise, check all workspaces
-        for workspace in self.workspaces.values() {
-            if let Some(crate_info) = workspace.find_crate(name) {
-                return Some(crate_info.clone());
-            }
-        }
-
-        None
-    }
-
-    /// Get all workspaces except the specified one
-    pub fn get_other_workspaces(&self, workspace_name: &str) -> Vec<&WorkspaceModel> {
-        self.workspaces
-            .iter()
-            .filter(|(name, _)| *name != workspace_name)
-            .map(|(_, ws)| ws)
-            .collect()
     }
 
     /// Get all workspaces
@@ -175,5 +97,81 @@ impl NexusManager {
             Some(ws) => ws.dependencies.clone(),
             None => DependencyMap::new(),
         }
+    }
+
+    /// Resolve a dependency
+    pub fn resolve_dependency(
+        &mut self,
+        package: &PackageModel,
+        name: &str,
+        dep: &DependencyConfig,
+    ) -> Result<DetailedDependency> {
+        // Extract the detailed configuration
+        let mut detailed_config = match dep {
+            DependencyConfig::Simple(version) => DetailedDependency {
+                version: Some(version.clone()),
+                ..Default::default()
+            },
+            DependencyConfig::Detailed(detailed) => detailed.clone(),
+        };
+
+        // If nexus is set to true, try to find the dependency in the workspace
+        if detailed_config.nexus == Some(true) {
+            // Auto-discovery: try to find the dependency in any workspace
+            let mut matching_crates = Vec::new();
+
+            // Then check in other workspaces
+            for workspace in self.get_all_workspaces() {
+                if let Ok(package) = workspace.find_package(name) {
+                    // TODO: double check crate name if different from package name
+                    matching_crates.push(package.clone());
+                }
+            }
+
+            if matching_crates.len() > 1 {
+                bail!(
+                    "Multiple matching crates found for dependency '{}': {:?}",
+                    name,
+                    matching_crates
+                )
+            } else if matching_crates.len() == 0 {
+                warn!("No matching crates found for dependency '{}'", name);
+            }
+            detailed_config.path = Some(
+                pathdiff::diff_paths(&matching_crates[0].root_path, &package.root_path)
+                    .expect("Could not compute rel path"),
+            );
+            detailed_config.nexus = None;
+            return Ok(detailed_config);
+        }
+
+        Ok(detailed_config)
+    }
+    pub fn resolve_package_dependencies(&mut self, package: &mut PackageModel) -> Result<()> {
+        for (name, dep) in package.dependencies.clone() {
+            // Resolve the dependency
+            let resolved = self.resolve_dependency(package, &name, &dep);
+            match resolved {
+                Ok(detailed) => {
+                    // Update the package dependencies
+                    package
+                        .dependencies
+                        .insert(name.clone(), DependencyConfig::Detailed(detailed));
+                }
+                Err(err) => {
+                    if let DependencyConfig::Detailed(detailed) = dep {
+                        if detailed.optional == Some(true) {
+                            warn!("Error resolving dependency '{}': {}", name, err);
+                            warn!(
+                                "This could be you don't have sufficient permissions to access the workspace"
+                            );
+                            package.dependencies.remove(&name);
+                        }
+                    }
+                    Err(err)?
+                }
+            }
+        }
+        Ok(())
     }
 }

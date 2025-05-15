@@ -2,7 +2,7 @@
 
 use crate::manager::NexusManager;
 use crate::models::PackageModel;
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use std::path::Path;
 
 /// Tree command for visualizing workspace structure
@@ -75,7 +75,7 @@ fn print_workspace_tree(
     // }
     // Print packages
     println!("{}Packages:", "  ".repeat(depth as usize + 1));
-    for package in workspace.get_members()? {
+    for package in workspace.list_packages()? {
         let package_path = workspace.root_path().join(&package);
         let package = PackageModel::from_root_path(&package_path)?;
         print_package_tree(&package, depth + 2)?;
@@ -92,9 +92,8 @@ fn print_package_tree(package: &PackageModel, depth: u32) -> Result<()> {
     for (idx, (crate_, dep)) in package.dependencies.iter().enumerate() {
         let is_last = idx == package.dependencies.len() - 1;
         let dep_prefix = if is_last { "└── " } else { "├── " };
-
         println!(
-            "{}{}{}{:?}",
+            "{}{}{} = {}",
             "  ".repeat(depth as usize + 2),
             dep_prefix,
             crate_,
