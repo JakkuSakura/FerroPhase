@@ -82,14 +82,10 @@ impl WorkspaceModel {
 
         Ok(model)
     }
-
-    pub fn root_path(&self) -> &Path {
-        self.root_path.as_path()
-    }
     /// list packages paths joined with the workspace root path
     pub fn list_packages(&self) -> Result<Vec<PathBuf>> {
         let mut all_members: Vec<PathBuf> = vec![];
-        let root_path = self.root_path();
+        let root_path = &self.root_path;
         // handle globs
         for member in self.members.iter() {
             if member.contains("*") {
