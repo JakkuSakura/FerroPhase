@@ -1,9 +1,10 @@
 //! Domain model for a Nexus, which represents a collection of workspaces.
 
-use crate::configs::NexusConfig;
+use crate::configs::MagnetConfig;
+use eyre::ContextCompat;
+use eyre::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
 /// A nexus model representing a collection of workspaces
 #[derive(Debug, Clone)]
 pub struct NexusModel {
@@ -28,8 +29,13 @@ pub struct NexusModel {
 
 impl NexusModel {
     /// Create a nexus model from a config, with additional source path information
-    pub fn from_config(config: NexusConfig, source_path: &Path) -> Self {
-        let root_path = source_path.parent().unwrap().canonicalize().unwrap().to_owned();
+    pub fn from_root_path(root_path: &Path) -> Result<Self> {
+        let root_path = root_path.canonicalize()?;
+        let config_path = root_path.join("Magnet.toml");
+        let config = MagnetConfig::from_file(&config_path)?;
+        let config = config.nexus.with_context(|| {
+            format!("No nexus configuration found in {}", config_path.display())
+        })?;
         let name = config.name.unwrap_or_else(|| {
             root_path
                 .file_name()
@@ -37,7 +43,7 @@ impl NexusModel {
                 .to_string_lossy()
                 .into_owned()
         });
-        let source_path = source_path.to_path_buf();
+        let source_path = root_path.to_path_buf();
         let model = NexusModel {
             name,
             version: config.version,
@@ -50,6 +56,6 @@ impl NexusModel {
             source_path,
         };
 
-        model
+        Ok(model)
     }
 }

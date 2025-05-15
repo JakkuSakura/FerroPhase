@@ -5,12 +5,14 @@ edition = "2024"
 description = ""
 authors = []
 
-[dependencies]
-log = "*"
-eyre = "*"
+[dependencies.shared-types]
+path = "../../../shared-lib/crates/shared-types"
+
+[dependencies.eyre]
+version = "*"
+
+[dependencies.log]
+version = "*"
 
 [dependencies.shared-utils]
-auto = true
-
-[dependencies.shared-types]
-auto = true
+path = "../../../shared-lib/crates/shared-utils"

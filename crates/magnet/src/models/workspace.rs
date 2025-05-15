@@ -1,12 +1,12 @@
 //! Domain model for a Workspace, which is a collection of packages.
 
-use crate::MagnetConfig;
-use crate::configs::DependencyMap;
-use crate::models::{CrateModel, PackageModel};
-use eyre::{ContextCompat, Result};
+use crate::configs::{DependencyMap, MagnetConfig};
+use crate::models::PackageModel;
+use eyre::{ContextCompat, Result, bail};
 use glob::glob;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 /// A workspace model representing a collection of packages
 #[derive(Debug, Clone)]
@@ -31,13 +31,12 @@ pub struct WorkspaceModel {
     pub root_path: PathBuf,
     /// Source path of the workspace configuration
     pub source_path: PathBuf,
-    pub crates: Vec<CrateModel>,
-    pub packages: Vec<PackageModel>,
     pub nexus_path: Option<PathBuf>,
 }
 
 impl WorkspaceModel {
     pub fn from_root_path(root_path: &Path) -> Result<Self> {
+        let root_path = root_path.canonicalize()?;
         if !root_path.exists() {
             eyre::bail!(
                 "Root path doesn't exist in the current directory: {}",
@@ -49,7 +48,7 @@ impl WorkspaceModel {
         } else if root_path.join("Cargo.toml").exists() {
             root_path.join("Cargo.toml")
         } else {
-            eyre::bail!(
+            bail!(
                 "Root path must point to Cargo.toml or Magnet.toml: {}",
                 root_path.display()
             )
@@ -59,11 +58,7 @@ impl WorkspaceModel {
             .workspace
             .clone()
             .with_context(|| format!("No workspace found in {}", source_path.display()))?;
-        let root_path = source_path
-            .parent()
-            .unwrap()
-            .canonicalize()?
-            .to_owned();
+        let root_path = source_path.parent().unwrap().canonicalize()?.to_owned();
         let name = root_path
             .file_name()
             .unwrap()
@@ -82,23 +77,18 @@ impl WorkspaceModel {
             dependencies: config.dependencies.clone(),
             source_path: source_path.to_path_buf(),
             root_path,
-            crates: vec![],
-            packages: vec![],
             nexus_path: config1.nexus_path,
         };
 
         Ok(model)
     }
 
-    /// Find a crate by name
-    pub fn find_crate(&self, name: &str) -> Option<&CrateModel> {
-        self.crates.iter().find(|c| c.name == name)
-    }
     pub fn root_path(&self) -> &Path {
         self.root_path.as_path()
     }
-    pub fn get_members(&self) -> Result<Vec<String>> {
-        let mut all_members = vec![];
+    /// list packages paths joined with the workspace root path
+    pub fn list_packages(&self) -> Result<Vec<PathBuf>> {
+        let mut all_members: Vec<PathBuf> = vec![];
         let root_path = self.root_path();
         // handle globs
         for member in self.members.iter() {
@@ -108,21 +98,32 @@ impl WorkspaceModel {
                 for entry in globeed {
                     match entry {
                         Ok(path) => {
-                            let relative_path = path
-                                .strip_prefix(root_path)
-                                .expect("Failed to strip prefix");
-                            all_members.push(relative_path.to_string_lossy().to_string());
+                            all_members.push(path);
                         }
                         Err(e) => {
-                            eprintln!("Error processing glob pattern: {}", e);
+                            warn!("Error processing glob pattern: {}", e);
                         }
                     }
                 }
             } else {
-                all_members.push(member.to_string());
+                all_members.push(self.root_path.join(member));
             }
         }
 
         Ok(all_members)
+    }
+    pub fn find_package(&self, package_name: &str) -> Result<PackageModel> {
+        for member in self.list_packages()? {
+            let member_path = self.root_path.join(&member);
+            let package = PackageModel::from_root_path(&member_path)?;
+            if package.name == package_name {
+                return Ok(package);
+            }
+        }
+        bail!(
+            "Package '{}' not found in workspace '{}'",
+            package_name,
+            self.name
+        )
     }
 }
