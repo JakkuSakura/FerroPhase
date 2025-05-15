@@ -1,8 +1,0 @@
-members = []
-exclude = []
-
-[dependencies]
-chrono = "0.4"
-
-[dependencies.shared-types]
-auto = true
