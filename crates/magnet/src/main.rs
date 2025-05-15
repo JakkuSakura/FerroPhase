@@ -1,7 +1,8 @@
 use eyre::{Context, Result};
 use clap::{Parser, Subcommand};
-use log::debug;
 use std::path::PathBuf;
+use common::{setup_logs, LogLevel};
+use tracing::debug;
 
 mod configs;
 
@@ -13,16 +14,11 @@ fn main() -> Result<()> {
 
     // Setup logging based on verbosity
     let log_level = match cli.verbose {
-        0 => log::LevelFilter::Info,
-        1 => log::LevelFilter::Debug,
-        _ => log::LevelFilter::Trace,
+        0 => LogLevel::Info,
+        1 => LogLevel::Debug,
+        _ => LogLevel::Trace,
     };
-
-    env_logger::Builder::new()
-        .filter_level(log_level)
-        .format_timestamp(None)
-        .init();
-
+    setup_logs(log_level)?;
     // Change working directory if specified
     if let Some(dir) = cli.working_dir {
         std::env::set_current_dir(&dir)

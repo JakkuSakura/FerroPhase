@@ -1,7 +1,7 @@
-use crate::DependencyResolver;
 use crate::configs::{CargoPackageConfig, CargoWorkspaceConfig};
 use crate::manager::WorkspaceManager;
 use crate::models::PackageModel;
+use crate::DependencyResolver;
 use eyre::{Context, ContextCompat, Result};
 
 /// Cargo.toml generator

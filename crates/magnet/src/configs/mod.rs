@@ -3,14 +3,11 @@
 //! This module provides structures and functionality for parsing,
 //! validating, and managing Magnet.toml configuration files.
 
-#[path = "crate.rs"]
-mod crate_;
 mod dependencies;
 mod nexus;
 mod package;
 mod workspace;
 
-pub use crate_::*;
 pub use dependencies::*;
 pub use nexus::*;
 pub use package::*;
