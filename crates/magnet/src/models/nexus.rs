@@ -14,62 +14,42 @@ pub struct NexusModel {
     /// Description of the nexus
     pub description: Option<String>,
     /// Workspaces included in this nexus (patterns)
-    pub workspaces: Vec<String>,
+    pub members: Vec<String>,
     /// Workspaces excluded from this nexus (patterns)
     pub exclude: Vec<String>,
     /// Default search paths for dependencies
     pub search_paths: HashMap<String, PathBuf>,
     /// Custom nexus metadata
     pub custom: HashMap<String, toml::Value>,
+    pub root_path: PathBuf,
     /// Source path of the nexus configuration
-    pub source_path: Option<PathBuf>,
-}
-
-impl Default for NexusModel {
-    fn default() -> Self {
-        Self {
-            name: "unnamed-nexus".to_string(),
-            version: None,
-            description: None,
-            workspaces: Vec::new(),
-            exclude: Vec::new(),
-            search_paths: HashMap::new(),
-            custom: HashMap::new(),
-            source_path: None,
-        }
-    }
-}
-
-impl From<NexusConfig> for NexusModel {
-    fn from(config: NexusConfig) -> Self {
-        Self {
-            name: config.name.unwrap_or_else(|| "unnamed-nexus".to_string()),
-            version: config.version,
-            description: config.description,
-            workspaces: vec![],
-            exclude: vec![],
-            search_paths: config.search_paths.unwrap_or_default(),
-            custom: config.custom.clone(),
-            source_path: None,
-        }
-    }
+    pub source_path: PathBuf,
 }
 
 impl NexusModel {
-    /// Create a new nexus model with the given name
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            ..Default::default()
-        }
-    }
-
     /// Create a nexus model from a config, with additional source path information
-    pub fn from_config(config: NexusConfig, source_path: Option<&Path>) -> Self {
-        let mut model = Self::from(config);
-        if let Some(path) = source_path {
-            model.source_path = Some(path.to_path_buf());
-        }
+    pub fn from_config(config: NexusConfig, source_path: &Path) -> Self {
+        let root_path = source_path.parent().unwrap().canonicalize().unwrap().to_owned();
+        let name = config.name.unwrap_or_else(|| {
+            root_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        });
+        let source_path = source_path.to_path_buf();
+        let model = NexusModel {
+            name,
+            version: config.version,
+            description: config.description,
+            members: config.members,
+            exclude: config.exclude,
+            search_paths: config.search_paths.unwrap_or_default(),
+            custom: config.custom.clone(),
+            root_path,
+            source_path,
+        };
+
         model
     }
 }
