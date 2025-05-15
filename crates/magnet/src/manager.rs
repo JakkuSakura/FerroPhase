@@ -6,10 +6,11 @@
 use crate::configs::DependencyMap;
 use crate::models::{CrateModel, WorkspaceModel};
 use crate::MagnetConfig;
-use eyre::Result;
+use eyre::{bail, Result};
 use std::collections::HashMap;
 use std::path::Path;
 
+// TODO: rename it to NexusManager
 /// WorkspaceModel manager
 #[derive(Debug, Clone)]
 pub struct WorkspaceManager {
@@ -21,9 +22,24 @@ pub struct WorkspaceManager {
 
 impl WorkspaceManager {
     /// Create a new workspace manager
-    pub fn new(config: MagnetConfig, root_path: &Path) -> Result<Self> {
+    pub fn new(config: MagnetConfig, workspace_config_path: &Path) -> Result<Self> {
+        if !workspace_config_path.exists() {
+            bail!(
+                "Root path doesn't exist in the current directory: {}",
+                workspace_config_path.display()
+            )
+        }
+        if workspace_config_path.file_name() != Some("Cargo.toml".as_ref())
+            && workspace_config_path.file_name() != Some("Magnet.toml".as_ref())
+        {
+            bail!(
+                "Root path point to Cargo.toml or Magnet.toml: {}",
+                workspace_config_path.display()
+            )
+        }
+
         // Create the primary workspace
-        let primary_workspace = WorkspaceModel::from_config_file(&config, root_path)?;
+        let primary_workspace = WorkspaceModel::from_config_file(&config, workspace_config_path)?;
         // TODO: resolve crates & packages
         Ok(Self {
             primary_workspace,
