@@ -20,7 +20,7 @@ pub enum DependencyConfig {
 impl Display for DependencyConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DependencyConfig::Simple(version) => write!(f, "{}", version),
+            DependencyConfig::Simple(version) => write!(f, "{:?}", version),
             DependencyConfig::Detailed(dep) => {
                 write!(f, "{{ ")?;
                 if let Some(version) = &dep.version {

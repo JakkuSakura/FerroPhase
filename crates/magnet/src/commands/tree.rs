@@ -13,14 +13,17 @@ pub fn tree(config_path: &Path) -> Result<()> {
     print_nexus_tree(&nexus_manager, 0)?;
     Ok(())
 }
+
 fn print_nexus_tree(nexus_manager: &NexusManager, depth: u32) -> Result<()> {
     // Print the root directory
-    println!("Nexus Root: {}", nexus_manager.nexus_path.display());
+    println!("🧲 Nexus Root: {}", nexus_manager.nexus_path.display());
 
     // Print the workspaces
     println!("Workspaces:");
-    for (_idx, (name, _)) in nexus_manager.workspaces.iter().enumerate() {
-        print_workspace_tree(nexus_manager, name, depth + 1)?;
+    for (idx, (name, _)) in nexus_manager.workspaces.iter().enumerate() {
+        let is_last = idx == nexus_manager.workspaces.len() - 1;
+        let prefix = if is_last { "└── " } else { "├── " };
+        print_workspace_tree(nexus_manager, name, depth + 1, prefix, is_last)?;
     }
 
     Ok(())
@@ -31,6 +34,8 @@ fn print_workspace_tree(
     nexus_manager: &NexusManager,
     workspace_name: &str,
     depth: u32,
+    prefix: &str,
+    is_last: bool,
 ) -> Result<()> {
     // Get workspace
     let workspace = nexus_manager
@@ -39,66 +44,69 @@ fn print_workspace_tree(
 
     // Print workspace name
     println!(
-        "{}Workspace: {}",
+        "{}{} 🏢 Workspace: {} ({})",
         "  ".repeat(depth as usize),
-        workspace.name
+        prefix,
+        workspace.name,
+        &workspace.root_path.display()
     );
 
     // Print workspace root
-    println!(
-        "{}Root: {}",
-        "  ".repeat(depth as usize + 1),
-        workspace.root_path().display()
-    );
+    let indent = if is_last { "    " } else { "│   " };
 
-    // Print crates
-    // println!("{}Crates:", "  ".repeat(depth as usize + 1));
-    // for (idx, crate_info) in workspace.crates.iter().enumerate() {
-    //     let is_last = idx == workspace.crates.len() - 1;
-    //     let crate_prefix = if is_last { "└── " } else { "├── " };
-    //
-    //     println!(
-    //         "{}{}{}",
-    //         "  ".repeat(depth as usize + 2),
-    //         crate_prefix,
-    //         crate_info.name
-    //     );
-    //
-    //     // Print crate path
-    //     let path_prefix = if is_last { "    " } else { "│   " };
-    //     println!(
-    //         "{}{}Path: {}",
-    //         "  ".repeat(depth as usize + 2),
-    //         path_prefix,
-    //         crate_info.path.display()
-    //     );
-    // }
     // Print packages
-    println!("{}Packages:", "  ".repeat(depth as usize + 1));
-    for package in workspace.list_packages()? {
-        let package_path = workspace.root_path().join(&package);
+    println!("{}{}Packages:", "  ".repeat(depth as usize), indent);
+
+    let packages = workspace.list_packages()?;
+    for (idx, package_name) in packages.iter().enumerate() {
+        let package_path = (&workspace.root_path).join(package_name);
         let package = PackageModel::from_root_path(&package_path)?;
-        print_package_tree(&package, depth + 2)?;
+        let is_last_package = idx == packages.len() - 1;
+        let package_prefix = if is_last_package {
+            "└── "
+        } else {
+            "├── "
+        };
+
+        // Use the correct indentation for packages
+        let package_indent = format!("{}{}", "  ".repeat(depth as usize), indent);
+        print_package_tree(
+            &package,
+            package_indent.as_str(),
+            package_prefix,
+            is_last_package,
+        )?;
     }
 
     Ok(())
 }
-fn print_package_tree(package: &PackageModel, depth: u32) -> Result<()> {
-    // Print package name
-    println!("{}Package: {}", "  ".repeat(depth as usize), package.name);
 
-    // dependency
-    println!("{}Dependencies:", "  ".repeat(depth as usize + 1));
-    for (idx, (crate_, dep)) in package.dependencies.iter().enumerate() {
-        let is_last = idx == package.dependencies.len() - 1;
-        let dep_prefix = if is_last { "└── " } else { "├── " };
-        println!(
-            "{}{}{} = {}",
-            "  ".repeat(depth as usize + 2),
-            dep_prefix,
-            crate_,
-            dep
-        );
+fn print_package_tree(
+    package: &PackageModel,
+    parent_indent: &str,
+    prefix: &str,
+    is_last: bool,
+) -> Result<()> {
+    // Print package name
+    println!("{}{} 📦 Package: {} ({})", parent_indent, prefix, package.name, package.root_path.display());
+
+    // Prepare the indent for the package children
+    let next_indent = format!("{}{}", parent_indent, if is_last { "    " } else { "│   " });
+
+    // Dependencies
+    if !package.dependencies.is_empty() {
+        println!("{}Dependencies:", next_indent);
+
+        for (idx, (crate_, dep)) in package.dependencies.iter().enumerate() {
+            let is_last_dep = idx == package.dependencies.len() - 1;
+            let dep_prefix = if is_last_dep {
+                "└── "
+            } else {
+                "├── "
+            };
+            println!("{}{} 📄{} = {}", next_indent, dep_prefix, crate_, dep);
+        }
     }
+
     Ok(())
 }
