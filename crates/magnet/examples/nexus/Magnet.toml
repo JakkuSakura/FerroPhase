@@ -1,4 +1,4 @@
 [nexus]
-members = ["crates/*"]
+members = ["project1", "project2", "shared-lib"]
 exclude = []
 

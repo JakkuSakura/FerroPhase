@@ -23,7 +23,7 @@
 //! ## Core modules
 //!
 //! - `config`: Configuration handling for Magnet.toml files
-//! - `workspace_manager`: Workspace discovery and management
+//! - `manager`: Workspace discovery and management
 //! - `generator`: Cargo.toml generation from Magnet configuration
 //! - `resolver`: Dependency resolution across workspaces
 //! - `commands`: CLI command implementations
@@ -39,7 +39,7 @@ pub mod models;
 
 // Re-export commonly used items
 pub use configs::MagnetConfig;
-pub use manager::WorkspaceManager;
+pub use manager::NexusManager;
 pub use generator::CargoGenerator;
 pub use resolver::DependencyResolver;
 

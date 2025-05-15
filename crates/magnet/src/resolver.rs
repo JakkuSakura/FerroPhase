@@ -37,20 +37,20 @@ pub struct ResolvedDependency {
 
 /// Dependency resolver
 pub struct DependencyResolver {
-    /// Primary workspace
-    primary_workspace: WorkspaceModel,
-    /// Related workspaces
-    related_workspaces: Vec<WorkspaceModel>,
+    /// Active workspace
+    active_workspace: WorkspaceModel,
+    /// Other workspaces
+    other_workspaces: Vec<WorkspaceModel>,
     /// Cache of resolved dependencies
     resolved_dependencies: HashMap<String, ResolvedDependency>,
 }
 
 impl DependencyResolver {
     /// Create a new dependency resolver
-    pub fn new(primary_workspace: WorkspaceModel, related_workspaces: Vec<WorkspaceModel>) -> Self {
+    pub fn new(active_workspace: WorkspaceModel, other_workspaces: Vec<WorkspaceModel>) -> Self {
         Self {
-            primary_workspace,
-            related_workspaces,
+            active_workspace,
+            other_workspaces,
             resolved_dependencies: HashMap::new(),
         }
     }
@@ -62,15 +62,15 @@ impl DependencyResolver {
 
     /// Find a crate by name
     pub fn find_crate(&self, name: &str) -> Option<&CrateModel> {
-        // First check the primary workspace
-        for crate_info in &self.primary_workspace.crates {
+        // First check the active workspace
+        for crate_info in &self.active_workspace.crates {
             if crate_info.name == name {
                 return Some(crate_info);
             }
         }
 
-        // Then check related workspaces
-        for workspace in &self.related_workspaces {
+        // Then check other workspaces
+        for workspace in &self.other_workspaces {
             for crate_info in &workspace.crates {
                 if crate_info.name == name {
                     return Some(crate_info);
@@ -107,16 +107,16 @@ impl DependencyResolver {
             // Auto-discovery: try to find the dependency in any workspace
             let mut matching_crates = Vec::new();
 
-            // First check in the primary workspace
-            for crate_info in &self.primary_workspace.crates {
+            // First check in the active workspace
+            for crate_info in &self.active_workspace.crates {
                 if crate_info.name == name {
                     matching_crates
                         .push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
                 }
             }
 
-            // Then check in related workspaces
-            for workspace in &self.related_workspaces {
+            // Then check in other workspaces
+            for workspace in &self.other_workspaces {
                 for crate_name in &workspace.crates {
                     if crate_name.name == name {
                         matching_crates
@@ -178,7 +178,7 @@ impl DependencyResolver {
                 crate_dir.join(path)
             } else {
                 // Resolve relative to workspace root
-                let workspace_root = self.primary_workspace.root_path();
+                let workspace_root = self.active_workspace.root_path();
                 workspace_root.join(path)
             };
 
@@ -232,15 +232,15 @@ impl DependencyResolver {
         // Look for matching crates in all workspaces
         let mut matching_crates = Vec::new();
 
-        // First check in the primary workspace
-        for crate_info in &self.primary_workspace.crates {
+        // First check in the active workspace
+        for crate_info in &self.active_workspace.crates {
             if crate_info.name == name {
                 matching_crates.push(crate_info.cargo_toml_path.parent().unwrap().to_path_buf());
             }
         }
 
         // Then check in other workspaces
-        for workspace in &self.related_workspaces {
+        for workspace in &self.other_workspaces {
             for crate_info in &workspace.crates {
                 if crate_info.name == name {
                     matching_crates
@@ -294,16 +294,16 @@ impl DependencyResolver {
         from_crate: &CrateModel,
         candidates: &[PathBuf],
     ) -> Result<PathBuf> {
-        // Check if the from_crate exists in primary workspace
+        // Check if the from_crate exists in active workspace
         let from_workspace = if self
-            .primary_workspace
+            .active_workspace
             .crates
             .iter()
             .any(|c| c.name == from_crate.name)
         {
-            &self.primary_workspace
+            &self.active_workspace
         } else {
-            self.related_workspaces
+            self.other_workspaces
                 .iter()
                 .find(|w| w.crates.iter().any(|c| c.name == from_crate.name))
                 .ok_or_else(|| eyre!("Failed to find workspace for crate {}", from_crate.name))?
@@ -342,8 +342,8 @@ impl DependencyResolver {
     /// Resolve all dependencies in a workspace
     pub fn resolve_all_workspace_dependencies(&mut self) -> Result<()> {
         // First, get all workspaces to be scanned
-        let mut workspaces = vec![self.primary_workspace.clone()];
-        workspaces.extend(self.related_workspaces.clone().into_iter());
+        let mut workspaces = vec![self.active_workspace.clone()];
+        workspaces.extend(self.other_workspaces.clone().into_iter());
 
         // For each workspace, resolve all dependencies
         for workspace in workspaces {

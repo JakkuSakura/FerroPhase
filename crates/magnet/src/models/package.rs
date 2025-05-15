@@ -1,9 +1,9 @@
-use crate::configs::{DependencyMap, PackageConfig};
+use crate::configs::DependencyMap;
 use crate::MagnetConfig;
-use eyre::ContextCompat;
 use eyre::Result;
+use eyre::ContextCompat;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Package-specific configuration
 #[derive(Debug, Clone, Default)]
@@ -28,13 +28,33 @@ pub struct PackageModel {
     /// Custom package metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyMap,
+    pub root_path: PathBuf,
+    pub source_path: PathBuf,
 }
 impl PackageModel {
-    pub fn from_config_file(config: MagnetConfig, path: &Path) -> Result<Self> {
+    pub fn from_root_path(root_path: &Path) -> Result<Self> {
+        if !root_path.exists() {
+            eyre::bail!(
+                "Root path doesn't exist in the current directory: {}",
+                root_path.display()
+            )
+        }
+        let config_path = if root_path.join("Magnet.toml").exists() {
+            root_path.join("Magnet.toml")
+        } else if root_path.join("Cargo.toml").exists() {
+            root_path.join("Cargo.toml")
+        } else {
+            eyre::bail!(
+                "Root path must point to Cargo.toml or Magnet.toml: {}",
+                root_path.display()
+            )
+        };
+        let config = MagnetConfig::from_file(&config_path)?;
+
         let package = config
             .package
             .clone()
-            .with_context(|| format!("No package found in {}", path.display()))?;
+            .with_context(|| format!("No package found in {}", root_path.display()))?;
         // Create a new PackageModel instance
         let model = PackageModel {
             name: package.name,
@@ -48,25 +68,10 @@ impl PackageModel {
             license: package.license,
             custom: package.custom,
             dependencies: config.dependencies,
+            root_path: root_path.to_path_buf(),
+            source_path: config_path,
         };
 
         Ok(model)
-    }
-}
-impl From<PackageConfig> for PackageModel {
-    fn from(config: PackageConfig) -> Self {
-        Self {
-            name: config.name,
-            version: config.version,
-            edition: "".to_string(),
-            description: config.description,
-            authors: config.authors,
-            homepage: config.homepage,
-            repository: config.repository,
-            documentation: config.documentation,
-            license: config.license,
-            custom: config.custom,
-            dependencies: Default::default(),
-        }
     }
 }
