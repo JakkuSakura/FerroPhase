@@ -60,7 +60,7 @@ impl NexusManager {
 
     /// Get the root path of the specified workspace
     pub fn root_path(&self, workspace_name: &str) -> Option<&Path> {
-        self.get_workspace(workspace_name).map(|w| w.root_path())
+        self.get_workspace(workspace_name).map(|w| w.root_path.as_path())
     }
 
     /// Discover related workspaces from a specific workspace
