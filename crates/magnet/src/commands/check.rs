@@ -4,6 +4,7 @@ use crate::manager::ManifestManager;
 use crate::models::WorkspaceModel;
 use eyre::Result;
 use std::path::Path;
+use tracing::info;
 
 /// Check command for verifying the consistency of workspace dependencies
 pub fn check(config_path: &Path) -> Result<()> {
@@ -15,6 +16,6 @@ pub fn check(config_path: &Path) -> Result<()> {
         nexus_manager.resolve_package_dependencies(&mut package)?;
     }
 
-    println!("All package dependencies are properly resolved.");
+    info!("All package dependencies are properly resolved.");
     Ok(())
 }

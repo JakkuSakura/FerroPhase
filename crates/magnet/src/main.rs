@@ -1,12 +1,11 @@
 use clap::{Parser, Subcommand};
-use common::{LogLevel, setup_logs};
 use eyre::{Context, Result};
 use std::path::PathBuf;
-use tracing::debug;
+use tracing::{debug, info};
 
-mod configs;
-
-use magnet::commands;
+// Use local utils module instead of common crate
+use magnet::commands::{self, generate::GenerateOptions};
+use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point
 fn main() -> Result<()> {
@@ -19,6 +18,7 @@ fn main() -> Result<()> {
         _ => LogLevel::Trace,
     };
     setup_logs(log_level)?;
+
     // Change working directory if specified
     if let Some(dir) = cli.working_dir {
         std::env::set_current_dir(&dir)
@@ -29,22 +29,59 @@ fn main() -> Result<()> {
     // Execute the appropriate subcommand
     match cli.command {
         Some(Commands::Init { path }) => commands::init(&path),
-        Some(Commands::Generate { config }) => commands::generate(&config),
+        Some(Commands::Generate {
+            config,
+            clean,
+            copy_lock,
+            include_cargo_dir,
+            symlink_cargo_dir,
+        }) => {
+            let options = GenerateOptions {
+                config_path: config,
+                clean,
+                copy_lock,
+                include_cargo_dir,
+                symlink_cargo_dir,
+            };
+            commands::generate(&options)
+        }
         Some(Commands::Check { config }) => commands::check(&config),
         Some(Commands::Tree { config }) => commands::tree(&config),
+        Some(Commands::Export {
+            package,
+            clean,
+            copy_lock,
+            include_cargo_dir,
+            symlink_cargo_dir,
+            export_dir,
+            crates_dir,
+        }) => {
+            let options = commands::export::ExportOptions {
+                package_path: package,
+                clean,
+                copy_lock,
+                include_cargo_dir,
+                symlink_cargo_dir,
+                export_dir,
+                crates_dir,
+            };
+            commands::export(&options)
+        }
         Some(Commands::Submodule {
             action,
             path,
             remote,
         }) => match action {
             SubmoduleAction::Init => commands::submodule_init(&path),
-            SubmoduleAction::Update => commands::update(&path, remote),
-            SubmoduleAction::Deinit { submodule_path } => commands::deinit(&path, &submodule_path),
+            SubmoduleAction::Update => commands::submodule_update(&path, remote),
+            SubmoduleAction::Deinit { submodule_path } => {
+                commands::submodule_deinit(&path, &submodule_path)
+            }
             SubmoduleAction::List => commands::submodule_list(&path),
-            SubmoduleAction::Switch { rev } => commands::switch(&path, &rev),
+            SubmoduleAction::Switch { rev } => commands::submodule_switch(&path, &rev),
         },
         None => {
-            println!("No command specified. Run with --help for usage information.");
+            info!("No command specified. Run with --help for usage information.");
             Ok(())
         }
     }
@@ -79,6 +116,22 @@ enum Commands {
         /// Path to the Magnet.toml file
         #[arg(default_value = ".")]
         config: PathBuf,
+
+        /// Clean the output directory before generating files
+        #[arg(short = 'c', long)]
+        clean: bool,
+
+        /// Copy the Cargo.lock file if it exists
+        #[arg(short = 'l', long, default_value_t = true)]
+        copy_lock: bool,
+
+        /// Include .cargo directory in the generation
+        #[arg(long, default_value_t = true)]
+        include_cargo_dir: bool,
+
+        /// Create symlinks for .cargo directory instead of copying
+        #[arg(long, default_value_t = true)]
+        symlink_cargo_dir: bool,
     },
     /// Check Magnet.toml for issues
     Check {
@@ -91,6 +144,36 @@ enum Commands {
         /// Path to the Magnet.toml file
         #[arg(default_value = ".")]
         config: PathBuf,
+    },
+    /// Export local dependencies for a package/workspace
+    Export {
+        /// Path to the package or workspace directory
+        #[arg(default_value = ".")]
+        package: PathBuf,
+
+        /// Clean the export directory before exporting
+        #[arg(short = 'c', long, default_value_t = true)]
+        clean: bool,
+
+        /// Copy the Cargo.lock file if it exists
+        #[arg(short = 'l', long, default_value_t = true)]
+        copy_lock: bool,
+
+        /// Include .cargo directory in the export
+        #[arg(long, default_value_t = true)]
+        include_cargo_dir: bool,
+
+        /// Create symlinks for .cargo directory instead of copying
+        #[arg(long, default_value_t = true)]
+        symlink_cargo_dir: bool,
+
+        /// Custom directory to export to (default: $PWD/target/export)
+        #[arg(short = 'o', long)]
+        export_dir: Option<PathBuf>,
+
+        /// Subdirectory name for exported crates (default: "crates")
+        #[arg(short = 'd', long, default_value = "crates")]
+        crates_dir: String,
     },
     /// Manage git submodules
     Submodule {

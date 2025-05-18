@@ -1,10 +1,11 @@
 use crate::configs::{
     CargoPackageConfig, CargoPackageConfigWrapper, CargoWorkspaceConfig,
-    CargoWorkspaceConfigWrapper,
+    CargoWorkspaceConfigWrapper, ManifestConfig,
 };
 use crate::manager::ManifestManager;
 use crate::models::{PackageModel, WorkspaceModel};
 use eyre::{Context, Result};
+use tracing::info;
 
 /// Cargo.toml generator
 pub struct CargoGenerator {
@@ -31,28 +32,6 @@ impl CargoGenerator {
         Ok(())
     }
 
-    /// Generate the root Cargo.toml file for a specific workspace
-    fn generate_workspace_cargo_toml(&self, workspace: &WorkspaceModel) -> Result<()> {
-        // Path to the root Cargo.toml
-        let cargo_toml_path = workspace.root_path.join("Cargo.toml");
-        println!("Generating Cargo.toml at {}", cargo_toml_path.display());
-
-        // Create a new workspace manifest
-        let workspace_manifest = self.generate_workspace_manifest(&workspace)?;
-
-        // Convert to TOML string
-        let toml_string = toml::to_string_pretty(&CargoWorkspaceConfigWrapper {
-            workspace: workspace_manifest,
-        })
-        .context("Failed to convert workspace manifest to TOML")?;
-
-        // Write to file
-        std::fs::write(&cargo_toml_path, toml_string)
-            .context(format!("Failed to write to {}", cargo_toml_path.display()))?;
-
-        Ok(())
-    }
-
     /// Generate a workspace manifest for a specific workspace
     fn generate_workspace_manifest(
         &self,
@@ -67,6 +46,39 @@ impl CargoGenerator {
         };
 
         Ok(manifest)
+    }
+
+    /// Generate the root Cargo.toml file for a specific workspace
+    fn generate_workspace_cargo_toml(&self, workspace: &WorkspaceModel) -> Result<()> {
+        // Path to the root Cargo.toml
+        let cargo_toml_path = workspace.root_path.join("Cargo.toml");
+        info!("Generating Cargo.toml at {}", cargo_toml_path.display());
+
+        // Create a new workspace manifest
+        let workspace_manifest = self.generate_workspace_manifest(&workspace)?;
+
+        // Get the patch section if it exists in the configuration
+        let patch_section = if let Ok(magnet_config) = ManifestConfig::from_file(&workspace.source_path) {
+            magnet_config.patch
+        } else {
+            None
+        };
+
+        // Create the wrapper with workspace and patch section
+        let wrapper = CargoWorkspaceConfigWrapper {
+            workspace: workspace_manifest,
+            patch: patch_section,
+        };
+
+        // Convert to TOML string
+        let toml_string = toml::to_string_pretty(&wrapper)
+            .context("Failed to convert workspace manifest to TOML")?;
+
+        // Write to file
+        std::fs::write(&cargo_toml_path, toml_string)
+            .context(format!("Failed to write to {}", cargo_toml_path.display()))?;
+
+        Ok(())
     }
 
     fn generate_package_cargo_toml(&mut self, package: &mut PackageModel) -> Result<()> {
@@ -96,6 +108,13 @@ impl CargoGenerator {
     ) -> Result<CargoPackageConfigWrapper> {
         self.nexus_manager.resolve_package_dependencies(model)?;
 
+        // Get the patch section if it exists in the source Magnet.toml file
+        let patch_section = if let Ok(magnet_config) = ManifestConfig::from_file(&model.source_path) {
+            magnet_config.patch
+        } else {
+            None
+        };
+
         let package = CargoPackageConfig {
             name: model.name.clone(),
             version: model.version.clone(),
@@ -110,6 +129,7 @@ impl CargoGenerator {
         Ok(CargoPackageConfigWrapper {
             package,
             dependencies: model.dependencies.clone(),
+            patch: patch_section,
         })
     }
 }

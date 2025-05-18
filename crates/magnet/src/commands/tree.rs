@@ -3,6 +3,7 @@
 use crate::models::{ManifestModel, NexusModel, PackageModel, WorkspaceModel};
 use eyre::Result;
 use std::path::Path;
+use tracing::info;
 
 /// Tree command for visualizing workspace structure
 pub fn tree(config_path: &Path) -> Result<()> {
@@ -30,7 +31,7 @@ fn print_manifest_tree(
 }
 fn print_nexus_tree(nexus: &NexusModel, depth: u32, prefix: &str) -> Result<()> {
     // Print Nexus details
-    println!(
+    info!(
         "{}{} 🧲 Nexus: {} ({})",
         "  ".repeat(depth as usize),
         prefix,
@@ -70,7 +71,7 @@ fn print_workspace_tree(
     is_last: bool,
 ) -> Result<()> {
     // Print workspace name
-    println!(
+    info!(
         "{}{} 🏢 Workspace: {} ({})",
         "  ".repeat(depth as usize),
         prefix,
@@ -110,7 +111,7 @@ fn print_package_tree(
     is_last: bool,
 ) -> Result<()> {
     // Print package name
-    println!(
+    info!(
         "{}{} 📦 Package: {} ({})",
         parent_indent,
         prefix,
@@ -130,7 +131,7 @@ fn print_package_tree(
             } else {
                 "├── "
             };
-            println!("{}{} 📄{} = {}", next_indent, dep_prefix, crate_, dep);
+            info!("{}{} 📄{} = {}", next_indent, dep_prefix, crate_, dep);
         }
     }
 

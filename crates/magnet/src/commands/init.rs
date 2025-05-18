@@ -3,6 +3,7 @@
 use crate::configs::{ManifestConfig, MagnetConfigType};
 use eyre::{Context, Result};
 use std::path::Path;
+use tracing::info;
 
 /// Initialize a new Magnet.toml file at the specified path
 pub fn init(path: &Path) -> Result<()> {
@@ -31,7 +32,7 @@ pub fn init(path: &Path) -> Result<()> {
         target_path.display()
     ))?;
 
-    println!(
+    info!(
         "Created new {} Magnet.toml at {}",
         match config_type {
             MagnetConfigType::Nexus => "nexus",

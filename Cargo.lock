@@ -1179,7 +1179,6 @@ name = "magnet"
 version = "0.1.0"
 dependencies = [
  "clap",
- "common",
  "eyre",
  "glob",
  "pathdiff",
@@ -1189,6 +1188,7 @@ dependencies = [
  "thiserror 1.0.61",
  "toml",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

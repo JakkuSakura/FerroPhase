@@ -50,4 +50,6 @@ pub struct CargoWorkspaceConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CargoWorkspaceConfigWrapper {
     pub workspace: CargoWorkspaceConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<toml::value::Table>,
 }
