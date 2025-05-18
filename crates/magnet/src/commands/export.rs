@@ -176,8 +176,6 @@ impl Exporter {
                         "./{}/{}",
                         self.crates_dir_name, dep_name
                     )));
-                    // Ensure it's marked as a workspace dependency
-                    detailed.workspace = Some(true);
                     debug!("Updated workspace dependency path for {}", dep_name);
                 }
             }
@@ -272,46 +270,56 @@ impl Exporter {
     }
 
     /// Create symlinks for a package's dependencies
+    /// Recursively processes dependencies of dependencies
     fn create_symlinks_for_package(&mut self, package: &PackageModel) -> Result<()> {
         // Clone the package to allow for mutable operations
         let mut package_clone = package.clone();
-
+        
         // First, resolve any workspace or nexus dependencies
-        for (crate_name, dep_config) in &mut package_clone.dependencies {
+        let mut deps_to_resolve = Vec::new();
+        
+        // First pass: collect dependencies that need resolution
+        for (crate_name, dep_config) in &package_clone.dependencies {
             // Only process DetailedDependency configs that have workspace=true or nexus=true
-            let dep_config_clone = dep_config.clone();
-            let crate::configs::DependencyConfig::Detailed(dep) = dep_config else {
-                continue;
-            };
-
-            // Try to resolve workspace dependencies
-            if dep.workspace == Some(true) || dep.nexus == Some(true) {
-                debug!(
-                    "Resolving dependency {} with workspace={:?}, nexus={:?}",
-                    crate_name, dep.workspace, dep.nexus
-                );
-
-                // Use the nexus_manager to resolve this dependency
-                match self
-                    .nexus_manager
-                    .resolve_dependency(&package, crate_name, &dep_config_clone)
-                {
-                    Ok(resolved_dep) => {
-                        // Update with the resolved dependency that now has a path
-                        *dep = resolved_dep;
-                        debug!(
-                            "Successfully resolved {} to path: {:?}",
-                            crate_name, dep.path
-                        );
-                    }
-                    Err(err) => {
-                        // Log warning but continue with other dependencies
-                        warn!("Failed to resolve dependency {}: {}", crate_name, err);
-                        continue;
+            if let crate::configs::DependencyConfig::Detailed(dep) = dep_config {
+                // Try to resolve workspace dependencies
+                if dep.workspace == Some(true) || dep.nexus == Some(true) {
+                    deps_to_resolve.push(crate_name.clone());
+                    debug!("Scheduled {} for resolution with workspace={:?}, nexus={:?}", 
+                           crate_name, dep.workspace, dep.nexus);
+                }
+            }
+        }
+        
+        // Second pass: resolve the collected dependencies
+        for crate_name in deps_to_resolve {
+            // Create a temporary copy for the resolution
+            let pkg_for_resolve = package_clone.clone();
+            
+            if let Some(dep_config) = package_clone.dependencies.get_mut(&crate_name) {
+                if let crate::configs::DependencyConfig::Detailed(dep) = dep_config {
+                    // Create a temporary clone for resolution - we don't directly use the mutable reference
+                    let dep_clone = crate::configs::DependencyConfig::Detailed(dep.clone());
+                    
+                    // Use the nexus_manager to resolve this dependency
+                    match self.nexus_manager.resolve_dependency(&pkg_for_resolve, &crate_name, &dep_clone) {
+                        Ok(resolved_dep) => {
+                            // Update with the resolved dependency that now has a path
+                            *dep = resolved_dep;
+                            debug!("Successfully resolved {} to path: {:?}", crate_name, dep.path);
+                        },
+                        Err(err) => {
+                            // Log warning but continue with other dependencies
+                            warn!("Failed to resolve dependency {}: {}", crate_name, err);
+                            continue;
+                        }
                     }
                 }
             }
         }
+
+        // Track dependencies that need recursive processing
+        let mut deps_to_process_recursively = Vec::new();
 
         // Now process all dependencies with paths (original and newly resolved ones)
         for (crate_name, dep_config) in &package_clone.dependencies {
@@ -340,12 +348,8 @@ impl Exporter {
             let canonical_path = match absolute_path.canonicalize() {
                 Ok(path) => path,
                 Err(err) => {
-                    warn!(
-                        "Failed to canonicalize path for dependency {}: {} - {:?}",
-                        crate_name,
-                        absolute_path.display(),
-                        err
-                    );
+                    warn!("Failed to canonicalize path for dependency {}: {} - {:?}",
+                          crate_name, absolute_path.display(), err);
                     continue;
                 }
             };
@@ -367,12 +371,46 @@ impl Exporter {
                 canonical_path.display()
             );
 
-            self.processed_paths.insert(canonical_path);
+            self.processed_paths.insert(canonical_path.clone());
             self.processed_crates.insert(crate_name.clone());
+            
+            // Queue this dependency for recursive processing
+            deps_to_process_recursively.push((crate_name.clone(), canonical_path));
         }
 
         // Process patches from this package
         self.process_package_patches(package)?;
+        
+        // Recursively process all dependencies' dependencies
+        for (dep_name, dep_path) in deps_to_process_recursively {
+            debug!("Recursively processing dependencies of {}", dep_name);
+            
+            // Try to load dependency's manifest
+            match crate::models::ManifestModel::from_dir(&dep_path) {
+                Ok(manifest) => {
+                    // Get all packages from the manifest
+                    match manifest.list_packages() {
+                        Ok(dep_packages) => {
+                            for dep_package in &dep_packages {
+                                // Recursively process each package's dependencies
+                                if let Err(err) = self.create_symlinks_for_package(dep_package) {
+                                    warn!("Error recursively processing dependencies of {}: {}", dep_name, err);
+                                    // Continue with other dependencies
+                                }
+                            }
+                        },
+                        Err(err) => {
+                            warn!("Failed to list packages from dependency {}: {}", dep_name, err);
+                            // Continue with other dependencies
+                        }
+                    }
+                },
+                Err(err) => {
+                    warn!("Failed to load manifest for dependency {}: {}", dep_name, err);
+                    // Continue with other dependencies
+                }
+            }
+        }
 
         Ok(())
     }
