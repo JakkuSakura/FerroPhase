@@ -64,4 +64,6 @@ pub struct CargoPackageConfig {
 pub struct CargoPackageConfigWrapper {
     pub package: CargoPackageConfig,
     pub dependencies: DependencyMap,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<toml::value::Table>,
 }

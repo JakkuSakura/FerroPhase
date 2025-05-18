@@ -60,6 +60,9 @@ pub struct ManifestConfig {
     /// Build dependencies shared across workspace members
     #[serde(default, rename = "build-dependencies")]
     pub build_dependencies: DependencyMap,
+    /// Patch section for overriding dependencies
+    #[serde(default)]
+    pub patch: Option<toml::value::Table>,
     /// Source path of this configuration
     #[allow(dead_code)]
     #[serde(skip)]
@@ -341,6 +344,7 @@ impl ManifestConfig {
             dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
             build_dependencies: HashMap::new(),
+            patch: None,
             source_path: None,
             config_type: MagnetConfigType::default(),
         }
