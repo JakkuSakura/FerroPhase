@@ -27,7 +27,6 @@ pub struct WorkspaceConfig {
     /// Custom workspace metadata
     #[serde(flatten)]
     pub custom: HashMap<String, toml::Value>,
-    pub nexus_path: Option<PathBuf>,
 }
 
 

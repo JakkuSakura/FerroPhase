@@ -3,7 +3,7 @@ use std::path::Path;
 use eyre::Result;
 use tempfile::tempdir;
 
-use magnet::configs::MagnetConfig;
+use magnet::configs::ManifestConfig;
 
 #[test]
 fn test_magnet_config_create_and_parse() -> Result<()> {
@@ -12,7 +12,7 @@ fn test_magnet_config_create_and_parse() -> Result<()> {
     let config_path = temp_dir.path().join("Magnet.toml");
     
     // Create a basic configuration
-    let mut config = MagnetConfig::new();
+    let mut config = ManifestConfig::new();
     config.package.name = Some("test-project".to_string());
     config.package.version = Some("0.1.0".to_string());
     config.workspace.members = vec!["crates/*".to_string()];
@@ -22,7 +22,7 @@ fn test_magnet_config_create_and_parse() -> Result<()> {
     config.to_file(&config_path)?;
     
     // Read it back
-    let read_config = MagnetConfig::from_file(&config_path)?;
+    let read_config = ManifestConfig::from_file(&config_path)?;
     
     // Verify it matches what we wrote
     assert_eq!(read_config.package.name, Some("test-project".to_string()));
@@ -42,7 +42,7 @@ fn test_workspace_crate_detection() -> Result<()> {
     
     // Create a Magnet.toml file
     let config_path = workspace_dir.join("Magnet.toml");
-    let mut config = MagnetConfig::new();
+    let mut config = ManifestConfig::new();
     config.package.name = Some("test-workspace".to_string());
     config.workspace.members = vec!["crates/*".to_string()];
     config.to_file(&config_path)?;
