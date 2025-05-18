@@ -32,6 +32,17 @@ fn main() -> Result<()> {
         Some(Commands::Generate { config }) => commands::generate(&config),
         Some(Commands::Check { config }) => commands::check(&config),
         Some(Commands::Tree { config }) => commands::tree(&config),
+        Some(Commands::Submodule {
+            action,
+            path,
+            remote,
+        }) => match action {
+            SubmoduleAction::Init => commands::submodule_init(&path),
+            SubmoduleAction::Update => commands::update(&path, remote),
+            SubmoduleAction::Deinit { submodule_path } => commands::deinit(&path, &submodule_path),
+            SubmoduleAction::List => commands::submodule_list(&path),
+            SubmoduleAction::Switch { rev } => commands::switch(&path, &rev),
+        },
         None => {
             println!("No command specified. Run with --help for usage information.");
             Ok(())
@@ -80,5 +91,39 @@ enum Commands {
         /// Path to the Magnet.toml file
         #[arg(default_value = ".")]
         config: PathBuf,
+    },
+    /// Manage git submodules
+    Submodule {
+        /// Action to perform on submodules
+        #[command(subcommand)]
+        action: SubmoduleAction,
+
+        /// Path to the repository root
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Fetch latest changes from remote repository (only for update)
+        #[arg(short, long)]
+        remote: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SubmoduleAction {
+    /// Initialize and update submodules
+    Init,
+    /// Update submodules with latest changes
+    Update,
+    /// Deinitialize (remove) a submodule
+    Deinit {
+        /// Path to the submodule to deinitialize
+        submodule_path: PathBuf,
+    },
+    /// List all submodules
+    List,
+    /// Switch submodules to a specific revision
+    Switch {
+        /// Revision to switch to
+        rev: String,
     },
 }
