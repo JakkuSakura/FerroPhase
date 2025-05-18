@@ -1,12 +1,11 @@
 //! Domain model for a Workspace, which is a collection of packages.
 
-use crate::configs::{DependencyMap, MagnetConfig};
+use crate::configs::{DependencyMap, ManifestConfig};
 use crate::models::PackageModel;
+use crate::utils::glob_relative;
 use eyre::{ContextCompat, Result, bail};
-use glob::glob;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::warn;
 
 /// A workspace model representing a collection of packages
 #[derive(Debug, Clone)]
@@ -31,11 +30,10 @@ pub struct WorkspaceModel {
     pub root_path: PathBuf,
     /// Source path of the workspace configuration
     pub source_path: PathBuf,
-    pub nexus_path: Option<PathBuf>,
 }
 
 impl WorkspaceModel {
-    pub fn from_root_path(root_path: &Path) -> Result<Self> {
+    pub fn from_dir(root_path: &Path) -> Result<Self> {
         let root_path = root_path.canonicalize()?;
         if !root_path.exists() {
             eyre::bail!(
@@ -53,7 +51,7 @@ impl WorkspaceModel {
                 root_path.display()
             )
         };
-        let config = MagnetConfig::from_file(&source_path)?;
+        let config = ManifestConfig::from_file(&source_path)?;
         let config1 = config
             .workspace
             .clone()
@@ -77,41 +75,38 @@ impl WorkspaceModel {
             dependencies: config.dependencies.clone(),
             source_path: source_path.to_path_buf(),
             root_path,
-            nexus_path: config1.nexus_path,
         };
 
         Ok(model)
     }
-    /// list packages paths joined with the workspace root path
-    pub fn list_packages(&self) -> Result<Vec<PathBuf>> {
+    pub fn list_members(&self) -> Result<Vec<PathBuf>> {
         let mut all_members: Vec<PathBuf> = vec![];
         let root_path = &self.root_path;
         // handle globs
         for member in self.members.iter() {
-            if member.contains("*") {
-                let abs_path = root_path.join(member);
-                let globeed = glob(&abs_path.to_string_lossy().to_string())?;
-                for entry in globeed {
-                    match entry {
-                        Ok(path) => {
-                            all_members.push(path);
-                        }
-                        Err(e) => {
-                            warn!("Error processing glob pattern: {}", e);
-                        }
-                    }
-                }
-            } else {
-                all_members.push(self.root_path.join(member));
+            all_members.extend(glob_relative(root_path, member, true)?);
+        }
+        // handle excludes
+        for exclude in self.exclude.iter() {
+            let exclude_paths = glob_relative(root_path, exclude, false)?;
+            for exclude_path in exclude_paths {
+                all_members.retain(|path| path != &exclude_path);
             }
         }
-
         Ok(all_members)
     }
+    /// list packages paths joined with the workspace root path
+    pub fn list_packages(&self) -> Result<Vec<PackageModel>> {
+        let all_members: Vec<PathBuf> = self.list_members()?;
+        let mut packages: Vec<PackageModel> = vec![];
+        for member in all_members.iter() {
+            let package = PackageModel::from_dir(member)?;
+            packages.push(package);
+        }
+        Ok(packages)
+    }
     pub fn find_package(&self, package_name: &str) -> Result<PackageModel> {
-        for member in self.list_packages()? {
-            let member_path = self.root_path.join(&member);
-            let package = PackageModel::from_root_path(&member_path)?;
+        for package in self.list_packages()? {
             if package.name == package_name {
                 return Ok(package);
             }

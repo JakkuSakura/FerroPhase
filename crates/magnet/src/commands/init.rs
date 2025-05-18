@@ -1,6 +1,6 @@
 //! Command implementation for initializing Magnet.toml files
 
-use crate::configs::{MagnetConfig, MagnetConfigType};
+use crate::configs::{ManifestConfig, MagnetConfigType};
 use eyre::{Context, Result};
 use std::path::Path;
 
@@ -92,9 +92,9 @@ fn detect_config_type_from_path(path: &Path) -> MagnetConfigType {
 fn create_minimal_config(
     _path: &Path,
     config_type: MagnetConfigType,
-) -> Result<MagnetConfig> {
+) -> Result<ManifestConfig> {
     // Create a minimal config with the specified type
-    let config = MagnetConfig::new_with_type(config_type);
+    let config = ManifestConfig::new_with_type(config_type);
 
     Ok(config)
 }

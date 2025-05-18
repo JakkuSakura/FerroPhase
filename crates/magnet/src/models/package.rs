@@ -1,4 +1,4 @@
-use crate::configs::{DependencyMap, MagnetConfig};
+use crate::configs::{DependencyMap, ManifestConfig};
 use eyre::Result;
 use eyre::ContextCompat;
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ pub struct PackageModel {
     pub source_path: PathBuf,
 }
 impl PackageModel {
-    pub fn from_root_path(root_path: &Path) -> Result<Self> {
+    pub fn from_dir(root_path: &Path) -> Result<Self> {
         let root_path = root_path.canonicalize()?;
         if !root_path.exists() {
             eyre::bail!(
@@ -49,7 +49,7 @@ impl PackageModel {
                 root_path.display()
             )
         };
-        let config = MagnetConfig::from_file(&config_path)?;
+        let config = ManifestConfig::from_file(&config_path)?;
 
         let package = config
             .package
