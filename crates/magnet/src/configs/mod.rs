@@ -37,8 +37,9 @@ impl Default for MagnetConfigType {
 }
 
 /// The main configuration structure representing a Magnet.toml file
+/// which is a superset of Cargo.toml
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MagnetConfig {
+pub struct ManifestConfig {
     /// Nexus configuration (for top-level nexus configs)
     #[serde(default)]
     pub nexus: Option<NexusConfig>,
@@ -70,7 +71,7 @@ pub struct MagnetConfig {
 
 #[allow(dead_code)]
 #[allow(clippy::trivially_copy_pass_by_ref)]
-impl MagnetConfig {
+impl ManifestConfig {
     /// Load a MagnetConfig from a file, using cache if available
     pub fn from_file(path: &Path) -> Result<Self> {
         // Cache miss or expired, load from file
@@ -467,7 +468,7 @@ impl MagnetConfig {
     }
 }
 
-impl Default for MagnetConfig {
+impl Default for ManifestConfig {
     fn default() -> Self {
         Self::new()
     }

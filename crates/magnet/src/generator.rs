@@ -2,35 +2,29 @@ use crate::configs::{
     CargoPackageConfig, CargoPackageConfigWrapper, CargoWorkspaceConfig,
     CargoWorkspaceConfigWrapper,
 };
-use crate::manager::NexusManager;
-use crate::models::PackageModel;
+use crate::manager::ManifestManager;
+use crate::models::{PackageModel, WorkspaceModel};
 use eyre::{Context, Result};
 
 /// Cargo.toml generator
 pub struct CargoGenerator {
     /// Nexus manager
-    nexus_manager: NexusManager,
+    nexus_manager: ManifestManager,
 }
 
 impl CargoGenerator {
     /// Create a new generator
-    pub fn new(nexus_manager: NexusManager) -> Self {
+    pub fn new(nexus_manager: ManifestManager) -> Self {
         Self { nexus_manager }
     }
 
     /// Generate all Cargo.toml files for a specific workspace
-    pub fn generate_all(&mut self, workspace_name: &str) -> Result<()> {
+    pub fn generate_all(&mut self, workspace: &WorkspaceModel) -> Result<()> {
         // First, generate the root Cargo.toml
-        self.generate_workspace_cargo_toml(workspace_name)?;
+        self.generate_workspace_cargo_toml(workspace)?;
 
-        // Get the specified workspace
-        let workspace = match self.nexus_manager.get_workspace(workspace_name) {
-            Some(ws) => ws.clone(),
-            None => return Err(eyre::eyre!("Workspace '{}' not found", workspace_name)),
-        };
         // Generate for all packages in the specified workspace
-        for member in workspace.list_packages()? {
-            let mut package = PackageModel::from_root_path(&workspace.root_path.join(member))?;
+        for mut package in workspace.list_packages()? {
             self.generate_package_cargo_toml(&mut package)?;
         }
 
@@ -38,19 +32,13 @@ impl CargoGenerator {
     }
 
     /// Generate the root Cargo.toml file for a specific workspace
-    fn generate_workspace_cargo_toml(&self, workspace_name: &str) -> Result<()> {
-        // Get the workspace root path
-        let workspace_root = match self.nexus_manager.root_path(workspace_name) {
-            Some(path) => path,
-            None => return Err(eyre::eyre!("Workspace '{}' not found", workspace_name)),
-        };
-
+    fn generate_workspace_cargo_toml(&self, workspace: &WorkspaceModel) -> Result<()> {
         // Path to the root Cargo.toml
-        let cargo_toml_path = workspace_root.join("Cargo.toml");
+        let cargo_toml_path = workspace.root_path.join("Cargo.toml");
         println!("Generating Cargo.toml at {}", cargo_toml_path.display());
 
         // Create a new workspace manifest
-        let workspace_manifest = self.generate_workspace_manifest(workspace_name)?;
+        let workspace_manifest = self.generate_workspace_manifest(&workspace)?;
 
         // Convert to TOML string
         let toml_string = toml::to_string_pretty(&CargoWorkspaceConfigWrapper {
@@ -66,28 +54,22 @@ impl CargoGenerator {
     }
 
     /// Generate a workspace manifest for a specific workspace
-    fn generate_workspace_manifest(&self, workspace_name: &str) -> Result<CargoWorkspaceConfig> {
-        // Get the workspace configuration
-        let workspace_config = match self.nexus_manager.get_workspace(workspace_name) {
-            Some(ws) => ws,
-            None => return Err(eyre::eyre!("Workspace '{}' not found", workspace_name)),
-        };
-
+    fn generate_workspace_manifest(
+        &self,
+        workspace: &WorkspaceModel,
+    ) -> Result<CargoWorkspaceConfig> {
         // Create a new workspace manifest
         let manifest = CargoWorkspaceConfig {
-            members: workspace_config.members.clone(),
-            exclude: workspace_config.exclude.clone(),
-            resolver: workspace_config.resolver.clone(),
-            dependencies: workspace_config.dependencies.clone(),
+            members: workspace.members.clone(),
+            exclude: workspace.exclude.clone(),
+            resolver: workspace.resolver.clone(),
+            dependencies: workspace.dependencies.clone(),
         };
 
         Ok(manifest)
     }
 
-    fn generate_package_cargo_toml(
-        &mut self,
-        package: &mut PackageModel,
-    ) -> Result<()> {
+    fn generate_package_cargo_toml(&mut self, package: &mut PackageModel) -> Result<()> {
         // Get the package path
         let package_path = package.root_path.as_path();
         // Path to the package Cargo.toml
@@ -127,7 +109,7 @@ impl CargoGenerator {
         };
         Ok(CargoPackageConfigWrapper {
             package,
-            dependencies: model.dependencies.clone()
+            dependencies: model.dependencies.clone(),
         })
     }
 }

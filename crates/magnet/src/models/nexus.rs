@@ -1,10 +1,13 @@
 //! Domain model for a Nexus, which represents a collection of workspaces.
 
-use crate::configs::MagnetConfig;
+use crate::configs::ManifestConfig;
+use crate::models::{PackageModel, WorkspaceModel};
+use crate::utils::glob_relative;
 use eyre::ContextCompat;
 use eyre::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
 /// A nexus model representing a collection of workspaces
 #[derive(Debug, Clone)]
 pub struct NexusModel {
@@ -29,10 +32,10 @@ pub struct NexusModel {
 
 impl NexusModel {
     /// Create a nexus model from a config, with additional source path information
-    pub fn from_root_path(root_path: &Path) -> Result<Self> {
+    pub fn from_dir(root_path: &Path) -> Result<Self> {
         let root_path = root_path.canonicalize()?;
         let config_path = root_path.join("Magnet.toml");
-        let config = MagnetConfig::from_file(&config_path)?;
+        let config = ManifestConfig::from_file(&config_path)?;
         let config = config.nexus.with_context(|| {
             format!("No nexus configuration found in {}", config_path.display())
         })?;
@@ -57,5 +60,35 @@ impl NexusModel {
         };
 
         Ok(model)
+    }
+    pub fn list_members(&self) -> Result<Vec<PathBuf>> {
+        let mut valid_members = Vec::new();
+        for pattern in &self.members {
+            valid_members.extend(glob_relative(&self.source_path, pattern, true)?);
+        }
+        Ok(valid_members)
+    }
+    pub fn list_workspaces(&self) -> Result<Vec<WorkspaceModel>> {
+        let all_members: Vec<PathBuf> = self.list_members()?;
+        let mut workspaces = Vec::new();
+        for member in all_members.iter() {
+            let Ok(workspace) = WorkspaceModel::from_dir(member) else {
+                continue;
+            };
+            workspaces.push(workspace);
+        }
+        Ok(workspaces)
+    }
+
+    pub fn list_packages(&self) -> Result<Vec<PackageModel>> {
+        let all_members: Vec<PathBuf> = self.list_members()?;
+        let mut packages = Vec::new();
+        for member in all_members {
+            let Ok(package) = PackageModel::from_dir(&member) else {
+                continue;
+            };
+            packages.push(package);
+        }
+        Ok(packages)
     }
 }
