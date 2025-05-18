@@ -22,6 +22,6 @@ jobs:
       - name: Cache rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Run lang-optimize examples
-        run: cd lang-optimize && cargo run --example generate-examples
+      - name: Run fp-optimize examples
+        run: cd fp-optimize && cargo run --example generate-examples
 
