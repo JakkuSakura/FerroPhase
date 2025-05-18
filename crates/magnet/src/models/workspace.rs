@@ -27,6 +27,8 @@ pub struct WorkspaceModel {
     /// Custom workspace metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyMap,
+    /// Patch section for overriding dependencies
+    pub patch: Option<toml::value::Table>,
     pub root_path: PathBuf,
     /// Source path of the workspace configuration
     pub source_path: PathBuf,
@@ -73,6 +75,7 @@ impl WorkspaceModel {
             paths: config1.paths.unwrap_or_default(),
             custom: config1.custom,
             dependencies: config.dependencies.clone(),
+            patch: config.patch,
             source_path: source_path.to_path_buf(),
             root_path,
         };
