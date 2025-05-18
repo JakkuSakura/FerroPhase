@@ -78,11 +78,11 @@ pub fn list(path: &Path) -> Result<()> {
     let submodules = get_submodules(path)?;
 
     if submodules.is_empty() {
-        println!("No submodules found.");
+        info!("No submodules found.");
     } else {
-        println!("Submodules:");
+        info!("Submodules:");
         for submodule in &submodules {
-            println!("  {}", submodule.display());
+            info!("  {}", submodule.display());
         }
     }
 

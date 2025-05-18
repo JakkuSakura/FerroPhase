@@ -27,6 +27,8 @@ pub struct PackageModel {
     /// Custom package metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyMap,
+    /// Patch section for overriding dependencies
+    pub patch: Option<toml::value::Table>,
     pub root_path: PathBuf,
     pub source_path: PathBuf,
 }
@@ -68,6 +70,7 @@ impl PackageModel {
             license: package.license,
             custom: package.custom,
             dependencies: config.dependencies,
+            patch: config.patch,
             root_path: root_path.to_path_buf(),
             source_path: config_path,
         };

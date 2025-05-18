@@ -49,7 +49,7 @@ impl Display for DependencyConfig {
                 }
 
                 if let Some(default_features) = &dep.default_features {
-                    write!(f, "default_features = {}, ", default_features)?;
+                    write!(f, "default-features = {}, ", default_features)?;
                 }
                 if let Some(workspace) = &dep.workspace {
                     write!(f, "workspace = {}, ", workspace)?;
