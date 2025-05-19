@@ -1,5 +1,5 @@
 use crate::configs::ManifestConfig;
-use crate::models::DependencyModelMap;
+use crate::models::{DependencyModelMap, PatchMap};
 use eyre::ContextCompat;
 use eyre::Result;
 use std::collections::HashMap;
@@ -29,7 +29,7 @@ pub struct PackageModel {
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyModelMap,
     /// Patch section for overriding dependencies
-    pub patch: Option<toml::value::Table>,
+    pub patch: PatchMap,
     pub root_path: PathBuf,
     pub source_path: PathBuf,
 }

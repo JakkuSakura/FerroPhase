@@ -3,7 +3,6 @@
 use crate::configs::DependencyConfigMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Workspace configuration (legacy)
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -18,11 +17,8 @@ pub struct WorkspaceConfig {
     /// Cargo resolver version (1 or 2)
     #[serde(default)]
     pub resolver: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "DependencyConfigMap::is_empty")]
     pub dependencies: DependencyConfigMap,
-    /// Path overrides for specific dependencies
-    #[serde(default)]
-    pub paths: Option<HashMap<String, PathBuf>>,
     /// Custom workspace metadata
     #[serde(flatten)]
     pub custom: HashMap<String, toml::Value>,
@@ -35,7 +31,6 @@ impl Default for WorkspaceConfig {
             exclude: Vec::new(),
             resolver: None,
             dependencies: DependencyConfigMap::new(),
-            paths: None,
             custom: HashMap::new(),
         }
     }
