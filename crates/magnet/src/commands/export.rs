@@ -513,8 +513,7 @@ impl Exporter {
                     "./{}/{}",
                     self.crates_dir_name, dep_name
                 )));
-                // Ensure it's marked as a workspace dependency
-                detailed.workspace = Some(true);
+
                 debug!("Updated workspace dependency path for {}", dep_name);
             }
         }
