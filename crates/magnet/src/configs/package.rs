@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::configs::DependencyMap;
+use crate::configs::DependencyConfigMap;
 
 /// Package-specific configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -63,7 +63,7 @@ pub struct CargoPackageConfig {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct CargoPackageConfigWrapper {
     pub package: CargoPackageConfig,
-    pub dependencies: DependencyMap,
+    pub dependencies: DependencyConfigMap,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patch: Option<toml::value::Table>,
 }

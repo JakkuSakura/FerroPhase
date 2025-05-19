@@ -1,6 +1,7 @@
-use crate::configs::{DependencyMap, ManifestConfig};
-use eyre::Result;
+use crate::configs::ManifestConfig;
+use crate::models::DependencyModelMap;
 use eyre::ContextCompat;
+use eyre::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -26,7 +27,7 @@ pub struct PackageModel {
     pub license: Option<String>,
     /// Custom package metadata
     pub custom: HashMap<String, toml::Value>,
-    pub dependencies: DependencyMap,
+    pub dependencies: DependencyModelMap,
     /// Patch section for overriding dependencies
     pub patch: Option<toml::value::Table>,
     pub root_path: PathBuf,
@@ -69,7 +70,11 @@ impl PackageModel {
             documentation: package.documentation,
             license: package.license,
             custom: package.custom,
-            dependencies: config.dependencies,
+            dependencies: config.dependencies
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
             patch: config.patch,
             root_path: root_path.to_path_buf(),
             source_path: config_path,

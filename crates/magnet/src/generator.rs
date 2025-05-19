@@ -42,7 +42,10 @@ impl CargoGenerator {
             members: workspace.members.clone(),
             exclude: workspace.exclude.clone(),
             resolver: workspace.resolver.clone(),
-            dependencies: workspace.dependencies.clone(),
+            dependencies: workspace.dependencies.clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
         };
 
         Ok(manifest)
@@ -58,11 +61,12 @@ impl CargoGenerator {
         let workspace_manifest = self.generate_workspace_manifest(&workspace)?;
 
         // Get the patch section if it exists in the configuration
-        let patch_section = if let Ok(magnet_config) = ManifestConfig::from_file(&workspace.source_path) {
-            magnet_config.patch
-        } else {
-            None
-        };
+        let patch_section =
+            if let Ok(magnet_config) = ManifestConfig::from_file(&workspace.source_path) {
+                magnet_config.patch
+            } else {
+                None
+            };
 
         // Create the wrapper with workspace and patch section
         let wrapper = CargoWorkspaceConfigWrapper {
@@ -109,7 +113,8 @@ impl CargoGenerator {
         self.nexus_manager.resolve_package_dependencies(model)?;
 
         // Get the patch section if it exists in the source Magnet.toml file
-        let patch_section = if let Ok(magnet_config) = ManifestConfig::from_file(&model.source_path) {
+        let patch_section = if let Ok(magnet_config) = ManifestConfig::from_file(&model.source_path)
+        {
             magnet_config.patch
         } else {
             None
@@ -126,9 +131,15 @@ impl CargoGenerator {
             repository: model.repository.clone(),
             documentation: model.documentation.clone(),
         };
+
         Ok(CargoPackageConfigWrapper {
             package,
-            dependencies: model.dependencies.clone(),
+            dependencies: model
+                .dependencies
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
             patch: patch_section,
         })
     }
