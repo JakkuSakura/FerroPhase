@@ -7,6 +7,7 @@ mod dependency;
 mod nexus;
 mod package;
 mod workspace;
+mod patch;
 
 use crate::configs::ManifestConfig;
 pub use crate_::*;
@@ -14,6 +15,7 @@ pub use dependency::*;
 pub use nexus::*;
 pub use package::*;
 pub use workspace::*;
+pub use patch::*;
 
 /// a valid manifest model is either:
 /// - a NexusModel
@@ -95,6 +97,13 @@ impl ManifestModel {
             ManifestModel::Nexus(nexus) => nexus.list_packages(),
             ManifestModel::Workspace(workspace) => workspace.list_packages(),
             ManifestModel::Package(package) => Ok(vec![package.clone()]),
+        }
+    }
+    pub fn patch(&self) -> &PatchMap {
+        match self {
+            ManifestModel::Nexus(nexus) => &nexus.patch,
+            ManifestModel::Workspace(workspace) => &workspace.patch,
+            ManifestModel::Package(package) => &package.patch,
         }
     }
 }

@@ -17,6 +17,7 @@ use eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use crate::models::PatchMap;
 
 /// Type of Magnet.toml configuration file
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -53,17 +54,17 @@ pub struct ManifestConfig {
     pub package: Option<PackageConfig>,
 
     /// Dependencies shared across workspace members
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "DependencyConfigMap::is_empty")]
     pub dependencies: DependencyConfigMap,
     /// Development dependencies shared across workspace members
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "DependencyConfigMap::is_empty")]
     pub dev_dependencies: DependencyConfigMap,
     /// Build dependencies shared across workspace members
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "DependencyConfigMap::is_empty")]
     pub build_dependencies: DependencyConfigMap,
     /// Patch section for overriding dependencies
-    #[serde(default)]
-    pub patch: Option<toml::value::Table>,
+    #[serde(default, skip_serializing_if = "PatchMap::is_empty")]
+    pub patch: PatchMap,
     /// Source path of this configuration
     #[allow(dead_code)]
     #[serde(skip)]
@@ -173,7 +174,7 @@ impl ManifestConfig {
             dependencies: HashMap::new(),
             dev_dependencies: HashMap::new(),
             build_dependencies: HashMap::new(),
-            patch: None,
+            patch: PatchMap::new(),
             source_path: None,
             config_type: MagnetConfigType::default(),
         }
