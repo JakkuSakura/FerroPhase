@@ -1,6 +1,6 @@
 //! Workspace configuration for Magnet.toml files
 
-use crate::configs::DependencyMap;
+use crate::configs::DependencyConfigMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -18,9 +18,8 @@ pub struct WorkspaceConfig {
     /// Cargo resolver version (1 or 2)
     #[serde(default)]
     pub resolver: Option<String>,
-    /// Search paths for related workspaces
-    #[serde(default)]
-    pub search_paths: Option<HashMap<String, PathBuf>>,
+
+    pub dependencies: DependencyConfigMap,
     /// Path overrides for specific dependencies
     #[serde(default)]
     pub paths: Option<HashMap<String, PathBuf>>,
@@ -43,7 +42,7 @@ pub struct CargoWorkspaceConfig {
     pub resolver: Option<String>,
     
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub dependencies: DependencyMap,
+    pub dependencies: DependencyConfigMap,
     
 }
 
