@@ -482,11 +482,11 @@ impl Exporter {
     /// Generate Cargo.toml files using CargoGenerator
     fn generate_cargo_toml_files(&self, workspace: &WorkspaceModel) -> Result<()> {
         // Create the Cargo.toml generator
-        let mut generator = CargoGenerator::new(self.nexus_manager.clone());
+        let generator = CargoGenerator::new(self.nexus_manager.clone());
 
         // Generate workspace and package Cargo.toml files
         generator
-            .generate_all(workspace)
+            .generate_workspace_cargo_toml(workspace)
             .context("Failed to generate Cargo.toml files")?;
 
         Ok(())
