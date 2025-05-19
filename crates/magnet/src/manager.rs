@@ -59,7 +59,7 @@ impl ManifestManager {
     ) -> Result<DependencyModel> {
         let mut dep = dep.clone();
         // If nexus is set to true, try to find the dependency in the nexus
-        if dep.nexus == Some(true) {
+        if dep.nexus() {
             // Auto-discovery: try to find the dependency in any workspace
             let mut matching_crates = Vec::new();
 
@@ -86,7 +86,7 @@ impl ManifestManager {
             return Ok(dep);
         }
 
-        if dep.workspace == Some(true) {
+        if dep.workspace() {
             let mut matching_crates = Vec::new();
 
             // Then check in other workspaces
@@ -134,7 +134,7 @@ impl ManifestManager {
                     package.dependencies.insert(name.clone(), detailed);
                 }
                 Err(err) => {
-                    if dep.optional == Some(true) {
+                    if dep.optional() {
                         warn!("Error resolving dependency '{}': {}", name, err);
                         warn!(
                             "This could be you don't have sufficient permissions to access the workspace"

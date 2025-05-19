@@ -1,7 +1,5 @@
-use crate::configs::{
-    CargoPackageConfig, CargoPackageConfigWrapper, CargoWorkspaceConfig,
-    CargoWorkspaceConfigWrapper, ManifestConfig,
-};
+// filepath: /home/jakku/Dev/SHLL/crates/magnet/src/generator.rs
+use crate::configs::{ManifestConfig, WorkspaceConfig, PackageConfig};
 use crate::manager::ManifestManager;
 use crate::models::{PackageModel, WorkspaceModel};
 use eyre::{Context, Result};
@@ -36,9 +34,12 @@ impl CargoGenerator {
     fn generate_workspace_manifest(
         &self,
         workspace: &WorkspaceModel,
-    ) -> Result<CargoWorkspaceConfig> {
-        // Create a new workspace manifest
-        let manifest = CargoWorkspaceConfig {
+    ) -> Result<ManifestConfig> {
+        // Create a new manifest config
+        let mut manifest = ManifestConfig::new();
+        
+        // Set workspace configuration
+        let workspace_config = WorkspaceConfig {
             members: workspace.members.clone(),
             exclude: workspace.exclude.clone(),
             resolver: workspace.resolver.clone(),
@@ -46,6 +47,17 @@ impl CargoGenerator {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
+            paths: Some(workspace.paths.clone()),
+            custom: workspace.custom.clone(),
+        };
+        
+        manifest.workspace = Some(workspace_config);
+        
+        // Add the patch section if it exists in the original config
+        manifest.patch = if let Ok(magnet_config) = ManifestConfig::from_file(&workspace.source_path) {
+            magnet_config.patch
+        } else {
+            None
         };
 
         Ok(manifest)
@@ -57,25 +69,11 @@ impl CargoGenerator {
         let cargo_toml_path = workspace.root_path.join("Cargo.toml");
         info!("Generating Cargo.toml at {}", cargo_toml_path.display());
 
-        // Create a new workspace manifest
-        let workspace_manifest = self.generate_workspace_manifest(&workspace)?;
-
-        // Get the patch section if it exists in the configuration
-        let patch_section =
-            if let Ok(magnet_config) = ManifestConfig::from_file(&workspace.source_path) {
-                magnet_config.patch
-            } else {
-                None
-            };
-
-        // Create the wrapper with workspace and patch section
-        let wrapper = CargoWorkspaceConfigWrapper {
-            workspace: workspace_manifest,
-            patch: patch_section,
-        };
+        // Create a new workspace manifest using WorkspaceConfig
+        let manifest = self.generate_workspace_manifest(&workspace)?;
 
         // Convert to TOML string
-        let toml_string = toml::to_string_pretty(&wrapper)
+        let toml_string = toml::to_string_pretty(&manifest)
             .context("Failed to convert workspace manifest to TOML")?;
 
         // Write to file
@@ -109,38 +107,41 @@ impl CargoGenerator {
     fn generate_package_manifest(
         &mut self,
         model: &mut PackageModel,
-    ) -> Result<CargoPackageConfigWrapper> {
+    ) -> Result<ManifestConfig> {
         self.nexus_manager.resolve_package_dependencies(model)?;
 
-        // Get the patch section if it exists in the source Magnet.toml file
-        let patch_section = if let Ok(magnet_config) = ManifestConfig::from_file(&model.source_path)
-        {
-            magnet_config.patch
-        } else {
-            None
-        };
-
-        let package = CargoPackageConfig {
+        // Create a new manifest config
+        let mut manifest = ManifestConfig::new();
+        
+        // Create package section
+        manifest.package = Some(PackageConfig {
             name: model.name.clone(),
             version: model.version.clone(),
-            edition: model.edition.clone(),
+            edition: Some(model.edition.clone()),
             description: model.description.clone(),
             license: model.license.clone(),
             authors: model.authors.clone(),
             homepage: model.homepage.clone(),
             repository: model.repository.clone(),
             documentation: model.documentation.clone(),
+            custom: model.custom.clone(),
+        });
+        
+        // Add dependencies
+        manifest.dependencies = model
+            .dependencies
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k, v.into()))
+            .collect();
+            
+        // Get the patch section if it exists in the source Magnet.toml file
+        manifest.patch = if let Ok(magnet_config) = ManifestConfig::from_file(&model.source_path) {
+            magnet_config.patch
+        } else {
+            None
         };
 
-        Ok(CargoPackageConfigWrapper {
-            package,
-            dependencies: model
-                .dependencies
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-            patch: patch_section,
-        })
+        Ok(manifest)
     }
 }
