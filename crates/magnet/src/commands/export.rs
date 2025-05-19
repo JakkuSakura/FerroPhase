@@ -4,16 +4,15 @@
 //! creating symlinks to target/export/crates/ and generating a workspace Cargo.toml.
 //! It supports workspace = true and nexus = true dependencies by resolving them to paths.
 
-use crate::configs::DetailedDependency;
 use crate::generator::CargoGenerator;
 use crate::manager::ManifestManager;
-use crate::models::{ManifestModel, PackageModel, WorkspaceModel};
+use crate::models::{DependencyModel, ManifestModel, PackageModel, WorkspaceModel};
+use crate::utils::maybe_join;
 use eyre::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-
 // -----------------------------------------------------------------------------
 // Public API
 // -----------------------------------------------------------------------------
@@ -97,9 +96,6 @@ impl Exporter {
         // Parse the manifest
         let manifest = ManifestModel::from_dir(&options.package_path)?;
 
-        // Find the root path for exports - this is the package path
-        let package_root_path = options.package_path.canonicalize()?;
-
         // Get the current working directory for determining the export path
         let current_dir =
             std::env::current_dir().context("Failed to get current working directory")?;
@@ -117,7 +113,7 @@ impl Exporter {
 
         Ok(Self {
             manifest,
-            root_path: package_root_path,
+            root_path: nexus_manager.root_path.clone(),
             export_dir,
             export_crates_dir,
             processed_paths: HashSet::new(),
@@ -139,11 +135,52 @@ impl Exporter {
             self.init_export_directory()?;
         }
 
-        // Export the main package itself first (the one being explicitly exported)
-        self.export_main_package()?;
+        // Get the main package information
+        let main_package = match &self.manifest {
+            ManifestModel::Package(pkg) => pkg.clone(),
+            ManifestModel::Workspace(_) => {
+                // For workspace, create a virtual package with the workspace information
+                let workspace_name = self
+                    .root_path
+                    .file_name()
+                    .ok_or_else(|| eyre::eyre!("Could not determine workspace name"))?
+                    .to_string_lossy()
+                    .to_string();
 
-        // Process packages and their dependencies
-        self.process_packages()?;
+                PackageModel {
+                    name: workspace_name,
+                    root_path: self.root_path.clone(),
+                    ..PackageModel::default()
+                }
+            }
+            ManifestModel::Nexus(_) => {
+                // For nexus, create a virtual package with the nexus information
+                let nexus_name = self
+                    .root_path
+                    .file_name()
+                    .ok_or_else(|| eyre::eyre!("Could not determine nexus name"))?
+                    .to_string_lossy()
+                    .to_string();
+
+                PackageModel {
+                    name: nexus_name,
+                    root_path: self.root_path.clone(),
+                    ..PackageModel::default()
+                }
+            }
+        };
+
+        // Process the main package first
+        self.process_package(&main_package, true)?;
+
+        // Process all packages from the manifest
+        let packages = self.manifest.list_packages()?;
+        for package in &packages {
+            self.process_package(package, false)?;
+        }
+
+        // Sort workspace members for consistent output
+        self.workspace_members.sort();
 
         // Create export workspace model with updated dependency paths
         let export_workspace = self.create_export_workspace()?;
@@ -186,192 +223,99 @@ impl Exporter {
         Ok(())
     }
 
-    /// Process all packages and their dependencies
-    fn process_packages(&mut self) -> Result<()> {
-        // Get all packages from the manifest
-        let packages = self.manifest.list_packages()?;
-
-        for package in &packages {
-            self.create_symlinks_for_package(package)?;
-        }
-
-        // Sort workspace members for consistent output
-        self.workspace_members.sort();
-
-        Ok(())
-    }
-
-    /// Export the main package itself (the one being explicitly exported)
-    fn export_main_package(&mut self) -> Result<()> {
-        // Get the name and path of the main package being exported
-        let (main_package_name, main_package_path) = match &self.manifest {
-            ManifestModel::Package(pkg) => (pkg.name.clone(), pkg.root_path.clone()),
-            ManifestModel::Workspace(_) => {
-                // For workspace, use the workspace name and path
-                let workspace_name = self
-                    .root_path
-                    .file_name()
-                    .ok_or_else(|| eyre::eyre!("Could not determine workspace name"))?
-                    .to_string_lossy()
-                    .to_string();
-                (workspace_name, self.root_path.clone())
-            }
-            ManifestModel::Nexus(_) => {
-                // For nexus, use the nexus name and path
-                let nexus_name = self
-                    .root_path
-                    .file_name()
-                    .ok_or_else(|| eyre::eyre!("Could not determine nexus name"))?
-                    .to_string_lossy()
-                    .to_string();
-                (nexus_name, self.root_path.clone())
-            }
-        };
-
-        // Skip if already processed
-        if self.processed_crates.contains(&main_package_name) {
-            return Ok(());
-        }
-
-        // Create the target directory for this package
-        let target_dir = self.export_crates_dir.join(&main_package_name);
-
-        // Create symbolic link and update tracking
-        self.create_symlink(&main_package_path, &target_dir)?;
-        info!(
-            "Linked main package {} -> {}",
-            target_dir.display(),
-            main_package_path.display()
-        );
-
-        self.processed_paths.insert(main_package_path);
-        self.processed_crates.insert(main_package_name.clone());
-        self.workspace_members
-            .push(format!("{}/{}", self.crates_dir_name, main_package_name));
-
-        Ok(())
-    }
-
     // -------------------------------------------------------------------------
     // Core Dependency Processing
     // -------------------------------------------------------------------------
 
-    /// Create symlinks for a package's dependencies
-    /// Recursively processes dependencies of dependencies
-    fn create_symlinks_for_package(&mut self, package: &PackageModel) -> Result<()> {
+    /// Unified method to process a package and its dependencies
+    /// This replaces export_main_package, process_packages, and create_symlinks_for_package
+    fn process_package(&mut self, package: &PackageModel, is_main_package: bool) -> Result<()> {
+        // Skip if already processed
+        if self.processed_crates.contains(&package.name) {
+            return Ok(());
+        }
+
+        // 1. First handle the package itself (symlink creation)
+        let target_dir = self.export_crates_dir.join(&package.name);
+
+        // Create symbolic link for the package
+        self.create_symlink(&package.root_path, &target_dir)?;
+
+        // Update tracking information
+        self.processed_paths.insert(package.root_path.clone());
+        self.processed_crates.insert(package.name.clone());
+        self.workspace_members
+            .push(format!("{}/{}", self.crates_dir_name, package.name));
+
+        // Log appropriately
+        if is_main_package {
+            info!(
+                "Linked main package {} -> {}",
+                target_dir.display(),
+                package.root_path.display()
+            );
+        } else {
+            info!(
+                "Linked package {} -> {}",
+                target_dir.display(),
+                package.root_path.display()
+            );
+        }
+
+        // 2. Process the package's dependencies
+
         // Clone the package to allow for mutable operations
-        let mut package_clone = package.clone();
-        
-        // First resolve any workspace = true or nexus = true dependencies
-        self.resolve_special_dependencies(&mut package_clone)?;
+        let package_clone = package.clone();
 
         // Track dependencies that need recursive processing
         let mut deps_to_process_recursively = Vec::new();
 
         // Process all dependencies with paths (original and newly resolved ones)
-        for (crate_name, dep_config) in &package_clone.dependencies {
+        for (crate_name, dep) in &package_clone.dependencies {
             // Skip already processed crates
             if self.processed_crates.contains(crate_name) {
                 continue;
             }
-
-            // Only handle detailed dependency configs
-            let crate::configs::DependencyConfig::Detailed(dep) = dep_config else {
+            if !(dep.path.is_some() || dep.workspace == Some(true) || dep.nexus == Some(true)) {
                 continue;
-            };
-
-            let Some(path) = &dep.path else {
-                continue;
-            };
+            }
 
             // Process path dependency
-            if let Some(canonical_path) = self.process_path_dependency(package, crate_name, path)? {
+            if let Some(canonical_path) =
+                self.process_path_dependency(&package_clone, crate_name, dep)?
+            {
                 // Queue this dependency for recursive processing
                 deps_to_process_recursively.push((crate_name.clone(), canonical_path));
             }
         }
 
         // Process patches from this package
-        self.process_package_patches(package)?;
-        
+        self.process_package_patches(&package_clone)?;
+
         // Recursively process all dependencies' dependencies
         self.process_recursive_dependencies(deps_to_process_recursively)?;
 
         Ok(())
     }
 
-    /// Resolve workspace = true and nexus = true dependencies to actual paths
-    fn resolve_special_dependencies(&mut self, package: &mut PackageModel) -> Result<()> {
-        let mut deps_to_resolve = Vec::new();
-        
-        // First pass: collect dependencies that need resolution
-        for (crate_name, dep_config) in &package.dependencies {
-            // Only process DetailedDependency configs that have workspace=true or nexus=true
-            if let crate::configs::DependencyConfig::Detailed(dep) = dep_config {
-                // Try to resolve workspace dependencies
-                if dep.workspace == Some(true) || dep.nexus == Some(true) {
-                    deps_to_resolve.push(crate_name.clone());
-                    debug!("Scheduled {} for resolution with workspace={:?}, nexus={:?}", 
-                           crate_name, dep.workspace, dep.nexus);
-                }
-            }
-        }
-        
-        // Second pass: resolve the collected dependencies
-        for crate_name in deps_to_resolve {
-            // Create a temporary copy for the resolution
-            let pkg_for_resolve = package.clone();
-            
-            if let Some(dep_config) = package.dependencies.get_mut(&crate_name) {
-                if let crate::configs::DependencyConfig::Detailed(dep) = dep_config {
-                    // Create a temporary clone for resolution - we don't directly use the mutable reference
-                    let dep_clone = crate::configs::DependencyConfig::Detailed(dep.clone());
-                    
-                    // Use the nexus_manager to resolve this dependency
-                    match self.nexus_manager.resolve_dependency(&pkg_for_resolve, &crate_name, &dep_clone) {
-                        Ok(resolved_dep) => {
-                            // Update with the resolved dependency that now has a path
-                            *dep = resolved_dep;
-                            debug!("Successfully resolved {} to path: {:?}", crate_name, dep.path);
-                        },
-                        Err(err) => {
-                            // Log warning but continue with other dependencies
-                            warn!("Failed to resolve dependency {}: {}", crate_name, err);
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-        
-        Ok(())
-    }
-
     /// Process a path dependency and create a symlink for it
     /// Returns Some(canonical_path) if the dependency was processed, None otherwise
     fn process_path_dependency(
-        &mut self, 
-        package: &PackageModel, 
-        crate_name: &str, 
-        path: &Path
+        &mut self,
+        package: &PackageModel,
+        crate_name: &str,
+        dep: &DependencyModel,
     ) -> Result<Option<PathBuf>> {
         // Convert to absolute path
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            package.root_path.join(path)
+        let dep = self
+            .nexus_manager
+            .resolve_dependency(&package, &crate_name, &dep)?;
+        let Some(dep_path) = &dep.path else {
+            warn!("No path found for dependency {}", crate_name);
+            return Ok(None);
         };
-
         // Canonicalize the path to resolve any '..' components
-        let canonical_path = match absolute_path.canonicalize() {
-            Ok(path) => path,
-            Err(err) => {
-                warn!("Failed to canonicalize path for dependency {}: {} - {:?}",
-                      crate_name, absolute_path.display(), err);
-                return Ok(None);
-            }
-        };
-
+        let canonical_path = maybe_join(&package.root_path, dep_path).canonicalize()?;
         // Skip if already processed
         if self.processed_paths.contains(&canonical_path) {
             return Ok(None);
@@ -384,14 +328,14 @@ impl Exporter {
         self.workspace_members
             .push(format!("{}/{}", self.crates_dir_name, crate_name));
         info!(
-            "Linked {} -> {}",
+            "Linked dependency {} -> {}",
             target_dir.display(),
             canonical_path.display()
         );
 
         self.processed_paths.insert(canonical_path.clone());
         self.processed_crates.insert(crate_name.to_string());
-        
+
         Ok(Some(canonical_path))
     }
 
@@ -399,7 +343,7 @@ impl Exporter {
     fn process_recursive_dependencies(&mut self, deps: Vec<(String, PathBuf)>) -> Result<()> {
         for (dep_name, dep_path) in deps {
             debug!("Recursively processing dependencies of {}", dep_name);
-            
+
             // Try to load dependency's manifest
             match crate::models::ManifestModel::from_dir(&dep_path) {
                 Ok(manifest) => {
@@ -408,23 +352,33 @@ impl Exporter {
                         Ok(dep_packages) => {
                             for dep_package in &dep_packages {
                                 // Recursively process each package's dependencies
-                                if let Err(err) = self.create_symlinks_for_package(dep_package) {
-                                    warn!("Error recursively processing dependencies of {}: {}", dep_name, err);
+                                // Use our unified process_package method instead of create_symlinks_for_package
+                                if let Err(err) = self.process_package(dep_package, false) {
+                                    warn!(
+                                        "Error recursively processing dependencies of {}: {}",
+                                        dep_name, err
+                                    );
                                     // Continue with other dependencies
                                 }
                             }
-                        },
+                        }
                         Err(err) => {
-                            warn!("Failed to list packages from dependency {}: {}", dep_name, err);
+                            warn!(
+                                "Failed to list packages from dependency {}: {}",
+                                dep_name, err
+                            );
                         }
                     }
-                },
+                }
                 Err(err) => {
-                    warn!("Failed to load manifest for dependency {}: {}", dep_name, err);
+                    warn!(
+                        "Failed to load manifest for dependency {}: {}",
+                        dep_name, err
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -463,9 +417,12 @@ impl Exporter {
                     crate_name,
                     path.display()
                 );
-
+                let dep = DependencyModel {
+                    path: Some(path),
+                    ..Default::default()
+                };
                 // Process the patch as a path dependency
-                self.process_path_dependency(package, crate_name, &path)?;
+                self.process_path_dependency(package, crate_name, &dep)?;
             }
         }
 
@@ -517,7 +474,6 @@ impl Exporter {
             members: self.workspace_members.clone(),
             exclude: Vec::new(),
             resolver,
-            search_paths: HashMap::new(),
             paths: HashMap::new(),
             custom: HashMap::new(),
             dependencies,
@@ -530,7 +486,7 @@ impl Exporter {
     }
 
     /// Update workspace dependencies to include all exported packages
-    fn update_workspace_dependencies(&self, dependencies: &mut HashMap<String, crate::configs::DependencyConfig>) {
+    fn update_workspace_dependencies(&self, dependencies: &mut HashMap<String, DependencyModel>) {
         // Ensure all exported packages are defined in workspace dependencies
         // This allows packages to reference each other through workspace dependencies
         for crate_name in &self.processed_crates {
@@ -538,33 +494,28 @@ impl Exporter {
             if !dependencies.contains_key(crate_name) {
                 // Create a workspace dependency pointing to the crate directory
                 let path = PathBuf::from(format!("./{}/{}", self.crates_dir_name, crate_name));
-                let dep = DetailedDependency {
+                let dep = DependencyModel {
                     path: Some(path),
-                    ..DetailedDependency::default()
+                    ..DependencyModel::default()
                 };
 
-                dependencies.insert(
-                    crate_name.clone(),
-                    crate::configs::DependencyConfig::Detailed(dep),
-                );
+                dependencies.insert(crate_name.clone(), dep);
 
                 debug!("Added workspace dependency for {}", crate_name);
             }
         }
 
         // Update paths in existing dependencies
-        for (dep_name, dep_config) in dependencies.iter_mut() {
-            if let crate::configs::DependencyConfig::Detailed(detailed) = dep_config {
-                // If this is a dependency on an exported crate, update its path
-                if self.processed_crates.contains(dep_name) {
-                    detailed.path = Some(PathBuf::from(format!(
-                        "./{}/{}",
-                        self.crates_dir_name, dep_name
-                    )));
-                    // Ensure it's marked as a workspace dependency
-                    detailed.workspace = Some(true);
-                    debug!("Updated workspace dependency path for {}", dep_name);
-                }
+        for (dep_name, detailed) in dependencies.iter_mut() {
+            // If this is a dependency on an exported crate, update its path
+            if self.processed_crates.contains(dep_name) {
+                detailed.path = Some(PathBuf::from(format!(
+                    "./{}/{}",
+                    self.crates_dir_name, dep_name
+                )));
+                // Ensure it's marked as a workspace dependency
+                detailed.workspace = Some(true);
+                debug!("Updated workspace dependency path for {}", dep_name);
             }
         }
     }

@@ -12,3 +12,6 @@ features = ["derive"]
 [dependencies.uuid]
 version = "1.3"
 features = ["v4"]
+
+[dependencies.shared-utils]
+path = "../shared-utils"
