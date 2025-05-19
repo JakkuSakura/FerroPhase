@@ -1,5 +1,5 @@
 // filepath: /home/jakku/Dev/SHLL/crates/magnet/src/generator.rs
-use crate::configs::{ManifestConfig, WorkspaceConfig, PackageConfig};
+use crate::configs::{ManifestConfig, PackageConfig, WorkspaceConfig};
 use crate::manager::ManifestManager;
 use crate::models::{PackageModel, WorkspaceModel};
 use eyre::{Context, Result};
@@ -31,27 +31,26 @@ impl CargoGenerator {
     }
 
     /// Generate a workspace manifest for a specific workspace
-    fn generate_workspace_manifest(
-        &self,
-        workspace: &WorkspaceModel,
-    ) -> Result<ManifestConfig> {
+    fn generate_workspace_manifest(&self, workspace: &WorkspaceModel) -> Result<ManifestConfig> {
         // Create a new manifest config
         let mut manifest = ManifestConfig::new();
-        
+
         // Set workspace configuration
         let workspace_config = WorkspaceConfig {
             members: workspace.members.clone(),
             exclude: workspace.exclude.clone(),
             resolver: workspace.resolver.clone(),
-            dependencies: workspace.dependencies.clone()
+            dependencies: workspace
+                .dependencies
+                .clone()
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
             custom: workspace.custom.clone(),
         };
-        
+
         manifest.workspace = Some(workspace_config);
-        
+
         // Add the patch section if it exists in the original config
         manifest.patch = workspace.patch.clone();
 
@@ -59,7 +58,7 @@ impl CargoGenerator {
     }
 
     /// Generate the root Cargo.toml file for a specific workspace
-    fn generate_workspace_cargo_toml(&self, workspace: &WorkspaceModel) -> Result<()> {
+    pub fn generate_workspace_cargo_toml(&self, workspace: &WorkspaceModel) -> Result<()> {
         // Path to the root Cargo.toml
         let cargo_toml_path = workspace.root_path.join("Cargo.toml");
         info!("Generating Cargo.toml at {}", cargo_toml_path.display());
@@ -99,15 +98,12 @@ impl CargoGenerator {
     }
 
     /// Generate a crate manifest
-    fn generate_package_manifest(
-        &mut self,
-        model: &mut PackageModel,
-    ) -> Result<ManifestConfig> {
+    fn generate_package_manifest(&mut self, model: &mut PackageModel) -> Result<ManifestConfig> {
         self.nexus_manager.resolve_package_dependencies(model)?;
 
         // Create a new manifest config
         let mut manifest = ManifestConfig::new();
-        
+
         // Create package section
         manifest.package = Some(PackageConfig {
             name: model.name.clone(),
@@ -121,7 +117,7 @@ impl CargoGenerator {
             documentation: model.documentation.clone(),
             custom: model.custom.clone(),
         });
-        
+
         // Add dependencies
         manifest.dependencies = model
             .dependencies
@@ -129,7 +125,7 @@ impl CargoGenerator {
             .into_iter()
             .map(|(k, v)| (k, v.into()))
             .collect();
-            
+
         // Get the patch section if it exists in the source Magnet.toml file
         manifest.patch = model.patch.clone();
 
