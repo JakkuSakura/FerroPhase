@@ -53,13 +53,13 @@ pub struct ManifestConfig {
 
     /// Dependencies shared across workspace members
     #[serde(default)]
-    pub dependencies: DependencyMap,
+    pub dependencies: DependencyConfigMap,
     /// Development dependencies shared across workspace members
     #[serde(default, rename = "dev-dependencies")]
-    pub dev_dependencies: DependencyMap,
+    pub dev_dependencies: DependencyConfigMap,
     /// Build dependencies shared across workspace members
     #[serde(default, rename = "build-dependencies")]
-    pub build_dependencies: DependencyMap,
+    pub build_dependencies: DependencyConfigMap,
     /// Patch section for overriding dependencies
     #[serde(default)]
     pub patch: Option<toml::value::Table>,
@@ -85,21 +85,19 @@ impl ManifestConfig {
 
     /// Actually load the file from disk (no caching)
     fn load_file(path: &Path) -> Result<Self> {
-        let path = path.canonicalize().with_context(|| format!(
-            "Failed to canonicalize path for Magnet.toml: {}",
-            path.display()
-        ))?;
+        let path = path.canonicalize().with_context(|| {
+            format!(
+                "Failed to canonicalize path for Magnet.toml: {}",
+                path.display()
+            )
+        })?;
         // Read the file content
-        let content = std::fs::read_to_string(&path).with_context(||format!(
-            "Failed to read Magnet.toml from {}",
-            path.display()
-        ))?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read Magnet.toml from {}", path.display()))?;
 
         // Parse the TOML
-        let mut config: Self = toml::from_str(&content).with_context(|| format!(
-            "Failed to parse Magnet.toml from {}",
-            path.display()
-        ))?;
+        let mut config: Self = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse Magnet.toml from {}", path.display()))?;
 
         // Store the source path
         config.source_path = Some(path);
@@ -233,7 +231,7 @@ impl ManifestConfig {
             }
         }
         if let Some(workspace) = &self.workspace {
-             for pattern in &workspace.members {
+            for pattern in &workspace.members {
                 // Process the glob pattern to find actual directory paths
                 match Self::expand_workspace_member_pattern(base_dir, pattern) {
                     Ok(paths) => result.extend(paths),
@@ -247,7 +245,6 @@ impl ManifestConfig {
                 }
             }
         }
-
 
         // Return all discovered paths
         Ok(result)
@@ -347,27 +344,6 @@ impl ManifestConfig {
             patch: None,
             source_path: None,
             config_type: MagnetConfigType::default(),
-        }
-    }
-
-    /// Check if a dependency is configured for auto path resolution
-    pub fn is_auto_dependency(&self, name: &str) -> bool {
-        match self.dependencies.get(name) {
-            Some(DependencyConfig::Detailed(dep)) => dep.nexus.unwrap_or(false),
-            _ => false,
-        }
-    }
-
-    /// Get a detailed dependency configuration by name
-    pub fn get_detailed_dependency(&self, name: &str) -> Option<DetailedDependency> {
-        match self.dependencies.get(name) {
-            Some(DependencyConfig::Simple(version)) => {
-                let mut dep = DetailedDependency::default();
-                dep.version = Some(version.clone());
-                Some(dep)
-            }
-            Some(DependencyConfig::Detailed(dep)) => Some(dep.clone()),
-            None => None,
         }
     }
 

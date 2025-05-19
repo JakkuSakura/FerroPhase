@@ -1,9 +1,9 @@
 //! Domain model for a Workspace, which is a collection of packages.
 
-use crate::configs::{DependencyMap, ManifestConfig};
-use crate::models::PackageModel;
+use crate::configs::ManifestConfig;
+use crate::models::{DependencyModel, DependencyModelMap, PackageModel};
 use crate::utils::glob_relative;
-use eyre::{ContextCompat, Result, bail};
+use eyre::{bail, ContextCompat, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -20,13 +20,12 @@ pub struct WorkspaceModel {
     pub exclude: Vec<String>,
     /// Cargo resolver version (1 or 2)
     pub resolver: Option<String>,
-    /// Search paths for related workspaces
-    pub search_paths: HashMap<String, PathBuf>,
+    
     /// Path overrides for specific dependencies
     pub paths: HashMap<String, PathBuf>,
     /// Custom workspace metadata
     pub custom: HashMap<String, toml::Value>,
-    pub dependencies: DependencyMap,
+    pub dependencies: DependencyModelMap,
     /// Patch section for overriding dependencies
     pub patch: Option<toml::value::Table>,
     pub root_path: PathBuf,
@@ -38,7 +37,7 @@ impl WorkspaceModel {
     pub fn from_dir(root_path: &Path) -> Result<Self> {
         let root_path = root_path.canonicalize()?;
         if !root_path.exists() {
-            eyre::bail!(
+            bail!(
                 "Root path doesn't exist in the current directory: {}",
                 root_path.display()
             )
@@ -71,10 +70,12 @@ impl WorkspaceModel {
             members: config1.members,
             exclude: config1.exclude,
             resolver: config1.resolver,
-            search_paths: config1.search_paths.unwrap_or_default(),
             paths: config1.paths.unwrap_or_default(),
             custom: config1.custom,
-            dependencies: config.dependencies.clone(),
+            dependencies: config1.dependencies.clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
             patch: config.patch,
             source_path: source_path.to_path_buf(),
             root_path,
@@ -119,5 +120,11 @@ impl WorkspaceModel {
             package_name,
             self.name
         )
+    }
+    pub fn find_dependency(
+        &self,
+        name: &str,
+    ) -> Option<DependencyModel> {
+        self.dependencies.get(name).cloned()
     }
 }
