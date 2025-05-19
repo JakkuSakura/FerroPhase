@@ -47,18 +47,13 @@ impl CargoGenerator {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-            paths: Some(workspace.paths.clone()),
             custom: workspace.custom.clone(),
         };
         
         manifest.workspace = Some(workspace_config);
         
         // Add the patch section if it exists in the original config
-        manifest.patch = if let Ok(magnet_config) = ManifestConfig::from_file(&workspace.source_path) {
-            magnet_config.patch
-        } else {
-            None
-        };
+        manifest.patch = workspace.patch.clone();
 
         Ok(manifest)
     }
@@ -136,11 +131,7 @@ impl CargoGenerator {
             .collect();
             
         // Get the patch section if it exists in the source Magnet.toml file
-        manifest.patch = if let Ok(magnet_config) = ManifestConfig::from_file(&model.source_path) {
-            magnet_config.patch
-        } else {
-            None
-        };
+        manifest.patch = model.patch.clone();
 
         Ok(manifest)
     }
