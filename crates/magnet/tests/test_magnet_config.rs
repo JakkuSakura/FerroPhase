@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 use eyre::Result;
 use tempfile::tempdir;
 
@@ -13,21 +12,35 @@ fn test_magnet_config_create_and_parse() -> Result<()> {
     
     // Create a basic configuration
     let mut config = ManifestConfig::new();
-    config.package.name = Some("test-project".to_string());
-    config.package.version = Some("0.1.0".to_string());
-    config.workspace.members = vec!["crates/*".to_string()];
+    // Create package section
+    config.package = Some(magnet::configs::PackageConfig {
+        name: "test-project".to_string(),
+        version: "0.1.0".to_string(),
+        ..Default::default()
+    });
+    // Create workspace section
+    config.workspace = Some(magnet::configs::WorkspaceConfig {
+        members: vec!["crates/*".to_string()],
+        ..Default::default()
+    });
     config.dependencies.insert("serde".to_string(), "1.0.0".into());
     
     // Write the config to file
-    config.to_file(&config_path)?;
+    config.save_to_file(&config_path)?;
     
     // Read it back
     let read_config = ManifestConfig::from_file(&config_path)?;
     
     // Verify it matches what we wrote
-    assert_eq!(read_config.package.name, Some("test-project".to_string()));
-    assert_eq!(read_config.package.version, Some("0.1.0".to_string()));
-    assert_eq!(read_config.workspace.members, vec!["crates/*".to_string()]);
+    assert!(read_config.package.is_some());
+    if let Some(package) = &read_config.package {
+        assert_eq!(package.name, "test-project".to_string());
+        assert_eq!(package.version, "0.1.0".to_string());
+    }
+    assert!(read_config.workspace.is_some());
+    if let Some(workspace) = &read_config.workspace {
+        assert_eq!(workspace.members, vec!["crates/*".to_string()]);
+    }
     assert!(read_config.dependencies.contains_key("serde"));
     
     Ok(())
@@ -43,9 +56,16 @@ fn test_workspace_crate_detection() -> Result<()> {
     // Create a Magnet.toml file
     let config_path = workspace_dir.join("Magnet.toml");
     let mut config = ManifestConfig::new();
-    config.package.name = Some("test-workspace".to_string());
-    config.workspace.members = vec!["crates/*".to_string()];
-    config.to_file(&config_path)?;
+    config.package = Some(magnet::configs::PackageConfig {
+        name: "test-workspace".to_string(),
+        version: "0.1.0".to_string(),
+        ..Default::default()
+    });
+    config.workspace = Some(magnet::configs::WorkspaceConfig {
+        members: vec!["crates/*".to_string()],
+        ..Default::default()
+    });
+    config.save_to_file(&config_path)?;
     
     // Create some test crates
     let crates_dir = workspace_dir.join("crates");
@@ -81,10 +101,24 @@ crate1 = { version = "0.1.0" }
     )?;
     
     // Now test that we can detect these crates
-    use magnet::workspace::WorkspaceManager;
+    use magnet::models::WorkspaceModel;
     
-    let workspace_manager = WorkspaceManager::new(config, workspace_dir)?;
-    let crates = workspace_manager.get_all_crates();
+    // Create a workspace model manually since we don't have a real workspace manager
+    let workspace = WorkspaceModel {
+        name: "test-workspace".to_string(),
+        description: Some("Test workspace".to_string()),
+        members: vec!["crates/*".to_string()],
+        exclude: vec![],
+        resolver: Some("2".to_string()),
+        paths: Default::default(),
+        custom: Default::default(),
+        dependencies: Default::default(),
+        patch: None,
+        root_path: workspace_dir.clone(),
+        source_path: workspace_dir.join("Magnet.toml"),
+    };
+    
+    let crates = workspace.list_packages()?;
     
     // We should have found 2 crates
     assert_eq!(crates.len(), 2);

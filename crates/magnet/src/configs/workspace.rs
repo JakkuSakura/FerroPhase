@@ -18,7 +18,7 @@ pub struct WorkspaceConfig {
     /// Cargo resolver version (1 or 2)
     #[serde(default)]
     pub resolver: Option<String>,
-
+    #[serde(default)]
     pub dependencies: DependencyConfigMap,
     /// Path overrides for specific dependencies
     #[serde(default)]
@@ -28,6 +28,18 @@ pub struct WorkspaceConfig {
     pub custom: HashMap<String, toml::Value>,
 }
 
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            members: Vec::new(),
+            exclude: Vec::new(),
+            resolver: None,
+            dependencies: DependencyConfigMap::new(),
+            paths: None,
+            custom: HashMap::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CargoWorkspaceConfig {
