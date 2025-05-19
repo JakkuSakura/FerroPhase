@@ -39,6 +39,7 @@ impl Default for MagnetConfigType {
 /// The main configuration structure representing a Magnet.toml file
 /// which is a superset of Cargo.toml
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ManifestConfig {
     /// Nexus configuration (for top-level nexus configs)
     #[serde(default)]
@@ -55,10 +56,10 @@ pub struct ManifestConfig {
     #[serde(default)]
     pub dependencies: DependencyConfigMap,
     /// Development dependencies shared across workspace members
-    #[serde(default, rename = "dev-dependencies")]
+    #[serde(default)]
     pub dev_dependencies: DependencyConfigMap,
     /// Build dependencies shared across workspace members
-    #[serde(default, rename = "build-dependencies")]
+    #[serde(default)]
     pub build_dependencies: DependencyConfigMap,
     /// Patch section for overriding dependencies
     #[serde(default)]

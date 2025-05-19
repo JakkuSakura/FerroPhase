@@ -276,7 +276,7 @@ impl Exporter {
             if self.processed_crates.contains(crate_name) {
                 continue;
             }
-            if !(dep.path.is_some() || dep.workspace == Some(true) || dep.nexus == Some(true)) {
+            if !(dep.path.is_some() || dep.workspace() || dep.nexus()) {
                 continue;
             }
 
