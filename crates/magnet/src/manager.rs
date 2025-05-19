@@ -53,7 +53,7 @@ impl ManifestManager {
     /// Resolve a dependency
     pub fn resolve_dependency(
         &mut self,
-        package: &PackageModel,
+        manifest_root_path: &Path,
         name: &str,
         dep: &DependencyModel,
     ) -> Result<DependencyModel> {
@@ -80,7 +80,7 @@ impl ManifestManager {
                 warn!("No matching crates found for dependency '{}'", name);
                 return Ok(dep);
             }
-            dep.path = Some(diff_path(&package.root_path, &matching_crates[0].root_path));
+            dep.path = Some(diff_path(manifest_root_path, &matching_crates[0].root_path));
             dep.nexus = None;
             dep.workspace = None;
             return Ok(dep);
@@ -115,7 +115,7 @@ impl ManifestManager {
                 dep.path = Some(dep_path);
             } else {
                 dep_path = workspace.root_path.join(dep_path);
-                dep.path = Some(diff_path(&package.root_path, &dep_path));
+                dep.path = Some(diff_path(manifest_root_path, &dep_path));
             }
 
             dep.nexus = None;
@@ -127,7 +127,7 @@ impl ManifestManager {
     pub fn resolve_package_dependencies(&mut self, package: &mut PackageModel) -> Result<()> {
         for (name, dep) in package.dependencies.clone() {
             // Resolve the dependency
-            let resolved = self.resolve_dependency(package, &name, &dep);
+            let resolved = self.resolve_dependency(&package.root_path, &name, &dep);
             match resolved {
                 Ok(detailed) => {
                     // Update the package dependencies

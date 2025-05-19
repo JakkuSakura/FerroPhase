@@ -6,7 +6,7 @@
 
 use crate::generator::CargoGenerator;
 use crate::manager::ManifestManager;
-use crate::models::{DependencyModel, ManifestModel, PackageModel, WorkspaceModel};
+use crate::models::{DependencyModel, ManifestModel, PackageModel, PatchMap, WorkspaceModel};
 use crate::utils::maybe_join;
 use eyre::{Context, Result};
 use std::collections::{HashMap, HashSet};
@@ -83,6 +83,7 @@ struct Exporter {
     nexus_manager: ManifestManager,
     /// Name of the crates directory
     crates_dir_name: String,
+    patch: PatchMap,
 }
 
 impl Exporter {
@@ -119,6 +120,7 @@ impl Exporter {
             processed_paths: HashSet::new(),
             processed_crates: HashSet::new(),
             workspace_members: Vec::new(),
+            patch: nexus_manager.root_manifest.patch().clone(),
             nexus_manager,
             crates_dir_name: options.crates_dir.clone(),
         })
@@ -135,49 +137,17 @@ impl Exporter {
             self.init_export_directory()?;
         }
 
-        // Get the main package information
-        let main_package = match &self.manifest {
-            ManifestModel::Package(pkg) => pkg.clone(),
-            ManifestModel::Workspace(_) => {
-                // For workspace, create a virtual package with the workspace information
-                let workspace_name = self
-                    .root_path
-                    .file_name()
-                    .ok_or_else(|| eyre::eyre!("Could not determine workspace name"))?
-                    .to_string_lossy()
-                    .to_string();
-
-                PackageModel {
-                    name: workspace_name,
-                    root_path: self.root_path.clone(),
-                    ..PackageModel::default()
-                }
-            }
-            ManifestModel::Nexus(_) => {
-                // For nexus, create a virtual package with the nexus information
-                let nexus_name = self
-                    .root_path
-                    .file_name()
-                    .ok_or_else(|| eyre::eyre!("Could not determine nexus name"))?
-                    .to_string_lossy()
-                    .to_string();
-
-                PackageModel {
-                    name: nexus_name,
-                    root_path: self.root_path.clone(),
-                    ..PackageModel::default()
-                }
-            }
+        if let ManifestModel::Package(pkg) = &self.manifest.clone() {
+            self.process_package(pkg, true)?;
         };
-
-        // Process the main package first
-        self.process_package(&main_package, true)?;
 
         // Process all packages from the manifest
         let packages = self.manifest.list_packages()?;
         for package in &packages {
             self.process_package(package, false)?;
         }
+
+        self.process_manifest_patches()?;
 
         // Sort workspace members for consistent output
         self.workspace_members.sort();
@@ -282,16 +252,12 @@ impl Exporter {
 
             // Process path dependency
             if let Some(canonical_path) =
-                self.process_path_dependency(&package_clone, crate_name, dep)?
+                self.process_path_dependency(&package_clone.root_path, crate_name, dep)?
             {
                 // Queue this dependency for recursive processing
                 deps_to_process_recursively.push((crate_name.clone(), canonical_path));
             }
         }
-
-        // Process patches from this package
-        self.process_package_patches(&package_clone)?;
-
         // Recursively process all dependencies' dependencies
         self.process_recursive_dependencies(deps_to_process_recursively)?;
 
@@ -302,20 +268,20 @@ impl Exporter {
     /// Returns Some(canonical_path) if the dependency was processed, None otherwise
     fn process_path_dependency(
         &mut self,
-        package: &PackageModel,
+        manifest_root_path: &Path,
         crate_name: &str,
         dep: &DependencyModel,
     ) -> Result<Option<PathBuf>> {
         // Convert to absolute path
         let dep = self
             .nexus_manager
-            .resolve_dependency(&package, &crate_name, &dep)?;
+            .resolve_dependency(manifest_root_path, &crate_name, &dep)?;
         let Some(dep_path) = &dep.path else {
             warn!("No path found for dependency {}", crate_name);
             return Ok(None);
         };
         // Canonicalize the path to resolve any '..' components
-        let canonical_path = maybe_join(&package.root_path, dep_path).canonicalize()?;
+        let canonical_path = maybe_join(manifest_root_path, dep_path).canonicalize()?;
         // Skip if already processed
         if self.processed_paths.contains(&canonical_path) {
             return Ok(None);
@@ -345,7 +311,7 @@ impl Exporter {
             debug!("Recursively processing dependencies of {}", dep_name);
 
             // Try to load dependency's manifest
-            match crate::models::ManifestModel::from_dir(&dep_path) {
+            match ManifestModel::from_dir(&dep_path) {
                 Ok(manifest) => {
                     // Get all packages from the manifest
                     match manifest.list_packages() {
@@ -383,46 +349,46 @@ impl Exporter {
     }
 
     /// Process patches from a package
-    fn process_package_patches(&mut self, package: &PackageModel) -> Result<()> {
-        let Some(patch_table) = &package.patch else {
+    fn process_manifest_patches(&mut self) -> Result<()> {
+        let patch_table = self.patch.clone();
+        if patch_table.is_empty() {
             return Ok(());
-        };
+        }
 
         for (registry_name, registry_patches) in patch_table.iter() {
-            debug!("Processing registry patches for: {}", registry_name);
-
-            let Some(registry_table) = registry_patches.as_table() else {
-                continue;
-            };
+            info!("Processing registry patches for: {}", registry_name);
 
             // For each patched crate
-            for (crate_name, patch_config) in registry_table.iter() {
+            for (crate_name, patch_config) in registry_patches.iter() {
                 // Skip already processed crates
                 if self.processed_crates.contains(crate_name) {
                     continue;
                 }
 
-                let Some(patch_table) = patch_config.as_table() else {
+                let Some(path) = patch_config.path.as_ref() else {
                     continue;
                 };
-
-                // Check if it has a local path
-                let Some(path_str) = patch_table.get("path").and_then(|v| v.as_str()) else {
+                if path.is_absolute() {
                     continue;
-                };
-
-                let path = PathBuf::from(path_str);
-                debug!(
-                    "Found patch with path for {}: {}",
+                }
+                info!(
+                    "Found patch with relative path for {}: {}",
                     crate_name,
                     path.display()
                 );
-                let dep = DependencyModel {
-                    path: Some(path),
-                    ..Default::default()
-                };
+
                 // Process the patch as a path dependency
-                self.process_path_dependency(package, crate_name, &dep)?;
+                self.process_path_dependency(&self.root_path.clone(), crate_name, &patch_config)?;
+                self.patch.get_mut(registry_name).unwrap().insert(
+                    crate_name.clone(),
+                    DependencyModel {
+                        path: Some(PathBuf::from(format!(
+                            "{}/{}",
+                            self.crates_dir_name, crate_name
+                        ))),
+                        ..patch_config.clone()
+                    },
+                );
             }
         }
 
@@ -437,24 +403,19 @@ impl Exporter {
     /// This method also prepares the models with correct dependency paths
     fn create_export_workspace(&self) -> Result<WorkspaceModel> {
         // Get source information from original manifest
-        let (name, description, resolver, patch) = match &self.manifest {
-            ManifestModel::Workspace(ws) => (
-                ws.name.clone(),
-                ws.description.clone(),
-                ws.resolver.clone(),
-                ws.patch.clone(),
-            ),
+        let (name, description, resolver) = match &self.manifest {
+            ManifestModel::Workspace(ws) => {
+                (ws.name.clone(), ws.description.clone(), ws.resolver.clone())
+            }
             ManifestModel::Package(pkg) => (
                 pkg.name.clone(),
                 Some(pkg.description.clone()),
                 Some("2".to_string()),
-                pkg.patch.clone(),
             ),
             ManifestModel::Nexus(nexus) => (
                 nexus.name.clone(),
                 nexus.description.clone(),
                 Some("2".to_string()),
-                None,
             ),
         };
 
@@ -474,10 +435,9 @@ impl Exporter {
             members: self.workspace_members.clone(),
             exclude: Vec::new(),
             resolver,
-            paths: HashMap::new(),
             custom: HashMap::new(),
             dependencies,
-            patch,
+            patch: self.patch.clone(),
             root_path: self.export_dir.clone(),
             source_path: self.export_dir.join("Cargo.toml"),
         };
@@ -493,7 +453,7 @@ impl Exporter {
             // Only add if not already in dependencies
             if !dependencies.contains_key(crate_name) {
                 // Create a workspace dependency pointing to the crate directory
-                let path = PathBuf::from(format!("./{}/{}", self.crates_dir_name, crate_name));
+                let path = PathBuf::from(format!("{}/{}", self.crates_dir_name, crate_name));
                 let dep = DependencyModel {
                     path: Some(path),
                     ..DependencyModel::default()

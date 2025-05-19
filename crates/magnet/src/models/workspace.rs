@@ -1,7 +1,7 @@
 //! Domain model for a Workspace, which is a collection of packages.
 
 use crate::configs::ManifestConfig;
-use crate::models::{DependencyModel, DependencyModelMap, PackageModel};
+use crate::models::{DependencyModel, DependencyModelMap, PackageModel, PatchMap};
 use crate::utils::glob_relative;
 use eyre::{bail, ContextCompat, Result};
 use std::collections::HashMap;
@@ -21,13 +21,11 @@ pub struct WorkspaceModel {
     /// Cargo resolver version (1 or 2)
     pub resolver: Option<String>,
     
-    /// Path overrides for specific dependencies
-    pub paths: HashMap<String, PathBuf>,
     /// Custom workspace metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyModelMap,
     /// Patch section for overriding dependencies
-    pub patch: Option<toml::value::Table>,
+    pub patch: PatchMap,
     pub root_path: PathBuf,
     /// Source path of the workspace configuration
     pub source_path: PathBuf,
@@ -70,7 +68,6 @@ impl WorkspaceModel {
             members: config1.members,
             exclude: config1.exclude,
             resolver: config1.resolver,
-            paths: config1.paths.unwrap_or_default(),
             custom: config1.custom,
             dependencies: config1.dependencies.clone()
                 .into_iter()

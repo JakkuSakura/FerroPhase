@@ -1,7 +1,7 @@
 //! Domain model for a Nexus, which represents a collection of workspaces.
 
 use crate::configs::ManifestConfig;
-use crate::models::{PackageModel, WorkspaceModel};
+use crate::models::{PackageModel, PatchMap, WorkspaceModel};
 use crate::utils::glob_relative;
 use eyre::ContextCompat;
 use eyre::Result;
@@ -21,8 +21,7 @@ pub struct NexusModel {
     pub members: Vec<String>,
     /// Workspaces excluded from this nexus (patterns)
     pub exclude: Vec<String>,
-    /// Default search paths for dependencies
-    pub search_paths: HashMap<String, PathBuf>,
+    pub patch: PatchMap,
     /// Custom nexus metadata
     pub custom: HashMap<String, toml::Value>,
     pub root_path: PathBuf,
@@ -36,10 +35,10 @@ impl NexusModel {
         let root_path = root_path.canonicalize()?;
         let config_path = root_path.join("Magnet.toml");
         let config = ManifestConfig::from_file(&config_path)?;
-        let config = config.nexus.with_context(|| {
+        let config1 = config.nexus.with_context(|| {
             format!("No nexus configuration found in {}", config_path.display())
         })?;
-        let name = config.name.unwrap_or_else(|| {
+        let name = config1.name.unwrap_or_else(|| {
             root_path
                 .file_name()
                 .unwrap()
@@ -49,12 +48,12 @@ impl NexusModel {
         let source_path = root_path.to_path_buf();
         let model = NexusModel {
             name,
-            version: config.version,
-            description: config.description,
-            members: config.members,
-            exclude: config.exclude,
-            search_paths: config.search_paths.unwrap_or_default(),
-            custom: config.custom.clone(),
+            version: config1.version,
+            description: config1.description,
+            members: config1.members,
+            exclude: config1.exclude,
+            custom: config1.custom.clone(),
+            patch: config.patch,
             root_path,
             source_path,
         };

@@ -55,10 +55,6 @@ members = ["crates/*"]
 exclude = []
 resolver = "2"
 
-# Define external workspace members with custom paths
-[workspace.paths]
-external-crate = "../external-crate"
-
 # Dependencies shared across the workspace
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
