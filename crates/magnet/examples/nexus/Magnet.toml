@@ -1,4 +1,0 @@
-[nexus]
-members = ["project1", "project2", "shared-lib"]
-exclude = []
-

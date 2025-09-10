@@ -1,9 +1,0 @@
-[package]
-name = "shared-types"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-serde = { version = "1.0", features = ["derive"] }
-uuid = { version = "1.3", features = ["v4"] }
-shared-utils = { nexus = true }
