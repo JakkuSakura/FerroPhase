@@ -1,15 +1,15 @@
-use common::*;
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::*;
 
+use crate::{RawExpr, RawExprMacro, RawStmtMacro};
+use fp_core::{Error, Result};
 use fp_core::ast::*;
+use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use fp_core::ops::{BuiltinFn, BuiltinFnName};
 use fp_core::pat::{Pattern, PatternIdent};
 use fp_core::utils::anybox::AnyBox;
-
-use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 
 mod attr;
 mod expr;
@@ -31,10 +31,10 @@ impl RustPrinter {
     pub fn set_rustfmt(&mut self, rustfmt: bool) {
         self.rustfmt = rustfmt;
     }
-    pub fn maybe_rustfmt_token_stream(&self, code: &TokenStream) -> Result<String> {
+    pub fn maybe_rustfmt_token_stream(&self, code: &TokenStream) -> fp_core::error::Result<String> {
         self.maybe_rustfmt(&code.to_string())
     }
-    pub fn maybe_rustfmt(&self, code: &str) -> Result<String> {
+    pub fn maybe_rustfmt(&self, code: &str) -> fp_core::error::Result<String> {
         if self.rustfmt {
             if let Ok(ok) = rustfmt::format_code(code) {
                 return Ok(ok);
@@ -354,7 +354,7 @@ impl RustPrinter {
         let items = self.print_items_chunk(&file.items)?;
         Ok(quote!(#items))
     }
-    pub fn print_node(&self, node: &AstNode) -> Result<TokenStream> {
+    pub fn print_node(&self, node: &AstNode) -> fp_core::Result<TokenStream> {
         match node {
             AstNode::Item(n) => self.print_item(n),
             AstNode::Expr(n) => self.print_expr(n),
@@ -364,60 +364,60 @@ impl RustPrinter {
 }
 
 impl AstSerializer for RustPrinter {
-    fn serialize_node(&self, node: &AstNode) -> Result<String> {
+    fn serialize_node(&self, node: &AstNode) -> fp_core::error::Result<String> {
         self.print_node(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_expr(&self, node: &AstExpr) -> Result<String> {
-        self.print_expr(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    fn serialize_expr(&self, node: &AstExpr) -> fp_core::error::Result<String> {
+        Ok(self.print_expr(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String> {
-        self.print_invoke(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    fn serialize_invoke(&self, node: &ExprInvoke) -> fp_core::error::Result<String> {
+        Ok(self.print_invoke(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_item(&self, node: &AstItem) -> Result<String> {
-        self.print_item(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    fn serialize_item(&self, node: &AstItem) -> fp_core::error::Result<String> {
+        Ok(self.print_item(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_block(&self, node: &ExprBlock) -> Result<String> {
-        self.print_block(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    fn serialize_block(&self, node: &ExprBlock) -> fp_core::error::Result<String> {
+        Ok(self.print_block(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_file(&self, node: &AstFile) -> Result<String> {
-        self.print_file(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    fn serialize_file(&self, node: &AstFile) -> fp_core::error::Result<String> {
+        Ok(self.print_file(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
-    fn serialize_module(&self, node: &AstModule) -> Result<String> {
-        self.print_module(node)
-            .and_then(|x| self.maybe_rustfmt_token_stream(&x))
+    fn serialize_module(&self, node: &AstModule) -> fp_core::error::Result<String> {
+        Ok(self.print_module(node)
+            .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_value(&self, node: &AstValue) -> Result<String> {
+    fn serialize_value(&self, node: &AstValue) -> fp_core::error::Result<String> {
         self.print_value(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_type(&self, node: &AstType) -> Result<String> {
+    fn serialize_type(&self, node: &AstType) -> fp_core::error::Result<String> {
         self.print_type(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_stmt(&self, node: &BlockStmt) -> Result<String> {
+    fn serialize_stmt(&self, node: &BlockStmt) -> fp_core::error::Result<String> {
         self.print_statement(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_value_function(&self, node: &ValueFunction) -> Result<String> {
+    fn serialize_value_function(&self, node: &ValueFunction) -> fp_core::error::Result<String> {
         self.print_value_function(node, Visibility::Private)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
-    fn serialize_def_function(&self, node: &ItemDefFunction) -> Result<String> {
+    fn serialize_def_function(&self, node: &ItemDefFunction) -> fp_core::error::Result<String> {
         self.print_def_function(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }

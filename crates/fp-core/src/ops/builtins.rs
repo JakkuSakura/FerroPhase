@@ -2,7 +2,7 @@ use crate::ast::*;
 use crate::context::SharedScopedContext;
 use crate::id::Ident;
 use crate::ops::BinOpKind;
-use common::*;
+use crate::bail;
 use itertools::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
@@ -32,12 +32,12 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    func: Arc<dyn Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue> + Send + Sync>,
+    func: Arc<dyn Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue, crate::Error> + Send + Sync>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue> + Send + Sync + 'static,
+        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue, crate::Error> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::BinOpKind(name),
@@ -46,14 +46,14 @@ impl BuiltinFn {
     }
     pub fn new_with_ident(
         name: Ident,
-        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue> + Send + Sync + 'static,
+        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue, crate::Error> + Send + Sync + 'static,
     ) -> Self {
         Self {
             name: BuiltinFnName::Name(name),
             func: Arc::new(f),
         }
     }
-    pub fn invoke(&self, args: &[AstValue], ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn invoke(&self, args: &[AstValue], ctx: &SharedScopedContext) -> Result<AstValue, crate::Error> {
         (self.func)(args, ctx)
     }
 }

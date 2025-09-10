@@ -1,6 +1,8 @@
 use crate::ast::AstType;
 use crate::context::SharedScopedContext;
-use common::*;
+use crate::warn;
+use crate::Error;
+use crate::{bail, error::Result};
 
 pub struct Injector {}
 impl Injector {
@@ -50,11 +52,16 @@ impl Injector {
         args: &[AstType],
         ctx: &SharedScopedContext,
     ) -> Result<Vec<crate::id::Ident>> {
-        args.iter()
-            .map(|arg| {
-                self.pick(arg, ctx)
-                    .with_context(|| format!("Cannot pickup type: {}", arg))
-            })
-            .collect()
+        let mut ids = vec![];
+        for arg in args {
+            let id = self
+                .pick(arg, ctx);
+            if let None = id {
+                bail!("Could not find value for type: {}", arg);
+            }
+            let id = id.unwrap();
+            ids.push(id);
+        }
+        Ok(ids)
     }
 }

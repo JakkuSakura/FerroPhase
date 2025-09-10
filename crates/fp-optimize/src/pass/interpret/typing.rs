@@ -1,4 +1,4 @@
-use common::{bail, ensure, ContextCompat, Error, Result};
+use fp_core::error::Result;
 use itertools::Itertools;
 
 use fp_core::ast::{AstExpr, Visibility};
@@ -12,64 +12,59 @@ use fp_core::id::{Ident, Locator};
 use fp_core::utils::conv::TryConv;
 
 use crate::pass::{FoldOptimizer, InterpreterPass};
+use crate::error::optimization_error;
+use crate::opt_bail;
+use crate::opt_ensure;
 
 impl InterpreterPass {
     pub fn type_check_value(&self, lit: &AstValue, ty: &AstType) -> Result<()> {
         match lit {
             AstValue::Int(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Int(_))),
-                    "Expected i64, got {:?}",
-                    lit
+                    format!("Expected i64, got {:?}", lit)
                 )
             }
             AstValue::Bool(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Bool)),
-                    "Expected bool, got {:?}",
-                    lit
+                    format!("Expected bool, got {:?}", lit)
                 )
             }
             AstValue::Decimal(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Decimal(_))),
-                    "Expected f64, got {:?}",
-                    lit
+                    format!("Expected f64, got {:?}", lit)
                 )
             }
             AstValue::Char(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::Char)),
-                    "Expected char, got {:?}",
-                    lit
+                    format!("Expected char, got {:?}", lit)
                 )
             }
             AstValue::String(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::String)),
-                    "Expected string, got {:?}",
-                    lit
+                    format!("Expected string, got {:?}", lit)
                 )
             }
             AstValue::List(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Primitive(TypePrimitive::List)),
-                    "Expected list, got {:?}",
-                    lit
+                    format!("Expected list, got {:?}", lit)
                 )
             }
             AstValue::Unit(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Unit(_)),
-                    "Expected unit, got {:?}",
-                    lit
+                    format!("Expected unit, got {:?}", lit)
                 )
             }
             AstValue::Type(_) => {
-                ensure!(
+                opt_ensure!(
                     matches!(ty, AstType::Type(_)),
-                    "Expected type, got {:?}",
-                    lit
+                    format!("Expected type, got {:?}", lit)
                 )
             }
             _ => {}
@@ -86,7 +81,7 @@ impl InterpreterPass {
             AstExpr::Locator(n) => {
                 let expr = ctx
                     .get_expr(n.to_path())
-                    .with_context(|| format!("Could not find {:?} in context", n))?;
+                    .ok_or_else(|| optimization_error(format!("Could not find {:?} in context", n)))?;
                 return self.type_check_expr_against_value(&expr, type_value, ctx);
             }
 
@@ -100,8 +95,7 @@ impl InterpreterPass {
         match ty {
             AstType::Expr(expr) => {
                 let value = self.interpret_expr(expr, ctx)?;
-                let ty = value.try_conv()?;
-                return Ok(ty);
+                return Ok(value.try_conv()?);
             }
             AstType::Struct(n) => {
                 let fields = n
@@ -109,7 +103,7 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| {
                         let value = self.evaluate_type_value(&x.value, ctx)?;
-                        eyre::Ok(StructuralField {
+                        Ok::<_, fp_core::error::Error>(StructuralField {
                             name: x.name.clone(),
                             value,
                         })
@@ -126,7 +120,7 @@ impl InterpreterPass {
                     .iter()
                     .map(|x| {
                         let value = self.evaluate_type_value(&x.value, ctx)?;
-                        Ok::<_, Error>(StructuralField {
+                        Ok::<_, fp_core::error::Error>(StructuralField {
                             name: x.name.clone(),
                             value,
                         })
@@ -190,11 +184,10 @@ impl InterpreterPass {
             return Ok(AstType::any());
         }
         if bounds.len() == 1 {
-            return bounds.first().unwrap().clone().try_conv();
+            return Ok(bounds.first().unwrap().clone().try_conv()?);
         }
 
-        bail!("failed to evaluate type bounds: {:?}", bounds)
-        // Ok(TypeValue::TypeBounds(TypeBounds { bounds }))
+        opt_bail!(format!("failed to evaluate type bounds: {:?}", bounds))
     }
 
     pub fn type_check_expr(
@@ -217,7 +210,7 @@ impl InterpreterPass {
         match callee {
             AstExpr::Locator(Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
-                    return self.infer_expr(params.first().context("No param")?, ctx)
+                    return self.infer_expr(params.first().ok_or_else(|| optimization_error("No param"))?, ctx)
                 }
                 "print" => return Ok(AstType::unit()),
                 _ => {}
@@ -236,7 +229,7 @@ impl InterpreterPass {
             _ => {}
         }
 
-        bail!("Could not infer type call {:?}", callee)
+        opt_bail!(format!("Could not infer type call {:?}", callee))
     }
     pub fn infer_ident(&self, ident: &Ident, ctx: &SharedScopedContext) -> Result<AstType> {
         match ident.as_str() {
@@ -254,7 +247,7 @@ impl InterpreterPass {
         }
         let expr = ctx
             .get_expr(ident)
-            .with_context(|| format!("Could not find {:?} in context", ident))?;
+            .ok_or_else(|| optimization_error(format!("Could not find {:?} in context", ident)))?;
         self.infer_expr(&expr, ctx)
     }
     pub fn infer_locator(&self, locator: &Locator, ctx: &SharedScopedContext) -> Result<AstType> {
@@ -263,7 +256,7 @@ impl InterpreterPass {
         }
         match locator {
             Locator::Ident(ident) => self.infer_ident(ident, ctx),
-            _ => bail!("Could not infer locator {:?}", locator),
+            _ => opt_bail!(format!("Could not infer locator {:?}", locator)),
         }
     }
     pub fn infer_expr_invoke_target(
@@ -274,7 +267,7 @@ impl InterpreterPass {
         match target {
             ExprInvokeTarget::Function(ident) => self.infer_locator(ident, ctx),
 
-            _ => bail!("Could not infer invoke target {:?}", target),
+            _ => opt_bail!(format!("Could not infer invoke target {:?}", target)),
         }
     }
     pub fn infer_expr(&self, expr: &AstExpr, ctx: &SharedScopedContext) -> Result<AstType> {
@@ -291,7 +284,7 @@ impl InterpreterPass {
                 AstValue::Type(_) => AstType::Type(TypeType {}),
                 AstValue::Char(_) => AstType::Primitive(TypePrimitive::Char),
                 AstValue::List(_) => AstType::Primitive(TypePrimitive::List),
-                _ => bail!("Could not infer type of {:?}", l),
+                _ => opt_bail!(format!("Could not infer type of {:?}", l)),
             },
             AstExpr::Invoke(invoke) => {
                 let function = self.infer_expr_invoke_target(&invoke.target, ctx)?;
@@ -301,7 +294,7 @@ impl InterpreterPass {
                         ret_ty: Some(t), ..
                     }) => *t,
 
-                    _ => bail!("Expected function, got {:?}", function),
+                    _ => opt_bail!(format!("Expected function, got {:?}", function)),
                 }
             }
             AstExpr::BinOp(op) => {
@@ -310,15 +303,13 @@ impl InterpreterPass {
                 }
                 let lhs = self.infer_expr(&op.lhs, ctx)?;
                 let rhs = self.infer_expr(&op.rhs, ctx)?;
-                ensure!(
+                opt_ensure!(
                     lhs == rhs,
-                    "Expected same types, got {:?} and {:?}",
-                    lhs,
-                    rhs
+                    format!("Expected same types, got {:?} and {:?}", lhs, rhs)
                 );
                 lhs
             }
-            _ => bail!("Could not infer type of {:?}", expr),
+            _ => opt_bail!(format!("Could not infer type of {:?}", expr)),
         };
         Ok(ret)
     }
@@ -348,9 +339,9 @@ impl TypeSystem for InterpreterPass {
         match expr {
             AstExpr::Value(v) => match v.into() {
                 AstValue::Type(t) => return Ok(t),
-                v => bail!("Expected type, got {:?}", v),
+                v => opt_bail!(format!("Expected type, got {:?}", v)),
             },
-            _ => bail!("Expected type, got {:?}", expr),
+            _ => opt_bail!(format!("Expected type, got {:?}", expr)),
         }
     }
     fn get_ty_from_value(&self, ctx: &Context, value: &AstValue) -> Result<AstType> {
@@ -361,9 +352,9 @@ impl TypeSystem for InterpreterPass {
         match value {
             AstExpr::Value(v) => match v.into() {
                 AstValue::Type(t) => return Ok(t),
-                v => bail!("Expected type, got {:?}", v),
+                v => opt_bail!(format!("Expected type, got {:?}", v)),
             },
-            _ => bail!("Expected type, got {:?}", value),
+            _ => opt_bail!(format!("Expected type, got {:?}", value)),
         }
     }
 }

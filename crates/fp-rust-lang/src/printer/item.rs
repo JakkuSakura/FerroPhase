@@ -1,4 +1,5 @@
-use eyre::{bail, ContextCompat, Result};
+use eyre::{bail, ContextCompat};
+use fp_core::{Error, Result};
 use itertools::Itertools;
 use fp_core::ast::{
     AstItem, ItemDefConst, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,

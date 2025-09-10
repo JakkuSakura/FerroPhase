@@ -1,4 +1,3 @@
-use common::{eyre, Error};
 use std::fmt::Display;
 
 pub trait TryConv<T> {
@@ -11,9 +10,9 @@ where
     F: TryInto<T>,
     F::Error: Display,
 {
-    type Error = Error;
+    type Error = eyre::Report;
 
     fn try_conv(self) -> Result<T, Self::Error> {
-        self.try_into().map_err(|e| eyre!("{}", e))
+        self.try_into().map_err(|e| eyre::eyre!("{}", e))
     }
 }

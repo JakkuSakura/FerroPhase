@@ -2,7 +2,7 @@ use std::io::{Cursor, Write};
 use std::sync::{Arc, Mutex};
 
 use common::bail;
-use eyre::Result;
+use fp_core::Result;
 use itertools::Itertools;
 use swc_ecma_ast::{Script, TsEnumDecl, TsEnumMemberId};
 use swc_ecma_codegen::text_writer::JsWriter;

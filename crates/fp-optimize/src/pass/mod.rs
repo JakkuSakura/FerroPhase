@@ -8,7 +8,8 @@ pub use interpret::*;
 pub use optimizer::*;
 pub use specialize::*;
 
-use common::*;
+// Replace common::* with specific imports for error handling
+use fp_core::error::Result;
 use fp_core::ast::AstValue;
 use fp_core::ast::{AstExpr, ControlFlow, ExprInvoke};
 use fp_core::ast::{AstItem, AstModule};

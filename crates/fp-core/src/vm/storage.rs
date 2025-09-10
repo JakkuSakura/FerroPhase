@@ -1,6 +1,6 @@
 use crate::ast::{AstValue, ValueBytes, ValueEscaped, ValuePointer};
 use crate::vm::VmValue;
-use common::warn;
+use crate::warn;
 use std::collections::HashMap;
 
 pub type Ptr = ValuePointer;
