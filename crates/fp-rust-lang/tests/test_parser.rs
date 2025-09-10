@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
-use common::*;
+use eyre::Result;
 use pretty_assertions::assert_eq;
+use fp_core::bail;
+use fp_core::info;
+use fp_core::warn;
 
 use fp_core::ast::*;
 use fp_core::ast::{AstItem, ItemDefFunction, ItemImpl, Visibility};

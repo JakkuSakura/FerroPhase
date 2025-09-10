@@ -1,7 +1,7 @@
 use crate::ast::AstValue;
 use crate::ast::{AstExpr, ExprId};
 use crate::ctx::Context;
-use eyre::Result;
+use crate::error::Result;
 
 pub trait ValueSystem {
     fn get_value_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstValue> {

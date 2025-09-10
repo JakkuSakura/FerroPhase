@@ -8,11 +8,12 @@ mod ty;
 use crate::parser::expr::parse_block;
 
 use crate::parser::item::parse_fn_sig;
-use common::*;
 use itertools::Itertools;
 use fp_core::ast::*;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
+use fp_core::{bail};
 
+use eyre::{Result, eyre, ensure, Context};
 use std::path::PathBuf;
 use syn::parse_str;
 use syn_inline_mod::InlinerBuilder;
@@ -58,7 +59,7 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
                     _ => bail!("Does not support path arguments: {:?}", x),
                 };
                 let ident = parse_ident(x.ident);
-                Ok(ParameterPathSegment { ident, args })
+                Ok::<_, fp_core::Error>(ParameterPathSegment { ident, args })
             })
             .try_collect()?,
     })
@@ -115,7 +116,7 @@ impl RustParser {
         let path = path
             .canonicalize()
             .with_context(|| format!("Could not find file: {}", path.display()))?;
-        info!("Parsing {}", path.display());
+        println!("Parsing {}", path.display());
         let module = builder
             .parse_and_inline_modules(&path)
             .with_context(|| format!("path: {}", path.display()))?;
@@ -157,27 +158,27 @@ impl RustParser {
 }
 
 impl AstDeserializer for RustParser {
-    fn deserialize_node(&self, code: &str) -> Result<AstNode> {
-        let code: syn::File = parse_str(code)?;
+    fn deserialize_node(&self, code: &str) -> fp_core::error::Result<AstNode> {
+        let code: syn::File = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         let path = PathBuf::from("__file__");
-        self.parse_file_content(path, code).map(AstNode::File)
+        Ok(self.parse_file_content(path, code).map(AstNode::File)?)
     }
 
-    fn deserialize_expr(&self, code: &str) -> Result<AstExpr> {
-        let code: syn::Expr = parse_str(code)?;
-        self.parse_expr(code)
+    fn deserialize_expr(&self, code: &str) -> fp_core::error::Result<AstExpr> {
+        let code: syn::Expr = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
+        Ok(self.parse_expr(code)?)
     }
 
-    fn deserialize_item(&self, code: &str) -> Result<AstItem> {
-        let code: syn::Item = parse_str(code)?;
-        self.parse_item(code)
+    fn deserialize_item(&self, code: &str) -> fp_core::error::Result<AstItem> {
+        let code: syn::Item = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
+        Ok(self.parse_item(code)?)
     }
 
-    fn deserialize_file_load(&self, path: &std::path::Path) -> Result<AstFile> {
-        self.parse_file_recursively(path.to_owned())
+    fn deserialize_file_load(&self, path: &std::path::Path) -> fp_core::error::Result<AstFile> {
+        Ok(self.parse_file_recursively(path.to_owned())?)
     }
-    fn deserialize_type(&self, code: &str) -> Result<AstType> {
-        let code: syn::Type = parse_str(code)?;
-        self.parse_type(code)
+    fn deserialize_type(&self, code: &str) -> fp_core::error::Result<AstType> {
+        let code: syn::Type = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
+        Ok(self.parse_type(code)?)
     }
 }
