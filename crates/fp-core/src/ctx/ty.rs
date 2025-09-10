@@ -1,7 +1,7 @@
 use crate::ast::{AstExpr, ExprId};
 use crate::ast::{AstType, AstValue};
 use crate::ctx::Context;
-use eyre::Result;
+use crate::error::Result;
 
 pub trait TypeSystem {
     fn get_ty_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstType> {

@@ -1,5 +1,4 @@
 use crate::printer::RustPrinter;
-use eyre::bail;
 use itertools::Itertools;
 use fp_core::ast::{
     AstExpr, AstValue, ValueBool, ValueChar, ValueDecimal, ValueInt, ValueList, ValueString,
@@ -9,10 +8,10 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote;
 
 impl RustPrinter {
-    pub fn print_undefined(&self, _n: &ValueUndefined) -> eyre::Result<TokenStream> {
+    pub fn print_undefined(&self, _n: &ValueUndefined) -> fp_core::Result<TokenStream> {
         Ok(quote!(undefined))
     }
-    pub fn print_value(&self, v: &AstValue) -> eyre::Result<TokenStream> {
+    pub fn print_value(&self, v: &AstValue) -> fp_core::Result<TokenStream> {
         let v = match v {
             AstValue::Function(f) => self.print_func_value(f)?,
             AstValue::Int(i) => self.print_int(i)?,
@@ -44,7 +43,7 @@ impl RustPrinter {
         };
         Ok(v)
     }
-    pub fn print_struct_value(&self, s: &ValueStruct) -> eyre::Result<TokenStream> {
+    pub fn print_struct_value(&self, s: &ValueStruct) -> fp_core::Result<TokenStream> {
         let name = self.print_ident(&s.ty.name);
         let kwargs: Vec<_> = s
             .structural
@@ -55,23 +54,23 @@ impl RustPrinter {
         Ok(quote!(#name { #(#kwargs), * }))
     }
 
-    pub fn print_int(&self, n: &ValueInt) -> eyre::Result<TokenStream> {
+    pub fn print_int(&self, n: &ValueInt) -> fp_core::Result<TokenStream> {
         let n = syn::LitInt::new(&n.value.to_string(), Span::call_site());
         Ok(quote!(#n))
     }
-    pub fn print_bool(&self, n: &ValueBool) -> eyre::Result<TokenStream> {
+    pub fn print_bool(&self, n: &ValueBool) -> fp_core::Result<TokenStream> {
         let n = n.value;
         Ok(quote!(#n))
     }
-    pub fn print_decimal(&self, n: &ValueDecimal) -> eyre::Result<TokenStream> {
+    pub fn print_decimal(&self, n: &ValueDecimal) -> fp_core::Result<TokenStream> {
         let n = syn::LitFloat::new(&n.value.to_string(), Span::call_site());
         Ok(quote!(#n))
     }
-    pub fn print_char(&self, n: &ValueChar) -> eyre::Result<TokenStream> {
+    pub fn print_char(&self, n: &ValueChar) -> fp_core::Result<TokenStream> {
         let n = n.value;
         Ok(quote!(#n))
     }
-    pub fn print_string(&self, n: &ValueString) -> eyre::Result<TokenStream> {
+    pub fn print_string(&self, n: &ValueString) -> fp_core::Result<TokenStream> {
         let v = &n.value;
         return if n.owned {
             Ok(quote!(
@@ -83,15 +82,15 @@ impl RustPrinter {
             ))
         };
     }
-    pub fn print_list_expr(&self, n: &[AstExpr]) -> eyre::Result<TokenStream> {
+    pub fn print_list_expr(&self, n: &[AstExpr]) -> fp_core::Result<TokenStream> {
         let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }
-    pub fn print_list_value(&self, n: &ValueList) -> eyre::Result<TokenStream> {
+    pub fn print_list_value(&self, n: &ValueList) -> fp_core::Result<TokenStream> {
         let n: Vec<_> = n.values.iter().map(|x| self.print_value(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }
-    pub fn print_unit(&self, _n: &ValueUnit) -> eyre::Result<TokenStream> {
+    pub fn print_unit(&self, _n: &ValueUnit) -> fp_core::Result<TokenStream> {
         Ok(quote!(()))
     }
 }

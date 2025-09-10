@@ -1,7 +1,6 @@
 use crate::ast::{AstExpr, ExprClosured, Visibility};
 use crate::ast::{AstType, AstValue, ValueFunction};
 use crate::id::{Ident, Path};
-use common::*;
 use dashmap::DashMap;
 use itertools::Itertools;
 use std::ops::Deref;
@@ -84,7 +83,7 @@ impl ScopedContext {
         self.insert_value(key, AstValue::expr(value));
     }
 
-    pub fn print_local_values(&self) -> Result<()> {
+    pub fn print_local_values(&self) -> Result<(), crate::Error> {
         debug!("Values in {}", self.path);
         for key in self.storages.iter() {
             let (k, v) = key.pair();
@@ -264,7 +263,7 @@ impl SharedScopedContext {
         }
     }
 
-    pub fn print_values(&self) -> Result<()> {
+    pub fn print_values(&self) -> Result<(), crate::Error> {
         if let Some(parent) = self.get_parent() {
             parent.print_values()?;
         }

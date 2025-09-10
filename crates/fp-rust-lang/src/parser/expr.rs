@@ -2,7 +2,6 @@ use crate::parser::item::parse_item;
 use crate::parser::pat::parse_pat;
 use crate::parser::ty::{parse_member, parse_type};
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
-use common::warn;
 use eyre::bail;
 use itertools::Itertools;
 use fp_core::ast::*;
@@ -37,7 +36,7 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
         syn::Expr::Closure(c) => AstExpr::Closure(parse_expr_closure(c)?),
         syn::Expr::Array(a) => AstExpr::Array(parse_expr_array(a)?),
         raw => {
-            warn!("RawExpr {:?}", raw);
+            eprintln!("RawExpr {:?}", raw);
             AstExpr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };

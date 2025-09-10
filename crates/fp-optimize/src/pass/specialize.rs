@@ -1,11 +1,16 @@
 use crate::pass::{InterpreterPass, OptimizePass};
-use common::*;
+// Replace common::* with specific imports
 use itertools::{zip_eq, Itertools};
+use tracing::{debug, warn};
+use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::id::{Ident, Locator};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+
+// Import our error helpers
+use crate::error::optimization_error;
 
 pub struct SpecializePass {
     spec_id: AtomicUsize,
@@ -41,7 +46,7 @@ impl SpecializePass {
             let x = match arg.get() {
                 AstExpr::Locator(v) => ctx
                     .get_expr(v.to_path())
-                    .with_context(|| format!("Couldn't find {:?} in context", v))?,
+                    .ok_or_else(|| optimization_error(format!("Couldn't find {:?} in context", v)))?,
                 x => x,
             };
             args.push(x.into())

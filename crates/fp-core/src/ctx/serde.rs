@@ -1,5 +1,5 @@
 use crate::ast::AstExpr;
-use eyre::Result;
+use crate::error::Result;
 
 use crate::ast::{AstType, AstValue};
 use crate::ctx::Context;
