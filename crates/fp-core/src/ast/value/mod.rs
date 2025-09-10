@@ -9,7 +9,7 @@ use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
-use common::bail;
+use crate::bail;
 use std::fmt::{Display, Formatter};
 
 pub type ValueId = u64;
@@ -93,7 +93,7 @@ impl AstValue {
     }
 }
 impl ToJson for AstValue {
-    fn to_json(&self) -> common::Result<serde_json::Value> {
+    fn to_json(&self) -> crate::Result<serde_json::Value> {
         match self {
             AstValue::Int(i) => i.to_json(),
             AstValue::Bool(b) => b.to_json(),

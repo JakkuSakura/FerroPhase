@@ -1,11 +1,17 @@
 use crate::pass::{InlinePass, OptimizePass, SpecializePass};
-use common::*;
+// Replace common::* with specific imports
 use itertools::Itertools;
+use tracing::{debug, info, warn};
+use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::id::Ident;
 use std::mem::take;
 use std::sync::Arc;
+
+// Import our custom error helpers
+use crate::error::optimization_error;
+use crate::opt_bail;
 
 pub fn load_optimizers(serializer: Arc<dyn AstSerializer>) -> Vec<FoldOptimizer> {
     let optimizers: Vec<Box<dyn OptimizePass>> = vec![
@@ -39,7 +45,7 @@ impl FoldOptimizer {
             ExprInvokeTarget::Function(id) => {
                 func = ctx
                     .get_expr_with_ctx(id.to_path())
-                    .with_context(|| format!("Couldn't find {}", id))?;
+                    .ok_or_else(|| optimization_error(format!("Couldn't find {}", id)))?;
             }
             ExprInvokeTarget::Method(_) => {
                 todo!()
@@ -83,9 +89,8 @@ impl FoldOptimizer {
                                 .map(|x| x.child("__invoke__".into(), Visibility::Private, false))
                                 .unwrap_or_else(|| SharedScopedContext::new());
                             for (i, arg) in invoke.args.clone().into_iter().enumerate() {
-                                let param = f.params.get(i).with_context(|| {
-                                    format!("Couldn't find {} parameter of {:?}", i, f)
-                                })?;
+                                let param = f.params.get(i)
+                                    .ok_or_else(|| optimization_error(format!("Couldn't find {} parameter of {:?}", i, f)))?;
 
                                 sub_ctx.insert_expr(param.name.clone(), arg.into());
                             }
@@ -125,7 +130,7 @@ impl FoldOptimizer {
                 }
             }
             ControlFlow::Continue => Ok(AstExpr::Invoke(invoke.into())),
-            _ => bail!("Cannot handle control flow {:?}", control),
+            _ => opt_bail!(format!("Cannot handle control flow {:?}", control)),
         }
     }
 
@@ -137,7 +142,7 @@ impl FoldOptimizer {
             AstExpr::Locator(val) => {
                 info!("Looking for {}", val);
                 ctx.get_expr_with_ctx(val.to_path())
-                    .with_context(|| format!("Couldn't find {}", val))?
+                    .ok_or_else(|| optimization_error(format!("Couldn't find {}", val)))?
             }
             AstExpr::Block(x) => self.optimize_block(x, ctx)?,
             AstExpr::Match(x) => self.optimize_match(x, ctx)?,
@@ -232,10 +237,11 @@ impl FoldOptimizer {
         if let Some(init) = &let_.init {
             let init = self.optimize_expr(init.clone(), ctx)?;
             let value = self.pass.try_evaluate_expr(&init, ctx)?;
-            ctx.insert_expr(
-                let_.pat.as_ident().context("Only supports ident")?.clone(),
-                value.clone(),
-            );
+            let ident = let_.pat.as_ident()
+                .ok_or_else(|| optimization_error("Only supports ident"))?
+                .clone();
+            
+            ctx.insert_expr(ident, value.clone());
 
             Ok(StmtLet::new(let_.pat.clone(), value.into(), None))
         } else {
@@ -258,7 +264,7 @@ impl FoldOptimizer {
             BlockStmt::Any(_) => Ok(stmt),
             BlockStmt::Let(x) => self.optimize_let(x, ctx).map(BlockStmt::Let),
             #[allow(unreachable_patterns)]
-            _ => bail!("Could not optimize {:?}", stmt),
+            _ => opt_bail!(format!("Could not optimize {:?}", stmt)),
         }
     }
 

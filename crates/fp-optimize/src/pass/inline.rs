@@ -1,5 +1,7 @@
 use crate::pass::OptimizePass;
-use common::*;
+// Replace common::* with specific imports
+use tracing::warn;
+use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::id::Locator;

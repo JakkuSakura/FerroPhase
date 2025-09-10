@@ -1,7 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
 use crate::{common_enum, common_struct};
-use eyre::Result;
+use crate::error::Result;
 use std::path::{Path, PathBuf};
 
 pub use deserialize::*;
@@ -48,9 +48,9 @@ pub trait AstProvider {
 }
 impl<D: AstDeserializer> AstProvider for D {
     fn get_ast_from_code(&self, cst: &str) -> Result<AstNode> {
-        self.deserialize_node(cst)
+        Ok(self.deserialize_node(cst)?)
     }
     fn get_ast_from_file_path(&self, path: &Path) -> Result<AstNode> {
-        self.deserialize_file_load(path).map(AstNode::File)
+        Ok(self.deserialize_file_load(path).map(AstNode::File)?)
     }
 }

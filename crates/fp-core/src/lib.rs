@@ -1,3 +1,8 @@
+#![feature(iterator_try_collect)]
+
+#[macro_use]
+pub mod macros;
+
 pub mod ast;
 pub mod context;
 pub mod cst;
@@ -12,3 +17,11 @@ pub mod span;
 pub mod thir;
 pub mod utils;
 pub mod vm;
+
+
+// Re-export commonly used items for convenience
+pub use tracing;
+
+// Alias for error types
+pub type Error = crate::error::Error;
+pub type Result<T> = crate::error::Result<T>;

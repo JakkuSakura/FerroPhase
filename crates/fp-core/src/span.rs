@@ -9,6 +9,18 @@ pub struct Span {
     pub hi: u32,
 }
 
+impl std::fmt::Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Span({}:{}-{})", self.file, self.lo, self.hi)
+    }
+}
+
+impl Span {
+    pub fn new(file: FileId, lo: u32, hi: u32) -> Span {
+        Span { file, lo, hi }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FileInfo {
     pub file: PathBuf,

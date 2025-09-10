@@ -1,5 +1,5 @@
 use eyre::bail;
-use eyre::Result;
+use fp_core::Result;
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

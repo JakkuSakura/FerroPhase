@@ -3,10 +3,10 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Add, Deref, DerefMut, Mul, Sub};
 
 use bytes::BytesMut;
-use common::*;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use crate::error::Result;
 
 use crate::ast::{get_threadlocal_serializer, BExpr};
 use crate::ast::{AstType, AstValue, TypeBounds, TypeStruct};
@@ -40,7 +40,7 @@ macro_rules! plain_value {
             }
         }
         impl ToJson for $name {
-            fn to_json(&self) -> Result<serde_json::Value> {
+            fn to_json(&self) -> crate::error::Result<serde_json::Value> {
                 Ok(json!(self.value))
             }
         }
@@ -94,7 +94,7 @@ impl ValueDecimal {
     }
 }
 impl ToJson for ValueDecimal {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(self.value))
     }
 }
@@ -130,7 +130,7 @@ impl ValueString {
 }
 
 impl ToJson for ValueString {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(self.value))
     }
 }
@@ -151,7 +151,7 @@ impl ValueList {
     }
 }
 impl ToJson for ValueList {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         let values: Vec<_> = self.values.iter().map(|x| x.to_json()).try_collect()?;
         Ok(json!(values))
     }
@@ -324,14 +324,14 @@ impl Mul<ValueInt> for ValueOffset {
 }
 plain_value!(ValueUnit);
 impl ToJson for ValueUnit {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!({}))
     }
 }
 
 plain_value!(ValueNull);
 impl ToJson for ValueNull {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(null))
     }
 }
@@ -383,13 +383,13 @@ impl Drop for ValueEscaped {
 }
 
 impl ToJson for ValueUndefined {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(null))
     }
 }
 plain_value!(ValueNone);
 impl ToJson for ValueNone {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(null))
     }
 }
@@ -407,7 +407,7 @@ impl ValueSome {
     }
 }
 impl ToJson for ValueSome {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         self.value.to_json()
     }
 }
@@ -425,7 +425,7 @@ impl ValueOption {
     }
 }
 impl ToJson for ValueOption {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         match &self.value {
             Some(v) => v.to_json(),
             None => Ok(json!(null)),
@@ -458,7 +458,7 @@ impl ValueStruct {
     }
 }
 impl ToJson for ValueStruct {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         self.structural.to_json()
     }
 }
@@ -491,7 +491,7 @@ impl ValueStructural {
     }
 }
 impl ToJson for ValueStructural {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         let mut map = serde_json::Map::new();
         for field in &self.fields {
             map.insert(field.name.name.clone(), field.value.to_json()?);
@@ -630,7 +630,7 @@ impl ValueTuple {
 }
 
 impl ToJson for ValueTuple {
-    fn to_json(&self) -> Result<serde_json::Value> {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         let values: Vec<_> = self.values.iter().map(|x| x.to_json()).try_collect()?;
         Ok(json!(values))
     }
