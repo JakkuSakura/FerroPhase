@@ -10,27 +10,160 @@ Source Code → AST (enriched with const evaluation) → Target Source Code
 
 **Key Insight:** AST interpreters are perfect for const evaluation - they're simple, provide excellent error reporting, and handle metaprogramming naturally.
 
-## Phase 1: Core AST Infrastructure
+# Refined Mini Passes for Const Evaluation
 
-### Step 1: Integration with Existing AST
+Based on the type system integration and interpreter reuse architecture, here are the refined mini passes:
+
+## Phase 1: Setup & Discovery
+
+### Pass 1: **Type System Integration Setup**
+- Establish bidirectional connection between const evaluator and type system
+- Initialize shared type registry and query interfaces
+- Set up type introspection capabilities (`@sizeof`, `@reflect_fields` infrastructure)
+- Cache frequently accessed type information
+
+### Pass 2: **Const Discovery & Dependency Analysis**
+- Find all const blocks, const expressions, and intrinsic calls
+- Build dependency graph between const blocks
+- Identify type dependencies (which const blocks need type information)
+- Compute initial evaluation order with topological sort
+- Detect circular dependencies early
+
+### Pass 3: **Generic Context Preparation**
+- Identify generic parameters that will be specialized by const evaluation
+- Set up evaluation contexts for different generic instantiations
+- Prepare type variable mappings for const evaluation scope
+
+## Phase 2: Iterative Evaluation & Feedback
+
+### Pass 4: **Const Evaluation with Type Queries** *(Iterative)*
+- Evaluate const blocks in dependency order
+- Query type system for introspection operations
+- Execute metaprogramming intrinsics
+- Collect generated types, fields, methods, and impl blocks
+- **May generate new const blocks** → triggers iteration
+
+### Pass 5: **Type System Update & Validation** *(Iterative)*
+- Feed generated types back to type system
+- Validate new type definitions for consistency
+- Update type registry with new types
+- Resolve any type conflicts or errors
+- **If new types affect existing const blocks** → triggers iteration
+
+### Pass 6: **Dependency Re-analysis** *(Conditional)*
+- Re-analyze dependencies if new const blocks were generated
+- Update evaluation order if dependency graph changed
+- Check for new circular dependencies
+- **Only runs if Pass 4-5 generated new const constructs**
+
+## Phase 3: Specialization & Finalization
+
+### Pass 7: **Generic Specialization**
+- Use const evaluation results to specialize generic types
+- Create concrete type instances based on const parameters
+- Propagate specializations through type hierarchy
+- Update type system with specialized instances
+
+### Pass 8: **Code Generation & AST Modification**
+- Apply all collected side effects to AST
+- Add generated fields to structs
+- Insert generated methods and impl blocks
+- Create new type definitions from metaprogramming
+- Maintain source location tracking for generated code
+
+### Pass 9: **Final Type Validation & Integration**
+- Perform final type checking with all generated types
+- Ensure all type references are resolved
+- Validate generic constraints with specialized types
+- Freeze type system state for runtime compilation
+
+### Pass 10: **Const Cleanup & Optimization**
+- Remove evaluated const blocks (no longer needed)
+- Replace const expressions with computed literal values
+- Eliminate dead const variables
+- Optimize generated code patterns
+
+## Key Architectural Features
+
+### **Iterative Execution**
+Passes 4-6 form an **iterative loop** because const evaluation can generate new const blocks:
+```
+┌─> Pass 4: Const Evaluation ────┐
+│                                ▼
+└── Pass 6: Re-analysis ◄── Pass 5: Type Update
+    (if changes)
+```
+
+### **Shared State Management**
+```
+Type System ◄─────────────────► Const Evaluator
+     ▲                               ▲
+     │                               │
+     ▼                               ▼
+Pass Results Storage ◄────────► Dependency Graph
+```
+
+### **Bailout Conditions**
+- **Maximum iterations**: Prevent infinite const evaluation loops
+- **Dependency cycles**: Detected and reported as errors
+- **Type validation failures**: Stop evaluation if type system becomes inconsistent
+
+### **Incremental Updates**
+- Only re-evaluate const blocks affected by type system changes
+- Cache evaluation results when possible
+- Track which passes need to re-run based on changes
+
+## Pass Coordination Example
+
+```
+Initial State: 3 const blocks discovered
+
+Iteration 1:
+  Pass 4: Evaluates blocks A, B, C → generates new type T
+  Pass 5: Adds type T to type system → validates successfully
+  Pass 6: No new const blocks → continue
+
+Iteration 2: (skipped - no new const blocks)
+
+Pass 7: Specializes generic G<X> with const value 42 → G<42>
+Pass 8: Adds generated methods to struct S
+Pass 9: Final validation of all types
+Pass 10: Removes const blocks, optimizes
+```
+
+## Core AST Infrastructure
+
+### Enhanced AST Design
 
 ```rust
-// Const evaluation works with existing AST structures
-// No special const-specific nodes needed
+// AST nodes carry both syntax and semantic information
 #[derive(Debug, Clone)]
-enum BlockStmt {
+struct BlockStmt {
     // Core statement types
     kind: BlockStmtKind,
 
+    // Const evaluation state
+    const_evaluation_state: ConstEvalState,
+
+    // Source mapping for errors
+    span: Span,
 }
 #[derive(Debug, Clone)]
-enum BlockStmt {
-    Item(BItem),
-    Let(StmtLet),
-    Expr(BlockStmtExpr),
-    Noop,
-    Any(AnyBox),
+enum BlockStmtKind {
+    Let { name: String, ty: Option<AstType>, value: AstExpr },
+    Expr(AstExpr),
+
+    // Regular control flow - no special const variants
+    // Const evaluation works with existing AST structures
 }
+#[derive(Debug, Clone)]
+enum ConstEvalState {
+    NotEvaluated,
+    Evaluating,      // Prevent infinite recursion
+    Evaluated,
+    Error(String),
+}
+```
 ### Step 2: Core Value System
 
 ```rust
@@ -378,45 +511,55 @@ impl ConstEvaluationCache {
 // or handled as Generic errors with descriptive messages
 ```
 
+## Implementation Benefits
+
+This refined architecture provides:
+
+- ✅ **Type system integration** through dedicated setup and update passes
+- ✅ **Feedback loop handling** via iterative passes 4-6
+- ✅ **Incremental processing** with bailout conditions
+- ✅ **Clear separation** between evaluation, integration, and cleanup
+- ✅ **Extensibility** - easy to add new intrinsics or type operations
+- ✅ **Debuggability** - each pass has clear inputs/outputs and responsibilities
+
 ## Implementation Timeline
 
-### Week 1-2: Foundation
-- Const evaluation integration with existing AST structures
-- Basic AstValue system and conversions
-- Simple AST interpreter skeleton
-- Basic expression evaluation (literals, identifiers, binary ops)
+### Sprint 1: Foundation (Passes 1-3)
+- Type system integration setup and bidirectional communication
+- Const discovery with dependency graph construction
+- Generic context preparation for specialization
+- **Milestone:** Complete type system integration infrastructure
 
-### Week 3-4: Core Features
-- Control flow statements (regular if, loops)
-- Scope management and variable lookup
-- Function calls in const context
-- Error handling and source location tracking
+### Sprint 2: Iterative Core (Passes 4-6)
+- Const evaluation with type queries and intrinsic execution
+- Type system updates and validation feedback loops
+- Dependency re-analysis with incremental updates
+- **Milestone:** Working iterative const evaluation with type feedback
 
-### Week 5-6: Metaprogramming
-- Core intrinsic functions (@sizeof, @reflect_fields, @hasmethod)
-- Code generation intrinsics (@addfield, @generate_method)
-- Side effect system for code generation
-- Integration with AST modification
+### Sprint 3: Specialization (Passes 7-8)
+- Generic specialization based on const results
+- Code generation and AST modification with side effects
+- Source location tracking for generated code
+- **Milestone:** Full metaprogramming capabilities
 
-### Week 7-8: Integration & Optimization
-- Full compiler pipeline integration
-- Caching system for performance
-- Comprehensive error reporting
-- Testing and debugging tools
-
-### Week 9-10: Polish
-- Performance optimization
-- Documentation and examples
-- Advanced intrinsics as needed
-- Integration testing with various target code generators
+### Sprint 4: Finalization (Passes 9-10)
+- Final type validation and integration
+- Const cleanup and optimization
+- Performance tuning and edge case handling
+- **Milestone:** Production-ready const evaluation system
 
 ## Success Metrics
 
-- **Functionality:** Can evaluate complex const expressions with regular control flow (if, loops, etc.)
-- **Performance:** Const evaluation doesn't significantly slow compilation
-- **Usability:** Clear error messages with source locations
-- **Extensibility:** Easy to add new intrinsic functions
-- **Reliability:** Handles edge cases and provides proper error recovery
+- **Functionality:** Can evaluate complex const expressions with metaprogramming
+- **Type Integration:** Seamless bidirectional communication with type system
+- **Performance:** Iterative evaluation converges efficiently
+- **Extensibility:** Easy to add new passes, intrinsics, and type operations
+- **Reliability:** Handles circular dependencies, type conflicts, and edge cases
+- **Debuggability:** Clear pass-by-pass execution with detailed error reporting
 
-This plan provides a solid foundation for const evaluation while maintaining the flexibility to add more sophisticated features as needed.
+## Key Architectural Insight
+
+**Const evaluation isn't a single pass** - it's a **controlled feedback loop** between const evaluation and type system that eventually converges to a stable state. The key insight: **passes transform, queries analyze**, and the **iterative loop** handles the complex interactions between compile-time evaluation and type system evolution.
+
+This design provides the foundation for sophisticated metaprogramming capabilities while maintaining clear architectural boundaries and predictable execution semantics.
 
