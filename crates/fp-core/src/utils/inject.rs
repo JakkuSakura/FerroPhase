@@ -1,7 +1,6 @@
 use crate::ast::AstType;
 use crate::context::SharedScopedContext;
 use crate::warn;
-use crate::Error;
 use crate::{bail, error::Result};
 
 pub struct Injector {}
