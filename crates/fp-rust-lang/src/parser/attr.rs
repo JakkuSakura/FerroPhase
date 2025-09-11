@@ -1,7 +1,7 @@
 use crate::parser::expr::parse_expr;
 use crate::parser::parse_path;
-use eyre::bail;
-use eyre::Result;
+use fp_core::bail;
+use fp_core::error::Result;
 use fp_core::ast::{
     AstAttrMeta, AstAttrMetaList, AstAttrMetaNameValue, AstAttrStyle, AstAttribute,
 };

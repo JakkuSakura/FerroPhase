@@ -1,5 +1,6 @@
 use crate::printer::RustPrinter;
-use eyre::bail;
+use fp_core::bail;
+use fp_core::error::Result;
 use itertools::Itertools;
 use fp_core::ast::{
     AstType, DecimalType, ExprInvoke, StructuralField, TypeInt, TypePrimitive, TypeReference,
@@ -9,7 +10,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 impl RustPrinter {
-    pub fn print_type(&self, v: &AstType) -> eyre::Result<TokenStream> {
+    pub fn print_type(&self, v: &AstType) -> Result<TokenStream> {
         let ty = match v {
             AstType::Function(f) => self.print_func_type(f)?,
             AstType::Primitive(p) => self.print_primitive_type(*p)?,
@@ -29,7 +30,7 @@ impl RustPrinter {
         };
         Ok(ty)
     }
-    fn print_type_ref(&self, reference: &TypeReference) -> eyre::Result<TokenStream> {
+    fn print_type_ref(&self, reference: &TypeReference) -> Result<TokenStream> {
         let ty = self.print_type(&reference.ty)?;
         if reference.mutability == Some(true) {
             Ok(quote!(&mut #ty))
@@ -38,7 +39,7 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_primitive_type(&self, ty: TypePrimitive) -> eyre::Result<TokenStream> {
+    pub fn print_primitive_type(&self, ty: TypePrimitive) -> Result<TokenStream> {
         match ty {
             TypePrimitive::Int(TypeInt::I64) => Ok(quote!(i64)),
             TypePrimitive::Int(TypeInt::U64) => Ok(quote!(u64)),
@@ -57,7 +58,7 @@ impl RustPrinter {
             _ => bail!("Not supported {:?}", ty),
         }
     }
-    pub fn print_struct_type(&self, s: &TypeStruct) -> eyre::Result<TokenStream> {
+    pub fn print_struct_type(&self, s: &TypeStruct) -> Result<TokenStream> {
         let name = self.print_ident(&s.name);
         let fields: Vec<_> = s
             .fields
@@ -69,13 +70,13 @@ impl RustPrinter {
         }))
     }
 
-    pub fn print_field(&self, field: &StructuralField) -> eyre::Result<TokenStream> {
+    pub fn print_field(&self, field: &StructuralField) -> Result<TokenStream> {
         let name = self.print_ident(&field.name);
         let ty = self.print_type(&field.value)?;
         Ok(quote!(pub #name: #ty ))
     }
 
-    pub fn print_structural_type(&self, s: &TypeStructural) -> eyre::Result<TokenStream> {
+    pub fn print_structural_type(&self, s: &TypeStructural) -> Result<TokenStream> {
         let fields: Vec<_> = s
             .fields
             .iter()
@@ -88,7 +89,7 @@ impl RustPrinter {
         ))
     }
 
-    pub fn print_invoke_type(&self, invoke: &ExprInvoke) -> eyre::Result<TokenStream> {
+    pub fn print_invoke_type(&self, invoke: &ExprInvoke) -> Result<TokenStream> {
         let fun = self.print_invoke_target(&invoke.target)?;
         let args: Vec<_> = invoke
             .args
@@ -99,7 +100,7 @@ impl RustPrinter {
             #fun::<#(#args), *>
         ))
     }
-    pub fn print_type_slice(&self, ty: &TypeSlice) -> eyre::Result<TokenStream> {
+    pub fn print_type_slice(&self, ty: &TypeSlice) -> Result<TokenStream> {
         let elem = self.print_type(&*ty.elem)?;
         Ok(quote!([#elem]))
     }

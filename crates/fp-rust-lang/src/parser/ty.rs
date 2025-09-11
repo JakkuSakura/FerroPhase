@@ -1,4 +1,6 @@
-use eyre::{bail, Context};
+use eyre::Context;
+use fp_core::bail;
+use fp_core::error::Result;
 use itertools::Itertools;
 use quote::ToTokens;
 use syn::parse::ParseStream;
@@ -15,7 +17,7 @@ use crate::parser;
 use crate::parser::item::parse_impl_trait;
 use crate::parser::{item, parse_path};
 
-pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
+pub fn parse_type(t: syn::Type) -> Result<AstType> {
     let t = match t {
         syn::Type::BareFn(f) => AstType::Function(
             TypeFunction {
@@ -69,12 +71,12 @@ pub fn parse_type(t: syn::Type) -> eyre::Result<AstType> {
     };
     Ok(t)
 }
-fn parse_type_slice(s: syn::TypeSlice) -> eyre::Result<AstType> {
+fn parse_type_slice(s: syn::TypeSlice) -> Result<AstType> {
     Ok(AstType::Slice(TypeSlice {
         elem: parse_type(*s.elem)?.into(),
     }))
 }
-fn parse_type_reference(r: syn::TypeReference) -> eyre::Result<TypeReference> {
+fn parse_type_reference(r: syn::TypeReference) -> Result<TypeReference> {
     Ok(TypeReference {
         ty: Box::new(parse_type(*r.elem)?),
         mutability: r.mutability.map(|_| true),
@@ -82,7 +84,7 @@ fn parse_type_reference(r: syn::TypeReference) -> eyre::Result<TypeReference> {
     })
 }
 
-pub fn parse_type_param_bound(b: syn::TypeParamBound) -> eyre::Result<AstExpr> {
+pub fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<AstExpr> {
     match b {
         syn::TypeParamBound::Trait(t) => {
             let path = parse_path(t.path)?;
@@ -92,20 +94,20 @@ pub fn parse_type_param_bound(b: syn::TypeParamBound) -> eyre::Result<AstExpr> {
     }
 }
 
-pub fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> eyre::Result<TypeBounds> {
+pub fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> Result<TypeBounds> {
     Ok(TypeBounds {
         bounds: bs.into_iter().map(parse_type_param_bound).try_collect()?,
     })
 }
 
-pub fn parse_member(mem: syn::Member) -> eyre::Result<Ident> {
+pub fn parse_member(mem: syn::Member) -> Result<Ident> {
     Ok(match mem {
         syn::Member::Named(n) => parser::parse_ident(n),
         syn::Member::Unnamed(_) => bail!("Does not support unnamed field yet {:?}", mem),
     })
 }
 
-pub fn parse_struct_field(i: usize, f: syn::Field) -> eyre::Result<StructuralField> {
+pub fn parse_struct_field(i: usize, f: syn::Field) -> Result<StructuralField> {
     Ok(StructuralField {
         name: f
             .ident
@@ -130,7 +132,7 @@ impl syn::parse::Parse for StructuralTypeParser {
                 .enumerate()
                 .map(|(i, f)| parse_struct_field(i, f))
                 .try_collect()
-                .map_err(|err| input.error(err))?,
+                .map_err(|err| input.error(err.to_string()))?,
         }))
     }
 }
@@ -164,7 +166,7 @@ impl syn::parse::Parse for TypeValueParser {
             if input.peek2(syn::Ident) {
                 let s: syn::ItemStruct = input.parse()?;
                 Ok(TypeValueParser::Struct(
-                    item::parse_type_struct(s).map_err(|err| input.error(err))?,
+                    item::parse_type_struct(s).map_err(|err| input.error(err.to_string()))?,
                 ))
             } else {
                 Ok(TypeValueParser::Structural(
@@ -174,7 +176,7 @@ impl syn::parse::Parse for TypeValueParser {
         } else {
             let path = input.parse::<syn::Path>()?;
             Ok(TypeValueParser::Path(
-                parse_path(path).map_err(|err| input.error(err))?,
+                parse_path(path).map_err(|err| input.error(err.to_string()))?,
             ))
         }
     }
@@ -227,7 +229,7 @@ impl Into<AstExpr> for TypeExprParser {
         }
     }
 }
-fn parse_custom_type_expr(m: syn::TypeMacro) -> eyre::Result<AstExpr> {
+fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<AstExpr> {
     let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
     Ok(t.into())
 }

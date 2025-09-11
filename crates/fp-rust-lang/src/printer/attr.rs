@@ -1,5 +1,5 @@
 use crate::printer::RustPrinter;
-use eyre::Result;
+use fp_core::error::Result;
 use itertools::Itertools;
 use fp_core::ast::{AstAttrMeta, AstAttrStyle, AstAttribute};
 use proc_macro2::TokenStream;

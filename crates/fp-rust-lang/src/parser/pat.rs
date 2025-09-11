@@ -1,18 +1,19 @@
 use crate::parser::{parse_ident, parse_locator, ty};
-use eyre::bail;
+use fp_core::bail;
+use fp_core::error::Result;
 use itertools::Itertools;
 use fp_core::pat::{
     Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
 };
 use quote::ToTokens;
 
-pub fn parse_pat_ident(i: syn::PatIdent) -> eyre::Result<PatternIdent> {
+pub fn parse_pat_ident(i: syn::PatIdent) -> Result<PatternIdent> {
     Ok(PatternIdent {
         ident: parse_ident(i.ident),
         mutability: Some(i.mutability.is_some()),
     })
 }
-pub fn parse_pat(p: syn::Pat) -> eyre::Result<Pattern> {
+pub fn parse_pat(p: syn::Pat) -> Result<Pattern> {
     Ok(match p {
         syn::Pat::Ident(ident) => parse_pat_ident(ident)?.into(),
         syn::Pat::Wild(_) => Pattern::Wildcard(PatternWildcard {}),

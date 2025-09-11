@@ -1,4 +1,4 @@
-use eyre::Result;
+use fp_core::error::Result;
 use fp_core::bail;
 use std::io::Write;
 use std::process::{Command, Stdio};

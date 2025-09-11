@@ -29,6 +29,13 @@ impl From<eyre::Report> for Error {
         Error::Generic(err.to_string())
     }
 }
+
+// Convert from std::io::Error to our Error type
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Generic(e.to_string())
+    }
+}
 impl From<String> for Error {
     fn from(s: String) -> Self {
         Error::Generic(s)
