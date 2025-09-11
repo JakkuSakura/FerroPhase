@@ -640,6 +640,7 @@ dependencies = [
 name = "fp-rust-lang"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "eyre",
  "fp-core",
  "itertools 0.12.1",

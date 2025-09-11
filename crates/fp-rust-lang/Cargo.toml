@@ -16,6 +16,7 @@ syn-inline-mod = "0.6.0"
 pretty_assertions = "1.4.0"
 eyre = "0.6.12"
 itertools = "0.12.1"
+clap = { version = "4.0", features = ["derive"] }
 
 [features]
 default = []
