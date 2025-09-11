@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use common::*;
 use pretty_assertions::assert_eq;
 
 use fp_core::ast::*;
 use fp_core::ctx::Context;
+use fp_core::Result;
 use fp_optimize::pass::InterpreterPass;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::{shll_parse_expr, shll_parse_value};
@@ -49,7 +49,6 @@ fn test_eval_function_call() -> Result<()> {
 
 #[test]
 fn test_eval_function_call_with_main() -> Result<()> {
-    setup_logs(LogLevel::Debug)?;
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let code = shll_parse_expr! {
