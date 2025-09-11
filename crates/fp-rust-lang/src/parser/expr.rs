@@ -2,7 +2,8 @@ use crate::parser::item::parse_item;
 use crate::parser::pat::parse_pat;
 use crate::parser::ty::{parse_member, parse_type};
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
-use eyre::bail;
+use fp_core::bail;
+use fp_core::error::Result;
 use itertools::Itertools;
 use fp_core::ast::*;
 use fp_core::id::Ident;
@@ -10,7 +11,7 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::utils::anybox::AnyBox;
 use quote::ToTokens;
 
-pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
+pub fn parse_expr(expr: syn::Expr) -> Result<AstExpr> {
     let expr = match expr {
         syn::Expr::Binary(b) => parse_expr_binary(b)?,
         syn::Expr::Unary(u) => parse_unary(u)?.into(),
@@ -42,12 +43,12 @@ pub fn parse_expr(expr: syn::Expr) -> eyre::Result<AstExpr> {
     };
     Ok(expr)
 }
-fn parse_expr_array(a: syn::ExprArray) -> eyre::Result<ExprArray> {
+fn parse_expr_array(a: syn::ExprArray) -> Result<ExprArray> {
     Ok(ExprArray {
         values: a.elems.into_iter().map(parse_expr).try_collect()?,
     })
 }
-fn parse_expr_closure(c: syn::ExprClosure) -> eyre::Result<ExprClosure> {
+fn parse_expr_closure(c: syn::ExprClosure) -> Result<ExprClosure> {
     let movability = c.movability.is_some();
     let params: Vec<_> = c.inputs.into_iter().map(|x| parse_pat(x)).try_collect()?;
     let ret_ty = match c.output {
@@ -62,24 +63,24 @@ fn parse_expr_closure(c: syn::ExprClosure) -> eyre::Result<ExprClosure> {
         body,
     })
 }
-fn parse_expr_let(l: syn::ExprLet) -> eyre::Result<ExprLet> {
+fn parse_expr_let(l: syn::ExprLet) -> Result<ExprLet> {
     Ok(ExprLet {
         pat: parse_pat(*l.pat)?.into(),
         expr: parse_expr(*l.expr)?.into(),
     })
 }
-fn parse_expr_while(w: syn::ExprWhile) -> eyre::Result<ExprWhile> {
+fn parse_expr_while(w: syn::ExprWhile) -> Result<ExprWhile> {
     Ok(ExprWhile {
         cond: parse_expr(*w.cond)?.into(),
         body: AstExpr::Block(parse_block(w.body)?).into(),
     })
 }
-fn parse_expr_try(t: syn::ExprTry) -> eyre::Result<ExprTry> {
+fn parse_expr_try(t: syn::ExprTry) -> Result<ExprTry> {
     Ok(ExprTry {
         expr: parse_expr(*t.expr)?.into(),
     })
 }
-fn parse_expr_field(f: syn::ExprField) -> eyre::Result<ExprSelect> {
+fn parse_expr_field(f: syn::ExprField) -> Result<ExprSelect> {
     let obj = parse_expr(*f.base)?.into();
     let field = parse_field_member(f.member);
     Ok(ExprSelect {
@@ -94,17 +95,17 @@ pub fn parse_field_member(f: syn::Member) -> Ident {
         syn::Member::Unnamed(n) => Ident::new(n.index.to_string()),
     }
 }
-pub fn parse_literal(lit: syn::Lit) -> eyre::Result<AstValue> {
+pub fn parse_literal(lit: syn::Lit) -> Result<AstValue> {
     Ok(match lit {
-        syn::Lit::Int(i) => AstValue::Int(ValueInt::new(i.base10_parse()?)),
-        syn::Lit::Float(i) => AstValue::Decimal(ValueDecimal::new(i.base10_parse()?)),
+        syn::Lit::Int(i) => AstValue::Int(ValueInt::new(i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?)),
+        syn::Lit::Float(i) => AstValue::Decimal(ValueDecimal::new(i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?)),
         syn::Lit::Str(s) => AstValue::String(ValueString::new_ref(s.value())),
         syn::Lit::Bool(b) => AstValue::Bool(ValueBool::new(b.value)),
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
 
-pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
+pub fn parse_unary(u: syn::ExprUnary) -> Result<ExprUnOp> {
     let expr = parse_expr(*u.expr)?;
     let op = match u.op {
         syn::UnOp::Neg(_) => UnOpKind::Neg,
@@ -119,7 +120,7 @@ pub fn parse_unary(u: syn::ExprUnary) -> eyre::Result<ExprUnOp> {
 }
 
 /// returns: statement, with_semicolon
-pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
+pub fn parse_stmt(stmt: syn::Stmt) -> Result<(BlockStmt, bool)> {
     Ok(match stmt {
         syn::Stmt::Local(l) => {
             let pat = parse_pat(l.pat)?;
@@ -151,7 +152,7 @@ pub fn parse_stmt(stmt: syn::Stmt) -> eyre::Result<(BlockStmt, bool)> {
     })
 }
 
-pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
+pub fn parse_block(block: syn::Block) -> Result<ExprBlock> {
     // info!("Parsing block {:?}", block);
     let mut stmts = vec![];
 
@@ -163,14 +164,14 @@ pub fn parse_block(block: syn::Block) -> eyre::Result<ExprBlock> {
     Ok(ExprBlock::new_stmts(stmts))
 }
 
-pub fn parse_expr_reference(item: syn::ExprReference) -> eyre::Result<ExprReference> {
+pub fn parse_expr_reference(item: syn::ExprReference) -> Result<ExprReference> {
     Ok(ExprReference {
         referee: parse_expr(*item.expr)?.into(),
         mutable: Some(item.mutability.is_some()),
     })
 }
 
-pub fn parse_expr_call(call: syn::ExprCall) -> eyre::Result<ExprInvoke> {
+pub fn parse_expr_call(call: syn::ExprCall) -> Result<ExprInvoke> {
     let fun = parse_expr(*call.func)?;
     let args: Vec<_> = call.args.into_iter().map(parse_expr).try_collect()?;
 
@@ -180,7 +181,7 @@ pub fn parse_expr_call(call: syn::ExprCall) -> eyre::Result<ExprInvoke> {
     })
 }
 
-pub fn parse_expr_method_call(call: syn::ExprMethodCall) -> eyre::Result<ExprInvoke> {
+pub fn parse_expr_method_call(call: syn::ExprMethodCall) -> Result<ExprInvoke> {
     Ok(ExprInvoke {
         target: ExprInvokeTarget::Method(
             ExprSelect {
@@ -195,14 +196,14 @@ pub fn parse_expr_method_call(call: syn::ExprMethodCall) -> eyre::Result<ExprInv
     })
 }
 
-pub fn parse_expr_index(i: syn::ExprIndex) -> eyre::Result<ExprIndex> {
+pub fn parse_expr_index(i: syn::ExprIndex) -> Result<ExprIndex> {
     Ok(ExprIndex {
         obj: parse_expr(*i.expr)?.into(),
         index: parse_expr(*i.index)?.into(),
     })
 }
 
-pub fn parse_expr_if(i: syn::ExprIf) -> eyre::Result<ExprIf> {
+pub fn parse_expr_if(i: syn::ExprIf) -> Result<ExprIf> {
     let cond = parse_expr(*i.cond)?.into();
     let then = parse_block(i.then_branch)?;
     let elze;
@@ -218,14 +219,14 @@ pub fn parse_expr_if(i: syn::ExprIf) -> eyre::Result<ExprIf> {
     })
 }
 
-pub fn parse_expr_loop(l: syn::ExprLoop) -> eyre::Result<ExprLoop> {
+pub fn parse_expr_loop(l: syn::ExprLoop) -> Result<ExprLoop> {
     Ok(ExprLoop {
         label: l.label.map(|x| parser::parse_ident(x.name.ident)),
         body: AstExpr::block(parse_block(l.body)?).into(),
     })
 }
 
-pub fn parse_expr_binary(b: syn::ExprBinary) -> eyre::Result<AstExpr> {
+pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<AstExpr> {
     let lhs = parse_expr(*b.left)?.into();
     let rhs = parse_expr(*b.right)?.into();
     let (kind, _flatten) = match b.op {
@@ -250,7 +251,7 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> eyre::Result<AstExpr> {
     Ok(ExprBinOp { kind, lhs, rhs }.into())
 }
 
-pub fn parse_expr_tuple(t: syn::ExprTuple) -> eyre::Result<ExprTuple> {
+pub fn parse_expr_tuple(t: syn::ExprTuple) -> Result<ExprTuple> {
     let mut values = vec![];
     for e in t.elems {
         let expr = parse_expr(e)?;
@@ -260,14 +261,14 @@ pub fn parse_expr_tuple(t: syn::ExprTuple) -> eyre::Result<ExprTuple> {
     Ok(ExprTuple { values })
 }
 
-pub fn parse_expr_field_value(fv: syn::FieldValue) -> eyre::Result<ExprField> {
+pub fn parse_expr_field_value(fv: syn::FieldValue) -> Result<ExprField> {
     Ok(ExprField {
         name: parse_member(fv.member)?,
         value: parse_expr(fv.expr)?.into(),
     })
 }
 
-pub fn parse_expr_struct(s: syn::ExprStruct) -> eyre::Result<ExprStruct> {
+pub fn parse_expr_struct(s: syn::ExprStruct) -> Result<ExprStruct> {
     Ok(ExprStruct {
         name: AstExpr::path(parser::parse_path(s.path)?).into(),
         fields: s
@@ -277,12 +278,12 @@ pub fn parse_expr_struct(s: syn::ExprStruct) -> eyre::Result<ExprStruct> {
             .try_collect()?,
     })
 }
-pub fn parse_expr_paren(p: syn::ExprParen) -> eyre::Result<ExprParen> {
+pub fn parse_expr_paren(p: syn::ExprParen) -> Result<ExprParen> {
     Ok(ExprParen {
         expr: parse_expr(*p.expr)?.into(),
     })
 }
-pub fn parse_expr_range(r: syn::ExprRange) -> eyre::Result<ExprRange> {
+pub fn parse_expr_range(r: syn::ExprRange) -> Result<ExprRange> {
     let start = r
         .start
         .map(|x| parse_expr(*x))
