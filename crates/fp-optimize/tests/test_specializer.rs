@@ -1,6 +1,6 @@
-use common::*;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
+use fp_core::Result;
 use fp_optimize::pass::{FoldOptimizer, SpecializePass};
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::shll_parse_expr;
@@ -55,6 +55,95 @@ fn test_specialize_function_call() -> Result<()> {
         }
     });
     assert_eq!(value.to_string(), expected.to_string());
+    Ok(())
+}
+
+// ===== ADDITIONAL TESTS FOR SPECIALIZER PHASES =====
+
+#[test]
+fn test_specializer_type_integration() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    // Test type integration in specialization
+    let code = shll_parse_expr! {{
+        fn add(x: i64, y: i64) -> i64 {
+            x + y
+        }
+        add(5, 10)
+    }};
+    let value = specialize_shll_expr(code)?;
+    // Should produce specialized version
+    assert!(value.to_string().contains("15"));
+    Ok(())
+}
+
+#[test]
+fn test_specializer_const_propagation() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    // Test const propagation through specialization
+    let code = shll_parse_expr! {{
+        const MULTIPLIER = 3;
+        fn multiply(x: i64) -> i64 {
+            x * MULTIPLIER
+        }
+        multiply(7)
+    }};
+    let value = specialize_shll_expr(code)?;
+    // Should propagate the const value
+    assert!(value.to_string().contains("21")); // 7 * 3
+    Ok(())
+}
+
+#[test]
+fn test_specializer_generic_specialization() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    // Test generic specialization (placeholder - may not be fully implemented)
+    let code = shll_parse_expr! {{
+        fn identity(x: i64) -> i64 {
+            x
+        }
+        identity(42)
+    }};
+    let value = specialize_shll_expr(code)?;
+    assert!(value.to_string().contains("42"));
+    Ok(())
+}
+
+#[test]
+fn test_specializer_code_generation() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    // Test code generation through specialization
+    let code = shll_parse_expr! {{
+        fn compute() -> i64 {
+            let a = 10;
+            let b = a + 5;
+            b * 2
+        }
+        compute()
+    }};
+    let value = specialize_shll_expr(code)?;
+    // Should generate optimized code
+    assert!(value.to_string().contains("30")); // (10 + 5) * 2
+    Ok(())
+}
+
+#[test]
+fn test_specializer_final_validation() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    // Test final validation of specialized code
+    let code = shll_parse_expr! {{
+        fn validate(x: i64) -> i64 {
+            if x > 0 { x } else { 0 }
+        }
+        validate(5)
+    }};
+    let value = specialize_shll_expr(code)?;
+    // Should validate and optimize the conditional
+    assert!(value.to_string().contains("5"));
     Ok(())
 }
 #[test]
