@@ -1,3 +1,4 @@
+use eyre;
 use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::*;
@@ -272,7 +273,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_import(&self, node: &ItemImport) -> Result<TokenStream> {
-        let import: syn::UseTree = syn::parse_str(&node.tree.to_string())?;
+        let import: syn::UseTree = syn::parse_str(&node.tree.to_string()).map_err(|e| eyre::eyre!(e.to_string()))?;
         let vis = self.print_vis(node.visibility);
 
         Ok(quote!(#vis use #import;))

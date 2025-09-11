@@ -6,7 +6,6 @@ use bytes::BytesMut;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use crate::error::Result;
 
 use crate::ast::{get_threadlocal_serializer, BExpr};
 use crate::ast::{AstType, AstValue, TypeBounds, TypeStruct};

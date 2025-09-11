@@ -13,7 +13,8 @@ use fp_core::ast::*;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use fp_core::{bail};
 
-use eyre::{Result, eyre, ensure, Context};
+use fp_core::error::Result;
+use eyre::{eyre, ensure, Context};
 use std::path::PathBuf;
 use syn::parse_str;
 use syn_inline_mod::InlinerBuilder;
@@ -125,12 +126,9 @@ impl RustParser {
         for err in errors {
             errors_str.push_str(&format!("{}\n", err));
         }
-        ensure!(
-            errors_str.is_empty(),
-            "Errors when parsing {}: {}",
-            path.display(),
-            errors_str
-        );
+        if !errors_str.is_empty() {
+            bail!("Errors when parsing {}: {}", path.display(), errors_str);
+        }
         let file = self.parse_file_content(path, outputs)?;
         Ok(file)
     }

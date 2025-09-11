@@ -1,4 +1,6 @@
-use eyre::{bail, ContextCompat};
+use eyre::ContextCompat;
+use fp_core::bail;
+use fp_core::error::Result;
 use itertools::Itertools;
 use syn::{Fields, FnArg, ReturnType};
 
@@ -12,7 +14,7 @@ use crate::parser::ty::{parse_struct_field, parse_type, parse_type_param_bounds}
 use crate::parser::{parse_ident, parse_path, parse_value_fn, parse_vis};
 use crate::{parser, RawItemMacro};
 
-fn parse_fn_arg_receiver(r: syn::Receiver) -> eyre::Result<FunctionParamReceiver> {
+fn parse_fn_arg_receiver(r: syn::Receiver) -> Result<FunctionParamReceiver> {
     // let ty = parse_type(*r.ty)?;
     // TODO: check if ty is correct
     match (&r.reference, &r.mutability) {
@@ -27,7 +29,7 @@ fn parse_fn_arg_receiver(r: syn::Receiver) -> eyre::Result<FunctionParamReceiver
         _ => bail!("Does not support receiver {:?}", r),
     }
 }
-pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
+pub fn parse_fn_arg(i: FnArg) -> Result<Option<FunctionParam>> {
     Ok(match i {
         FnArg::Receiver(_) => None,
         FnArg::Typed(t) => Some(FunctionParam::new(
@@ -37,7 +39,7 @@ pub fn parse_fn_arg(i: FnArg) -> eyre::Result<Option<FunctionParam>> {
     })
 }
 
-pub fn parse_fn_sig(sig: syn::Signature) -> eyre::Result<FunctionSignature> {
+pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
     let generics_params = sig
         .generics
         .params
@@ -71,7 +73,7 @@ pub fn parse_fn_sig(sig: syn::Signature) -> eyre::Result<FunctionSignature> {
         },
     })
 }
-fn parse_use_tree(tree: syn::UseTree) -> eyre::Result<ItemImportTree> {
+fn parse_use_tree(tree: syn::UseTree) -> Result<ItemImportTree> {
     let tree = match tree {
         syn::UseTree::Path(p) => {
             let mut path = ItemImportPath::new();
@@ -96,7 +98,7 @@ fn parse_use_tree(tree: syn::UseTree) -> eyre::Result<ItemImportTree> {
     };
     Ok(tree)
 }
-pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport> {
+pub fn parse_use(u: syn::ItemUse) -> Result<ItemImport> {
     let tree = parse_use_tree(u.tree)?;
     Ok(ItemImport {
         visibility: parse_vis(u.vis),
@@ -104,7 +106,7 @@ pub fn parse_use(u: syn::ItemUse) -> eyre::Result<ItemImport> {
     })
 }
 
-pub fn parse_type_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
+pub fn parse_type_struct(s: syn::ItemStruct) -> Result<TypeStruct> {
     Ok(TypeStruct {
         name: parse_ident(s.ident),
         fields: s
@@ -116,7 +118,7 @@ pub fn parse_type_struct(s: syn::ItemStruct) -> eyre::Result<TypeStruct> {
     })
 }
 
-fn parse_item_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
+fn parse_item_trait(t: syn::ItemTrait) -> Result<ItemDefTrait> {
     // TODO: generis params
     let bounds = parse_type_param_bounds(t.supertraits.into_iter().collect())?;
     let vis = parse_vis(t.vis);
@@ -132,7 +134,7 @@ fn parse_item_trait(t: syn::ItemTrait) -> eyre::Result<ItemDefTrait> {
     })
 }
 
-fn parse_impl_item(item: syn::ImplItem) -> eyre::Result<AstItem> {
+fn parse_impl_item(item: syn::ImplItem) -> Result<AstItem> {
     match item {
         syn::ImplItem::Fn(m) => {
             let attrs = parse_attrs(m.attrs.clone())?;
@@ -159,7 +161,7 @@ fn parse_impl_item(item: syn::ImplItem) -> eyre::Result<AstItem> {
         _ => bail!("Does not support impl item {:?}", item),
     }
 }
-fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
+fn parse_item_static(s: syn::ItemStatic) -> Result<ItemDefStatic> {
     let vis = parse_vis(s.vis);
     let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?.into();
@@ -170,7 +172,7 @@ fn parse_item_static(s: syn::ItemStatic) -> eyre::Result<ItemDefStatic> {
         visibility: vis,
     })
 }
-fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefConst> {
+fn parse_item_const(s: syn::ItemConst) -> Result<ItemDefConst> {
     let vis = parse_vis(s.vis);
     let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?.into();
@@ -181,7 +183,7 @@ fn parse_item_const(s: syn::ItemConst) -> eyre::Result<ItemDefConst> {
         visibility: vis,
     })
 }
-fn parse_item_impl(im: syn::ItemImpl) -> eyre::Result<ItemImpl> {
+fn parse_item_impl(im: syn::ItemImpl) -> Result<ItemImpl> {
     Ok(ItemImpl {
         trait_ty: im
             .trait_
@@ -193,7 +195,7 @@ fn parse_item_impl(im: syn::ItemImpl) -> eyre::Result<ItemImpl> {
     })
 }
 
-fn parse_item_enum(e: syn::ItemEnum) -> eyre::Result<ItemDefEnum> {
+fn parse_item_enum(e: syn::ItemEnum) -> Result<ItemDefEnum> {
     let visibility = parse_vis(e.vis.clone());
     let ident = parse_ident(e.ident.clone());
     let variants = e
@@ -221,7 +223,7 @@ fn parse_item_enum(e: syn::ItemEnum) -> eyre::Result<ItemDefEnum> {
         visibility,
     })
 }
-fn parse_item_fn(f: syn::ItemFn) -> eyre::Result<ItemDefFunction> {
+fn parse_item_fn(f: syn::ItemFn) -> Result<ItemDefFunction> {
     let visibility = parse_vis(f.vis.clone());
     let attrs = parse_attrs(f.attrs.clone())?;
     let f = parse_value_fn(f)?;
@@ -235,7 +237,7 @@ fn parse_item_fn(f: syn::ItemFn) -> eyre::Result<ItemDefFunction> {
     };
     Ok(d)
 }
-pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
+pub fn parse_item(item: syn::Item) -> Result<AstItem> {
     let item = match item {
         syn::Item::Fn(f0) => {
             let f = parse_item_fn(f0)?;
@@ -284,12 +286,12 @@ pub fn parse_item(item: syn::Item) -> eyre::Result<AstItem> {
     Ok(item)
 }
 
-pub fn parse_impl_trait(im: syn::TypeImplTrait) -> eyre::Result<ImplTraits> {
+pub fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
     Ok(ImplTraits {
         bounds: parse_type_param_bounds(im.bounds.into_iter().collect())?,
     })
 }
-pub fn parse_trait_item(f: syn::TraitItem) -> eyre::Result<AstItem> {
+pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
     match f {
         syn::TraitItem::Fn(f) => {
             let name = parse_ident(f.sig.ident.clone());
