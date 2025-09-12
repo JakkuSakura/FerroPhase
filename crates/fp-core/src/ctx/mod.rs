@@ -2,7 +2,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 mod serde;
-mod ty;
+pub mod ty;
 mod value;
 
 use crate::context::SharedScopedContext;

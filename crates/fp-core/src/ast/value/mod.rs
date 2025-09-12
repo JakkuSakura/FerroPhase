@@ -60,6 +60,9 @@ impl AstValue {
     pub fn unit() -> AstValue {
         AstValue::Unit(ValueUnit)
     }
+    pub fn string(s: String) -> AstValue {
+        AstValue::String(ValueString::new_owned(s))
+    }
     pub fn is_unit(&self) -> bool {
         match self {
             AstValue::Unit(_) => true,
