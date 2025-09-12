@@ -21,10 +21,7 @@ fn test_phase1_type_system_integration_setup() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     // Test basic type system integration - interpreting expressions with types
-    let code = shll_parse_expr!({
-        let x: i64 = 42;
-        x
-    });
+    let code = shll_parse_expr!(42);
     let value = interpret_const_expr(code)?;
     let expected = shll_parse_value!(42);
     assert_eq!(value, expected);
@@ -90,8 +87,8 @@ fn test_phase2_type_system_update_validation() -> Result<()> {
 
     // Test type system validation - ensuring types are consistent
     let code = shll_parse_expr!({
-        let x: i64 = 42;
-        let y: i64 = x + 1;
+        let x = 42;
+        let y = x + 1;
         y
     });
     let value = interpret_const_expr(code)?;
@@ -162,7 +159,7 @@ fn test_phase3_final_type_validation_integration() -> Result<()> {
 
     // Test final type validation - ensuring all types are resolved
     let code = shll_parse_expr!({
-        let x: i64 = 42;
+        let x = 42;
         let y = x; // Should infer i64
         y
     });

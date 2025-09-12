@@ -20,6 +20,7 @@ impl Pattern {
     pub fn as_ident(&self) -> Option<&Ident> {
         match self {
             Pattern::Ident(ident) => Some(&ident.ident),
+            Pattern::Type(pattern_type) => pattern_type.pat.as_ident(),
             _ => None,
         }
     }
