@@ -166,6 +166,13 @@ impl InterpreterPass {
             "unit" => Ok(AstValue::Unit(ValueUnit)),
             "undefined" => Ok(AstValue::Undefined(ValueUndefined)),
             "Some" => Ok(AstValue::any(builtin_some())),
+            // Metaprogramming intrinsics
+            "@sizeof" if resolve => Ok(AstValue::any(builtin_sizeof())),
+            "@reflect_fields" if resolve => Ok(AstValue::any(builtin_reflect_fields())),
+            "@hasmethod" if resolve => Ok(AstValue::any(builtin_hasmethod())),
+            "@addfield" if resolve => Ok(AstValue::any(builtin_addfield())),
+            "@generate_method" if resolve => Ok(AstValue::any(builtin_generate_method())),
+            "@type_name" if resolve => Ok(AstValue::any(builtin_type_name())),
             _ => {
                 info!("Get value recursive {:?}", ident);
                 ctx.print_values()?;

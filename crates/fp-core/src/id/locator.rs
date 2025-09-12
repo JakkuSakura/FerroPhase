@@ -42,6 +42,13 @@ impl Locator {
         }
         Self::ParameterPath(path)
     }
+    
+    pub fn as_ident(&self) -> Option<&Ident> {
+        match self {
+            Self::Ident(ident) => Some(ident),
+            _ => None,
+        }
+    }
 }
 
 impl Display for Locator {

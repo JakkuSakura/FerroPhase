@@ -1,8 +1,10 @@
+pub mod const_eval;
 mod inline;
 mod interpret;
 mod optimizer;
 mod specialize;
 
+pub use const_eval::{ConstEvaluationPass, ConstEvaluator};
 pub use inline::*;
 pub use interpret::*;
 pub use optimizer::*;
