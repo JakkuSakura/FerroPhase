@@ -17,3 +17,11 @@ thiserror = "2.0.0"
 miette = { version = "7.2.0", features = ["fancy"] }
 tree-sitter = "0.24.3"
 tracing = "0.1"
+
+[dev-dependencies]
+fp-optimize = { path = "../fp-optimize" }
+fp-rust-lang = { path = "../fp-rust-lang" }
+pretty_assertions = "1.4.0"
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
