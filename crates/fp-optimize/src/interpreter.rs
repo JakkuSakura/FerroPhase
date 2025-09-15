@@ -23,6 +23,29 @@ impl Interpreter {
     fn extract_expr(&self, node: AstExpr) -> Result<AstValue> {
         match node {
             AstExpr::Value(value) => Ok(value.get()),
+            AstExpr::Block(block) => {
+                // Handle block expressions
+                if block.stmts.is_empty() {
+                    // Empty block evaluates to unit
+                    Ok(AstValue::unit())
+                } else {
+                    // Try to extract value from the last statement in block
+                    if let Some(last_stmt) = block.stmts.last() {
+                        match last_stmt {
+                            fp_core::ast::BlockStmt::Expr(block_expr) => {
+                                // Extract value from the expression
+                                self.extract_expr(*block_expr.expr.clone())
+                            },
+                            _ => {
+                                // Non-expression statement, block evaluates to unit
+                                Ok(AstValue::unit())
+                            }
+                        }
+                    } else {
+                        Ok(AstValue::unit())
+                    }
+                }
+            },
             _ => Err(optimization_error(format!("Failed to extract Value from {}", node))),
         }
     }
