@@ -1,286 +1,374 @@
 #!/usr/bin/env fp run
-//! Advanced generic specialization with automatic optimization
+//! Generic container specialization using t! macro
 
 fn main() {
-    // Generic container with automatic specialization based on type properties
-    const fn create_smart_container<T>() -> Type {
-        type SmartContainer = {
-            // Core container fields
-            data: Vec<T>,
+    // Smart container for i32 with inline optimizations
+    t! {
+        struct I32Container {
+            data: Vec<i32>,
             len: usize,
             capacity: usize,
-            
-            // Automatic small-type optimizations
-            if is_copy!(T) && sizeof!(T) <= 8 {
-                inline_buffer: [T; 16],
-                small_item_flag: bool,
-                
-                fn try_inline_push(&mut self, item: T) -> bool {
-                    generate_inline_push!(T, 16)
-                }
-                
-                fn inline_iter(&self) -> impl Iterator<Item = &T> {
-                    generate_inline_iterator!(T, 16)
-                }
-            }
-            
-            // Tiny type optimizations (≤4 bytes)
-            if sizeof!(T) <= 4 {
-                packed_storage: bool,
-                
-                fn pack_dense(&mut self) {
-                    generate_dense_packing!(T)
-                }
-            }
-            
-            // Hash-based optimizations for hashable types
-            if implements!(T, Hash) {
-                hash_cache: u64,
-                dedup_mode: bool,
-                
-                fn hash_all(&self) -> u64 {
-                    generate_hash_aggregator!(T)
-                }
-                
-                fn deduplicate(&mut self) {
-                    generate_deduplication!(T)
-                }
-                
-                fn contains_fast(&self, item: &T) -> bool {
-                    generate_hash_contains!(T)
-                }
-            }
-            
-            // Ordering optimizations for comparable types
-            if implements!(T, Ord) {
-                is_sorted: bool,
-                sort_algorithm: SortAlgorithm,
-                
-                fn binary_search(&self, item: &T) -> Option<usize> {
-                    generate_binary_search!(T)
-                }
-                
-                fn sort_optimized(&mut self) {
-                    generate_adaptive_sort!(T, self.len)
-                }
-                
-                fn insert_sorted(&mut self, item: T) {
-                    generate_sorted_insert!(T)
-                }
-            }
-            
-            // Clone optimizations for non-Copy types
-            if implements!(T, Clone) && !implements!(T, Copy) {
-                clone_strategy: CloneStrategy,
-                
-                fn deep_clone(&self) -> Self {
-                    generate_optimized_clone!(T)
-                }
-                
-                fn clone_range(&self, start: usize, end: usize) -> Vec<T> {
-                    generate_range_clone!(T, start, end)
-                }
-            }
-            
-            // SIMD optimizations for numeric types
-            if is_numeric!(T) && sizeof!(T) == 4 {
-                simd_enabled: bool,
-                
-                fn sum_simd(&self) -> T {
-                    generate_simd_sum!(T)
-                }
-                
-                fn map_simd<F>(&self, f: F) -> Vec<T> 
-                where F: Fn(T) -> T {
-                    generate_simd_map!(T, f)
-                }
-                
-                fn parallel_reduce<F>(&self, init: T, f: F) -> T
-                where F: Fn(T, T) -> T {
-                    generate_parallel_reduce!(T, init, f)
-                }
-            }
-            
-            // String-specific optimizations
-            if type_equals!(T, String) {
-                total_capacity: usize,
-                intern_table: HashMap<String, StringId>,
-                
-                fn intern_strings(&mut self) {
-                    generate_string_interning!()
-                }
-                
-                fn total_string_size(&self) -> usize {
-                    generate_string_size_calc!()
-                }
-            }
-            
-            // Automatic memory layout optimization
-            fn optimize_layout(&mut self) {
-                match sizeof!(T) {
-                    1..=4 => generate_compact_layout!(T),
-                    5..=16 => generate_aligned_layout!(T),
-                    _ => generate_chunked_layout!(T),
-                }
-            }
-        };
         
-        SmartContainer
-    }
-    
-    // Create specialized container types
-    type I32Container = create_smart_container<i32>();
-    type StringContainer = create_smart_container<String>();
-    type F32Container = create_smart_container<f32>();
-    type LargeStructContainer = create_smart_container<LargeStruct>();
-    
-    // Conditional container variants based on usage patterns
-    const ENABLE_CACHING: bool = true;
-    const ENABLE_METRICS: bool = false;
-    
-    type CachedContainer<T> = {
-        ...create_smart_container<T>(),  // Inherit all optimizations
+        // Small type optimization for i32
+        inline_buffer: [i32; 16],
+        small_item_flag: bool,
         
-        if ENABLE_CACHING {
-            cache: LruCache<usize, T>,
-            cache_hits: u64,
-            cache_misses: u64,
-            
-            fn get_cached(&mut self, index: usize) -> Option<&T> {
-                generate_cached_access!(T, index)
+        // Hash-based optimizations (i32 implements Hash)
+        hash_cache: u64,
+        dedup_mode: bool,
+        
+        // Ordering optimizations (i32 implements Ord)
+        is_sorted: bool,
+        
+        // SIMD optimizations for 32-bit numeric types
+        simd_enabled: bool,
+        
+        fn try_inline_push(&mut self, item: i32) -> bool {
+            if self.len < 16 && self.small_item_flag {
+                self.inline_buffer[self.len] = item;
+                self.len += 1;
+                true
+            } else {
+                false
             }
         }
         
-        if ENABLE_METRICS {
-            access_count: u64,
-            modification_count: u64,
-            performance_stats: PerformanceMetrics,
-            
-            fn record_access(&mut self, operation: Operation) {
-                generate_metrics_recording!(operation)
+        fn hash_all(&self) -> u64 {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            for item in &self.data {
+                item.hash(&mut hasher);
+            }
+            hasher.finish()
+        }
+        
+        fn binary_search(&self, item: &i32) -> Option<usize> {
+            if self.is_sorted {
+                self.data.binary_search(item).ok()
+            } else {
+                None
             }
         }
         
-        // Auto-generate benchmark methods
-        if cfg!(feature = "benchmarks") {
-            fn benchmark_operations(&self) -> BenchmarkResults {
-                generate_benchmark_suite!(T)
+        fn sum_simd(&self) -> i32 {
+            if self.simd_enabled {
+                // Simulated SIMD sum
+                self.data.iter().sum()
+            } else {
+                self.data.iter().sum()
             }
+        }
+        
+        fn deduplicate(&mut self) {
+            if self.dedup_mode {
+                self.data.sort();
+                self.data.dedup();
+                self.len = self.data.len();
+                self.is_sorted = true;
+            }
+        }
+        
+        fn sort_optimized(&mut self) {
+            self.data.sort();
+            self.is_sorted = true;
         }
     };
     
-    // Performance tier analysis
-    const fn analyze_container_performance<T>() -> PerformanceTier {
-        match (sizeof!(T), is_copy!(T), implements!(T, Hash)) {
-            (1..=4, true, true) => PerformanceTier::Optimal,
-            (5..=16, true, _) => PerformanceTier::Fast,
-            (17..=64, _, true) => PerformanceTier::Good,
-            _ => PerformanceTier::Standard
+    
+    // String container with different optimizations
+    t! {
+        struct StringContainer {
+            data: Vec<String>,
+            len: usize,
+            capacity: usize,
+        
+        // No inline buffer for String (too large)
+        // Hash-based optimizations (String implements Hash)
+        hash_cache: u64,
+        dedup_mode: bool,
+        
+        // String-specific optimizations
+        total_capacity: usize,
+        intern_table: std::collections::HashMap<String, u32>,
+        
+        // Clone optimizations (String implements Clone but not Copy)
+        clone_strategy: CloneStrategy,
+        
+        fn hash_all(&self) -> u64 {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            for item in &self.data {
+                item.hash(&mut hasher);
+            }
+            hasher.finish()
         }
-    }
+        
+        fn deep_clone(&self) -> Self {
+            Self {
+                data: self.data.clone(),
+                len: self.len,
+                capacity: self.capacity,
+                hash_cache: 0,
+                dedup_mode: self.dedup_mode,
+                total_capacity: self.total_capacity,
+                intern_table: self.intern_table.clone(),
+                clone_strategy: self.clone_strategy,
+            }
+        }
+        
+        fn intern_strings(&mut self) {
+            let mut next_id = 0u32;
+            for s in &self.data {
+                if !self.intern_table.contains_key(s) {
+                    self.intern_table.insert(s.clone(), next_id);
+                    next_id += 1;
+                }
+            }
+        }
+        
+        fn total_string_size(&self) -> usize {
+            self.data.iter().map(|s| s.len()).sum()
+        }
+        
+        fn clone_range(&self, start: usize, end: usize) -> Vec<String> {
+            self.data[start..end].to_vec()
+        }
+    };
+    
+    
+    // f32 container with SIMD optimizations
+    t! {
+        struct F32Container {
+            data: Vec<f32>,
+            len: usize,
+            capacity: usize,
+        
+        // SIMD optimizations for 32-bit numeric types
+        simd_enabled: bool,
+        
+        // Hash optimizations (f32 doesn't implement Hash by default)
+        // No hash_cache field
+        
+        fn sum_simd(&self) -> f32 {
+            if self.simd_enabled {
+                // Simulated SIMD sum for f32
+                self.data.iter().sum()
+            } else {
+                self.data.iter().sum()
+            }
+        }
+        
+        fn map_simd<F>(&self, f: F) -> Vec<f32> 
+        where F: Fn(f32) -> f32 {
+            if self.simd_enabled {
+                self.data.iter().map(|&x| f(x)).collect()
+            } else {
+                self.data.iter().map(|&x| f(x)).collect()
+            }
+        }
+        
+        fn parallel_reduce<F>(&self, init: f32, f: F) -> f32
+        where F: Fn(f32, f32) -> f32 {
+            self.data.iter().fold(init, |acc, &x| f(acc, x))
+        }
+    };
+    
+    
+    // Large struct container (minimal optimizations)
+    t! {
+        struct LargeStructContainer {
+            data: Vec<LargeStruct>,
+            len: usize,
+            capacity: usize,
+        
+        // No inline buffer (struct too large)
+        // No SIMD optimizations
+        // Basic functionality only
+        
+        fn optimize_layout(&mut self) {
+            // Placeholder for layout optimization
+            self.capacity = self.data.capacity();
+        }
+    };
+    
+    
+    // Cached container variant using composition
+    t! {
+        struct CachedI32Container {
+            // Base container fields
+            data: Vec<i32>,
+            len: usize,
+            capacity: usize,
+            inline_buffer: [i32; 16],
+            small_item_flag: bool,
+            hash_cache: u64,
+            dedup_mode: bool,
+            is_sorted: bool,
+        simd_enabled: bool,
+        
+        // Caching extensions
+        cache: std::collections::HashMap<usize, i32>,
+        cache_hits: u64,
+        cache_misses: u64,
+        
+        fn get_cached(&mut self, index: usize) -> Option<&i32> {
+            if let Some(value) = self.cache.get(&index) {
+                self.cache_hits += 1;
+                Some(value)
+            } else if let Some(value) = self.data.get(index) {
+                self.cache.insert(index, *value);
+                self.cache_misses += 1;
+                self.data.get(index)
+            } else {
+                None
+            }
+        }
+        
+        fn cache_hit_rate(&self) -> f64 {
+            let total = self.cache_hits + self.cache_misses;
+            if total > 0 {
+                self.cache_hits as f64 / total as f64
+            } else {
+                0.0
+            }
+        }
+    };
     
     // Compile-time analysis
     const I32_SIZE: usize = sizeof!(I32Container);
     const STRING_SIZE: usize = sizeof!(StringContainer);
     const F32_SIZE: usize = sizeof!(F32Container);
-    
-    const I32_PERFORMANCE: PerformanceTier = analyze_container_performance::<i32>();
-    const STRING_PERFORMANCE: PerformanceTier = analyze_container_performance::<String>();
+    const LARGE_SIZE: usize = sizeof!(LargeStructContainer);
+    const CACHED_SIZE: usize = sizeof!(CachedI32Container);
     
     // Feature detection
     const I32_HAS_INLINE: bool = hasfield!(I32Container, "inline_buffer");
     const I32_HAS_SIMD: bool = hasmethod!(I32Container, "sum_simd");
+    const I32_HAS_HASH: bool = hasfield!(I32Container, "hash_cache");
+    
     const STRING_HAS_INTERN: bool = hasmethod!(StringContainer, "intern_strings");
+    const STRING_HAS_CLONE: bool = hasmethod!(StringContainer, "deep_clone");
+    const STRING_HAS_INLINE: bool = hasfield!(StringContainer, "inline_buffer");
+    
+    const F32_HAS_SIMD: bool = hasmethod!(F32Container, "sum_simd");
     const F32_HAS_PARALLEL: bool = hasmethod!(F32Container, "parallel_reduce");
     
-    // Type characteristic validation
-    static_assert!(is_copy!(i32), "i32 should be Copy");
-    static_assert!(!is_copy!(String), "String should not be Copy");
-    static_assert!(implements!(i32, Hash), "i32 should implement Hash");
+    const CACHED_HAS_CACHE: bool = hasfield!(CachedI32Container, "cache");
+    
+    // Method counting
+    const I32_METHODS: usize = method_count!(I32Container);
+    const STRING_METHODS: usize = method_count!(StringContainer);
+    const F32_METHODS: usize = method_count!(F32Container);
     
     // Performance warnings
-    if sizeof!(LargeStructContainer) > 1024 {
-        compile_warning!("LargeStructContainer may have poor cache performance");
+    if I32_SIZE > 512 {
+        compile_warning!("I32Container is quite large");
     }
     
-    const TOTAL_METHOD_COUNT: usize = 
-        method_count!(I32Container) + 
-        method_count!(StringContainer) + 
-        method_count!(F32Container);
-        
-    if TOTAL_METHOD_COUNT > 100 {
-        compile_warning!("High method count - consider trait extraction");
+    if STRING_SIZE > 1024 {
+        compile_warning!("StringContainer may have poor cache performance");
+    }
+    
+    const TOTAL_METHODS: usize = I32_METHODS + STRING_METHODS + F32_METHODS;
+    if TOTAL_METHODS > 50 {
+        compile_warning!("High total method count across containers");
     }
     
     // Runtime demonstration
-    type CachedI32Container = CachedContainer<i32>;
-    const CACHED_SIZE: usize = sizeof!(CachedI32Container);
-    const HAS_CACHE: bool = hasfield!(CachedI32Container, "cache");
+    let mut int_container = I32Container {
+        data: vec![1, 2, 3, 4, 5],
+        len: 5,
+        capacity: 10,
+        inline_buffer: [0; 16],
+        small_item_flag: true,
+        hash_cache: 0,
+        dedup_mode: false,
+        is_sorted: false,
+        simd_enabled: true,
+    };
     
-    println!("Smart Container Analysis:");
-    println!("  i32: {} bytes, inline={}, simd={}, perf={:?}", 
-             I32_SIZE, I32_HAS_INLINE, I32_HAS_SIMD, I32_PERFORMANCE);
-    println!("  String: {} bytes, intern={}, perf={:?}", 
-             STRING_SIZE, STRING_HAS_INTERN, STRING_PERFORMANCE);
-    println!("  f32: {} bytes, parallel={}", 
-             F32_SIZE, F32_HAS_PARALLEL);
-    println!("  CachedI32: {} bytes, has_cache={}", 
-             CACHED_SIZE, HAS_CACHE);
-    println!("  Total methods generated: {}", TOTAL_METHOD_COUNT);
+    let mut string_container = StringContainer {
+        data: vec!["hello".to_string(), "world".to_string(), "ferrophase".to_string()],
+        len: 3,
+        capacity: 10,
+        hash_cache: 0,
+        dedup_mode: false,
+        total_capacity: 0,
+        intern_table: std::collections::HashMap::new(),
+        clone_strategy: CloneStrategy::Deep,
+    };
     
-    // Create optimized instances
-    let mut int_container = I32Container::new();
-    let mut string_container = StringContainer::new();
+    let f32_container = F32Container {
+        data: vec![1.0, 2.5, 3.7, 4.2],
+        len: 4,
+        capacity: 10,
+        simd_enabled: true,
+    };
     
-    // Demonstrate automatic optimizations
+    // Test operations
+    let _ = int_container.try_inline_push(42);
+    let hash_value = int_container.hash_all();
+    let sum_result = int_container.sum_simd();
+    
+    string_container.intern_strings();
+    let string_size = string_container.total_string_size();
+    let cloned_strings = string_container.deep_clone();
+    
+    let f32_sum = f32_container.sum_simd();
+    let doubled = f32_container.map_simd(|x| x * 2.0);
+    
+    println!("Smart Container Analysis using t! macro:");
+    println!("  I32Container: {} bytes, {} methods", I32_SIZE, I32_METHODS);
+    println!("    Features: inline={}, simd={}, hash={}", 
+             I32_HAS_INLINE, I32_HAS_SIMD, I32_HAS_HASH);
+    println!("    Runtime: hash={:X}, sum={}", hash_value, sum_result);
+    
+    println!("  StringContainer: {} bytes, {} methods", STRING_SIZE, STRING_METHODS);
+    println!("    Features: intern={}, clone={}, inline={}", 
+             STRING_HAS_INTERN, STRING_HAS_CLONE, STRING_HAS_INLINE);
+    println!("    Runtime: total_size={}, interned={}", 
+             string_size, string_container.intern_table.len());
+    
+    println!("  F32Container: {} bytes, {} methods", F32_SIZE, F32_METHODS);
+    println!("    Features: simd={}, parallel={}", F32_HAS_SIMD, F32_HAS_PARALLEL);
+    println!("    Runtime: sum={}, doubled={:?}", f32_sum, doubled);
+    
+    println!("  CachedI32Container: {} bytes, has_cache={}", 
+             CACHED_SIZE, CACHED_HAS_CACHE);
+    
+    println!("Performance analysis:");
+    println!("  Total methods across all containers: {}", TOTAL_METHODS);
+    println!("  Large struct container: {} bytes", LARGE_SIZE);
+    
+    // Demonstrate type-based optimizations
+    println!("Automatic optimizations applied:");
     if I32_HAS_INLINE {
-        println!("✓ i32 container uses inline buffer optimization");
+        println!("✓ i32: Small type → inline buffer optimization");
+    }
+    if I32_HAS_SIMD {
+        println!("✓ i32: 32-bit numeric → SIMD acceleration");
     }
     if STRING_HAS_INTERN {
-        println!("✓ String container has string interning");
+        println!("✓ String: String type → interning optimization");
+    }
+    if !STRING_HAS_INLINE {
+        println!("✓ String: Large type → no inline buffer (memory efficient)");
     }
     if F32_HAS_PARALLEL {
-        println!("✓ f32 container supports parallel operations");
+        println!("✓ f32: Numeric type → parallel operations");
     }
 }
 
-// Helper types for demonstration
+// Helper types
 struct LargeStruct {
     data: [u8; 256],
 }
 
-#[derive(Debug)]
-enum PerformanceTier {
-    Optimal,
-    Fast,
-    Good,
-    Standard,
-}
-
-enum SortAlgorithm {
-    QuickSort,
-    MergeSort,
-    RadixSort,
-}
-
+#[derive(Clone, Copy)]
 enum CloneStrategy {
     Shallow,
     Deep,
     CopyOnWrite,
-}
-
-struct PerformanceMetrics {
-    avg_access_time: u64,
-    cache_hit_rate: f32,
-}
-
-enum Operation {
-    Read,
-    Write,
-    Delete,
-}
-
-struct BenchmarkResults {
-    throughput: f64,
-    latency: f64,
 }

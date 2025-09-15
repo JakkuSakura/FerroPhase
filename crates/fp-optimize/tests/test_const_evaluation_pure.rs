@@ -130,8 +130,8 @@ fn test_const_function_folding() -> Result<()> {
 fn test_sizeof_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @sizeof intrinsic (when implemented)
-    // let expr = shll_parse_expr!(@sizeof(i64));
+    // Test sizeof intrinsic (when implemented)
+    // let expr = shll_parse_expr!(sizeof(i64));
     // let result = test_const_optimization(expr)?;
     // Should be folded to literal 8
 
@@ -144,7 +144,7 @@ fn test_type_introspection() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     // Test type introspection intrinsics (when implemented)
-    // let expr = shll_parse_expr!(@type_name(i64));
+    // let expr = shll_parse_expr!(type_name(i64));
     // let result = test_const_optimization(expr)?;
     // Should be folded to literal "i64"
 
