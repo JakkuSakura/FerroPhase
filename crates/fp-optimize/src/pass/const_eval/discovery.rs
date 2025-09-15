@@ -8,6 +8,16 @@ use fp_core::error::Result;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
+/// Check if a function name is a const-time intrinsic
+fn is_const_intrinsic(name: &str) -> bool {
+    matches!(name, 
+        "sizeof!" | "reflect_fields!" | "hasmethod!" | "type_name!" |
+        "create_struct!" | "clone_struct!" | "addfield!" |
+        "hasfield!" | "field_count!" | "field_type!" | "struct_size!" |
+        "generate_method!" | "compile_error!" | "compile_warning!"
+    )
+}
+
 impl ConstEvaluator {
     /// Pass 2: Const Discovery & Dependency Analysis
     pub fn discover_const_blocks(&self, ast: &AstNode, ctx: &SharedScopedContext) -> Result<()> {
@@ -114,12 +124,12 @@ impl ConstEvaluator {
                 // Check if this is a metaprogramming intrinsic call
                 if let ExprInvokeTarget::Function(locator) = &invoke.target {
                     if let Some(ident) = locator.as_ident() {
-                        if ident.name.starts_with("@") {
+                        if is_const_intrinsic(&ident.name) {
                             // This is a const block that needs evaluation
                             let block_id = self.next_block_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             let const_block = ConstBlock::new(
                                 block_id,
-                                Some(format!("intrinsic_{}", ident.name)),
+                                Some(ident.name.clone()),
                                 expr.clone(),
                             );
                             
