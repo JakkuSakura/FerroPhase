@@ -323,28 +323,48 @@ pub fn builtin_hasmethod() -> BuiltinFn {
     })
 }
 
-/// @addfield intrinsic - add a field to a struct type (placeholder for metaprogramming)
+/// @addfield intrinsic - add a field to a struct type
 pub fn builtin_addfield() -> BuiltinFn {
-    BuiltinFn::new_with_ident("@addfield".into(), move |args, ctx| {
-        if args.len() != 2 {
-            bail!("@addfield expects 2 arguments (field_name, field_type), got: {:?}", args)
+    BuiltinFn::new_with_ident("@addfield".into(), move |args, _ctx| {
+        if args.len() != 3 {
+            bail!("@addfield expects 3 arguments (struct_type, field_name, field_type), got: {:?}", args)
         }
         
-        let field_name = match &args[0] {
+        let field_name = match &args[1] {
             AstValue::String(s) => s.value.clone(),
-            _ => bail!("@addfield expects a string for field name, got: {:?}", args[0])
+            _ => bail!("@addfield expects a string for field name, got: {:?}", args[1])
         };
         
-        let _field_type = match &args[1] {
+        let field_type = match &args[2] {
             AstValue::Type(ty) => ty.clone(),
-            _ => bail!("@addfield expects a type for field type, got: {:?}", args[1])
+            _ => bail!("@addfield expects a type for field type, got: {:?}", args[2])
         };
         
-        // For now, just record that we want to add this field
-        // In a full implementation, this would modify the current struct being processed
-        ctx.root().print_str(format!("@addfield: Adding field '{}' to current struct", field_name));
-        
-        Ok(AstValue::unit())
+        match &args[0] {
+            AstValue::Type(AstType::Struct(type_struct)) => {
+                // Create a new struct with the additional field
+                let mut new_fields = type_struct.fields.clone();
+                
+                // Check for duplicate field names
+                if new_fields.iter().any(|f| f.name.name == field_name) {
+                    bail!("Field '{}' already exists in struct", field_name);
+                }
+                
+                // Add the new field
+                new_fields.push(StructuralField {
+                    name: field_name.into(),
+                    value: field_type,
+                });
+                
+                let modified_struct = TypeStruct {
+                    name: type_struct.name.clone(),
+                    fields: new_fields,
+                };
+                
+                Ok(AstValue::Type(AstType::Struct(modified_struct)))
+            },
+            _ => bail!("@addfield expects a struct type as first argument, got: {:?}", args[0])
+        }
     })
 }
 
@@ -394,5 +414,236 @@ pub fn builtin_type_name() -> BuiltinFn {
         };
         
         Ok(AstValue::string(type_name))
+    })
+}
+
+// ===== ENHANCED CONST EVALUATION INTRINSICS =====
+
+/// @create_struct intrinsic - create a new struct type dynamically
+pub fn builtin_create_struct() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@create_struct".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("@create_struct expects 1 argument (struct_name), got: {:?}", args)
+        }
+        
+        let struct_name = match &args[0] {
+            AstValue::String(s) => s.value.clone(),
+            _ => bail!("@create_struct expects a string for struct name, got: {:?}", args[0])
+        };
+        
+        // Create a new empty struct type
+        let struct_type = TypeStruct {
+            name: struct_name.into(),
+            fields: Vec::new(),
+        };
+        
+        Ok(AstValue::Type(AstType::Struct(struct_type)))
+    })
+}
+
+/// @clone_struct intrinsic - clone an existing struct type
+pub fn builtin_clone_struct() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@clone_struct".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("@clone_struct expects 1 argument (struct_type), got: {:?}", args)
+        }
+        
+        match &args[0] {
+            AstValue::Type(AstType::Struct(type_struct)) => {
+                // Clone the struct definition
+                let cloned_struct = TypeStruct {
+                    name: format!("Clone_{}", type_struct.name.name).into(),
+                    fields: type_struct.fields.clone(),
+                };
+                
+                Ok(AstValue::Type(AstType::Struct(cloned_struct)))
+            },
+            _ => bail!("@clone_struct expects a struct type argument, got: {:?}", args[0])
+        }
+    })
+}
+
+/// @hasfield intrinsic - check if a struct has a specific field
+pub fn builtin_hasfield() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@hasfield".into(), move |args, _ctx| {
+        if args.len() != 2 {
+            bail!("@hasfield expects 2 arguments (struct_type, field_name), got: {:?}", args)
+        }
+        
+        let field_name = match &args[1] {
+            AstValue::String(s) => &s.value,
+            _ => bail!("@hasfield expects a string for field name, got: {:?}", args[1])
+        };
+        
+        let has_field = match &args[0] {
+            AstValue::Type(AstType::Struct(type_struct)) => {
+                type_struct.fields.iter().any(|field| field.name.name == *field_name)
+            },
+            AstValue::Struct(value_struct) => {
+                value_struct.ty.fields.iter().any(|field| field.name.name == *field_name)
+            },
+            _ => bail!("@hasfield expects a struct type or instance, got: {:?}", args[0])
+        };
+        
+        Ok(AstValue::bool(has_field))
+    })
+}
+
+/// @field_count intrinsic - get the number of fields in a struct
+pub fn builtin_field_count() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@field_count".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("@field_count expects 1 argument (struct_type), got: {:?}", args)
+        }
+        
+        let field_count = match &args[0] {
+            AstValue::Type(AstType::Struct(type_struct)) => type_struct.fields.len(),
+            AstValue::Struct(value_struct) => value_struct.ty.fields.len(),
+            _ => bail!("@field_count expects a struct type or instance, got: {:?}", args[0])
+        };
+        
+        Ok(AstValue::int(field_count as i64))
+    })
+}
+
+/// @field_type intrinsic - get the type of a specific field
+pub fn builtin_field_type() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@field_type".into(), move |args, _ctx| {
+        if args.len() != 2 {
+            bail!("@field_type expects 2 arguments (struct_type, field_name), got: {:?}", args)
+        }
+        
+        let field_name = match &args[1] {
+            AstValue::String(s) => &s.value,
+            _ => bail!("@field_type expects a string for field name, got: {:?}", args[1])
+        };
+        
+        match &args[0] {
+            AstValue::Type(AstType::Struct(type_struct)) => {
+                if let Some(field) = type_struct.fields.iter().find(|f| f.name.name == *field_name) {
+                    Ok(AstValue::Type(field.value.clone()))
+                } else {
+                    bail!("Field '{}' not found in struct", field_name)
+                }
+            },
+            AstValue::Struct(value_struct) => {
+                if let Some(field) = value_struct.ty.fields.iter().find(|f| f.name.name == *field_name) {
+                    Ok(AstValue::Type(field.value.clone()))
+                } else {
+                    bail!("Field '{}' not found in struct", field_name)
+                }
+            },
+            _ => bail!("@field_type expects a struct type or instance, got: {:?}", args[0])
+        }
+    })
+}
+
+/// @struct_size intrinsic - get the size of a struct in bytes
+pub fn builtin_struct_size() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@struct_size".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("@struct_size expects 1 argument (struct_type), got: {:?}", args)
+        }
+        
+        let size = match &args[0] {
+            AstValue::Type(AstType::Struct(type_struct)) => {
+                // Simple size calculation: sum of field sizes
+                type_struct.fields.iter().map(|field| {
+                    // Estimate field size based on type
+                    match &field.value {
+                        AstType::Expr(expr) => {
+                            if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
+                                if let Some(ident) = locator.as_ident() {
+                                    match ident.name.as_str() {
+                                        "i8" | "u8" => 1,
+                                        "i16" | "u16" => 2,
+                                        "i32" | "u32" | "f32" => 4,
+                                        "i64" | "u64" | "f64" => 8,
+                                        "bool" => 1,
+                                        "char" => 4,
+                                        "String" => 24, // Vec<u8> + capacity + len
+                                        _ => 8, // Default size
+                                    }
+                                } else {
+                                    8 // Default for complex expressions
+                                }
+                            } else {
+                                8 // Default for complex expressions
+                            }
+                        },
+                        AstType::Struct(nested) => nested.fields.len() * 8, // Recursive estimation
+                        _ => 8, // Default size
+                    }
+                }).sum::<usize>()
+            },
+            AstValue::Struct(value_struct) => {
+                // Same calculation for struct instances
+                value_struct.ty.fields.iter().map(|field| {
+                    match &field.value {
+                        AstType::Expr(expr) => {
+                            if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
+                                if let Some(ident) = locator.as_ident() {
+                                    match ident.name.as_str() {
+                                        "i8" | "u8" => 1,
+                                        "i16" | "u16" => 2,
+                                        "i32" | "u32" | "f32" => 4,
+                                        "i64" | "u64" | "f64" => 8,
+                                        "bool" => 1,
+                                        "char" => 4,
+                                        "String" => 24,
+                                        _ => 8,
+                                    }
+                                } else {
+                                    8
+                                }
+                            } else {
+                                8
+                            }
+                        },
+                        AstType::Struct(nested) => nested.fields.len() * 8,
+                        _ => 8,
+                    }
+                }).sum::<usize>()
+            },
+            _ => bail!("@struct_size expects a struct type or instance, got: {:?}", args[0])
+        };
+        
+        Ok(AstValue::int(size as i64))
+    })
+}
+
+/// @compile_error intrinsic - generate a compile-time error
+pub fn builtin_compile_error() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@compile_error".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("@compile_error expects 1 argument (error_message), got: {:?}", args)
+        }
+        
+        let error_message = match &args[0] {
+            AstValue::String(s) => &s.value,
+            _ => bail!("@compile_error expects a string message, got: {:?}", args[0])
+        };
+        
+        // Generate a compile-time error
+        bail!("Compile-time error: {}", error_message)
+    })
+}
+
+/// @compile_warning intrinsic - generate a compile-time warning
+pub fn builtin_compile_warning() -> BuiltinFn {
+    BuiltinFn::new_with_ident("@compile_warning".into(), move |args, ctx| {
+        if args.len() != 1 {
+            bail!("@compile_warning expects 1 argument (warning_message), got: {:?}", args)
+        }
+        
+        let warning_message = match &args[0] {
+            AstValue::String(s) => &s.value,
+            _ => bail!("@compile_warning expects a string message, got: {:?}", args[0])
+        };
+        
+        // Print warning (in a full implementation, this would go through a proper warning system)
+        ctx.root().print_str(format!("Warning: {}", warning_message));
+        
+        Ok(AstValue::unit())
     })
 }
