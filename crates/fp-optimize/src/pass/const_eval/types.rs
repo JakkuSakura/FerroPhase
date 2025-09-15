@@ -205,7 +205,7 @@ impl ConstEvaluator {
                     if let Some(ident) = locator.as_ident() {
                         // Check if this is a type-dependent intrinsic
                         match ident.name.as_str() {
-                            "@sizeof" | "@reflect_fields" | "@hasmethod" | "@type_name" => {
+                            "sizeof!" | "reflect_fields!" | "hasmethod!" | "type_name!" => {
                                 return Ok(true);
                             },
                             _ => {}

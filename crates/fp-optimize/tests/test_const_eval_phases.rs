@@ -68,7 +68,7 @@ fn test_phase1_generic_context_preparation() -> Result<()> {
 fn test_phase2_const_evaluation_with_type_queries() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test basic type queries - this would be extended with @sizeof, @reflect_fields
+    // Test basic type queries - this would be extended with sizeof, reflect_fields
     // For now, test basic type inference
     let code = shll_parse_expr!({
         let x = 42; // Should infer i64
@@ -139,7 +139,7 @@ fn test_phase3_generic_specialization() -> Result<()> {
 fn test_phase3_code_generation_ast_modification() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test code generation - this would involve side effects like @addfield
+    // Test code generation - this would involve side effects like addfield
     // For now, test struct field access which is basic code generation
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
@@ -192,14 +192,14 @@ fn test_phase3_const_cleanup_optimization() -> Result<()> {
 fn test_metaprogramming_intrinsics_sizeof() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @sizeof intrinsic - currently not implemented, so this is a stub test
+    // Test sizeof intrinsic - currently not implemented, so this is a stub test
     // When implemented, this would test compile-time sizeof calculations
     let code = shll_parse_expr!(42); // Placeholder
     let value = interpret_const_expr(code)?;
     let expected = shll_parse_value!(42);
     assert_eq!(value, expected);
 
-    // TODO: Implement and test @sizeof(i64) == 8
+    // TODO: Implement and test sizeof(i64) == 8
     Ok(())
 }
 
@@ -207,14 +207,14 @@ fn test_metaprogramming_intrinsics_sizeof() -> Result<()> {
 fn test_metaprogramming_intrinsics_reflect_fields() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @reflect_fields intrinsic - currently not implemented
+    // Test reflect_fields intrinsic - currently not implemented
     // When implemented, this would test reflection on struct fields
     let code = shll_parse_expr!(42); // Placeholder
     let value = interpret_const_expr(code)?;
     let expected = shll_parse_value!(42);
     assert_eq!(value, expected);
 
-    // TODO: Implement and test @reflect_fields(MyStruct)
+    // TODO: Implement and test reflect_fields(MyStruct)
     Ok(())
 }
 
@@ -222,14 +222,14 @@ fn test_metaprogramming_intrinsics_reflect_fields() -> Result<()> {
 fn test_metaprogramming_intrinsics_addfield() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @addfield intrinsic - currently not implemented
+    // Test addfield intrinsic - currently not implemented
     // When implemented, this would test adding fields to structs at compile time
     let code = shll_parse_expr!(42); // Placeholder
     let value = interpret_const_expr(code)?;
     let expected = shll_parse_value!(42);
     assert_eq!(value, expected);
 
-    // TODO: Implement and test @addfield("new_field", i64)
+    // TODO: Implement and test addfield("new_field", i64)
     Ok(())
 }
 

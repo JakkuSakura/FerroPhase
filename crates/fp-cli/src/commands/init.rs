@@ -62,7 +62,7 @@ fn main() {{
     println!("Project: {}", PROJECT_NAME);
     
     // Demonstrate const evaluation
-    const GREETING = comptime {{
+    const GREETING = const {{
         let hour = 14; // Would be actual time in real implementation
         if hour < 12 {{
             "Good morning"
@@ -151,12 +151,12 @@ async fn create_library_template(project_dir: &Path, project_name: &str, config:
 /// Core functionality for {}
 pub mod core {{
     /// A demonstration of compile-time computation
-    pub type ComputedType<T> = comptime {{
+    pub type ComputedType<T> = const {{
         let mut result_type = struct {{}};
         
         // Add fields based on type characteristics
-        @addfield(result_type, "data", T);
-        @addfield(result_type, "metadata", TypeMetadata<T>);
+        addfield!(result_type, "data", T);
+        addfield!(result_type, "metadata", TypeMetadata<T>);
         
         result_type
     }};
@@ -173,9 +173,9 @@ pub mod core {{
         ComputedType {{
             data: value,
             metadata: TypeMetadata {{
-                name: @type_name(T),
-                size: @sizeof(T),
-                alignment: @alignof(T),
+                name: type_name!(T),
+                size: sizeof!(T),
+                alignment: alignof!(T),
             }},
         }}
     }}
@@ -259,12 +259,12 @@ impl Default for Config {
 
 /// Load configuration with compile-time validation
 pub fn load_config() -> Config {
-    comptime {
+    const {
         // Validate configuration at compile time
         let config = Config::default();
         
         if config.server_port < 1024 {
-            @compile_warning("Using privileged port, may require elevated permissions");
+            compile_warning!("Using privileged port, may require elevated permissions");
         }
         
         config
@@ -289,7 +289,7 @@ fn main() {{
     println!("Multi-language FerroPhase project!");
     
     // Python-powered compile-time computation
-    const ANALYSIS_RESULT = comptime python! {{
+    const ANALYSIS_RESULT = const python! {{
         import math
         
         def analyze_data():
@@ -309,7 +309,7 @@ fn main() {{
     }};
     
     // JavaScript-powered configuration DSL
-    const API_CONFIG = comptime javascript! {{
+    const API_CONFIG = const javascript! {{
         const config = {{
             endpoints: {{
                 "/users": {{ method: "GET", auth: true }},
@@ -334,11 +334,11 @@ fn main() {{
     println!("API endpoints: {{}}", API_CONFIG.endpoints.len());
     
     // Generate optimized code based on analysis
-    let processor = comptime {{
+    let processor = const {{
         if ANALYSIS_RESULT.optimization_hint == "vectorize" {{
-            @generate_simd_processor()
+            generate_simd_processor!()
         }} else {{
-            @generate_scalar_processor()
+            generate_scalar_processor!()
         }}
     }};
     
