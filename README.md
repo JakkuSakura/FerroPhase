@@ -1,6 +1,6 @@
-# FerroPhase: Meta-Compilation Framework with Multi-Language Comptime Superpowers
+# FerroPhase: Meta-Compilation Framework with Multi-Language Const Evaluation Superpowers
 
-**TL;DR**: FerroPhase = "Rust++ with multi-language comptime superpowers and flexible compilation targets"
+**TL;DR**: FerroPhase = "Rust++ with multi-language const evaluation superpowers and flexible compilation targets"
 
 A unified compilation infrastructure that extends Rust's capabilities while supporting multi-language interoperability and advanced compile-time computation.
 
@@ -42,15 +42,15 @@ fn optimize_trading_strategy() {
 }
 ```
 
-### 2. Enhanced Comptime System
+### 2. Enhanced Const Evaluation System
 - **Rich compile-time evaluation** beyond Rust's const capabilities
-- **Cross-language comptime computation** (Python code executing at Rust compile-time)
+- **Cross-language const computation** (Python code executing at Rust compile-time)
 - **Advanced metaprogramming** with structural type manipulation
 - **Dynamic code generation** based on compile-time analysis
 
 ```rust
 // Compile-time algorithm analysis and specialization
-const ALGORITHM_PROFILE = comptime python! {
+const ALGORITHM_PROFILE = python! {
     # Analyze algorithm complexity at compile time
     import ast
     def analyze_complexity(code):
@@ -59,7 +59,7 @@ const ALGORITHM_PROFILE = comptime python! {
 };
 
 // Generate specialized implementations
-type OptimizedImpl = comptime {
+const OPTIMIZED_IMPL: Type = {
     if ALGORITHM_PROFILE.vectorizable {
         @generate_simd_version()
     } else {
@@ -86,21 +86,23 @@ type OptimizedImpl = comptime {
 **Crypto Trading Platforms**
 ```rust
 // Express trading logic in Python, compile to microsecond-latency Rust
-comptime python! {
+const TRADING_STRATEGY = python! {
     def define_strategy():
         # Complex mathematical models
         return SignalGenerator(rsi_threshold=70, macd_crossover=True)
-}
+};
 
 // Auto-generated high-frequency trading engine
 @ultra_low_latency  // <100ns execution time
-struct TradingEngine = comptime @optimize_for_latency(define_strategy());
+const TRADING_ENGINE: Type = {
+    @optimize_for_latency(TRADING_STRATEGY)
+};
 ```
 
 **Scientific Computing**
 ```rust
 // NumPy-style expressiveness, Rust performance
-let simulation = comptime {
+const SIMULATION = {
     let python_model = python! {
         # Define complex physics simulation
         import numpy as np
@@ -116,7 +118,7 @@ let simulation = comptime {
 **Systems Programming with High-Level APIs**
 ```rust
 // Express complex networking logic, compile to efficient async Rust
-comptime {
+const SPECIALIZED_CODE = {
     let protocol = javascript! {
         // Use JS for DSL expressiveness
         const protocol = {
@@ -153,7 +155,7 @@ type ApiEndpoints = struct {
 };
 
 // Type-level computation
-type HttpClient<T> = comptime {
+type HttpClient<T> = const SPECIALIZED_CODE = {
     let mut client_type = struct {};
     
     for (path, config) in @reflect_fields(T) {
@@ -326,7 +328,7 @@ fn main() {
     println!("Project: {}", PROJECT_NAME);
     
     // Demonstrate const evaluation
-    const GREETING = comptime {
+    const GREETING = const SPECIALIZED_CODE = {
         let hour = 14; // Would be actual time in real implementation
         if hour < 12 {
             "Good morning"
@@ -384,7 +386,7 @@ This generates a sophisticated project showcasing FerroPhase's multi-language ca
 // src/main.fp - Multi-language demonstration
 fn main() {
     // Python-powered compile-time computation
-    const ANALYSIS_RESULT = comptime python! {
+    const ANALYSIS_RESULT = const python! {
         import math
         def analyze_data():
             # Complex analysis that would be tedious in Rust
@@ -400,7 +402,7 @@ fn main() {
     };
     
     // JavaScript-powered configuration DSL
-    const API_CONFIG = comptime javascript! {
+    const API_CONFIG = const javascript! {
         const config = {
             endpoints: {
                 "/users": { method: "GET", auth: true },
@@ -421,7 +423,7 @@ fn main() {
     };
     
     // Generate optimized code based on compile-time analysis
-    let processor = comptime {
+    let processor = const SPECIALIZED_CODE = {
         if ANALYSIS_RESULT.optimization_hint == "vectorize" {
             @generate_simd_version()
         } else {
@@ -448,7 +450,7 @@ This creates a library demonstrating compile-time type manipulation:
 // src/lib.fp - Advanced type-level computation
 pub mod core {
     /// Compile-time type generation based on input characteristics
-    pub type ComputedType<T> = comptime {
+    pub type ComputedType<T> = const SPECIALIZED_CODE = {
         let mut result_type = struct {};
         
         // Add fields based on type characteristics
@@ -577,7 +579,7 @@ $ fp init ai-system --template multi-lang
 ### Interactive Development
 ```bash
 # Immediate expression evaluation
-$ fp eval --expr "comptime { 1 + 2 * 3 }"
+$ fp eval --expr "const RESULT = { 1 + 2 * 3 }"
 Result: 7
 
 # File evaluation with AST inspection
@@ -602,7 +604,7 @@ FerroPhase's const evaluation goes far beyond traditional compile-time computati
 
 ```rust
 // Complex compile-time struct generation
-type DynamicAPI = comptime {
+type DynamicAPI = const SPECIALIZED_CODE = {
     let mut api = @create_struct("APIRouter");
     
     // Parse OpenAPI spec at compile time
@@ -742,7 +744,7 @@ Here's what you can build with FerroPhase today:
 // trading-bot/src/main.fp
 fn main() {
     // Compile-time risk analysis using Python
-    const RISK_MODEL = comptime python! {
+    const RISK_MODEL = const python! {
         import numpy as np
         def calculate_var(prices, confidence=0.95):
             returns = np.diff(np.log(prices))
@@ -760,7 +762,7 @@ fn main() {
     };
     
     // JavaScript config DSL for trading rules
-    const TRADING_RULES = comptime javascript! {
+    const TRADING_RULES = const javascript! {
         const rules = {
             pairs: ["BTC/USD", "ETH/USD", "ADA/USD"],
             strategies: {
@@ -784,7 +786,7 @@ fn main() {
     };
     
     // Generate optimized trading engine based on analysis
-    let engine = comptime {
+    let engine = const SPECIALIZED_CODE = {
         let mut trading_engine = @create_struct("TradingEngine");
         
         // Add fields based on enabled strategies
