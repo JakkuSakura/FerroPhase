@@ -181,7 +181,7 @@ fn test_unsupported_operations() -> Result<()> {
         ("Logical OR", shll_parse_expr!(true || false)),
         ("Logical NOT", shll_parse_expr!(!true)),
         ("If expressions", shll_parse_expr!(if true { 42 } else { 24 })),
-        ("Block expressions", shll_parse_expr!({ let x = 42; x })),
+        // Note: Basic block expressions now work, but complex scoping may still fail
     ];
 
     for (operation_name, expr) in unsupported_expressions {
