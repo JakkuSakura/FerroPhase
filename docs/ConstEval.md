@@ -167,6 +167,15 @@ enum ConstEvalState {
 ### Step 2: Core Value System
 
 ```rust
+/// AstValue represents runtime values and type references during const evaluation.
+/// 
+/// IMPORTANT ARCHITECTURE PRINCIPLE:
+/// AstValue should contain references to other structs (via Type(AstType::Struct)),
+/// not define struct fields directly within AstValue variants.
+/// 
+/// - Struct instances: AstValue::Struct(ValueStruct) contains TypeStruct + field values
+/// - Struct types: AstValue::Type(AstType::Struct(TypeStruct)) references type definitions
+/// - This separation maintains clean architecture and enables proper type system integration
 #[derive(Debug, Clone, PartialEq)]
 enum AstValue {
     // Primitives
@@ -176,19 +185,15 @@ enum AstValue {
     String(ValueString),
     Unit(ValueUnit),
 
-    // Composite
+    // Composite values (contain references to types, not fields directly)
     List(ValueList),
-    Struct(ValueStruct),
+    Struct(ValueStruct),          // Contains TypeStruct reference + ValueStructural
     Tuple(ValueTuple),
 
-    // Meta-values for code generation
-    Type(AstType),
-    Expr(Box<AstExpr>),           // Generated code
-    FieldDescriptor {
-        name: String,
-        type_id: TypeId,
-        attributes: Vec<String>,
-    },
+    // Type system integration
+    Type(AstType),                // References to types, including AstType::Struct(TypeStruct)
+    Expr(Box<AstExpr>),           // Generated code expressions
+}
 }
 impl AstValue {
     fn as_bool(&self) -> Result<bool, Error> { /* ... */ }
@@ -413,6 +418,556 @@ impl CodeGenerator {
         Ok(())
     }
 }
+## Phase 3.5: Parametric Struct Creation - Structural Generics
+
+### Core Parametric Struct Creation
+
+FerroPhase supports **parametric struct creation** - a powerful form of structural generics where struct layout, fields, and types are determined by compile-time parameters and constants. This enables creating struct variants based on parameters, similar to generics but operating at the structural level.
+
+#### Basic Parametric Struct Creation
+
+```rust
+// Parametric struct creation function - like a struct generator
+const fn create_vector_struct<const DIM: usize, T>() -> Type {
+    let mut vec_struct = @create_struct(format!("Vector{}D<{}>", DIM, T::name()));
+    
+    // Create fields based on dimension parameter
+    match DIM {
+        1 => @addfield(vec_struct, "x", T),
+        2 => {
+            @addfield(vec_struct, "x", T);
+            @addfield(vec_struct, "y", T);
+        },
+        3 => {
+            @addfield(vec_struct, "x", T);
+            @addfield(vec_struct, "y", T);
+            @addfield(vec_struct, "z", T);
+        },
+        4 => {
+            @addfield(vec_struct, "x", T);
+            @addfield(vec_struct, "y", T);
+            @addfield(vec_struct, "z", T);
+            @addfield(vec_struct, "w", T);
+        },
+        _ => {
+            // Dynamic field creation for higher dimensions
+            for i in 0..DIM {
+                let field_name = format!("dim_{}", i);
+                @addfield(vec_struct, field_name, T);
+            }
+        }
+    }
+    
+    vec_struct
+}
+
+// Create specific vector types using parameters
+type Vector2D_f32 = create_vector_struct<2, f32>();
+type Vector3D_i64 = create_vector_struct<3, i64>();
+type Vector8D_f64 = create_vector_struct<8, f64>();
+
+// Generated structs:
+// struct Vector2D<f32> { x: f32, y: f32 }
+// struct Vector3D<i64> { x: i64, y: i64, z: i64 }
+// struct Vector8D<f64> { dim_0: f64, dim_1: f64, ..., dim_7: f64 }
+```
+
+#### Parameter-Driven Field Selection
+
+```rust
+// Struct creation based on capability parameters
+const fn create_config_struct(
+    enable_logging: bool,
+    enable_metrics: bool, 
+    enable_caching: bool,
+    log_level: &str
+) -> Type {
+    let mut config = @create_struct("Config");
+    
+    // Core fields always present
+    @addfield(config, "app_name", String);
+    @addfield(config, "port", u16);
+    
+    // Parameter-driven field inclusion
+    if enable_logging {
+        @addfield(config, "log_enabled", bool);
+        
+        // Nested parameter decisions
+        match log_level {
+            "debug" => {
+                @addfield(config, "log_level", LogLevel);
+                @addfield(config, "debug_info", String);
+                @addfield(config, "stack_trace", bool);
+            },
+            "info" => {
+                @addfield(config, "log_level", LogLevel);
+                @addfield(config, "log_format", String);
+            },
+            _ => {
+                @addfield(config, "log_level", LogLevel);
+            }
+        }
+    }
+    
+    if enable_metrics {
+        @addfield(config, "metrics_endpoint", String);
+        @addfield(config, "collection_interval", Duration);
+    }
+    
+    if enable_caching {
+        @addfield(config, "cache_size", usize);
+        @addfield(config, "cache_strategy", CacheStrategy);
+    }
+    
+    config
+}
+
+// Usage with different parameter combinations
+type DebugConfig = create_config_struct(true, false, true, "debug");
+type ProductionConfig = create_config_struct(true, true, true, "info");
+type MinimalConfig = create_config_struct(false, false, false, "");
+```
+
+#### Type-Based Parametric Creation
+
+```rust
+// Create struct based on type characteristics
+const fn create_container_struct<T>() -> Type {
+    let mut container = @create_struct(format!("Container<{}>", T::name()));
+    
+    // Core container fields
+    @addfield(container, "data", T);
+    @addfield(container, "capacity", usize);
+    @addfield(container, "len", usize);
+    
+    // Type-specific optimizations
+    if T::is_copy() {
+        @addfield(container, "inline_buffer", [T; 8]); // Small buffer optimization
+    }
+    
+    if T::size() <= 8 {
+        @addfield(container, "small_size_flag", bool);
+    }
+    
+    if T::needs_drop() {
+        @addfield(container, "drop_guard", DropGuard<T>);
+    }
+    
+    // Add methods based on type capabilities
+    if T::implements(PartialOrd) {
+        @addmethod(container, "sort", |&mut self| { self.data.sort() });
+        @addmethod(container, "binary_search", |&self, item: &T| -> Option<usize> {
+            self.data.binary_search(item).ok()
+        });
+    }
+    
+    if T::implements(Hash) {
+        @addmethod(container, "to_hash_set", |&self| -> HashSet<T> {
+            self.data.iter().cloned().collect()
+        });
+    }
+    
+    container
+}
+
+// Generated specialized containers
+type IntContainer = create_container_struct<i32>();     // With inline_buffer, small_size_flag
+type StringContainer = create_container_struct<String>(); // With drop_guard, no inline_buffer
+type HashableContainer = create_container_struct<u64>(); // With sort, binary_search, to_hash_set
+```
+
+#### Array-Like Parametric Structs
+
+```rust
+// Create array-like structs with compile-time size
+const fn create_fixed_array<T, const N: usize>() -> Type {
+    let mut array_struct = @create_struct(format!("Array{}x{}", N, T::name()));
+    
+    // Choose implementation based on size
+    if N <= 4 {
+        // Small arrays: individual named fields
+        let field_names = ["x", "y", "z", "w"];
+        for i in 0..N {
+            @addfield(array_struct, field_names[i], T);
+        }
+        
+        // Add swizzling methods for small vectors
+        if N >= 2 {
+            @addmethod(array_struct, "xy", |&self| -> (T, T) { (self.x, self.y) });
+        }
+        if N >= 3 {
+            @addmethod(array_struct, "xyz", |&self| -> (T, T, T) { (self.x, self.y, self.z) });
+        }
+    } else if N <= 16 {
+        // Medium arrays: indexed fields
+        for i in 0..N {
+            @addfield(array_struct, format!("field_{}", i), T);
+        }
+    } else {
+        // Large arrays: use internal array
+        @addfield(array_struct, "data", [T; N]);
+        
+        // Add efficient indexing
+        @addmethod(array_struct, "get", |&self, index: usize| -> Option<&T> {
+            self.data.get(index)
+        });
+    }
+    
+    // Add common methods regardless of size
+    @addmethod(array_struct, "len", |&self| -> usize { N });
+    @addmethod(array_struct, "as_slice", |&self| -> &[T] { 
+        unsafe { std::slice::from_raw_parts(self as *const _ as *const T, N) }
+    });
+    
+    array_struct
+}
+
+// Usage examples
+type Vec2 = create_fixed_array<f32, 2>();  // Fields: x, y + xy() method
+type Vec3 = create_fixed_array<f64, 3>();  // Fields: x, y, z + xyz() method  
+type Matrix4x4 = create_fixed_array<f32, 16>(); // Fields: field_0..field_15
+type LargeBuffer = create_fixed_array<u8, 1024>(); // Field: data + get() method
+```
+
+#### Conditional Struct Assembly
+
+```rust
+// Struct with conditional fields based on compile-time config
+const CONFIG_STRUCT: Type = {
+    let mut builder = @create_struct("ConfigStruct");
+    
+    @addfield(builder, "name", String);
+    
+    if DEBUG_MODE {
+        @addfield(builder, "debug_info", String);
+        @addfield(builder, "line_number", i64);
+    }
+    
+    if FEATURE_NETWORKING {
+        @addfield(builder, "socket", NetworkSocket);
+    }
+    
+    builder
+};
+```
+
+#### Struct Field Introspection and Modification
+
+```rust
+// Reflect on existing struct
+const STRUCT_INFO: Vec<FieldDescriptor> = {
+    @reflect_fields(Point)
+};
+
+// Create modified version of existing struct
+const EXTENDED_POINT: Type = {
+    let mut builder = @clone_struct(Point);
+    @addfield(builder, "z", i64);
+    @addfield(builder, "name", String);
+    builder
+};
+
+// Generate Point3D from Point
+```
+
+#### Compile-Time Struct Validation
+
+```rust
+// Validate struct at compile time
+const VALIDATED_STRUCT: Type = {
+    let mut builder = @create_struct("ValidatedStruct");
+    
+    @addfield(builder, "id", u64);
+    @addfield(builder, "data", Vec<u8>);
+    
+    // Compile-time validation
+    if @sizeof(builder) > MAX_STRUCT_SIZE {
+        @compile_error("Struct too large!");
+    }
+    
+    if !@hasfield(builder, "id") {
+        @compile_error("Missing required 'id' field!");
+    }
+    
+    builder
+};
+```
+
+### Enhanced Intrinsic Functions for Struct Creation
+
+```rust
+impl ConstInterpreter {
+    fn evaluate_struct_intrinsic(&mut self, name: &str, args: &[AstExpr], span: Span)
+        -> Result<AstValue, Error> {
+        match name {
+            // Struct creation intrinsics
+            "@create_struct" => {
+                let struct_name = self.evaluate_expression(&args[0])?.as_string()?;
+                
+                // Create a new TypeStruct in the type registry
+                let type_struct = TypeStruct::new(struct_name.clone(), Vec::new());
+                let type_id = self.type_registry.register_type(type_struct.clone())?;
+                
+                // Return reference to the type, not fields directly in AstValue
+                Ok(AstValue::Type(AstType::Struct(type_struct)))
+            }
+
+            "@clone_struct" => {
+                let source_type = self.evaluate_expression(&args[0])?.as_type()?;
+                
+                // Clone the TypeStruct definition
+                if let AstType::Struct(source_struct) = source_type {
+                    let cloned_name = format!("Clone_{}", source_struct.name);
+                    let cloned_fields = source_struct.fields.clone();
+                    let cloned_struct = TypeStruct::new(cloned_name, cloned_fields);
+                    
+                    self.type_registry.register_type(cloned_struct.clone())?;
+                    Ok(AstValue::Type(AstType::Struct(cloned_struct)))
+                } else {
+                    Err(Error::Generic("Expected struct type for cloning".to_string()))
+                }
+            }
+
+            "@addfield" => {
+                let type_value = self.evaluate_expression(&args[0])?;
+                let field_name = self.evaluate_expression(&args[1])?.as_string()?;
+                let field_type = self.evaluate_expression(&args[2])?.as_type()?;
+
+                // Modify the TypeStruct in the type registry, not AstValue directly
+                if let AstValue::Type(AstType::Struct(ref mut struct_type)) = type_value {
+                    struct_type.add_field(field_name.clone(), field_type);
+                    
+                    // Record side effect for code generation  
+                    self.current_context_mut().side_effects.push(
+                        SideEffect::GenerateField {
+                            name: field_name,
+                            type_id: field_type.id(),
+                        }
+                    );
+                }
+
+                Ok(type_value)
+            }
+
+            "@hasfield" => {
+                let struct_value = self.evaluate_expression(&args[0])?;
+                let field_name = self.evaluate_expression(&args[1])?.as_string()?;
+
+                let has_field = match struct_value {
+                    AstValue::Type(AstType::Struct(struct_type)) => {
+                        struct_type.has_field(&field_name)
+                    }
+                    AstValue::Struct(struct_instance) => {
+                        struct_instance.ty.has_field(&field_name)
+                    }
+                    _ => {
+                        // For other types, check via type registry
+                        if let Ok(type_id) = struct_value.get_type_id() {
+                            self.type_registry.type_has_field(type_id, &field_name)
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                Ok(AstValue::Bool(ValueBool::new(has_field)))
+            }
+
+            "@field_type" => {
+                let struct_value = self.evaluate_expression(&args[0])?;
+                let field_name = self.evaluate_expression(&args[1])?.as_string()?;
+
+                let field_type = match struct_value {
+                    AstValue::Type(AstType::Struct(struct_type)) => {
+                        struct_type.get_field_type(&field_name)
+                            .ok_or_else(|| Error::Generic(format!("Field '{}' not found", field_name)))?
+                    }
+                    AstValue::Struct(struct_instance) => {
+                        struct_instance.ty.get_field_type(&field_name)
+                            .ok_or_else(|| Error::Generic(format!("Field '{}' not found", field_name)))?
+                    }
+                    _ => {
+                        return Err(Error::Generic("Expected struct type or instance".to_string()));
+                    }
+                };
+
+                Ok(AstValue::Type(field_type))
+            }
+
+            "@field_count" => {
+                let struct_value = self.evaluate_expression(&args[0])?;
+                
+                let count = match struct_value {
+                    AstValue::Type(AstType::Struct(struct_type)) => struct_type.fields.len(),
+                    AstValue::Struct(struct_instance) => struct_instance.structural.fields.len(),
+                    _ => {
+                        let type_id = struct_value.get_type_id()?;
+                        self.type_registry.get_field_count(type_id)?
+                    }
+                };
+
+                Ok(AstValue::Int(ValueInt::new(count as i64)))
+            }
+
+            "@struct_size" => {
+                let struct_value = self.evaluate_expression(&args[0])?;
+                let size = match struct_value {
+                    AstValue::Type(AstType::Struct(struct_type)) => {
+                        // Calculate size from TypeStruct definition
+                        struct_type.calculate_size(&self.type_registry)?
+                    }
+                    AstValue::Struct(struct_instance) => {
+                        // Get size from the struct's type
+                        struct_instance.ty.calculate_size(&self.type_registry)?
+                    }
+                    _ => {
+                        // Fallback to type registry lookup
+                        let type_id = struct_value.get_type_id()?;
+                        self.type_registry.get_size(type_id)?
+                    }
+                };
+
+                Ok(AstValue::Int(ValueInt::new(size as i64)))
+            }
+
+            _ => Err(Error::Generic(format!("Unknown struct intrinsic: {}", name)))
+        }
+    }
+}
+```
+
+### Struct Creation Examples
+
+#### Example 1: Configuration-Driven Struct Generation
+
+```rust
+// Compile-time configuration
+const ENABLE_LOGGING: bool = true;
+const ENABLE_METRICS: bool = false;
+const MAX_CONNECTIONS: i64 = 100;
+
+// Generate struct based on configuration
+const SERVER_CONFIG: Type = {
+    let mut config = @create_struct("ServerConfig");
+    
+    // Always include basic fields
+    @addfield(config, "port", u16);
+    @addfield(config, "max_connections", i64);
+    
+    // Conditional fields based on features
+    if ENABLE_LOGGING {
+        @addfield(config, "log_level", LogLevel);
+        @addfield(config, "log_file", String);
+    }
+    
+    if ENABLE_METRICS {
+        @addfield(config, "metrics_endpoint", String);
+        @addfield(config, "metrics_interval", Duration);
+    }
+    
+    config
+};
+
+// Create instance with computed values
+const DEFAULT_SERVER_CONFIG: ServerConfig = {
+    let mut config = ServerConfig {
+        port: 8080,
+        max_connections: MAX_CONNECTIONS,
+    };
+    
+    if ENABLE_LOGGING {
+        config.log_level = LogLevel::Info;
+        config.log_file = "/var/log/server.log";
+    }
+    
+    config
+};
+```
+
+#### Example 2: Generic Struct Specialization
+
+```rust
+// Generic struct template
+struct Container<T> {
+    data: T,
+    size: usize,
+}
+
+// Specialize for specific types at compile time
+const STRING_CONTAINER: Type = {
+    let mut container = @specialize(Container, String);
+    
+    // Add specialized methods
+    @addmethod(container, "len", || self.data.len());
+    @addmethod(container, "is_empty", || self.data.is_empty());
+    
+    container
+};
+
+const INT_CONTAINER: Type = {
+    let mut container = @specialize(Container, i64);
+    
+    // Add numeric-specific methods
+    @addmethod(container, "abs", || self.data.abs());
+    @addmethod(container, "is_positive", || self.data > 0);
+    
+    container
+};
+```
+
+#### Example 3: Struct Field Transformation
+
+```rust
+// Transform existing struct
+const ENHANCED_POINT: Type = {
+    let original_fields = @reflect_fields(Point);
+    let mut enhanced = @create_struct("EnhancedPoint");
+    
+    // Copy all original fields
+    for field in original_fields {
+        @addfield(enhanced, field.name, field.type_id);
+    }
+    
+    // Add computed fields
+    @addfield(enhanced, "magnitude", f64);
+    @addfield(enhanced, "angle", f64);
+    @addfield(enhanced, "quadrant", i32);
+    
+    enhanced
+};
+
+// Generate implementation
+const ENHANCED_POINT_IMPL: Impl = {
+    let mut impl_block = @create_impl(EnhancedPoint);
+    
+    @addmethod(impl_block, "new", |x: i64, y: i64| {
+        let magnitude = ((x * x + y * y) as f64).sqrt();
+        let angle = (y as f64).atan2(x as f64);
+        let quadrant = match (x >= 0, y >= 0) {
+            (true, true) => 1,
+            (false, true) => 2,
+            (false, false) => 3,
+            (true, false) => 4,
+        };
+        
+        EnhancedPoint { x, y, magnitude, angle, quadrant }
+    });
+    
+    impl_block
+};
+```
+
+### Integration with Type System
+
+The struct creation system integrates seamlessly with the type system through the iterative evaluation passes:
+
+1. **Pass 4**: Struct creation intrinsics execute and generate `StructConstructor` values
+2. **Pass 5**: Type system receives new struct definitions and validates them
+3. **Pass 8**: Code generation applies struct creation side effects to AST
+4. **Pass 9**: Final validation ensures all struct references are resolved
+
+This enables sophisticated compile-time struct manipulation while maintaining type safety and performance.
+
 ## Phase 4: Integration with Compiler Pipeline
 
 ### Step 7: Compiler Integration
