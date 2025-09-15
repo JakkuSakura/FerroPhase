@@ -178,11 +178,11 @@ fn test_type_dependent_block_detection() -> Result<()> {
     
     // Create a const block that uses type introspection
     use fp_rust_lang::shll_parse_expr;
-    let expr = shll_parse_expr!(@sizeof(i64));
+    let expr = shll_parse_expr!(sizeof!(i64));
     
     // This should be detected as type-dependent
     let depends_on_types = evaluator.block_depends_on_types(&expr)?;
-    assert!(depends_on_types, "@sizeof expression should depend on types");
+    assert!(depends_on_types, "sizeof expression should depend on types");
     
     // Create a non-type-dependent expression
     let simple_expr = shll_parse_expr!(42 + 8);

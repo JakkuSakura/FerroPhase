@@ -168,28 +168,28 @@ impl InterpreterPass {
             "Some" => Ok(AstValue::any(builtin_some())),
             // Metaprogramming intrinsics
             // Core introspection intrinsics
-            "@sizeof" if resolve => Ok(AstValue::any(builtin_sizeof())),
-            "@reflect_fields" if resolve => Ok(AstValue::any(builtin_reflect_fields())),
-            "@hasmethod" if resolve => Ok(AstValue::any(builtin_hasmethod())),
-            "@type_name" if resolve => Ok(AstValue::any(builtin_type_name())),
+            "sizeof!" if resolve => Ok(AstValue::any(builtin_sizeof())),
+            "reflect_fields!" if resolve => Ok(AstValue::any(builtin_reflect_fields())),
+            "hasmethod!" if resolve => Ok(AstValue::any(builtin_hasmethod())),
+            "type_name!" if resolve => Ok(AstValue::any(builtin_type_name())),
             
             // Struct creation and manipulation intrinsics
-            "@create_struct" if resolve => Ok(AstValue::any(builtin_create_struct())),
-            "@clone_struct" if resolve => Ok(AstValue::any(builtin_clone_struct())),
-            "@addfield" if resolve => Ok(AstValue::any(builtin_addfield())),
+            "create_struct!" if resolve => Ok(AstValue::any(builtin_create_struct())),
+            "clone_struct!" if resolve => Ok(AstValue::any(builtin_clone_struct())),
+            "addfield!" if resolve => Ok(AstValue::any(builtin_addfield())),
             
             // Struct querying intrinsics
-            "@hasfield" if resolve => Ok(AstValue::any(builtin_hasfield())),
-            "@field_count" if resolve => Ok(AstValue::any(builtin_field_count())),
-            "@field_type" if resolve => Ok(AstValue::any(builtin_field_type())),
-            "@struct_size" if resolve => Ok(AstValue::any(builtin_struct_size())),
+            "hasfield!" if resolve => Ok(AstValue::any(builtin_hasfield())),
+            "field_count!" if resolve => Ok(AstValue::any(builtin_field_count())),
+            "field_type!" if resolve => Ok(AstValue::any(builtin_field_type())),
+            "struct_size!" if resolve => Ok(AstValue::any(builtin_struct_size())),
             
             // Code generation intrinsics
-            "@generate_method" if resolve => Ok(AstValue::any(builtin_generate_method())),
+            "generate_method!" if resolve => Ok(AstValue::any(builtin_generate_method())),
             
             // Compile-time validation intrinsics
-            "@compile_error" if resolve => Ok(AstValue::any(builtin_compile_error())),
-            "@compile_warning" if resolve => Ok(AstValue::any(builtin_compile_warning())),
+            "compile_error!" if resolve => Ok(AstValue::any(builtin_compile_error())),
+            "compile_warning!" if resolve => Ok(AstValue::any(builtin_compile_warning())),
             _ => {
                 info!("Get value recursive {:?}", ident);
                 ctx.print_values()?;

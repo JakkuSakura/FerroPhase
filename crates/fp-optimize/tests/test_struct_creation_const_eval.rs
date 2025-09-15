@@ -85,9 +85,9 @@ fn test_struct_field_access() -> Result<()> {
 fn test_create_struct_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @create_struct intrinsic
+    // Test create_struct intrinsic
     let code = shll_parse_expr!({
-        let struct_builder = @create_struct("DynamicStruct");
+        let struct_builder = create_struct!("DynamicStruct");
         struct_builder
     });
     
@@ -102,11 +102,11 @@ fn test_create_struct_intrinsic() -> Result<()> {
 fn test_addfield_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @addfield intrinsic for dynamic field addition
+    // Test addfield intrinsic for dynamic field addition
     let code = shll_parse_expr!({
-        let mut builder = @create_struct("DynamicStruct");
-        @addfield(builder, "field1", i64);
-        @addfield(builder, "field2", String);
+        let mut builder = create_struct!("DynamicStruct");
+        addfield!(builder, "field1", i64);
+        addfield!(builder, "field2", String);
         builder
     });
     
@@ -124,12 +124,12 @@ fn test_conditional_struct_generation() -> Result<()> {
     // Test conditional field addition based on compile-time constants
     let code = shll_parse_expr!({
         let debug_mode = true;
-        let mut builder = @create_struct("ConditionalStruct");
+        let mut builder = create_struct!("ConditionalStruct");
         
-        @addfield(builder, "name", String);
+        addfield!(builder, "name", String);
         
         if debug_mode {
-            @addfield(builder, "debug_info", String);
+            addfield!(builder, "debug_info", String);
         }
         
         builder
@@ -149,11 +149,11 @@ fn test_loop_based_field_generation() -> Result<()> {
     // Test generating fields in a loop
     let code = shll_parse_expr!({
         let field_count = 3;
-        let mut builder = @create_struct("LoopStruct");
+        let mut builder = create_struct!("LoopStruct");
         
         for i in 0..field_count {
             let field_name = format!("field_{}", i);
-            @addfield(builder, field_name, i64);
+            addfield!(builder, field_name, i64);
         }
         
         builder
@@ -172,10 +172,10 @@ fn test_loop_based_field_generation() -> Result<()> {
 fn test_reflect_fields_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @reflect_fields introspection
+    // Test reflect_fields introspection
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
-        let field_info = @reflect_fields(Point);
+        let field_info = reflect_fields!(Point);
         field_info
     });
     
@@ -190,11 +190,11 @@ fn test_reflect_fields_intrinsic() -> Result<()> {
 fn test_hasfield_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @hasfield introspection
+    // Test hasfield introspection
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
-        let has_x = @hasfield(Point, "x");
-        let has_z = @hasfield(Point, "z");
+        let has_x = hasfield!(Point, "x");
+        let has_z = hasfield!(Point, "z");
         has_x && !has_z
     });
     
@@ -209,10 +209,10 @@ fn test_hasfield_intrinsic() -> Result<()> {
 fn test_field_count_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @field_count introspection
+    // Test field_count introspection
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
-        let count = @field_count(Point);
+        let count = field_count!(Point);
         count
     });
     
@@ -228,10 +228,10 @@ fn test_field_count_intrinsic() -> Result<()> {
 fn test_struct_size_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @struct_size introspection
+    // Test struct_size introspection
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
-        let size = @struct_size(Point);
+        let size = struct_size!(Point);
         size
     });
     
@@ -248,10 +248,10 @@ fn test_struct_size_intrinsic() -> Result<()> {
 fn test_clone_struct_intrinsic() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test @clone_struct for creating copies
+    // Test clone_struct for creating copies
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
-        let cloned = @clone_struct(Point);
+        let cloned = clone_struct!(Point);
         cloned
     });
     
@@ -269,9 +269,9 @@ fn test_struct_extension() -> Result<()> {
     // Test extending existing struct with new fields
     let code = shll_parse_expr!({
         struct Point { x: i64, y: i64 }
-        let mut extended = @clone_struct(Point);
-        @addfield(extended, "z", i64);
-        @addfield(extended, "name", String);
+        let mut extended = clone_struct!(Point);
+        addfield!(extended, "z", i64);
+        addfield!(extended, "name", String);
         extended
     });
     
@@ -291,17 +291,17 @@ fn test_struct_validation() -> Result<()> {
     // Test compile-time struct validation
     let code = shll_parse_expr!({
         let max_size = 1000;
-        let mut builder = @create_struct("ValidatedStruct");
+        let mut builder = create_struct!("ValidatedStruct");
         
-        @addfield(builder, "id", u64);
-        @addfield(builder, "data", Vec<u8>);
+        addfield!(builder, "id", u64);
+        addfield!(builder, "data", Vec<u8>);
         
         // Validate struct properties
-        let field_count = @field_count(builder);
-        let struct_size = @struct_size(builder);
+        let field_count = field_count!(builder);
+        let struct_size = struct_size!(builder);
         
         if struct_size > max_size {
-            // In real implementation: @compile_error("Struct too large!");
+            // In real implementation: compile_error("Struct too large!");
         }
         
         field_count >= 2 && struct_size <= max_size
@@ -320,14 +320,14 @@ fn test_required_field_validation() -> Result<()> {
 
     // Test validation for required fields
     let code = shll_parse_expr!({
-        let mut builder = @create_struct("RequiredFieldStruct");
-        @addfield(builder, "id", u64);
-        @addfield(builder, "name", String);
+        let mut builder = create_struct!("RequiredFieldStruct");
+        addfield!(builder, "id", u64);
+        addfield!(builder, "name", String);
         
         // Validate required fields exist
-        let has_id = @hasfield(builder, "id");
-        let has_name = @hasfield(builder, "name");
-        let has_optional = @hasfield(builder, "optional");
+        let has_id = hasfield!(builder, "id");
+        let has_name = hasfield!(builder, "name");
+        let has_optional = hasfield!(builder, "optional");
         
         has_id && has_name && !has_optional
     });
@@ -348,12 +348,12 @@ fn test_generic_struct_specialization() -> Result<()> {
     // Test specializing generic structs at compile time
     let code = shll_parse_expr!({
         // In real implementation:
-        // let string_container = @specialize(Container, String);
+        // let string_container = specialize(Container, String);
         
         // For now, simulate with struct creation
-        let mut container = @create_struct("StringContainer");
-        @addfield(container, "data", String);
-        @addfield(container, "size", usize);
+        let mut container = create_struct!("StringContainer");
+        addfield!(container, "data", String);
+        addfield!(container, "size", usize);
         container
     });
     
@@ -376,25 +376,25 @@ fn test_feature_flag_driven_struct() -> Result<()> {
         let enable_metrics = false;
         let enable_caching = true;
         
-        let mut config = @create_struct("FeatureConfig");
+        let mut config = create_struct!("FeatureConfig");
         
         // Core fields always present
-        @addfield(config, "app_name", String);
-        @addfield(config, "version", String);
+        addfield!(config, "app_name", String);
+        addfield!(config, "version", String);
         
         // Conditional fields based on features
         if enable_logging {
-            @addfield(config, "log_level", String);
-            @addfield(config, "log_file", String);
+            addfield!(config, "log_level", String);
+            addfield!(config, "log_file", String);
         }
         
         if enable_metrics {
-            @addfield(config, "metrics_port", u16);
+            addfield!(config, "metrics_port", u16);
         }
         
         if enable_caching {
-            @addfield(config, "cache_size", usize);
-            @addfield(config, "cache_ttl", u64);
+            addfield!(config, "cache_size", usize);
+            addfield!(config, "cache_ttl", u64);
         }
         
         config
@@ -419,19 +419,19 @@ fn test_struct_composition() -> Result<()> {
         struct Point { x: i64, y: i64 }
         struct Color { r: u8, g: u8, b: u8 }
         
-        let mut drawable = @create_struct("DrawablePoint");
+        let mut drawable = create_struct!("DrawablePoint");
         
         // Embed Point fields
-        let point_fields = @reflect_fields(Point);
+        let point_fields = reflect_fields!(Point);
         for field in point_fields {
-            @addfield(drawable, field.name, field.type_id);
+            addfield!(drawable, field.name, field.type_id);
         }
         
         // Embed Color fields with prefix
-        let color_fields = @reflect_fields(Color);
+        let color_fields = reflect_fields!(Color);
         for field in color_fields {
             let prefixed_name = format!("color_{}", field.name);
-            @addfield(drawable, prefixed_name, field.type_id);
+            addfield!(drawable, prefixed_name, field.type_id);
         }
         
         drawable
@@ -452,10 +452,10 @@ fn test_struct_creation_error_handling() -> Result<()> {
 
     // Test that struct creation properly handles errors
     let code = shll_parse_expr!({
-        let builder = @create_struct("TestStruct");
+        let builder = create_struct!("TestStruct");
         
         // Try to access field that doesn't exist
-        let has_nonexistent = @hasfield(builder, "nonexistent_field");
+        let has_nonexistent = hasfield!(builder, "nonexistent_field");
         
         // Should return false, not crash
         !has_nonexistent
@@ -477,23 +477,23 @@ fn test_struct_creation_integration() -> Result<()> {
     // Test complete struct creation workflow
     let code = shll_parse_expr!({
         // 1. Create base struct
-        let mut config = @create_struct("IntegrationTestStruct");
+        let mut config = create_struct!("IntegrationTestStruct");
         
         // 2. Add basic fields
-        @addfield(config, "id", u64);
-        @addfield(config, "name", String);
+        addfield(config, "id", u64);
+        addfield(config, "name", String);
         
         // 3. Conditionally add fields
         let include_debug = true;
         if include_debug {
-            @addfield(config, "debug_mode", bool);
+            addfield!(config, "debug_mode", bool);
         }
         
         // 4. Validate the result
-        let field_count = @field_count(config);
-        let has_id = @hasfield(config, "id");
-        let has_name = @hasfield(config, "name");
-        let has_debug = @hasfield(config, "debug_mode");
+        let field_count = field_count(config);
+        let has_id = hasfield(config, "id");
+        let has_name = hasfield(config, "name");
+        let has_debug = hasfield!(config, "debug_mode");
         
         // 5. Return validation result
         field_count == 3 && has_id && has_name && has_debug
@@ -515,23 +515,23 @@ fn test_dimension_based_vector_creation() -> Result<()> {
     // Test creating vector structs based on dimension parameter
     let code = shll_parse_expr!({
         const fn create_vector<const DIM: usize>() -> Type {
-            let mut vec_struct = @create_struct(format!("Vector{}D", DIM));
+            let mut vec_struct = create_struct!(format!("Vector{}D", DIM));
             
             match DIM {
-                1 => @addfield(vec_struct, "x", f32),
+                1 => addfield!(vec_struct, "x", f32),
                 2 => {
-                    @addfield(vec_struct, "x", f32);
-                    @addfield(vec_struct, "y", f32);
+                    addfield!(vec_struct, "x", f32);
+                    addfield!(vec_struct, "y", f32);
                 },
                 3 => {
-                    @addfield(vec_struct, "x", f32);
-                    @addfield(vec_struct, "y", f32);
-                    @addfield(vec_struct, "z", f32);
+                    addfield!(vec_struct, "x", f32);
+                    addfield!(vec_struct, "y", f32);
+                    addfield!(vec_struct, "z", f32);
                 },
                 _ => {
                     for i in 0..DIM {
                         let field_name = format!("dim_{}", i);
-                        @addfield(vec_struct, field_name, f32);
+                        addfield!(vec_struct, field_name, f32);
                     }
                 }
             }
@@ -557,21 +557,21 @@ fn test_parameter_driven_config_struct() -> Result<()> {
     // Test struct creation based on boolean parameters
     let code = shll_parse_expr!({
         const fn create_config(enable_logging: bool, enable_metrics: bool) -> Type {
-            let mut config = @create_struct("Config");
+            let mut config = create_struct!("Config");
             
             // Core fields always present
-            @addfield(config, "app_name", String);
-            @addfield(config, "port", u16);
+            addfield!(config, "app_name", String);
+            addfield!(config, "port", u16);
             
             // Parameter-driven fields
             if enable_logging {
-                @addfield(config, "log_level", String);
-                @addfield(config, "log_file", String);
+                addfield!(config, "log_level", String);
+                addfield!(config, "log_file", String);
             }
             
             if enable_metrics {
-                @addfield(config, "metrics_endpoint", String);
-                @addfield(config, "collection_interval", u64);
+                addfield!(config, "metrics_endpoint", String);
+                addfield!(config, "collection_interval", u64);
             }
             
             config
@@ -595,19 +595,19 @@ fn test_type_based_container_specialization() -> Result<()> {
     // Test creating containers specialized for specific types
     let code = shll_parse_expr!({
         const fn create_container<T>() -> Type {
-            let mut container = @create_struct(format!("Container<{}>", T::name()));
+            let mut container = create_struct!(format!("Container<{}>", T::name()));
             
             // Core container fields
-            @addfield(container, "data", T);
-            @addfield(container, "size", usize);
+            addfield!(container, "data", T);
+            addfield!(container, "size", usize);
             
             // Type-specific optimizations
             if T::is_copy() {
-                @addfield(container, "inline_buffer", [T; 8]);
+                addfield!(container, "inline_buffer", [T; 8]);
             }
             
             if T::size() <= 8 {
-                @addfield(container, "small_type_flag", bool);
+                addfield!(container, "small_type_flag", bool);
             }
             
             container
@@ -631,17 +631,17 @@ fn test_array_size_parametric_creation() -> Result<()> {
     // Test creating array-like structs with compile-time size
     let code = shll_parse_expr!({
         const fn create_fixed_array<T, const N: usize>() -> Type {
-            let mut array_struct = @create_struct(format!("Array{}x{}", N, T::name()));
+            let mut array_struct = create_struct!(format!("Array{}x{}", N, T::name()));
             
             if N <= 4 {
                 // Small arrays: individual named fields
                 let field_names = ["x", "y", "z", "w"];
                 for i in 0..N {
-                    @addfield(array_struct, field_names[i], T);
+                    addfield!(array_struct, field_names[i], T);
                 }
             } else {
                 // Large arrays: use internal array
-                @addfield(array_struct, "data", [T; N]);
+                addfield!(array_struct, "data", [T; N]);
             }
             
             array_struct
@@ -668,26 +668,26 @@ fn test_conditional_field_assembly() -> Result<()> {
         let networking_enabled = false;
         let database_enabled = true;
         
-        let mut app_struct = @create_struct("AppStruct");
+        let mut app_struct = create_struct!("AppStruct");
         
         // Core fields
-        @addfield(app_struct, "name", String);
-        @addfield(app_struct, "version", String);
+        addfield(app_struct, "name", String);
+        addfield(app_struct, "version", String);
         
         // Conditional assembly
         if debug_mode {
-            @addfield(app_struct, "debug_info", String);
-            @addfield(app_struct, "stack_trace", bool);
+            addfield!(app_struct, "debug_info", String);
+            addfield!(app_struct, "stack_trace", bool);
         }
         
         if networking_enabled {
-            @addfield(app_struct, "socket", NetworkSocket);
-            @addfield(app_struct, "endpoint", String);
+            addfield!(app_struct, "socket", NetworkSocket);
+            addfield!(app_struct, "endpoint", String);
         }
         
         if database_enabled {
-            @addfield(app_struct, "db_connection", DatabaseConnection);
-            @addfield(app_struct, "connection_pool_size", usize);
+            addfield!(app_struct, "db_connection", DatabaseConnection);
+            addfield!(app_struct, "connection_pool_size", usize);
         }
         
         app_struct
@@ -707,33 +707,33 @@ fn test_nested_parameter_decisions() -> Result<()> {
     // Test nested parameter-based decisions
     let code = shll_parse_expr!({
         const fn create_message_struct(protocol_version: u32, message_type: &str) -> Type {
-            let mut message = @create_struct(format!("{}Message", message_type));
+            let mut message = create_struct!(format!("{}Message", message_type));
             
             // Standard fields for all messages
-            @addfield(message, "id", u64);
-            @addfield(message, "timestamp", u64);
+            addfield!(message, "id", u64);
+            addfield!(message, "timestamp", u64);
             
             // Version-specific fields
             if protocol_version >= 2 {
-                @addfield(message, "checksum", u32);
+                addfield!(message, "checksum", u32);
                 
                 if protocol_version >= 3 {
-                    @addfield(message, "encryption_key", String);
+                    addfield!(message, "encryption_key", String);
                 }
             }
             
             // Message type specific fields
             match message_type {
                 "Login" => {
-                    @addfield(message, "username", String);
-                    @addfield(message, "password_hash", Vec<u8>);
+                    addfield!(message, "username", String);
+                    addfield!(message, "password_hash", Vec<u8>);
                 },
                 "Data" => {
-                    @addfield(message, "payload", Vec<u8>);
-                    @addfield(message, "compression", CompressionType);
+                    addfield!(message, "payload", Vec<u8>);
+                    addfield!(message, "compression", CompressionType);
                 },
                 _ => {
-                    @addfield(message, "data", serde_json::Value);
+                    addfield!(message, "data", serde_json::Value);
                 }
             }
             
@@ -759,24 +759,24 @@ fn test_parametric_struct_validation() -> Result<()> {
     let code = shll_parse_expr!({
         const fn create_validated_struct<const MAX_FIELDS: usize>(field_count: usize) -> Type {
             if field_count > MAX_FIELDS {
-                @compile_error("Too many fields requested!");
+                compile_error!("Too many fields requested!");
             }
             
-            let mut validated = @create_struct("ValidatedStruct");
+            let mut validated = create_struct!("ValidatedStruct");
             
             // Add core field
-            @addfield(validated, "id", u64);
+            addfield(validated, "id", u64);
             
             // Add requested number of fields
             for i in 0..field_count {
                 let field_name = format!("field_{}", i);
-                @addfield(validated, field_name, i64);
+                addfield!(validated, field_name, i64);
             }
             
             // Validate final structure
-            let total_fields = @field_count(validated);
+            let total_fields = field_count!(validated);
             if total_fields != field_count + 1 {  // +1 for id field
-                @compile_error("Field count mismatch!");
+                compile_error!("Field count mismatch!");
             }
             
             validated
@@ -803,25 +803,25 @@ fn test_struct_composition_with_parameters() -> Result<()> {
         struct Color { r: u8, g: u8, b: u8 }
         
         const fn create_drawable<const INCLUDE_POINT: bool, const INCLUDE_COLOR: bool>() -> Type {
-            let mut drawable = @create_struct("Drawable");
+            let mut drawable = create_struct!("Drawable");
             
             // Core drawable fields
-            @addfield(drawable, "id", u64);
-            @addfield(drawable, "visible", bool);
+            addfield(drawable, "id", u64);
+            addfield(drawable, "visible", bool);
             
             // Conditionally include point fields
             if INCLUDE_POINT {
-                let point_fields = @reflect_fields(Point);
+                let point_fields = reflect_fields!(Point);
                 for field in point_fields {
-                    @addfield(drawable, format!("pos_{}", field.name), field.type_id);
+                    addfield!(drawable, format!("pos_{}", field.name), field.type_id);
                 }
             }
             
             // Conditionally include color fields
             if INCLUDE_COLOR {
-                let color_fields = @reflect_fields(Color);
+                let color_fields = reflect_fields!(Color);
                 for field in color_fields {
-                    @addfield(drawable, format!("color_{}", field.name), field.type_id);
+                    addfield!(drawable, format!("color_{}", field.name), field.type_id);
                 }
             }
             

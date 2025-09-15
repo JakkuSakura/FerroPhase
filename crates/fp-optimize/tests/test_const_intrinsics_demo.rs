@@ -26,7 +26,7 @@ fn eval_expr(expr: AstExpr) -> Result<AstValue> {
 fn test_basic_intrinsic_registration() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @sizeof intrinsic is implemented but @ symbol parsing is not yet supported
+    // NOTE: sizeof intrinsic is implemented but @ symbol parsing is not yet supported
     // The intrinsic functions are properly registered in fp-optimize/src/pass/interpret/mod.rs
     // but shll_parse_expr! uses syn::parse_quote! which requires valid Rust syntax
     // @ symbols are not valid Rust identifiers, so parser enhancement is needed
@@ -46,7 +46,7 @@ fn test_basic_intrinsic_registration() -> Result<()> {
 fn test_create_struct_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @create_struct intrinsic implemented, but @ parsing not yet supported
+    // NOTE: create_struct intrinsic implemented, but @ parsing not yet supported
     // Test basic block evaluation works
     let code = shll_parse_expr! {
         let result = true;
@@ -64,7 +64,7 @@ fn test_create_struct_intrinsic_demo() -> Result<()> {
 fn test_reflect_fields_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @reflect_fields intrinsic implemented, but @ parsing not yet supported
+    // NOTE: reflect_fields intrinsic implemented, but @ parsing not yet supported
     // Test variable assignment and evaluation
     let code = shll_parse_expr! {
         let test_val = 42;
@@ -82,7 +82,7 @@ fn test_reflect_fields_intrinsic_demo() -> Result<()> {
 fn test_hasfield_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @hasfield intrinsic implemented, but @ parsing not yet supported
+    // NOTE: hasfield intrinsic implemented, but @ parsing not yet supported
     // Test conditional expressions
     let code = shll_parse_expr! {
         let condition = true;
@@ -100,7 +100,7 @@ fn test_hasfield_intrinsic_demo() -> Result<()> {
 fn test_field_count_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @field_count intrinsic implemented, but @ parsing not yet supported
+    // NOTE: field_count intrinsic implemented, but @ parsing not yet supported
     // Test mathematical operations
     let code = shll_parse_expr! {
         let a = 5;
@@ -119,7 +119,7 @@ fn test_field_count_intrinsic_demo() -> Result<()> {
 fn test_multiple_intrinsics_available() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: Multiple intrinsics implemented (@sizeof, @create_struct, @reflect_fields, etc.)
+    // NOTE: Multiple intrinsics implemented (sizeof, create_struct, reflect_fields, etc.)
     // but @ parsing not yet supported. Test complex expression evaluation
     let code = shll_parse_expr! {
         let x = 10;
@@ -140,7 +140,7 @@ fn test_multiple_intrinsics_available() -> Result<()> {
 fn test_compile_error_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @compile_error intrinsic implemented, but @ parsing not yet supported
+    // NOTE: compile_error intrinsic implemented, but @ parsing not yet supported
     // Test string operations
     let code = shll_parse_expr! {
         let msg = "test";
@@ -158,7 +158,7 @@ fn test_compile_error_intrinsic_demo() -> Result<()> {
 fn test_compile_warning_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: @compile_warning intrinsic implemented, but @ parsing not yet supported  
+    // NOTE: compile_warning intrinsic implemented, but @ parsing not yet supported  
     // Test boolean logic
     let code = shll_parse_expr! {
         let a = true;
@@ -178,10 +178,10 @@ fn test_intrinsic_registry_completeness() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     // NOTE: All major const evaluation intrinsics are implemented and registered:
-    // Core introspection: @sizeof, @reflect_fields, @type_name
-    // Struct creation: @create_struct, @clone_struct, @addfield  
-    // Struct querying: @hasfield, @field_count, @field_type, @struct_size
-    // Validation: @compile_error, @compile_warning
+    // Core introspection: sizeof, reflect_fields, type_name
+    // Struct creation: create_struct, clone_struct, addfield  
+    // Struct querying: hasfield, field_count, field_type, struct_size
+    // Validation: compile_error, compile_warning
     // But @ parsing not yet supported. Test nested expressions instead.
     let code = shll_parse_expr! {
         let outer = {

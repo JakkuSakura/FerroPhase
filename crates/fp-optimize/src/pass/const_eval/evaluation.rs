@@ -7,6 +7,16 @@ use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
 use tracing::{debug, info, warn};
 
+/// Check if a function name is a const-time intrinsic
+fn is_const_intrinsic(name: &str) -> bool {
+    matches!(name, 
+        "sizeof!" | "reflect_fields!" | "hasmethod!" | "type_name!" |
+        "create_struct!" | "clone_struct!" | "addfield!" |
+        "hasfield!" | "field_count!" | "field_type!" | "struct_size!" |
+        "generate_method!" | "compile_error!" | "compile_warning!"
+    )
+}
+
 impl ConstEvaluator {
     /// Pass 1: Type System Integration Setup
     pub fn setup_type_system_integration(&self, _ctx: &SharedScopedContext) -> Result<()> {
@@ -41,7 +51,7 @@ impl ConstEvaluator {
                             
                             // If this is a metaprogramming intrinsic, it might generate side effects
                             if let Some(name) = &block.name {
-                                if name.starts_with("intrinsic_@") {
+                                if is_const_intrinsic(name) {
                                     self.handle_intrinsic_side_effects(name, &result, ctx)?;
                                 }
                             }
@@ -64,13 +74,13 @@ impl ConstEvaluator {
         
         // Parse the intrinsic name to determine what kind of side effect to generate
         match intrinsic_name {
-            name if name.contains("@addfield") => {
-                // This would be called from the @addfield intrinsic implementation
+            name if name.contains("addfield!") => {
+                // This would be called from the addfield! intrinsic implementation
                 // For now, just log that we would add a field
                 info!("Would generate field addition side effect");
             },
-            name if name.contains("@generate_method") => {
-                // This would be called from the @generate_method intrinsic implementation
+            name if name.contains("generate_method!") => {
+                // This would be called from the generate_method! intrinsic implementation
                 info!("Would generate method side effect");
             },
             _ => {
