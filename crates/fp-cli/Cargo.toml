@@ -1,0 +1,73 @@
+[package]
+name = "fp-cli"
+version = "0.1.0"
+edition = "2021"
+description = "FerroPhase command-line interface and main binary"
+authors = ["FerroPhase Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/FerroPhase"
+keywords = ["compiler", "transpiler", "rust", "metaprogramming"]
+categories = ["command-line-utilities", "compilers", "development-tools"]
+
+[[bin]]
+name = "fp"
+path = "src/bin/fp.rs"
+
+[dependencies]
+# Core FerroPhase crates
+fp-core = { path = "../fp-core" }
+fp-optimize = { path = "../fp-optimize" }
+fp-rust-lang = { path = "../fp-rust-lang" }
+
+# CLI and argument parsing
+clap = { version = "4.4", features = ["derive", "color"] }
+clap_complete = "4.4"
+
+# File I/O and path handling
+walkdir = "2.4"
+globset = "0.4"
+
+# Logging and diagnostics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+miette = { version = "5.0", features = ["fancy"] }
+
+# Serialization for configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Terminal output and colors
+console = "0.15"
+indicatif = "0.17"
+
+# Async runtime for potential future features
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "fs", "process"] }
+
+# Error handling
+eyre = "0.6"
+thiserror = "1.0"
+
+# Additional utilities
+dirs = "5.0"
+pathdiff = "0.2"
+syn = { version = "2.0", features = ["full"] }
+
+# Performance and profiling
+criterion = { version = "0.5", optional = true }
+
+[dev-dependencies]
+tempfile = "3.8"
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[features]
+default = []
+benchmarks = ["criterion"]
+
+# Optimization for release builds
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
