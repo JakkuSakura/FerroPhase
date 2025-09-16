@@ -4,6 +4,7 @@ use fp_core::context::SharedScopedContext;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::parser::RustParser;
 use fp_rust_lang::printer::RustPrinter;
+use fp_core::ast::register_threadlocal_serializer;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -145,6 +146,10 @@ impl Pipeline {
     async fn interpret_ast(&self, ast: &BExpr) -> Result<AstValue, CliError> {
         // Create a serializer using RustPrinter
         let serializer = Arc::new(RustPrinter::new());
+        
+        // Register the serializer for thread-local access
+        register_threadlocal_serializer(serializer.clone());
+        
         let orchestrator = InterpretationOrchestrator::new(serializer);
         let context = SharedScopedContext::new();
         

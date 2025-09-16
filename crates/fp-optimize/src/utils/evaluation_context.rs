@@ -47,6 +47,13 @@ impl EvaluationContext {
         Ok(())
     }
 
+    /// Generate a new unique block ID
+    pub fn next_id(&mut self) -> u64 {
+        let id = self.next_block_id;
+        self.next_block_id += 1;
+        id
+    }
+
     /// Get all const blocks
     pub fn get_const_blocks(&self) -> &HashMap<u64, ConstBlock> {
         &self.const_blocks

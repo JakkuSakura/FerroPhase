@@ -42,7 +42,8 @@ impl TypeQueries {
 
     /// Get size of a type in bytes
     pub fn sizeof(&self, type_name: &str) -> Result<usize> {
-        // TODO: Query type registry for size
+        // TODO: Convert type_name to TypeId and query type registry
+        // For now, use built-in type sizes
         match type_name {
             "i8" | "u8" => Ok(1),
             "i16" | "u16" => Ok(2),
@@ -50,13 +51,17 @@ impl TypeQueries {
             "i64" | "u64" | "f64" => Ok(8),
             "bool" => Ok(1),
             "char" => Ok(4),
-            _ => Ok(8), // Default size
+            _ => {
+                // Use type registry for complex types when available
+                Ok(8) // Default size
+            }
         }
     }
 
     /// Check if a struct has a specific field
     pub fn hasfield(&self, _struct_type: &str, _field_name: &str) -> Result<bool> {
-        // TODO: Query type registry for field existence
+        // TODO: Convert struct_type to TypeId and query type registry
+        let _ = &self.type_registry; // Suppress unused field warning
         Ok(false)
     }
 

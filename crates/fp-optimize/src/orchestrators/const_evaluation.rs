@@ -4,7 +4,6 @@
 use crate::utils::{IntrinsicEvaluationContext, SideEffectTracker, EvaluationContext};
 use crate::queries::{TypeQueries, DependencyQueries};
 use crate::orchestrators::{InterpretationOrchestrator};
-use crate::passes::{SpecializePass};
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
@@ -40,8 +39,6 @@ pub struct ConstEvaluationOrchestrator {
     /// Orchestrator for interpretation
     interpreter: InterpretationOrchestrator,
     
-    /// Pass for specialization  
-    specializer: SpecializePass,
     
     /// Evaluation context for tracking const blocks
     evaluation_context: EvaluationContext,
@@ -58,7 +55,6 @@ impl ConstEvaluationOrchestrator {
             side_effect_tracker: SideEffectTracker::new(),
             intrinsic_context,
             interpreter: InterpretationOrchestrator::new(serializer.clone()),
-            specializer: SpecializePass::new(serializer),
             evaluation_context: EvaluationContext::new(),
         }
     }
