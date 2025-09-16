@@ -11,12 +11,13 @@ use fp_core::ctx::{Context, TypeSystem};
 use fp_core::id::{Ident, Locator};
 use fp_core::utils::conv::TryConv;
 
-use crate::pass::{FoldOptimizer, InterpreterPass};
+use crate::utils::FoldOptimizer;
+use crate::orchestrators::InterpretationOrchestrator;
 use crate::error::optimization_error;
 use crate::opt_bail;
 use crate::opt_ensure;
 
-impl InterpreterPass {
+impl InterpretationOrchestrator {
     pub fn type_check_value(&self, lit: &AstValue, ty: &AstType) -> Result<()> {
         match lit {
             AstValue::Int(_) => {
@@ -331,7 +332,7 @@ impl InterpreterPass {
         })
     }
 }
-impl TypeSystem for InterpreterPass {
+impl TypeSystem for InterpretationOrchestrator {
     fn get_ty_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstType> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
 

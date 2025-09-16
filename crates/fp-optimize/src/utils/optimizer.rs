@@ -1,4 +1,5 @@
-use crate::pass::{InlinePass, OptimizePass, SpecializePass};
+use crate::passes::{InlinePass, SpecializePass};
+use crate::utils::OptimizePass;
 // Replace common::* with specific imports
 use itertools::Itertools;
 use tracing::{debug, info, warn};
