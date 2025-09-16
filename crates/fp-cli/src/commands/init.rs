@@ -77,7 +77,7 @@ fn main() {{
 }}
 
 const PROJECT_NAME: &str = "{}";
-"#, project_name, project_name);
+"#, project_name, project_name, project_name);
     
     fs::write(src_dir.join("main.fp"), main_content).map_err(|e| CliError::Io(e))?;
     

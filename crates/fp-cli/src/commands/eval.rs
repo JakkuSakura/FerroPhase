@@ -166,8 +166,8 @@ fn print_result(result: &AstValue) -> Result<()> {
             }
         }
         AstValue::Struct(s) => {
-            println!("{} {}", style("Result:").green().bold(), style(&format!("struct {}", s.name)).cyan());
-            for field in &s.fields {
+            println!("{} {}", style("Result:").green().bold(), style(&format!("struct {}", s.ty.name)).cyan());
+            for field in &s.structural.fields {
                 println!("  {}: {:?}", field.name, field.value);
             }
         }
