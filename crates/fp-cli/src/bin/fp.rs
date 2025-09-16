@@ -42,7 +42,6 @@ EXAMPLES:
     fp eval --expr "1 + 2 * 3"           # Evaluate expression
     fp compile hello.fp --target rust    # Compile to Rust
     fp init my-project                    # Create new project
-    fp repl                               # Start interactive REPL
     "#
 )]
 struct Cli {
@@ -74,6 +73,9 @@ enum Commands {
     /// Evaluate expressions using the interpreter
     Eval(EvalArgs),
     
+    /// Parse and display AST for FerroPhase code
+    Parse(ParseArgs),
+    
     /// Run a FerroPhase file (alias for eval --file)
     Run(RunArgs),
     
@@ -83,17 +85,6 @@ enum Commands {
     /// Initialize a new FerroPhase project
     Init(InitArgs),
     
-    /// Start an interactive REPL
-    Repl(ReplArgs),
-    
-    /// Run optimization passes on code
-    Optimize(OptimizeArgs),
-    
-    /// Format FerroPhase code
-    Format(FormatArgs),
-    
-    /// Language server protocol support
-    Lsp(LspArgs),
     
     /// Show information about the installation
     Info(InfoArgs),
@@ -161,6 +152,17 @@ struct EvalArgs {
 }
 
 #[derive(Args)]
+struct ParseArgs {
+    /// Expression to parse
+    #[arg(short, long, conflicts_with = "file")]
+    expr: Option<String>,
+    
+    /// File containing code to parse
+    #[arg(short, long)]
+    file: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct RunArgs {
     /// FerroPhase file to run
     file: PathBuf,
@@ -211,59 +213,6 @@ struct InitArgs {
     git: bool,
 }
 
-#[derive(Args)]
-struct ReplArgs {
-    /// Load file before starting REPL
-    #[arg(short, long)]
-    load: Option<PathBuf>,
-    
-    /// Enable multi-line mode
-    #[arg(short, long)]
-    multiline: bool,
-}
-
-#[derive(Args)]
-struct OptimizeArgs {
-    /// Input file
-    input: PathBuf,
-    
-    /// Output file (defaults to input with .opt extension)
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-    
-    /// Specific optimization passes to run
-    #[arg(short, long)]
-    passes: Vec<String>,
-    
-    /// Show optimization statistics
-    #[arg(long)]
-    stats: bool,
-}
-
-#[derive(Args)]
-struct FormatArgs {
-    /// Files to format
-    files: Vec<PathBuf>,
-    
-    /// Check if files are formatted without modifying
-    #[arg(long)]
-    check: bool,
-    
-    /// Format files in place
-    #[arg(short, long)]
-    in_place: bool,
-}
-
-#[derive(Args)]
-struct LspArgs {
-    /// Port to listen on (for TCP mode)
-    #[arg(short, long)]
-    port: Option<u16>,
-    
-    /// Use stdin/stdout for communication
-    #[arg(long)]
-    stdio: bool,
-}
 
 #[derive(Args)]
 struct InfoArgs {
@@ -310,10 +259,6 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = CliConfig::load(cli.config.as_deref())?;
     
-    // Print welcome message
-    if !cli.quiet && matches!(cli.command, Commands::Repl(_)) {
-        print_welcome();
-    }
     
     // Execute command
     let result = match cli.command {
@@ -339,6 +284,13 @@ async fn main() -> Result<()> {
                 print_passes: args.print_passes,
             };
             commands::eval_command(eval_args, &config).await
+        },
+        Commands::Parse(args) => {
+            let parse_args = commands::parse::ParseArgs {
+                expr: args.expr,
+                file: args.file,
+            };
+            commands::parse_command(parse_args, &config).await
         },
         Commands::Run(args) => {
             // Run is an alias for eval --file
@@ -367,37 +319,6 @@ async fn main() -> Result<()> {
                 git: args.git,
             };
             commands::init_command(init_args, &config).await
-        },
-        Commands::Repl(args) => {
-            let repl_args = commands::repl::ReplArgs {
-                load: args.load,
-                multiline: args.multiline,
-            };
-            commands::repl_command(repl_args, &config).await
-        },
-        Commands::Optimize(args) => {
-            let opt_args = commands::optimize::OptimizeArgs {
-                input: args.input,
-                output: args.output,
-                passes: args.passes,
-                stats: args.stats,
-            };
-            commands::optimize_command(opt_args, &config).await
-        },
-        Commands::Format(args) => {
-            let fmt_args = commands::format::FormatArgs {
-                files: args.files,
-                check: args.check,
-                in_place: args.in_place,
-            };
-            commands::format_command(fmt_args, &config).await
-        },
-        Commands::Lsp(args) => {
-            let lsp_args = commands::lsp::LspArgs {
-                port: args.port,
-                stdio: args.stdio,
-            };
-            commands::lsp_command(lsp_args, &config).await
         },
         Commands::Info(args) => {
             let info_args = commands::info::InfoArgs {
@@ -457,12 +378,3 @@ fn setup_logging(verbose: bool, quiet: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_welcome() {
-    println!("{}", style("FerroPhase").cyan().bold());
-    println!("{}", style("Meta-compilation framework with multi-language comptime superpowers").dim());
-    println!();
-    println!("Type {} for help, {} to exit", 
-             style(".help").green(), 
-             style(".exit").green());
-    println!();
-}

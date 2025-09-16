@@ -53,6 +53,10 @@ impl Pipeline {
         Ok(PipelineOutput::Value(result))
     }
 
+    pub fn parse_source_public(&self, source: &str) -> Result<BExpr, CliError> {
+        self.parse_source(source)
+    }
+
     fn parse_source(&self, source: &str) -> Result<BExpr, CliError> {
         // Strip shebang line if present
         let cleaned_source = if source.starts_with("#!") {
