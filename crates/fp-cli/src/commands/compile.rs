@@ -126,7 +126,7 @@ async fn compile_file(
     
     // Configure pipeline for compilation
     let pipeline_config = PipelineConfig {
-        optimization_level: args.opt_level as u32,
+        optimization_level: args.opt_level as u8,
         print_ast: false,
         print_passes: false,
         target: args.target.clone(),
