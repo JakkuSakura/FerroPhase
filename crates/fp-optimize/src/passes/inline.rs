@@ -1,4 +1,4 @@
-use crate::pass::OptimizePass;
+use crate::utils::OptimizePass;
 // Replace common::* with specific imports
 use tracing::warn;
 use fp_core::error::Result;
