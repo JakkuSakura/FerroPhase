@@ -7,6 +7,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod diagnostics;
+pub mod pipeline;
 pub mod project;
 pub mod utils;
 

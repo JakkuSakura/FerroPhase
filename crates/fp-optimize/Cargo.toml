@@ -12,6 +12,9 @@ derive_more = { version = "1.0.0-beta.6", features = ["full"] }
 bytes = { version = "1.5.0", features = ["serde"] }
 itertools = "0.12.1"
 tracing = "0.1"
+syn = "2"
+proc-macro2 = "1"
+fp-rust-lang = { path = "../fp-rust-lang" }
 
 [dev-dependencies]
 fp-rust-lang = { path = "../fp-rust-lang" }

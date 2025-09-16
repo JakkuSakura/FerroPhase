@@ -1,13 +1,7 @@
 [package]
 name = "fp-cli"
 version = "0.1.0"
-edition = "2021"
-description = "FerroPhase command-line interface and main binary"
-authors = ["FerroPhase Team"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/your-org/FerroPhase"
-keywords = ["compiler", "transpiler", "rust", "metaprogramming"]
-categories = ["command-line-utilities", "compilers", "development-tools"]
+edition = "2024"
 
 [[bin]]
 name = "fp"
@@ -65,9 +59,3 @@ predicates = "3.0"
 default = []
 benchmarks = ["criterion"]
 
-# Optimization for release builds
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true

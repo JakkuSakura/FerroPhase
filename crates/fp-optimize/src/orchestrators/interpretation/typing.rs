@@ -214,6 +214,7 @@ impl InterpretationOrchestrator {
                     return self.infer_expr(params.first().ok_or_else(|| optimization_error("No param"))?, ctx)
                 }
                 "print" => return Ok(AstType::unit()),
+                "println!" => return Ok(AstType::unit()),
                 _ => {}
             },
             _ => {}
@@ -234,7 +235,7 @@ impl InterpretationOrchestrator {
     }
     pub fn infer_ident(&self, ident: &Ident, ctx: &SharedScopedContext) -> Result<AstType> {
         match ident.as_str() {
-            "print" => {
+            "print" | "println!" => {
                 return Ok(AstType::Function(
                     TypeFunction {
                         params: vec![],

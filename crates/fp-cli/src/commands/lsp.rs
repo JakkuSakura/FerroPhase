@@ -1,6 +1,6 @@
 //! Language Server Protocol command implementation
 
-use crate::{cli::CliConfig, Result, CliError};
+use crate::{cli::CliConfig, Result};
 use console::style;
 
 /// Arguments for the lsp command
