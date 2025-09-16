@@ -207,6 +207,35 @@ pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
         Ok(AstValue::unit())
     })
 }
+
+/// println! macro - print arguments with newline
+pub fn builtin_println(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
+    BuiltinFn::new_with_ident("println!".into(), move |args, ctx| {
+        let formatted: Vec<_> = args
+            .into_iter()
+            .map(|x| {
+                // Format values for display (like Rust's println!)
+                match x {
+                    AstValue::String(s) => s.value.clone(),
+                    AstValue::Int(i) => i.value.to_string(),
+                    AstValue::Bool(b) => b.value.to_string(),
+                    AstValue::Decimal(d) => d.value.to_string(),
+                    AstValue::Unit(_) => "()".to_string(),
+                    _ => format!("{:?}", x), // Fallback for complex types
+                }
+            })
+            .collect();
+        
+        let output = if args.is_empty() {
+            String::new()
+        } else {
+            formatted.join(" ")
+        };
+        
+        ctx.root().print_str(format!("{}\n", output));
+        Ok(AstValue::unit())
+    })
+}
 pub fn builtin_some() -> BuiltinFn {
     BuiltinFn::new_with_ident("Some".into(), move |args, _ctx| {
         if args.len() != 1 {
@@ -220,7 +249,7 @@ pub fn builtin_some() -> BuiltinFn {
 
 /// sizeof! intrinsic - get size of a type in bytes
 pub fn builtin_sizeof() -> BuiltinFn {
-    BuiltinFn::new_with_ident("sizeof!".into(), move |args, ctx| {
+    BuiltinFn::new_with_ident("sizeof!".into(), move |args, _ctx| {
         if args.len() != 1 {
             bail!("sizeof! expects 1 argument, got: {:?}", args)
         }

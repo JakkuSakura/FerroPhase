@@ -26,7 +26,7 @@ use clap::{Args, Parser, Subcommand};
 use console::style;
 use fp_cli::{cli::CliConfig, commands, diagnostics::setup_error_reporting, Result};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Parser)]
 #[command(
@@ -38,8 +38,9 @@ FerroPhase is a unified compilation infrastructure that extends Rust's capabilit
 while supporting multi-language interoperability and advanced compile-time computation.
 
 EXAMPLES:
-    fp compile hello.fp --target rust     # Compile to Rust
-    fp eval --expr "1 + 2 * 3"           # Evaluate expression  
+    fp run hello.fp                       # Run a FerroPhase file
+    fp eval --expr "1 + 2 * 3"           # Evaluate expression
+    fp compile hello.fp --target rust    # Compile to Rust
     fp init my-project                    # Create new project
     fp repl                               # Start interactive REPL
     "#
@@ -72,6 +73,9 @@ enum Commands {
     
     /// Evaluate expressions using the interpreter
     Eval(EvalArgs),
+    
+    /// Run a FerroPhase file (alias for eval --file)
+    Run(RunArgs),
     
     /// Check and validate FerroPhase code
     Check(CheckArgs),
@@ -146,6 +150,20 @@ struct EvalArgs {
     /// File containing code to evaluate
     #[arg(short, long)]
     file: Option<PathBuf>,
+    
+    /// Print the AST representation
+    #[arg(long)]
+    print_ast: bool,
+    
+    /// Print optimization passes
+    #[arg(long)]
+    print_passes: bool,
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// FerroPhase file to run
+    file: PathBuf,
     
     /// Print the AST representation
     #[arg(long)]
@@ -317,6 +335,16 @@ async fn main() -> Result<()> {
             let eval_args = commands::eval::EvalArgs {
                 expr: args.expr,
                 file: args.file,
+                print_ast: args.print_ast,
+                print_passes: args.print_passes,
+            };
+            commands::eval_command(eval_args, &config).await
+        },
+        Commands::Run(args) => {
+            // Run is an alias for eval --file
+            let eval_args = commands::eval::EvalArgs {
+                expr: None,
+                file: Some(args.file),
                 print_ast: args.print_ast,
                 print_passes: args.print_passes,
             };
