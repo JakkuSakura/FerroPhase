@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use fp_core::ast::*;
 use fp_core::ctx::Context;
 use fp_core::Result;
-use fp_optimize::pass::InterpreterPass;
+use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::{shll_parse_expr, shll_parse_value};
 

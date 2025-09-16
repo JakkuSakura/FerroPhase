@@ -12,19 +12,6 @@ pub mod passes;
 pub mod queries;
 pub mod utils;
 
-// Legacy module for backward compatibility
-pub mod pass {
-    pub use crate::passes::*;
-    pub use crate::orchestrators::*;
-    pub use crate::utils::{OptimizePass, FoldOptimizer, NoopPass, load_optimizers};
-}
-
-// Legacy module alias for interpreter
-pub mod interpreter {
-    pub use crate::orchestrators::interpretation::*;
-    // Legacy alias
-    pub type Interpreter = InterpretationOrchestrator;
-}
 
 // Re-export key types for convenience
 pub use orchestrators::*;
