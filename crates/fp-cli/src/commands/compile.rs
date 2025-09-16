@@ -154,7 +154,6 @@ async fn compile_file(
             // For interpret target, we don't write to file
             info!("Interpretation completed");
         },
-        _ => return Err(CliError::Compilation("Unexpected pipeline output".to_string())),
     }
     
     Ok(())

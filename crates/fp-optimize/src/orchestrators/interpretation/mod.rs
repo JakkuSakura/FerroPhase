@@ -379,6 +379,7 @@ impl InterpretationOrchestrator {
     }
     pub fn interpret_def_const(&self, def: &ItemDefConst, ctx: &SharedScopedContext) -> Result<()> {
         let value = self.interpret_expr(&def.value, ctx)?;
+        tracing::debug!("Storing const {}: {:?}", def.name.name, value);
         ctx.insert_value_with_ctx(def.name.clone(), value);
         Ok(())
     }
@@ -442,7 +443,11 @@ impl InterpretationOrchestrator {
         })
     }
     pub fn interpret_select(&self, s: &ExprSelect, ctx: &SharedScopedContext) -> Result<AstValue> {
+        tracing::debug!("Interpreting field access: {}.{}", 
+            self.serializer.serialize_expr(&s.obj.get()).unwrap_or_default(), 
+            s.field.name);
         let obj0 = self.interpret_expr(&s.obj.get(), ctx)?;
+        tracing::debug!("Field access object resolved to: {:?}", obj0);
         let obj = obj0.as_structural()
             .ok_or_else(|| optimization_error(format!(
                 "Expected structural type, got {}",
@@ -797,15 +802,13 @@ impl OptimizePass for InterpretationOrchestrator {
     }
 
     fn try_evaluate_expr(&self, pat: &AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
-        let value = ctx.try_get_value_from_expr(pat)
-            .ok_or_else(|| optimization_error(format!(
-                "could not find {:?} in context {:?}",
-                pat,
-                ctx.list_values()
-                    .into_iter()
-                    .map(|x| x.to_string())
-                    .collect::<Vec<_>>()
-            )))?;
+        // First try the simple approach for basic expressions
+        if let Some(value) = ctx.try_get_value_from_expr(pat) {
+            return Ok(AstExpr::value(value));
+        }
+        
+        // If simple approach fails, use full interpretation for complex expressions
+        let value = self.interpret_expr(pat, ctx)?;
         Ok(AstExpr::value(value))
     }
 }
