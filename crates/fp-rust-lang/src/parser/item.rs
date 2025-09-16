@@ -314,3 +314,4 @@ pub fn parse_trait_item(f: syn::TraitItem) -> Result<AstItem> {
         _ => bail!("Does not support trait item {:?}", f),
     }
 }
+
