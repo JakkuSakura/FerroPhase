@@ -1,6 +1,6 @@
 //! Code formatting command implementation
 
-use crate::{cli::CliConfig, Result, CliError};
+use crate::{cli::CliConfig, Result};
 use console::style;
 use std::path::PathBuf;
 

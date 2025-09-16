@@ -13,6 +13,7 @@ use fp_core::id::{Ident, Locator};
 use fp_core::ops::*;
 use fp_core::utils::conv::TryConv;
 use std::sync::Arc;
+// use std::any::Any;
 
 // Import our error helpers
 use crate::error::optimization_error;
@@ -101,6 +102,7 @@ impl InterpretationOrchestrator {
         Ok(())
     }
     pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<AstValue> {
+        // eprintln!("DEBUG: interpret_block called with {} statements", node.stmts.len());
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         for stmt in node.first_stmts() {
             self.interpret_stmt(&stmt, &ctx)?;
@@ -159,6 +161,7 @@ impl InterpretationOrchestrator {
             "<=" if resolve => Ok(AstValue::any(builtin_le())),
             "<" if resolve => Ok(AstValue::any(builtin_lt())),
             "print" if resolve => Ok(AstValue::any(builtin_print(self.serializer.clone()))),
+            "println!" if resolve => Ok(AstValue::any(builtin_println(self.serializer.clone()))),
             "true" => Ok(AstValue::bool(true)),
             "false" => Ok(AstValue::bool(false)),
             "None" => Ok(AstValue::None(ValueNone)),
@@ -566,6 +569,7 @@ impl InterpretationOrchestrator {
         ctx: &SharedScopedContext,
     ) -> Result<Option<AstValue>> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
+        // eprintln!("DEBUG: interpret_stmt called with: {:?}", node);
         match node {
             BlockStmt::Let(n) => self.interpret_let(n, ctx).map(|_| None),
             BlockStmt::Expr(n) => {
@@ -580,7 +584,58 @@ impl InterpretationOrchestrator {
                 )
             }
             BlockStmt::Item(_) => Ok(None),
-            _ => opt_bail!(format!("Failed to interpret {:?}", node)),
+            BlockStmt::Any(any_box) => {
+                // Handle macro statements
+                if let Some(raw_macro_stmt) = any_box.downcast_ref::<fp_rust_lang::RawStmtMacro>() {
+                    self.interpret_macro_stmt(&raw_macro_stmt.raw, ctx).map(|_| None)
+                } else {
+                    opt_bail!(format!("Unsupported Any statement type: {:?}", any_box))
+                }
+            },
+            BlockStmt::Noop => Ok(None),
+        }
+    }
+
+    pub fn interpret_macro_stmt(&self, macro_stmt: &syn::StmtMacro, ctx: &SharedScopedContext) -> Result<AstValue> {
+        let macro_path = &macro_stmt.mac.path;
+        let macro_name = macro_path.segments.last()
+            .map(|seg| seg.ident.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // eprintln!("DEBUG: Interpreting macro: {}", macro_name);
+
+        match macro_name.as_str() {
+            "println" => {
+                // Parse the macro arguments
+                let tokens = &macro_stmt.mac.tokens;
+                let mut args = Vec::new();
+                
+                // For now, just handle string literals
+                for token in tokens.clone() {
+                    match token {
+                        proc_macro2::TokenTree::Literal(lit) => {
+                            // Try to parse as string literal
+                            let lit_str = lit.to_string();
+                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
+                                let content = &lit_str[1..lit_str.len() - 1];
+                                args.push(AstValue::string(content.to_string()));
+                            }
+                        }
+                        _ => {
+                            // For now, ignore other token types
+                        }
+                    }
+                }
+
+                // eprintln!("DEBUG: Parsed {} macro args", args.len());
+
+                // Call the println builtin
+                let println_builtin = builtin_println(self.serializer.clone());
+                println_builtin.invoke(&args, ctx)
+            }
+            _ => {
+                opt_bail!(format!("Unsupported macro: {}", macro_name))
+            }
         }
     }
 

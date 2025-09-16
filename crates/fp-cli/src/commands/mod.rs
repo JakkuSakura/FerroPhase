@@ -29,5 +29,5 @@ use crate::{cli::CliConfig, Result};
 pub trait Command {
     type Args;
     
-    async fn execute(args: Self::Args, config: &CliConfig) -> Result<()>;
+    fn execute(args: Self::Args, config: &CliConfig) -> impl std::future::Future<Output = Result<()>> + Send;
 }
