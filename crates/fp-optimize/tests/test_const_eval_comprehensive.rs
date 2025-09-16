@@ -4,8 +4,9 @@
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
-use fp_optimize::pass::{ConstEvaluationPass, FoldOptimizer};
-use fp_optimize::pass::const_eval::ConstEvaluator;
+use fp_optimize::orchestrators::ConstEvaluationOrchestrator;
+use fp_optimize::utils::FoldOptimizer;
+use fp_optimize::utils::ConstEvaluator;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::{shll_parse_expr, shll_parse_items};
 use std::sync::Arc;
@@ -148,7 +149,7 @@ fn test_system_const_block_tracking() -> Result<()> {
     
     // Test state updates
     evaluator.update_const_block_state(block_id, 
-        fp_optimize::pass::const_eval::ConstEvalState::Evaluated, 
+        fp_optimize::utils::ConstEvalState::Evaluated, 
         Some(AstValue::int(50)));
     
     Ok(())
@@ -185,10 +186,10 @@ fn test_end_to_end_const_evaluation_pipeline() -> Result<()> {
     
     // Test evaluation state updates
     evaluator.update_const_block_state(block1, 
-        fp_optimize::pass::const_eval::ConstEvalState::Evaluated, 
+        fp_optimize::utils::ConstEvalState::Evaluated, 
         Some(AstValue::int(15)));
     evaluator.update_const_block_state(block2, 
-        fp_optimize::pass::const_eval::ConstEvalState::Evaluated, 
+        fp_optimize::utils::ConstEvalState::Evaluated, 
         Some(AstValue::int(40)));
     
     // Should now be ready for final validation

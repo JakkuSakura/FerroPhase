@@ -1,7 +1,8 @@
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
-use fp_optimize::pass::{FoldOptimizer, SpecializePass};
+use fp_optimize::utils::FoldOptimizer;
+use fp_optimize::passes::SpecializePass;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::shll_parse_expr;
 use std::sync::Arc;

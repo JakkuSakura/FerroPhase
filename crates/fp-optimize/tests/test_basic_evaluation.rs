@@ -6,7 +6,7 @@ use fp_core::ast::AstValue;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
-use fp_optimize::interpreter::Interpreter;
+use fp_optimize::orchestrators::InterpretationOrchestrator;
 use pretty_assertions::assert_eq;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::{shll_parse_expr, shll_parse_value};
