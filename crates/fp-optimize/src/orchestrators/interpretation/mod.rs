@@ -4,7 +4,6 @@ use crate::utils::{FoldOptimizer, OptimizePass};
 // Replace common::* with specific imports
 use itertools::Itertools;
 use tracing::debug;
-use tracing::info;
 use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
@@ -102,11 +101,24 @@ impl InterpretationOrchestrator {
         Ok(())
     }
     pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<AstValue> {
-        // eprintln!("DEBUG: interpret_block called with {} statements", node.stmts.len());
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
-        for stmt in node.first_stmts() {
-            self.interpret_stmt(&stmt, &ctx)?;
+        
+        // FIRST PASS: Process all items (const declarations, structs, functions)
+        // Items can reference each other and need to be processed before statements
+        for stmt in node.first_stmts().iter() {
+            if let BlockStmt::Item(item) = stmt {
+                self.interpret_item(item, &ctx)?;
+            }
         }
+        
+        // SECOND PASS: Process all non-item statements (expressions, let statements, etc.)
+        for stmt in node.first_stmts().iter() {
+            if !matches!(stmt, BlockStmt::Item(_)) {
+                self.interpret_stmt(&stmt, &ctx)?;
+            }
+        }
+        
+        // Process final expression if any
         if let Some(expr) = node.last_expr() {
             self.interpret_expr(&expr, &ctx)
         } else {
@@ -194,13 +206,82 @@ impl InterpretationOrchestrator {
             "compile_error!" if resolve => Ok(AstValue::any(builtin_compile_error())),
             "compile_warning!" if resolve => Ok(AstValue::any(builtin_compile_warning())),
             _ => {
-                info!("Get value recursive {:?}", ident);
-                ctx.print_values()?;
+                debug!("Get value recursive {:?}", ident);
                 ctx.get_value_recursive(ident)
                     .ok_or_else(|| optimization_error(format!("could not find {:?} in context", ident.name)))
             }
         }
     }
+    // Bitwise AND operation
+    pub fn builtin_bitand(&self) -> BuiltinFn {
+        BuiltinFn::new_with_ident("&".into(), move |args, _ctx| {
+            if args.len() != 2 {
+                return Err(optimization_error(format!("BitAnd expects 2 arguments, got: {}", args.len())));
+            }
+            
+            match (&args[0], &args[1]) {
+                (AstValue::Int(a), AstValue::Int(b)) => {
+                    Ok(AstValue::int(a.value & b.value))
+                },
+                _ => Err(optimization_error(format!("BitAnd operation not supported for types: {:?} & {:?}", args[0], args[1])))
+            }
+        })
+    }
+
+    // Division operation
+    pub fn builtin_div(&self) -> BuiltinFn {
+        BuiltinFn::new_with_ident("/".into(), move |args, _ctx| {
+            if args.len() != 2 {
+                return Err(optimization_error(format!("Division expects 2 arguments, got: {}", args.len())));
+            }
+            
+            match (&args[0], &args[1]) {
+                (AstValue::Int(a), AstValue::Int(b)) => {
+                    if b.value == 0 {
+                        return Err(optimization_error("Division by zero".to_string()));
+                    }
+                    Ok(AstValue::int(a.value / b.value))
+                },
+                _ => Err(optimization_error(format!("Division operation not supported for types: {:?} / {:?}", args[0], args[1])))
+            }
+        })
+    }
+
+    // If expression handler  
+    pub fn interpret_if_expr(&self, if_expr: &fp_core::ast::ExprIf, ctx: &SharedScopedContext) -> Result<AstValue> {
+        // Evaluate the condition
+        let condition = self.interpret_expr(&if_expr.cond, ctx)?;
+        
+        // Check if condition is a boolean
+        match condition {
+            AstValue::Bool(b) => {
+                if b.value {
+                    // Execute then branch
+                    self.interpret_expr(&if_expr.then, ctx)
+                } else {
+                    // Execute else branch if it exists
+                    if let Some(else_expr) = &if_expr.elze {
+                        self.interpret_expr(else_expr, ctx)
+                    } else {
+                        Ok(AstValue::unit()) // No else branch, return unit
+                    }
+                }
+            },
+            AstValue::Any(_) => {
+                // Handle the case where condition contains unsupported expressions (like cfg! macro)
+                Err(optimization_error(
+                    "Cannot evaluate if condition: contains unsupported cfg! macro. The cfg!(debug_assertions) macro is not supported in const evaluation. Use a literal boolean instead.".to_string()
+                ))
+            },
+            _ => {
+                Err(optimization_error(format!(
+                    "If condition must be boolean, got: {:?}", 
+                    condition
+                )))
+            }
+        }
+    }
+
     pub fn lookup_bin_op_kind(&self, op: BinOpKind) -> Result<BuiltinFn> {
         match op {
             BinOpKind::Add => Ok(builtin_add()),
@@ -227,7 +308,7 @@ impl InterpretationOrchestrator {
             }
             BinOpKind::Sub => Ok(builtin_sub()),
             BinOpKind::Mul => Ok(builtin_mul()),
-            // BinOpKind::Div => Ok(builtin_div()),
+            BinOpKind::Div => Ok(self.builtin_div()),
             // BinOpKind::Mod => Ok(builtin_mod()),
             BinOpKind::Gt => Ok(builtin_gt()),
             BinOpKind::Lt => Ok(builtin_lt()),
@@ -235,10 +316,10 @@ impl InterpretationOrchestrator {
             BinOpKind::Le => Ok(builtin_le()),
             BinOpKind::Eq => Ok(builtin_eq()),
             BinOpKind::Ne => Ok(builtin_ne()),
+            BinOpKind::BitAnd => Ok(self.builtin_bitand()),
             // BinOpKind::LogicalOr => {}
             // BinOpKind::LogicalAnd => {}
             // BinOpKind::BitOr => {}
-            // BinOpKind::BitAnd => {}
             // BinOpKind::BitXor => {}
             // BinOpKind::Any(_) => {}
             _ => opt_bail!(format!("Could not process {:?}", op)),
@@ -508,10 +589,22 @@ impl InterpretationOrchestrator {
             AstExpr::Match(c) => self.interpret_cond(c, ctx),
             AstExpr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
             AstExpr::BinOp(op) => self.interpret_binop(op, ctx),
-            AstExpr::Any(n) => Ok(AstValue::Any(n.clone())),
+            AstExpr::Any(n) => {
+                // Handle cfg! macro specially
+                if let Some(raw_macro) = n.downcast_ref::<fp_rust_lang::RawExprMacro>() {
+                    // Check if this is a cfg! macro by looking at the macro path
+                    if raw_macro.raw.mac.path.is_ident("cfg") {
+                        // cfg! macro - for now, assume debug mode is disabled in const evaluation
+                        return Ok(AstValue::bool(false));
+                    }
+                }
+                Ok(AstValue::Any(n.clone()))
+            },
             AstExpr::Select(s) => self.interpret_select(s, ctx),
             AstExpr::Struct(s) => self.interpret_struct_expr(s, ctx).map(AstValue::Struct),
-            _ => opt_bail!(format!("Failed to interpret {:?}", node)),
+            AstExpr::Paren(p) => self.interpret_expr(&p.expr, ctx),
+            AstExpr::If(if_expr) => self.interpret_if_expr(if_expr, ctx),
+            _ => opt_bail!(format!("Unsupported expression type in interpreter: {:?}", node)),
         }
     }
     pub fn interpret_expr(&self, node: &AstExpr, ctx: &SharedScopedContext) -> Result<AstValue> {
@@ -583,7 +676,7 @@ impl InterpretationOrchestrator {
                     },
                 )
             }
-            BlockStmt::Item(_) => Ok(None),
+            BlockStmt::Item(item) => self.interpret_item(item, ctx).map(|_| None),
             BlockStmt::Any(any_box) => {
                 // Handle macro statements
                 if let Some(raw_macro_stmt) = any_box.downcast_ref::<fp_rust_lang::RawStmtMacro>() {
@@ -606,36 +699,118 @@ impl InterpretationOrchestrator {
 
         match macro_name.as_str() {
             "println" => {
-                // Parse the macro arguments
-                let tokens = &macro_stmt.mac.tokens;
-                let mut args = Vec::new();
-                
-                // For now, just handle string literals
-                for token in tokens.clone() {
-                    match token {
-                        proc_macro2::TokenTree::Literal(lit) => {
-                            // Try to parse as string literal
-                            let lit_str = lit.to_string();
-                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
-                                let content = &lit_str[1..lit_str.len() - 1];
-                                args.push(AstValue::string(content.to_string()));
-                            }
-                        }
-                        _ => {
-                            // For now, ignore other token types
-                        }
-                    }
-                }
-
-                // eprintln!("DEBUG: Parsed {} macro args", args.len());
-
-                // Call the println builtin
-                let println_builtin = builtin_println(self.serializer.clone());
-                println_builtin.invoke(&args, ctx)
+                self.interpret_println_macro(&macro_stmt.mac.tokens, ctx)
             }
             _ => {
                 opt_bail!(format!("Unsupported macro: {}", macro_name))
             }
+        }
+    }
+
+    pub fn interpret_println_macro(&self, tokens: &proc_macro2::TokenStream, ctx: &SharedScopedContext) -> Result<AstValue> {
+        // Parse the tokens as comma-separated expressions
+        let tokens_str = tokens.to_string();
+        
+        // Parse as function call arguments - this is the closest match to macro arguments
+        let wrapped_tokens = format!("dummy({})", tokens_str);
+        
+        match syn::parse_str::<syn::ExprCall>(&wrapped_tokens) {
+            Ok(call_expr) => {
+                let mut evaluated_args = Vec::new();
+                
+                for arg in &call_expr.args {
+                    // Convert syn::Expr to AstExpr and evaluate
+                    match self.syn_expr_to_ast_expr(arg) {
+                        Ok(ast_expr) => {
+                            // Evaluate the expression in the current context
+                            match self.interpret_expr(&ast_expr, ctx) {
+                                Ok(value) => {
+                                    evaluated_args.push(value);
+                                },
+                                Err(_e) => {
+                                    // If evaluation fails, use string representation as fallback
+                                    // This handles cases where const values aren't resolved yet
+                                    let fallback = format!("{{UNRESOLVED:{:?}}}", arg);
+                                    evaluated_args.push(AstValue::string(fallback));
+                                }
+                            }
+                        }
+                        Err(_e) => {
+                            // If conversion fails, use string representation as fallback
+                            evaluated_args.push(AstValue::string(format!("{{PARSE_ERROR:{:?}}}", arg)));
+                        }
+                    }
+                }
+
+
+                // Handle format string interpolation
+                if evaluated_args.is_empty() {
+                    return Ok(AstValue::unit());
+                }
+
+                let format_result = self.format_println_args(&evaluated_args)?;
+                ctx.root().print_str(format!("{}\n", format_result));
+                Ok(AstValue::unit())
+            }
+            Err(_e) => {
+                // Fallback: just print the raw tokens
+                ctx.root().print_str(format!("{}\n", tokens_str));
+                Ok(AstValue::unit())
+            }
+        }
+    }
+
+    fn syn_expr_to_ast_expr(&self, expr: &syn::Expr) -> Result<AstExpr> {
+        // For now, use the parser to convert syn::Expr to AstExpr
+        // This is a simplified approach - a full implementation would handle all syn::Expr variants
+        let parser = fp_rust_lang::parser::RustParser::new();
+        parser.parse_expr(expr.clone())
+            .map_err(|e| optimization_error(&format!("Failed to convert syn::Expr to AstExpr: {}", e)))
+    }
+
+    fn format_println_args(&self, args: &[AstValue]) -> Result<String> {
+        if args.is_empty() {
+            return Ok(String::new());
+        }
+
+        let format_string = match &args[0] {
+            AstValue::String(s) => s.value.clone(),
+            _ => return Ok(format!("{:?}", args[0])),
+        };
+
+        if args.len() == 1 {
+            // No format arguments, just return the string
+            return Ok(format_string);
+        }
+
+        // Simple format string replacement - replace {} with argument values
+        let mut result = format_string;
+        let format_args = &args[1..];
+        let mut arg_index = 0;
+
+        // Find and replace {} placeholders
+        while let Some(pos) = result.find("{}") {
+            if arg_index < format_args.len() {
+                let replacement = self.value_to_display_string(&format_args[arg_index]);
+                result.replace_range(pos..pos+2, &replacement);
+                arg_index += 1;
+            } else {
+                // No more arguments, leave placeholder as is
+                break;
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn value_to_display_string(&self, value: &AstValue) -> String {
+        match value {
+            AstValue::String(s) => s.value.clone(),
+            AstValue::Int(i) => i.value.to_string(),
+            AstValue::Bool(b) => b.value.to_string(),
+            AstValue::Decimal(d) => d.value.to_string(),
+            AstValue::Unit(_) => "()".to_string(),
+            _ => format!("{:?}", value),
         }
     }
 
