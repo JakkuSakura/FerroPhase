@@ -4,7 +4,7 @@ use crate::{cli::CliConfig, Result, CliError};
 use console::style;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
-use fp_optimize::interpreter::Interpreter;
+use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::{parser::RustParser, printer::RustPrinter, shll_parse_expr};
 use std::path::Path;
 use std::sync::Arc;
@@ -45,7 +45,7 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     }
     
     // Create interpreter and evaluate
-    let interpreter = Interpreter::new(Arc::new(RustPrinter::new()));
+    let interpreter = InterpretationOrchestrator::new(Arc::new(RustPrinter::new()));
     let ctx = SharedScopedContext::new();
     
     // Evaluate the expression

@@ -1,7 +1,7 @@
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
-use fp_optimize::pass::ConstEvaluator;
+use fp_optimize::orchestrators::ConstEvaluationOrchestrator;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::shll_parse_items;
 use std::sync::Arc;

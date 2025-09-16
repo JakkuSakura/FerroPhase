@@ -1,7 +1,7 @@
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
-use fp_optimize::pass::const_eval::{ConstEvaluator, SideEffect};
+use fp_optimize::utils::{ConstEvaluator, SideEffect};
 use fp_rust_lang::printer::RustPrinter;
 use std::sync::Arc;
 

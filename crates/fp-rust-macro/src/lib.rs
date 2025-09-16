@@ -1,7 +1,7 @@
 use common::*;
 
 use fp_core::context::SharedScopedContext;
-use fp_optimize::pass::{load_optimizers, FoldOptimizer};
+use fp_optimize::utils::{load_optimizers, FoldOptimizer};
 use proc_macro::TokenStream;
 use fp_rust_lang::parser::RustParser;
 use fp_rust_lang::printer::RustPrinter;
