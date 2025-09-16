@@ -234,7 +234,7 @@ impl SharedScopedContext {
             AstExpr::Value(value) => Some(value.get()),
             _ => None,
         };
-        info!(
+        debug!(
             "try_get_value_from_expr {} => {}",
             expr,
             ret.as_ref().map(|x| x.to_string()).unwrap_or_default()
@@ -243,9 +243,9 @@ impl SharedScopedContext {
     }
     pub fn get_value_recursive(&self, key: impl Into<Path>) -> Option<AstValue> {
         let key = key.into();
-        info!("get_value_recursive {}", key);
+        debug!("get_value_recursive {}", key);
         let expr = self.get_expr(&key)?;
-        info!("get_value_recursive {} => {:?}", key, expr);
+        debug!("get_value_recursive {} => {:?}", key, expr);
         match expr {
             AstExpr::Locator(ident) => self.get_value_recursive(ident.to_path()),
             _ => Some(AstValue::expr(expr)),
