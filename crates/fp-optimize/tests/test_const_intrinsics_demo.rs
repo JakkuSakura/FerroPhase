@@ -7,7 +7,7 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::id::Ident;
 use fp_core::Result;
-use fp_optimize::interpreter::Interpreter;
+use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::printer::RustPrinter;
 use fp_rust_lang::{shll_parse_expr};
 use std::sync::Arc;

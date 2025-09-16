@@ -3,7 +3,7 @@
 use crate::{cli::CliConfig, utils::file_utils, Result, CliError};
 use console::style;
 use fp_core::ast::*;
-use fp_optimize::interpreter::Interpreter;
+use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::{parser::RustParser, printer::RustPrinter};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
@@ -162,7 +162,7 @@ async fn apply_optimizations(
     info!("Applying optimizations (level {})", args.opt_level);
     
     let printer = Arc::new(RustPrinter::new());
-    let interpreter = Interpreter::new(printer.clone());
+    let interpreter = InterpretationOrchestrator::new(printer.clone());
     
     // This is a simplified optimization pipeline
     // In a real implementation, you'd have more sophisticated passes
@@ -220,7 +220,7 @@ async fn compile_to_wasm(_ast: AstFile, _output: &Path) -> Result<()> {
 
 async fn interpret_code(ast: AstFile) -> Result<()> {
     let printer = Arc::new(RustPrinter::new());
-    let interpreter = Interpreter::new(printer);
+    let interpreter = InterpretationOrchestrator::new(printer);
     
     // For now, just print that we would interpret
     // TODO: Implement actual interpretation
