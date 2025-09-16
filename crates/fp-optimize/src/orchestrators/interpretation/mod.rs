@@ -1,6 +1,6 @@
 mod typing;
 
-use crate::pass::{FoldOptimizer, OptimizePass};
+use crate::utils::{FoldOptimizer, OptimizePass};
 // Replace common::* with specific imports
 use itertools::Itertools;
 use tracing::debug;
@@ -20,12 +20,12 @@ use crate::opt_ensure;
 use crate::opt_bail;
 
 #[derive(Clone)]
-pub struct InterpreterPass {
+pub struct InterpretationOrchestrator {
     pub serializer: Arc<dyn AstSerializer>,
     pub ignore_missing_items: bool,
 }
 
-impl InterpreterPass {
+impl InterpretationOrchestrator {
     pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         Self {
             serializer,
@@ -591,11 +591,24 @@ impl InterpreterPass {
             AstNode::File(file) => self.interpret_items(&file.items, ctx),
         }
     }
+
+    /// Evaluate a const expression with side-effect-aware intrinsics
+    /// This is the main method for const evaluation
+    pub fn evaluate_const_expression(
+        &self, 
+        expr: &AstExpr, 
+        ctx: &SharedScopedContext,
+        _intrinsic_context: &crate::utils::IntrinsicEvaluationContext
+    ) -> fp_core::error::Result<AstValue> {
+        // For now, delegate to the existing interpreter
+        // TODO: Integrate with side-effect-aware intrinsics
+        self.interpret_expr_no_resolve(expr, ctx)
+    }
 }
 
-impl OptimizePass for InterpreterPass {
+impl OptimizePass for InterpretationOrchestrator {
     fn name(&self) -> &str {
-        "interpreter"
+        "interpretation"
     }
     fn optimize_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
@@ -663,7 +676,7 @@ impl OptimizePass for InterpreterPass {
     }
 }
 
-impl ValueSystem for InterpreterPass {
+impl ValueSystem for InterpretationOrchestrator {
     fn get_value_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstValue> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
         let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;

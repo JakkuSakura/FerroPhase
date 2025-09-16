@@ -8,16 +8,20 @@ use fp_core::ast::{AstExpr, AstItem, AstModule, AstNode, AstSerializer};
 use fp_core::ast::{AstFile, AstValue};
 use fp_core::context::SharedScopedContext;
 
-use crate::pass::{FoldOptimizer, InterpreterPass};
+use crate::utils::FoldOptimizer;
+use crate::orchestrators::InterpretationOrchestrator;
 
-pub struct Interpreter {
+/// Simple expression evaluator utility
+/// Wraps the interpretation orchestrator for basic expression evaluation
+pub struct ExpressionEvaluator {
     pub opt: FoldOptimizer,
 }
-impl Interpreter {
+
+impl ExpressionEvaluator {
     pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
-        let pass = InterpreterPass::new(serializer.clone());
+        let orchestrator = InterpretationOrchestrator::new(serializer.clone());
         Self {
-            opt: FoldOptimizer::new(serializer, Box::new(pass)),
+            opt: FoldOptimizer::new(serializer, Box::new(orchestrator)),
         }
     }
     fn extract_expr(&self, node: AstExpr) -> Result<AstValue> {

@@ -1,4 +1,5 @@
-use crate::pass::{InterpreterPass, OptimizePass};
+use crate::orchestrators::InterpretationOrchestrator;
+use crate::utils::OptimizePass;
 // Replace common::* with specific imports
 use itertools::{zip_eq, Itertools};
 use tracing::{debug, warn};
@@ -15,14 +16,14 @@ use crate::error::optimization_error;
 pub struct SpecializePass {
     spec_id: AtomicUsize,
     serializer: Arc<dyn AstSerializer>,
-    // TODO: use Context instead of InterpreterPass
-    interpreter: InterpreterPass,
+    // TODO: use Context instead of InterpretationOrchestrator
+    interpreter: InterpretationOrchestrator,
 }
 impl SpecializePass {
     pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         Self {
             spec_id: AtomicUsize::default(),
-            interpreter: InterpreterPass::new(serializer.clone()),
+            interpreter: InterpretationOrchestrator::new(serializer.clone()),
             serializer,
         }
     }
