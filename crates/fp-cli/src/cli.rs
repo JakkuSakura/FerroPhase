@@ -247,7 +247,7 @@ impl CliConfig {
     }
     
     /// Merge this configuration with another, with the other taking precedence
-    pub fn merge(mut self, other: Self) -> Self {
+    pub fn merge(self, other: Self) -> Self {
         // For now, just replace with other. In a real implementation,
         // you might want more sophisticated merging logic.
         other

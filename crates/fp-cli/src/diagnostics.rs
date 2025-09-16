@@ -1,8 +1,7 @@
 //! Diagnostic and error reporting utilities
 
 use crate::Result;
-use miette::{Diagnostic, Result as MietteResult};
-use std::fmt;
+use miette::Diagnostic;
 use thiserror::Error;
 
 /// Set up enhanced error reporting with miette
@@ -57,7 +56,6 @@ pub enum FerroPhaseError {
     )]
     CompilationError {
         message: String,
-        #[source_code]
         src: Option<String>,
         #[label("error occurred here")]
         err_span: Option<miette::SourceSpan>,
@@ -70,7 +68,6 @@ pub enum FerroPhaseError {
     )]
     ConfigError {
         message: String,
-        #[source_code]
         config_src: Option<String>,
         #[label("configuration error")]
         err_span: Option<miette::SourceSpan>,
@@ -120,7 +117,7 @@ pub fn config_error(message: String) -> FerroPhaseError {
 
 /// Pretty print diagnostics with context
 pub fn print_diagnostic(error: &dyn Diagnostic) {
-    eprintln!("{:?}", miette::Report::new(error));
+    eprintln!("{:?}", error);
 }
 
 #[cfg(test)]

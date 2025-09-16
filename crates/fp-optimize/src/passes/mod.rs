@@ -7,5 +7,5 @@ pub mod dead_code_elimination;
 
 pub use inline::*;
 pub use specialize::*;
-pub use const_folding::*;
-pub use dead_code_elimination::*;
+// pub use const_folding::*;
+// pub use dead_code_elimination::*;

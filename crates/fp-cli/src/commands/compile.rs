@@ -1,13 +1,9 @@
 //! Compilation command implementation
 
-use crate::{cli::CliConfig, utils::file_utils, Result, CliError};
+use crate::{cli::CliConfig, pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput}, Result, CliError};
 use console::style;
-use fp_core::ast::*;
-use fp_optimize::orchestrators::InterpretationOrchestrator;
-use fp_rust_lang::{parser::RustParser, printer::RustPrinter};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tracing::{info, warn};
 
 /// Arguments for the compile command
@@ -43,10 +39,10 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     
     let mut compiled_files = Vec::new();
     
-    for (i, input_file) in args.input.iter().enumerate() {
+    for (_i, input_file) in args.input.iter().enumerate() {
         progress.set_message(format!("Compiling {}", input_file.display()));
         
-        let output_file = determine_output_path(input_file, &args.output, &args.target)?;
+        let output_file = determine_output_path(input_file, args.output.as_ref(), &args.target)?;
         
         // Compile single file
         compile_file(input_file, &output_file, &args, config).await?;
@@ -124,108 +120,42 @@ async fn compile_file(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    config: &CliConfig,
+    _config: &CliConfig,
 ) -> Result<()> {
-    // Read input file
-    let source_code = std::fs::read_to_string(input)
-        .map_err(|e| CliError::Io(e))?;
+    info!("Compiling: {} -> {}", input.display(), output.display());
     
-    // Parse into AST
-    let parser = RustParser::new();
-    let ast = parser.parse_file(&source_code)
-        .map_err(|e| CliError::Compilation(format!("Parse error: {}", e)))?;
-    
-    // Apply optimizations if opt_level > 0
-    let optimized_ast = if args.opt_level > 0 {
-        apply_optimizations(ast, args, config).await?
-    } else {
-        ast
+    // Configure pipeline for compilation
+    let pipeline_config = PipelineConfig {
+        optimization_level: args.opt_level as u32,
+        print_ast: false,
+        print_passes: false,
+        target: args.target.clone(),
     };
     
-    // Generate output based on target
-    match args.target.as_str() {
-        "rust" => compile_to_rust(optimized_ast, output).await?,
-        "llvm" => compile_to_llvm(optimized_ast, output).await?,
-        "wasm" => compile_to_wasm(optimized_ast, output).await?,
-        "interpret" => interpret_code(optimized_ast).await?,
-        _ => return Err(CliError::InvalidInput(format!("Unknown target: {}", args.target))),
+    // Execute pipeline
+    let pipeline = Pipeline::new();
+    let pipeline_output = pipeline.execute(PipelineInput::File(input.to_path_buf()), &pipeline_config).await?;
+    
+    // Write output to file
+    match pipeline_output {
+        PipelineOutput::Code(code) => {
+            // Ensure output directory exists
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| CliError::Io(e))?;
+            }
+            
+            std::fs::write(output, code)
+                .map_err(|e| CliError::Io(e))?;
+            
+            info!("Generated code: {}", output.display());
+        },
+        PipelineOutput::Value(_) => {
+            // For interpret target, we don't write to file
+            info!("Interpretation completed");
+        },
+        _ => return Err(CliError::Compilation("Unexpected pipeline output".to_string())),
     }
-    
-    Ok(())
-}
-
-async fn apply_optimizations(
-    ast: AstFile,
-    args: &CompileArgs,
-    config: &CliConfig,
-) -> Result<AstFile> {
-    info!("Applying optimizations (level {})", args.opt_level);
-    
-    let printer = Arc::new(RustPrinter::new());
-    let interpreter = InterpretationOrchestrator::new(printer.clone());
-    
-    // This is a simplified optimization pipeline
-    // In a real implementation, you'd have more sophisticated passes
-    
-    match args.opt_level {
-        1 => {
-            // Basic optimizations
-            info!("Running basic optimizations");
-        }
-        2 => {
-            // Standard optimizations
-            info!("Running standard optimizations");
-        }
-        3 => {
-            // Aggressive optimizations
-            info!("Running aggressive optimizations");
-        }
-        _ => {
-            // No optimizations
-        }
-    }
-    
-    // For now, just return the original AST
-    // TODO: Implement actual optimization passes
-    Ok(ast)
-}
-
-async fn compile_to_rust(ast: AstFile, output: &Path) -> Result<()> {
-    let printer = RustPrinter::new();
-    let rust_code = printer.print_file(&ast)
-        .map_err(|e| CliError::Compilation(format!("Rust generation error: {}", e)))?;
-    
-    // Ensure output directory exists
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| CliError::Io(e))?;
-    }
-    
-    std::fs::write(output, rust_code)
-        .map_err(|e| CliError::Io(e))?;
-    
-    info!("Generated Rust code: {}", output.display());
-    Ok(())
-}
-
-async fn compile_to_llvm(_ast: AstFile, _output: &Path) -> Result<()> {
-    // TODO: Implement LLVM compilation
-    Err(CliError::Compilation("LLVM compilation not yet implemented".to_string()))
-}
-
-async fn compile_to_wasm(_ast: AstFile, _output: &Path) -> Result<()> {
-    // TODO: Implement WebAssembly compilation
-    Err(CliError::Compilation("WebAssembly compilation not yet implemented".to_string()))
-}
-
-async fn interpret_code(ast: AstFile) -> Result<()> {
-    let printer = Arc::new(RustPrinter::new());
-    let interpreter = InterpretationOrchestrator::new(printer);
-    
-    // For now, just print that we would interpret
-    // TODO: Implement actual interpretation
-    println!("{} Code interpretation not yet fully implemented", style("ℹ").blue());
-    println!("AST contains {} items", ast.items.len());
     
     Ok(())
 }

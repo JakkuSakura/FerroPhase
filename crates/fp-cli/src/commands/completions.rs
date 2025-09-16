@@ -1,7 +1,7 @@
 //! Shell completions command implementation
 
 use crate::{cli::CliConfig, Result};
-use clap::{Command, CommandFactory};
+use clap::Command;
 use clap_complete::{generate, Shell};
 use std::io;
 
