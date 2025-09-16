@@ -57,6 +57,31 @@ impl InterpretationOrchestrator {
                     ctx,
                 )
             }
+            ExprInvokeTarget::Function(Locator::Path(path)) => {
+                // For single-segment paths like "println", try to get it as an identifier first
+                if path.segments.len() == 1 {
+                    let func = self.interpret_ident(&path.segments[0], ctx, true)?;
+                    self.interpret_invoke(
+                        &ExprInvoke {
+                            target: ExprInvokeTarget::expr(AstExpr::value(func).into()),
+                            args: node.args.clone(),
+                        },
+                        ctx,
+                    )
+                } else {
+                    // For multi-segment paths, use context lookup
+                    let func = ctx
+                        .get_value_recursive(path)
+                        .ok_or_else(|| optimization_error(format!("could not find function {:?} in context", path)))?;
+                    self.interpret_invoke(
+                        &ExprInvoke {
+                            target: ExprInvokeTarget::expr(AstExpr::value(func).into()),
+                            args: node.args.clone(),
+                        },
+                        ctx,
+                    )
+                }
+            }
             ExprInvokeTarget::Method(select) => match select.field.as_str() {
                 "to_string" => match &select.obj.get() {
                     AstExpr::Value(value) => match value.as_ref() {
@@ -174,6 +199,7 @@ impl InterpretationOrchestrator {
             "<" if resolve => Ok(AstValue::any(builtin_lt())),
             "print" if resolve => Ok(AstValue::any(builtin_print(self.serializer.clone()))),
             "println!" if resolve => Ok(AstValue::any(builtin_println(self.serializer.clone()))),
+            "println" if resolve => Ok(AstValue::any(builtin_println(self.serializer.clone()))),
             "true" => Ok(AstValue::bool(true)),
             "false" => Ok(AstValue::bool(false)),
             "None" => Ok(AstValue::None(ValueNone)),
@@ -678,9 +704,11 @@ impl InterpretationOrchestrator {
             }
             BlockStmt::Item(item) => self.interpret_item(item, ctx).map(|_| None),
             BlockStmt::Any(any_box) => {
-                // Handle macro statements
-                if let Some(raw_macro_stmt) = any_box.downcast_ref::<fp_rust_lang::RawStmtMacro>() {
-                    self.interpret_macro_stmt(&raw_macro_stmt.raw, ctx).map(|_| None)
+                // Handle macro statements  
+                if any_box.downcast_ref::<fp_rust_lang::RawStmtMacro>().is_some() {
+                    // Macros like println! are now converted to function calls at parse time
+                    // For any remaining macros, just return unit
+                    Ok(None)
                 } else {
                     opt_bail!(format!("Unsupported Any statement type: {:?}", any_box))
                 }
@@ -689,130 +717,6 @@ impl InterpretationOrchestrator {
         }
     }
 
-    pub fn interpret_macro_stmt(&self, macro_stmt: &syn::StmtMacro, ctx: &SharedScopedContext) -> Result<AstValue> {
-        let macro_path = &macro_stmt.mac.path;
-        let macro_name = macro_path.segments.last()
-            .map(|seg| seg.ident.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        // eprintln!("DEBUG: Interpreting macro: {}", macro_name);
-
-        match macro_name.as_str() {
-            "println" => {
-                self.interpret_println_macro(&macro_stmt.mac.tokens, ctx)
-            }
-            _ => {
-                opt_bail!(format!("Unsupported macro: {}", macro_name))
-            }
-        }
-    }
-
-    pub fn interpret_println_macro(&self, tokens: &proc_macro2::TokenStream, ctx: &SharedScopedContext) -> Result<AstValue> {
-        // Parse the tokens as comma-separated expressions
-        let tokens_str = tokens.to_string();
-        
-        // Parse as function call arguments - this is the closest match to macro arguments
-        let wrapped_tokens = format!("dummy({})", tokens_str);
-        
-        match syn::parse_str::<syn::ExprCall>(&wrapped_tokens) {
-            Ok(call_expr) => {
-                let mut evaluated_args = Vec::new();
-                
-                for arg in &call_expr.args {
-                    // Convert syn::Expr to AstExpr and evaluate
-                    match self.syn_expr_to_ast_expr(arg) {
-                        Ok(ast_expr) => {
-                            // Evaluate the expression in the current context
-                            match self.interpret_expr(&ast_expr, ctx) {
-                                Ok(value) => {
-                                    evaluated_args.push(value);
-                                },
-                                Err(_e) => {
-                                    // If evaluation fails, use string representation as fallback
-                                    // This handles cases where const values aren't resolved yet
-                                    let fallback = format!("{{UNRESOLVED:{:?}}}", arg);
-                                    evaluated_args.push(AstValue::string(fallback));
-                                }
-                            }
-                        }
-                        Err(_e) => {
-                            // If conversion fails, use string representation as fallback
-                            evaluated_args.push(AstValue::string(format!("{{PARSE_ERROR:{:?}}}", arg)));
-                        }
-                    }
-                }
-
-
-                // Handle format string interpolation
-                if evaluated_args.is_empty() {
-                    return Ok(AstValue::unit());
-                }
-
-                let format_result = self.format_println_args(&evaluated_args)?;
-                ctx.root().print_str(format!("{}\n", format_result));
-                Ok(AstValue::unit())
-            }
-            Err(_e) => {
-                // Fallback: just print the raw tokens
-                ctx.root().print_str(format!("{}\n", tokens_str));
-                Ok(AstValue::unit())
-            }
-        }
-    }
-
-    fn syn_expr_to_ast_expr(&self, expr: &syn::Expr) -> Result<AstExpr> {
-        // For now, use the parser to convert syn::Expr to AstExpr
-        // This is a simplified approach - a full implementation would handle all syn::Expr variants
-        let parser = fp_rust_lang::parser::RustParser::new();
-        parser.parse_expr(expr.clone())
-            .map_err(|e| optimization_error(&format!("Failed to convert syn::Expr to AstExpr: {}", e)))
-    }
-
-    fn format_println_args(&self, args: &[AstValue]) -> Result<String> {
-        if args.is_empty() {
-            return Ok(String::new());
-        }
-
-        let format_string = match &args[0] {
-            AstValue::String(s) => s.value.clone(),
-            _ => return Ok(format!("{:?}", args[0])),
-        };
-
-        if args.len() == 1 {
-            // No format arguments, just return the string
-            return Ok(format_string);
-        }
-
-        // Simple format string replacement - replace {} with argument values
-        let mut result = format_string;
-        let format_args = &args[1..];
-        let mut arg_index = 0;
-
-        // Find and replace {} placeholders
-        while let Some(pos) = result.find("{}") {
-            if arg_index < format_args.len() {
-                let replacement = self.value_to_display_string(&format_args[arg_index]);
-                result.replace_range(pos..pos+2, &replacement);
-                arg_index += 1;
-            } else {
-                // No more arguments, leave placeholder as is
-                break;
-            }
-        }
-
-        Ok(result)
-    }
-
-    fn value_to_display_string(&self, value: &AstValue) -> String {
-        match value {
-            AstValue::String(s) => s.value.clone(),
-            AstValue::Int(i) => i.value.to_string(),
-            AstValue::Bool(b) => b.value.to_string(),
-            AstValue::Decimal(d) => d.value.to_string(),
-            AstValue::Unit(_) => "()".to_string(),
-            _ => format!("{:?}", value),
-        }
-    }
 
     pub fn interpret_tree(&self, node: &AstNode, ctx: &SharedScopedContext) -> Result<AstValue> {
         match node {

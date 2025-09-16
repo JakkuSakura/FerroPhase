@@ -20,7 +20,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<AstExpr> {
         syn::Expr::If(i) => AstExpr::If(parse_expr_if(i)?),
         syn::Expr::Loop(l) => AstExpr::Loop(parse_expr_loop(l)?),
         syn::Expr::Lit(l) => AstExpr::value(parse_literal(l.lit)?),
-        syn::Expr::Macro(m) => AstExpr::any(RawExprMacro { raw: m }),
+        syn::Expr::Macro(m) => parse_expr_macro(m)?,
         syn::Expr::MethodCall(c) => AstExpr::Invoke(parse_expr_method_call(c)?.into()),
         syn::Expr::Index(i) => AstExpr::Index(parse_expr_index(i)?),
         syn::Expr::Path(p) => AstExpr::path(parser::parse_path(p.path)?),
@@ -148,7 +148,7 @@ pub fn parse_stmt(stmt: syn::Stmt) -> Result<(BlockStmt, bool)> {
                 semicolon.is_some(),
             )
         }
-        syn::Stmt::Macro(raw) => (BlockStmt::any(RawStmtMacro { raw }), true),
+        syn::Stmt::Macro(raw) => (parse_stmt_macro(raw)?, true),
     })
 }
 
@@ -300,4 +300,64 @@ pub fn parse_expr_range(r: syn::ExprRange) -> Result<ExprRange> {
         end,
         step: None,
     })
+}
+
+pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<AstExpr> {
+    // Check if this is a println! macro
+    if is_println_macro(&m.mac) {
+        return parse_println_macro_to_function_call(&m.mac);
+    }
+    
+    // For other macros, preserve the original behavior
+    Ok(AstExpr::any(RawExprMacro { raw: m }))
+}
+
+pub fn parse_stmt_macro(raw: syn::StmtMacro) -> Result<BlockStmt> {
+    // Check if this is a println! macro
+    if is_println_macro(&raw.mac) {
+        let call_expr = parse_println_macro_to_function_call(&raw.mac)?;
+        return Ok(BlockStmt::Expr(BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some())));
+    }
+    
+    // For other macros, preserve the original behavior
+    Ok(BlockStmt::any(RawStmtMacro { raw }))
+}
+
+fn is_println_macro(mac: &syn::Macro) -> bool {
+    mac.path.segments.len() == 1 && 
+    mac.path.segments[0].ident == "println"
+}
+
+fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
+    // Parse the macro tokens as function arguments
+    let tokens_str = mac.tokens.to_string();
+    
+    // Handle empty println!()
+    if tokens_str.trim().is_empty() {
+        return Ok(AstExpr::Invoke(ExprInvoke {
+            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+            args: vec![],
+        }));
+    }
+    
+    // Parse as function call arguments - wrap in parentheses to make it a valid function call
+    let wrapped_tokens = format!("dummy({})", tokens_str);
+    
+    match syn::parse_str::<syn::ExprCall>(&wrapped_tokens) {
+        Ok(call_expr) => {
+            let args: Vec<_> = call_expr.args.into_iter().map(parse_expr).collect::<Result<Vec<_>>>()?;
+            
+            Ok(AstExpr::Invoke(ExprInvoke {
+                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+                args,
+            }))
+        }
+        Err(_) => {
+            // If parsing fails, fall back to treating it as a string literal
+            Ok(AstExpr::Invoke(ExprInvoke {
+                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+                args: vec![AstExpr::value(AstValue::String(ValueString::new_ref(tokens_str)))],
+            }))
+        }
+    }
 }
