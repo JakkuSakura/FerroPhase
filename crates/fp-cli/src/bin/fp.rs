@@ -282,6 +282,7 @@ async fn main() -> Result<()> {
                 file: args.file,
                 print_ast: args.print_ast,
                 print_passes: args.print_passes,
+                print_result: true, // For eval command, always print result
             };
             commands::eval_command(eval_args, &config).await
         },
@@ -299,6 +300,7 @@ async fn main() -> Result<()> {
                 file: Some(args.file),
                 print_ast: args.print_ast,
                 print_passes: args.print_passes,
+                print_result: false, // For run command, don't print result
             };
             commands::eval_command(eval_args, &config).await
         },
