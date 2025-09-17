@@ -37,6 +37,9 @@ pub mod error {
         #[error("Invalid input: {0}")]
         InvalidInput(String),
         
+        #[error("Transpilation error: {0}")]
+        Transpile(String),
+        
         #[error("Missing dependency: {0}")]
         MissingDependency(String),
     }

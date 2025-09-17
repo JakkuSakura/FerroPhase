@@ -6,6 +6,7 @@ use quote::*;
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use fp_core::{Error, Result};
 use fp_core::ast::*;
+use fp_core::printer::AstSerializerConfig;
 use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use fp_core::ops::{BuiltinFn, BuiltinFnName};
@@ -20,14 +21,29 @@ mod value;
 
 pub mod rustfmt;
 
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RustPrinter {
     pub rustfmt: bool,
+    pub config: AstSerializerConfig,
 }
 
 impl RustPrinter {
     pub fn new() -> Self {
-        Self { rustfmt: false }
+        Self { 
+            rustfmt: false,
+            config: AstSerializerConfig::standard(),
+        }
+    }
+    
+    pub fn with_config(config: AstSerializerConfig) -> Self {
+        Self {
+            rustfmt: false,
+            config,
+        }
+    }
+    
+    pub fn config(&self) -> &AstSerializerConfig {
+        &self.config
     }
     pub fn set_rustfmt(&mut self, rustfmt: bool) {
         self.rustfmt = rustfmt;
