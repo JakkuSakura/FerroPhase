@@ -12,6 +12,7 @@ path = "src/bin/fp.rs"
 fp-core = { path = "../fp-core" }
 fp-optimize = { path = "../fp-optimize" }
 fp-rust-lang = { path = "../fp-rust-lang" }
+fp-javascript = { path = "../fp-javascript" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
@@ -36,7 +37,7 @@ console = "0.15"
 indicatif = "0.17"
 
 # Async runtime for potential future features
-tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "fs", "process"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "fs", "process", "time", "macros"] }
 
 # Error handling
 eyre = "0.6"
@@ -46,6 +47,10 @@ thiserror = "1.0"
 dirs = "5.0"
 pathdiff = "0.2"
 syn = { version = "2.0", features = ["full"] }
+
+# SWC for TypeScript code generation
+swc_ecma_ast = "0.110"
+swc_ecma_quote = "0.57"
 
 # Performance and profiling
 criterion = { version = "0.5", optional = true }

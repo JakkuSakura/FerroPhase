@@ -70,6 +70,9 @@ enum Commands {
     /// Compile FerroPhase code to various targets
     Compile(CompileArgs),
     
+    /// Transpile FerroPhase code with const evaluation to target languages
+    Transpile(TranspileArgs),
+    
     /// Evaluate expressions using the interpreter
     Eval(EvalArgs),
     
@@ -128,6 +131,45 @@ struct CompileArgs {
     run: bool,
     
     /// Watch for file changes and recompile
+    #[arg(short, long)]
+    watch: bool,
+}
+
+#[derive(Args)]
+struct TranspileArgs {
+    /// Input file(s) to transpile
+    #[arg(required = true)]
+    input: Vec<PathBuf>,
+    
+    /// Target language (javascript, typescript, python, go)
+    #[arg(short, long, default_value = "typescript")]
+    target: String,
+    
+    /// Output file or directory
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    
+    /// Perform const evaluation before transpilation
+    #[arg(long, default_value = "true")]
+    const_eval: bool,
+    
+    /// Preserve struct types and methods
+    #[arg(long, default_value = "true")]
+    preserve_structs: bool,
+    
+    /// Generate type definitions (for TypeScript)
+    #[arg(long)]
+    type_defs: bool,
+    
+    /// Pretty print output
+    #[arg(long, default_value = "true")]
+    pretty: bool,
+    
+    /// Include source maps
+    #[arg(long)]
+    source_maps: bool,
+    
+    /// Watch for file changes and re-transpile
     #[arg(short, long)]
     watch: bool,
 }
@@ -275,6 +317,20 @@ async fn main() -> Result<()> {
                 watch: args.watch,
             };
             commands::compile_command(compile_args, &config).await
+        },
+        Commands::Transpile(args) => {
+            let transpile_args = commands::transpile::TranspileArgs {
+                input: args.input,
+                target: args.target,
+                output: args.output,
+                const_eval: args.const_eval,
+                preserve_structs: args.preserve_structs,
+                type_defs: args.type_defs,
+                pretty: args.pretty,
+                source_maps: args.source_maps,
+                watch: args.watch,
+            };
+            commands::transpile_command(transpile_args, &config).await
         },
         Commands::Eval(args) => {
             let eval_args = commands::eval::EvalArgs {
