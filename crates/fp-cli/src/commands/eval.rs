@@ -11,6 +11,7 @@ pub struct EvalArgs {
     pub file: Option<std::path::PathBuf>,
     pub print_ast: bool,
     pub print_passes: bool,
+    pub print_result: bool, // Whether to print the final result
 }
 
 /// Execute the eval command
@@ -41,7 +42,9 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     // Extract and print result
     match output {
         PipelineOutput::Value(value) => {
-            print_result(&value)?;
+            if args.print_result {
+                print_result(&value)?;
+            }
         },
         _ => return Err(CliError::Compilation("Expected evaluation result".to_string())),
     }
@@ -102,6 +105,7 @@ mod tests {
             file: None,
             print_ast: false,
             print_passes: false,
+            print_result: true,
         };
 
         // This test might fail until the interpreter is fully implemented
@@ -124,6 +128,7 @@ mod tests {
             file: Some(temp_file.path().to_path_buf()),
             print_ast: false,
             print_passes: false,
+            print_result: true,
         };
 
         // This test might fail until the interpreter is fully implemented
