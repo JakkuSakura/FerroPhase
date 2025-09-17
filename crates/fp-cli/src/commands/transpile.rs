@@ -1,6 +1,6 @@
 //! Transpilation command implementation with struct handling and const evaluation
 
-use crate::{cli::CliConfig, pipeline::Pipeline, Result, CliError};
+use crate::{cli::CliConfig, languages::*, pipeline::Pipeline, Result, CliError};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
@@ -165,11 +165,11 @@ async fn transpile_file(
     
     // Step 3: Transpile based on target language
     let transpile_output = match args.target.as_str() {
-        "typescript" | "ts" => transpile_to_typescript(&processed_ast, args).await?,
-        "javascript" | "js" => transpile_to_javascript(&processed_ast, args).await?,
-        "csharp" | "cs" | "c#" => transpile_to_csharp(&processed_ast, args).await?,
-        "python" | "py" => transpile_to_python(&processed_ast, args).await?,
-        "go" => transpile_to_go(&processed_ast, args).await?,
+        TYPESCRIPT | "ts" => transpile_to_typescript(&processed_ast, args).await?,
+        JAVASCRIPT | "js" => transpile_to_javascript(&processed_ast, args).await?,
+        CSHARP | "cs" | "c#" => transpile_to_csharp(&processed_ast, args).await?,
+        PYTHON | "py" => transpile_to_python(&processed_ast, args).await?,
+        GO => transpile_to_go(&processed_ast, args).await?,
         _ => return Err(CliError::InvalidInput(format!("Unsupported target language: {}", args.target))),
     };
     
@@ -705,10 +705,18 @@ fn validate_transpile_inputs(args: &TranspileArgs) -> Result<()> {
         }
     }
     
-    // Validate target language
-    match args.target.as_str() {
-        "typescript" | "ts" | "javascript" | "js" | "csharp" | "cs" | "c#" | "python" | "py" | "go" => {},
-        _ => return Err(CliError::InvalidInput(format!("Unsupported target language: {}. Supported: typescript, javascript, csharp, python, go", args.target))),
+    // Validate target language using the languages module
+    if !is_transpile_supported(&args.target) {
+        let supported_languages: Vec<&str> = SUPPORTED_LANGUAGES
+            .iter()
+            .filter(|lang| lang.transpile_supported)
+            .map(|lang| lang.name)
+            .collect();
+        return Err(CliError::InvalidInput(format!(
+            "Unsupported target language: {}. Supported: {}", 
+            args.target, 
+            supported_languages.join(", ")
+        )));
     }
     
     Ok(())
@@ -718,18 +726,13 @@ fn determine_transpile_output_path(input: &Path, output: Option<&PathBuf>, targe
     if let Some(output) = output {
         Ok(output.clone())
     } else {
-        let extension = match target {
-            "typescript" | "ts" => "ts",
-            "javascript" | "js" => "js",
-            "csharp" | "cs" | "c#" => "cs",
-            "python" | "py" => "py",
-            "go" => "go",
-            _ => return Err(CliError::InvalidInput(format!("Unknown target for output extension: {}", target))),
-        };
+        let extension = get_target_extension(target)
+            .ok_or_else(|| CliError::InvalidInput(format!("Unknown target for output extension: {}", target)))?;
         
         Ok(input.with_extension(extension))
     }
 }
+
 
 fn setup_progress_bar(total: usize) -> ProgressBar {
     let pb = ProgressBar::new(total as u64);

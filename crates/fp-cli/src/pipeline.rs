@@ -81,44 +81,58 @@ impl Pipeline {
     }
 
     fn try_parse_as_file(&self, source: &str) -> Result<BExpr, CliError> {
-        // Parse as a syn::File first
+        // Parse as a syn::File first, but be more permissive with errors
         let syn_file: syn::File = syn::parse_str(source)
             .map_err(|e| CliError::Compilation(format!("Failed to parse as file: {}", e)))?;
 
-        let ast_file = self.parser.parse_file_content(PathBuf::from("input.fp"), syn_file)
-            .map_err(|e| CliError::Compilation(format!("Failed to convert to AST: {}", e)))?;
-
-        // Find main function and const declarations
-        let mut const_items = Vec::new();
-        let mut main_body = None;
-        
-        for item in ast_file.items {
-            if let Some(func) = item.as_function() {
-                if func.name.name == "main" {
-                    main_body = Some(func.body.clone());
+        // Try to parse the file, but handle errors more gracefully for transpilation
+        match self.parser.parse_file_content(PathBuf::from("input.fp"), syn_file) {
+            Ok(ast_file) => {
+                // Find main function and const declarations
+                let mut const_items = Vec::new();
+                let mut main_body = None;
+                
+                for item in ast_file.items {
+                    if let Some(func) = item.as_function() {
+                        if func.name.name == "main" {
+                            main_body = Some(func.body.clone());
+                        }
+                    } else {
+                        // Keep const declarations and other items
+                        const_items.push(fp_core::ast::BlockStmt::Item(Box::new(item)));
+                    }
                 }
-            } else {
-                // Keep const declarations and other items
-                const_items.push(fp_core::ast::BlockStmt::Item(Box::new(item)));
+                
+                // If we found a main function, create a block with const items + main body
+                if let Some(body) = main_body {
+                    // Add the main body as the final expression
+                    const_items.push(fp_core::ast::BlockStmt::Expr(fp_core::ast::BlockStmtExpr {
+                        expr: body,
+                        semicolon: None,
+                    }));
+                    
+                    Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
+                        stmts: const_items,
+                    })))
+                } else {
+                    // No main function, create a minimal structure for transpilation
+                    if const_items.is_empty() {
+                        // Create an empty block for transpilation purposes
+                        Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
+                            stmts: vec![],
+                        })))
+                    } else {
+                        // Just use all parsed items
+                        Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
+                            stmts: const_items,
+                        })))
+                    }
+                }
+            },
+            Err(_e) => {
+                // For transpilation mode, if parsing fails, try to extract just the struct definitions
+                self.try_parse_structs_only(source)
             }
-        }
-        
-        // If we found a main function, create a block with const items + main body
-        if let Some(body) = main_body {
-            // Add the main body as the final expression
-            const_items.push(fp_core::ast::BlockStmt::Expr(fp_core::ast::BlockStmtExpr {
-                expr: body,
-                semicolon: None,
-            }));
-            
-            Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
-                stmts: const_items,
-            })))
-        } else {
-            // No main function, just execute all items
-            Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
-                stmts: const_items,
-            })))
         }
     }
 
@@ -141,6 +155,47 @@ impl Pipeline {
             .map_err(|e| CliError::Compilation(format!("Failed to convert to AST: {}", e)))?;
 
         Ok(Box::new(ast_expr))
+    }
+
+    fn try_parse_structs_only(&self, source: &str) -> Result<BExpr, CliError> {
+        // Try to parse individual items from the source, filtering out problematic ones
+        let syn_file: syn::File = syn::parse_str(source)
+            .map_err(|e| CliError::Compilation(format!("Failed to parse source: {}", e)))?;
+        
+        let mut parsed_items = Vec::new();
+        
+        // Try to parse each item individually, skipping ones that fail
+        for item in syn_file.items {
+            match item {
+                syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Type(_) => {
+                    // Try to parse struct/enum definitions
+                    if let Ok(ast_item) = self.parser.parse_item(item) {
+                        parsed_items.push(fp_core::ast::BlockStmt::Item(Box::new(ast_item)));
+                    }
+                },
+                syn::Item::Fn(_) => {
+                    // Try to parse function definitions, but don't fail if they use unsupported features
+                    if let Ok(ast_item) = self.parser.parse_item(item) {
+                        parsed_items.push(fp_core::ast::BlockStmt::Item(Box::new(ast_item)));
+                    }
+                },
+                syn::Item::Const(_) => {
+                    // Try to parse const definitions
+                    if let Ok(ast_item) = self.parser.parse_item(item) {
+                        parsed_items.push(fp_core::ast::BlockStmt::Item(Box::new(ast_item)));
+                    }
+                },
+                _ => {
+                    // Skip other items like use statements, impl blocks, etc.
+                    continue;
+                }
+            }
+        }
+        
+        // Create a block with whatever we managed to parse
+        Ok(Box::new(fp_core::ast::AstExpr::Block(fp_core::ast::ExprBlock {
+            stmts: parsed_items,
+        })))
     }
 
     async fn interpret_ast(&self, ast: &BExpr) -> Result<AstValue, CliError> {
