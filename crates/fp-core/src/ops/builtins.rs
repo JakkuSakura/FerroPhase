@@ -124,32 +124,74 @@ pub fn binary_comparison_on_literals(
         }
         let mut args_i64 = vec![];
         let mut args_f64 = vec![];
+        let mut args_string = vec![];
+        let mut args_bool = vec![];
+        
         for arg in args {
             match arg {
                 AstValue::Int(x) => args_i64.push(x.value),
                 AstValue::Decimal(x) => args_f64.push(x.value),
+                AstValue::String(x) => args_string.push(x.value.clone()),
+                AstValue::Bool(x) => args_bool.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
-        if !args_i64.is_empty() && !args_f64.is_empty() {
-            bail!("Does not support argument type {:?}", args)
+        
+        // Count non-empty argument type vectors
+        let type_count = [!args_i64.is_empty(), !args_f64.is_empty(), !args_string.is_empty(), !args_bool.is_empty()]
+            .iter().filter(|&&x| x).count();
+            
+        if type_count > 1 {
+            bail!("Cannot compare different types: {:?}", args)
         }
+        
         if !args_i64.is_empty() {
             return Ok(AstValue::bool(op_i64(args_i64[0], args_i64[1])));
         }
         if !args_f64.is_empty() {
             return Ok(AstValue::bool(op_f64(args_f64[0], args_f64[1])));
         }
+        if !args_string.is_empty() {
+            // For string comparison, use string equality
+            return Ok(AstValue::bool(args_string[0] == args_string[1]));
+        }
+        if !args_bool.is_empty() {
+            // For boolean comparison
+            return Ok(AstValue::bool(args_bool[0] == args_bool[1]));
+        }
 
         bail!("Does not support argument type {:?}", args)
     })
 }
 pub fn builtin_add() -> BuiltinFn {
-    operate_on_literals(
-        BinOpKind::Add,
-        |x| x.into_iter().sum(),
-        |x| x.into_iter().sum(),
-    )
+    BuiltinFn::new(BinOpKind::Add, move |args, _ctx| {
+        if args.len() != 2 {
+            bail!("Add expects 2 arguments, got: {:?}", args)
+        }
+        
+        match (&args[0], &args[1]) {
+            // String concatenation
+            (AstValue::String(a), AstValue::String(b)) => {
+                let mut result = a.value.clone();
+                result.push_str(&b.value);
+                Ok(AstValue::string(result))
+            },
+            // Numeric addition
+            (AstValue::Int(a), AstValue::Int(b)) => {
+                Ok(AstValue::int(a.value + b.value))
+            },
+            (AstValue::Decimal(a), AstValue::Decimal(b)) => {
+                Ok(AstValue::decimal(a.value + b.value))
+            },
+            (AstValue::Int(a), AstValue::Decimal(b)) => {
+                Ok(AstValue::decimal(a.value as f64 + b.value))
+            },
+            (AstValue::Decimal(a), AstValue::Int(b)) => {
+                Ok(AstValue::decimal(a.value + b.value as f64))
+            },
+            _ => bail!("Add operation not supported for types: {:?} + {:?}", args[0], args[1])
+        }
+    })
 }
 pub fn builtin_sub() -> BuiltinFn {
     operate_on_literals(
