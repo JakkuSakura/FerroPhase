@@ -1,6 +1,7 @@
 //! Command implementations for the FerroPhase CLI
 
 pub mod compile;
+pub mod transpile;
 pub mod eval;
 pub mod parse;
 pub mod check;
@@ -10,6 +11,7 @@ pub mod completions;
 
 // Re-export command functions
 pub use compile::compile_command;
+pub use transpile::transpile_command;
 pub use eval::eval_command;
 pub use parse::parse_command;
 pub use check::check_command;
