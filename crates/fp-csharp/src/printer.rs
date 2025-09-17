@@ -41,9 +41,88 @@ impl CSharpPrinter {
         self.config.formatting.indentation.indent_string(level)
     }
     
-    /// Map Rust/FerroPhase types to C# types
-    fn rust_type_to_csharp(&self, rust_type: &str) -> String {
-        match rust_type {
+    /// Map AST types to C# types using proper pattern matching
+    fn ast_type_to_csharp(&self, ast_type: &AstType) -> String {
+        match ast_type {
+            AstType::Vec(type_vec) => {
+                let inner_csharp = self.ast_type_to_csharp(&type_vec.ty);
+                format!("List<{}>", inner_csharp)
+            },
+            AstType::Primitive(prim) => {
+                match prim {
+                    fp_core::ast::TypePrimitive::Decimal(decimal_type) => {
+                        match decimal_type {
+                            fp_core::ast::DecimalType::F64 => "double".to_string(),
+                            fp_core::ast::DecimalType::F32 => "float".to_string(),
+                            _ => format!("{:?}", decimal_type),
+                        }
+                    },
+                    fp_core::ast::TypePrimitive::Int(int_type) => {
+                        match int_type {
+                            fp_core::ast::TypeInt::I64 => "long".to_string(),
+                            fp_core::ast::TypeInt::I32 => "int".to_string(),
+                            fp_core::ast::TypeInt::I16 => "short".to_string(),
+                            fp_core::ast::TypeInt::I8 => "sbyte".to_string(),
+                            fp_core::ast::TypeInt::U64 => "ulong".to_string(),
+                            fp_core::ast::TypeInt::U32 => "uint".to_string(),
+                            fp_core::ast::TypeInt::U16 => "ushort".to_string(),
+                            fp_core::ast::TypeInt::U8 => "byte".to_string(),
+                            _ => format!("{:?}", int_type),
+                        }
+                    },
+                    fp_core::ast::TypePrimitive::Bool => "bool".to_string(),
+                    fp_core::ast::TypePrimitive::String => "string".to_string(),
+                    fp_core::ast::TypePrimitive::List => "List<object>".to_string(), // Generic list
+                    _ => format!("{:?}", prim), // fallback for other primitives
+                }
+            },
+            AstType::Expr(expr) => {
+                // Handle expressions like paths/identifiers  
+                let expr_str = format!("{}", expr);
+                // Apply simple type mapping for consistency
+                self.map_simple_type_to_csharp(&expr_str)
+            },
+            _ => {
+                // Fallback to string representation for other types
+                let type_str = format!("{}", ast_type);
+                // Apply simple type mapping for consistency
+                self.map_simple_type_to_csharp(&type_str)
+            }
+        }
+    }
+
+    /// Handle Vec-like strings that weren't caught by the AST pattern matching
+    fn handle_vec_like_string(&self, type_str: &str) -> String {
+        // Handle Vec<T> types  
+        if type_str.starts_with("Vec<") && type_str.ends_with(">") {
+            let inner_type = type_str[4..type_str.len()-1].trim();
+            let csharp_inner = self.map_simple_type_to_csharp(inner_type);
+            return format!("List<{}>", csharp_inner);
+        }
+        
+        // Handle Vec :: < T > types (with spaces) - this is the problematic format
+        if type_str.contains("Vec :: <") && type_str.contains(">") {
+            if let Some(start) = type_str.find("Vec :: <") {
+                if let Some(end) = type_str.rfind(">") {
+                    let inner_type = type_str[start + 8..end].trim();
+                    let csharp_inner = self.map_simple_type_to_csharp(inner_type);
+                    return format!("List<{}>", csharp_inner);
+                }
+            }
+        }
+        
+        // No Vec pattern found, return as-is
+        type_str.to_string()
+    }
+
+    /// Map simple type strings to C# (for fallback cases)
+    fn map_simple_type_to_csharp(&self, type_str: &str) -> String {
+        // First check for Vec patterns as fallback (should be handled by AST pattern matching primarily)
+        if type_str.contains("Vec") {
+            return self.handle_vec_like_string(type_str);
+        }
+        
+        match type_str {
             "f64" => "double".to_string(),
             "f32" => "float".to_string(), 
             "i64" => "long".to_string(),
@@ -58,9 +137,10 @@ impl CSharpPrinter {
             "isize" => "nint".to_string(),
             "bool" => "bool".to_string(),
             "String" | "str" => "string".to_string(),
-            _ => rust_type.to_string(), // Keep custom types as-is
+            _ => type_str.to_string(), // Keep custom types as-is
         }
     }
+
     
     /// Generate C# interface from TypeStruct
     pub fn generate_interface(&self, struct_def: &TypeStruct) -> Result<String> {
@@ -70,7 +150,7 @@ impl CSharpPrinter {
         output.push_str("{\n");
         
         for field in &struct_def.fields {
-            let csharp_type = self.rust_type_to_csharp(&field.value.to_string());
+            let csharp_type = self.ast_type_to_csharp(&field.value);
             output.push_str(&format!("{}    {} {} {{ get; set; }}\n", 
                 self.indent(1), csharp_type, field.name.name));
         }
@@ -89,7 +169,7 @@ impl CSharpPrinter {
         
         // Generate properties
         for field in &struct_def.fields {
-            let csharp_type = self.rust_type_to_csharp(&field.value.to_string());
+            let csharp_type = self.ast_type_to_csharp(&field.value);
             
             // Add JSON property name attribute if JSON support is enabled
             if self.enable_json {
@@ -116,7 +196,7 @@ impl CSharpPrinter {
             
             let params = struct_def.fields.iter()
                 .map(|field| {
-                    let csharp_type = self.rust_type_to_csharp(&field.value.to_string());
+                    let csharp_type = self.ast_type_to_csharp(&field.value);
                     format!("{} {}", csharp_type, field.name.name.to_lowercase())
                 })
                 .join(", ");
@@ -165,7 +245,7 @@ impl CSharpPrinter {
         
         for (i, variant) in enum_def.variants.iter().enumerate() {
             let comma = if i < enum_def.variants.len() - 1 { "," } else { "" };
-            output.push_str(&format!("{}    {}{}\n", 
+            output.push_str(&format!("{}{}{}\n", 
                 self.indent(1), variant.name.name, comma));
         }
         
@@ -185,6 +265,7 @@ impl CSharpPrinter {
         
         // Add using statements
         output.push_str("using System;\n");
+        output.push_str("using System.Collections.Generic;\n");
         if self.enable_json {
             output.push_str("using System.Text.Json;\n");
             output.push_str("using System.Text.Json.Serialization;\n");
@@ -221,16 +302,23 @@ impl CSharpPrinter {
     }
     
     /// Generate a default value for a C# type
-    fn default_value_for_type(&self, csharp_type: &str) -> &'static str {
+    fn default_value_for_type(&self, csharp_type: &str) -> String {
         match csharp_type {
             "int" | "long" | "short" | "sbyte" | 
             "uint" | "ulong" | "ushort" | "byte" |
-            "nint" | "nuint" => "0",
-            "float" => "0.0f",
-            "double" => "0.0",
-            "bool" => "false",
-            "string" => "\"\"",
-            _ => "null"
+            "nint" | "nuint" => "0".to_string(),
+            "float" => "0.0f".to_string(),
+            "double" => "0.0".to_string(),
+            "bool" => "false".to_string(),
+            "string" | "String" => "\"\"".to_string(),
+            _ => {
+                // Handle List types and other reference types
+                if csharp_type.starts_with("List<") {
+                    format!("new {}{{}}", csharp_type)
+                } else {
+                    "null".to_string()
+                }
+            }
         }
     }
     
@@ -248,8 +336,8 @@ impl CSharpPrinter {
         
         // Add const values
         for (name, value) in const_values {
-            output.push_str(&format!("{}    const int {} = {};\n", 
-                self.indent(1), name, value));
+            output.push_str(&format!("{}const int {} = {};\n", 
+                self.indent(2), name, value));
         }
         
         if !const_values.is_empty() && !structs.is_empty() {
@@ -258,33 +346,33 @@ impl CSharpPrinter {
         
         // Add struct instantiation examples
         for struct_def in structs {
-            output.push_str(&format!("{}    // Example {} instantiation\n", 
-                self.indent(1), struct_def.name.name));
+            output.push_str(&format!("{}// Example {} instantiation\n", 
+                self.indent(2), struct_def.name.name));
                 
-            output.push_str(&format!("{}    var {}_instance = new {}()\n", 
-                self.indent(1), 
+            output.push_str(&format!("{}var {}_instance = new {}()\n", 
+                self.indent(2), 
                 struct_def.name.name.to_lowercase(), 
                 struct_def.name.name));
-            output.push_str(&format!("{}    {{\n", self.indent(1)));
+            output.push_str(&format!("{}{{\n", self.indent(2)));
             
             for field in &struct_def.fields {
-                let csharp_type = self.rust_type_to_csharp(&field.value.to_string());
+                let csharp_type = self.ast_type_to_csharp(&field.value);
                 let default_val = self.default_value_for_type(&csharp_type);
-                output.push_str(&format!("{}        {} = {},\n", 
-                    self.indent(1), field.name.name, default_val));
+                output.push_str(&format!("{}{} = {},\n", 
+                    self.indent(3), field.name.name, default_val));
             }
             
-            output.push_str(&format!("{}    }};\n", self.indent(1)));
+            output.push_str(&format!("{}}};\n", self.indent(2)));
             output.push('\n');
         }
         
         // Add output statements
-        output.push_str(&format!("{}    // Generated output\n", self.indent(1)));
-        output.push_str(&format!("{}    Console.WriteLine(\"Transpilation Example\");\n", self.indent(1)));
+        output.push_str(&format!("{}// Generated output\n", self.indent(2)));
+        output.push_str(&format!("{}Console.WriteLine(\"Transpilation Example\");\n", self.indent(2)));
         
         for (name, _) in const_values {
-            output.push_str(&format!("{}    Console.WriteLine($\"{}: {{{}}}\");\n", 
-                self.indent(1), name, name));
+            output.push_str(&format!("{}Console.WriteLine($\"{}: {{{}}}\");\n", 
+                self.indent(2), name, name));
         }
         
         output.push_str(&format!("{}}}\n", self.indent(1)));
