@@ -13,6 +13,7 @@ pub mod id;
 pub mod mir;
 pub mod ops;
 pub mod pat;
+pub mod printer;
 pub mod span;
 pub mod thir;
 pub mod utils;
