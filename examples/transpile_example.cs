@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 public class Point
@@ -64,9 +65,9 @@ public class Program
 {
     public static void Main(string[] args)
     {
-        const int COLOR_SIZE = 24;
-        const int TOTAL_SIZE = 40;
         const int POINT_SIZE = 16;
+        const int TOTAL_SIZE = 40;
+        const int COLOR_SIZE = 24;
 
         // Example Point instantiation
         var point_instance = new Point()
@@ -85,8 +86,8 @@ public class Program
 
         // Generated output
         Console.WriteLine("Transpilation Example");
-        Console.WriteLine($"COLOR_SIZE: {COLOR_SIZE}");
-        Console.WriteLine($"TOTAL_SIZE: {TOTAL_SIZE}");
         Console.WriteLine($"POINT_SIZE: {POINT_SIZE}");
+        Console.WriteLine($"TOTAL_SIZE: {TOTAL_SIZE}");
+        Console.WriteLine($"COLOR_SIZE: {COLOR_SIZE}");
     }
 }
