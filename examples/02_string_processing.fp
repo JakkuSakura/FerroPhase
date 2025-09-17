@@ -1,127 +1,140 @@
 #!/usr/bin/env fp run
-//! String concatenation and processing at compile time
+//! String processing and validation at compile time using const evaluation
 
 fn main() {
     // Basic string constants
-    const APP_NAME: &str = "FerroPhase";
-    const VERSION: &str = "1.0.0";
+    const APP_NAME: String = "FerroPhase";
+    const VERSION: String = "1.0.0";
     
-    // Compile-time string operations using const evaluation
-    const fn create_banner() -> &'static str {
-        // In full implementation this would use compile-time string concatenation
-        "FerroPhase v1.0.0"
-    }
+    // Compile-time string concatenation using different methods
+    const BANNER: String = APP_NAME + " v" + VERSION;              // Using + operator
+    const CONFIG_FILE: String = concat!(APP_NAME, ".config");       // Using concat! macro
+    const LOG_FILE: String = concat!(APP_NAME, "_", VERSION, ".log"); // Multiple concatenation
     
-    const fn create_config_file() -> &'static str {
-        "FerroPhase.config"
-    }
+    // Compile-time string property analysis
+    const APP_NAME_LENGTH: i64 = APP_NAME.len();
+    const VERSION_LENGTH: i64 = VERSION.len();
+    const BANNER_LENGTH: i64 = BANNER.len();
+    const UPPERCASE_NAME: String = "FERROPHASE"; // Computed at compile time
     
-    const fn create_log_file() -> &'static str {
-        "FerroPhase_1.0.0.log"
-    }
-    
-    const BANNER: &str = create_banner();
-    const CONFIG_FILE: &str = create_config_file();
-    const LOG_FILE: &str = create_log_file();
-    
-    // Advanced string processing
-    const BANNER_LENGTH: usize = COMPUTED_BANNER_LENGTH;
-    const UPPERCASE_NAME: &str = "FERROPHASE"; // Computed at compile time
-    const HASH_CODE: u64 = COMPUTED_HASH;
+    // String content validation at compile time
+    const VERSION_HAS_BETA: bool = VERSION.contains("beta");
+    const VERSION_HAS_DOT: bool = VERSION.contains(".");
+    const BANNER_HAS_VERSION: bool = BANNER.contains("1.0.0");
+    const APP_NAME_IS_EMPTY: bool = APP_NAME_LENGTH == 0;
     
     // Conditional buffer sizing based on string properties
-    const BUFFER_SIZE: usize = if BANNER_LENGTH > 20 { 1024 } else { 512 };
-    const NEEDS_LARGE_BUFFER: bool = strlen!(LOG_FILE) > 30;
+    const BUFFER_SIZE: i64 = if BANNER_LENGTH > 20 { 1024 } else { 512 };
+    const NEEDS_LARGE_BUFFER: bool = strlen!(LOG_FILE) > 15;
     
-    // String validation at compile time using const evaluation
-    const fn validate_app_config() -> Result<(), &'static str> {
-        if APP_NAME.len() == 0 {
-            return Err("App name cannot be empty!");
-        }
-        
-        if VERSION.contains("beta") {
-            // Note: this would be a compile warning in full implementation
-            // For now we'll just validate without warning
-        }
-        
-        Ok(())
-    }
+    // Simple compile-time hash computation
+    const HASH_BASE: i64 = 31;
+    const SIMPLE_HASH: i64 = APP_NAME_LENGTH * HASH_BASE + VERSION_LENGTH;
     
-    // Compile-time string processing functions
-    const fn compute_banner_length() -> usize {
-        APP_NAME.len() + VERSION.len() + 3 // " v" + null terminator
-    }
-    
-    const fn compute_hash_simple(s: &str) -> u64 {
-        let mut hash = 0u64;
-        let bytes = s.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            hash = hash.wrapping_mul(31).wrapping_add(bytes[i] as u64);
-            i += 1;
-        }
-        hash
-    }
-    
-    // Validate at compile time
-    const VALIDATION_RESULT: Result<(), &'static str> = validate_app_config();
-    const COMPUTED_BANNER_LENGTH: usize = compute_banner_length();
-    const COMPUTED_HASH: u64 = compute_hash_simple(APP_NAME);
-    
-    // Application info with computed string properties
-    t! {
-        struct AppInfo {
-            banner: &'static str,
-            config_file: &'static str,
-            log_file: &'static str,
-            buffer_size: usize,
-            hash_code: u64,
-        
-        fn display_info(&self) {
-            println!("App: {} (hash: 0x{:X})", self.banner, self.hash_code);
-            println!("Files: config={}, log={}", self.config_file, self.log_file);
-            println!("Buffer: {}KB", self.buffer_size / 1024);
-        }
-        
-        fn is_large_buffer(&self) -> bool {
-            self.buffer_size >= 1024
-        }
-        
-        fn get_file_prefix(&self) -> &str {
-            // Extract app name from banner (before " v")
-            if let Some(pos) = self.banner.find(" v") {
-                &self.banner[..pos]
-            } else {
-                self.banner
-            }
-        }
+    // More advanced hash using string search positions  
+    const DOT_POSITION: i64 = VERSION.find(".");
+    const COMPUTED_HASH: i64 = if DOT_POSITION >= 0 { 
+        SIMPLE_HASH + DOT_POSITION 
+    } else { 
+        SIMPLE_HASH 
     };
+    
+    // Dynamic string creation using concatenation
+    const DEBUG_PREFIX: String = "[" + APP_NAME + "]";
+    const STATUS_MESSAGE: String = concat!("Application ", APP_NAME, " version ", VERSION, " loaded");
+    const ERROR_LOG_FILE: String = APP_NAME + "_errors.log";
+    
+    // Application info struct with computed string properties
+    struct AppInfo {
+        banner: String,
+        config_file: String,
+        log_file: String,
+        error_log_file: String,
+        debug_prefix: String,
+        status_message: String,
+        app_name_length: i64,
+        buffer_size: i64,
+        hash_code: i64,
+        has_version_dot: bool,
+    }
     
     const APP_INFO: AppInfo = AppInfo {
         banner: BANNER,
         config_file: CONFIG_FILE,
         log_file: LOG_FILE,
+        error_log_file: ERROR_LOG_FILE,
+        debug_prefix: DEBUG_PREFIX,
+        status_message: STATUS_MESSAGE,
+        app_name_length: APP_NAME_LENGTH,
         buffer_size: BUFFER_SIZE,
-        hash_code: HASH_CODE,
+        hash_code: COMPUTED_HASH,
+        has_version_dot: VERSION_HAS_DOT,
     };
     
     // Demonstrate const evaluation results
-    println!("=== Const Evaluation Results ===");
-    println!("Validation result: {:?}", VALIDATION_RESULT);
-    println!("Computed banner length: {}", COMPUTED_BANNER_LENGTH);
-    println!("Computed hash: 0x{:X}", COMPUTED_HASH);
+    println!("=== String Processing Results ===");
+    println!("App name: {} (length: {})", APP_NAME, APP_NAME_LENGTH);
+    println!("Version: {} (length: {})", VERSION, VERSION_LENGTH);
+    println!("Banner: {} (length: {})", BANNER, BANNER_LENGTH);
     
-    // Use the enhanced methods
-    APP_INFO.display_info();
-    println!("Uppercase: {}, Large buffer needed: {}", UPPERCASE_NAME, NEEDS_LARGE_BUFFER);
-    println!("App prefix: {}, Has large buffer: {}", 
-             APP_INFO.get_file_prefix(), APP_INFO.is_large_buffer());
+    println!("\n=== String Analysis ===");
+    println!("Version has 'beta': {}", VERSION_HAS_BETA);
+    println!("Version has '.': {}", VERSION_HAS_DOT);
+    println!("Banner contains version: {}", BANNER_HAS_VERSION);
+    println!("App name is empty: {}", APP_NAME_IS_EMPTY);
+    println!("Dot position in version: {}", DOT_POSITION);
     
-    // Compile-time analysis
-    const APP_SIZE: usize = sizeof!(AppInfo);
-    const APP_METHODS: usize = method_count!(AppInfo);
-    const HAS_DISPLAY: bool = hasmethod!(AppInfo, "display_info");
+    println!("\n=== String Concatenation Results ===");
+    println!("Banner (+ operator): {}", APP_INFO.banner);
+    println!("Config file (concat! macro): {}", APP_INFO.config_file);
+    println!("Log file (multi-concat): {}", APP_INFO.log_file);
+    println!("Error log file (+ operator): {}", APP_INFO.error_log_file);
+    println!("Debug prefix: {}", APP_INFO.debug_prefix);
+    println!("Status message: {}", APP_INFO.status_message);
     
-    println!("AppInfo analysis: {} bytes, {} methods, display={}", 
-             APP_SIZE, APP_METHODS, HAS_DISPLAY);
+    println!("\n=== File Configuration ===");
+    println!("Buffer size: {}KB", APP_INFO.buffer_size / 1024);
+    println!("Needs large buffer: {}", NEEDS_LARGE_BUFFER);
+    
+    println!("\n=== Computed Values ===");
+    println!("Simple hash: {}", SIMPLE_HASH);
+    println!("Computed hash: {}", APP_INFO.hash_code);
+    println!("Hash computation: ({} * {}) + {} + {} = {}", 
+             APP_NAME_LENGTH, HASH_BASE, VERSION_LENGTH, DOT_POSITION, COMPUTED_HASH);
+    
+    // Validation using computed string properties
+    const IS_VALID_APP: bool = !APP_NAME_IS_EMPTY && VERSION_HAS_DOT && APP_NAME_LENGTH >= 5;
+    const CONFIG_COMPLEXITY: i64 = APP_NAME_LENGTH + VERSION_LENGTH + BANNER_LENGTH;
+    const OPTIMIZATION_LEVEL: i64 = if CONFIG_COMPLEXITY > 30 { 3 } else if CONFIG_COMPLEXITY > 20 { 2 } else { 1 };
+    
+    println!("\n=== Validation & Optimization ===");
+    println!("Is valid app config: {}", IS_VALID_APP);
+    println!("Config complexity: {}", CONFIG_COMPLEXITY);
+    println!("Recommended optimization level: {}", OPTIMIZATION_LEVEL);
+    
+    if IS_VALID_APP {
+        println!("✓ Application configuration is valid");
+    } else {
+        println!("⚠ Application configuration needs review");
+    }
+    
+    // Demonstrate conditional compilation based on string analysis
+    if VERSION_HAS_BETA {
+        println!("🚧 Development/Beta build detected");
+    } else {
+        println!("🚀 Production build ready");
+    }
+    
+    println!("\n=== Concatenation Methods Demo ===");
+    const DEMO_PLUS: String = "Method" + ": " + "+ operator";
+    const DEMO_CONCAT: String = concat!("Method", ": ", "concat! macro");
+    println!("{}", DEMO_PLUS);
+    println!("{}", DEMO_CONCAT);
+    
+    println!("\n=== Summary ===");
+    const TOTAL_CHARS: i64 = APP_NAME_LENGTH + VERSION_LENGTH + BANNER_LENGTH;
+    const SUMMARY: String = concat!("Processed 3 base strings with ", TOTAL_CHARS, " total characters");
+    println!("{}", SUMMARY);
+    println!("Uppercase variant: {}", UPPERCASE_NAME);
+    println!("Generated {} concatenated strings during compilation", 7);
 }
