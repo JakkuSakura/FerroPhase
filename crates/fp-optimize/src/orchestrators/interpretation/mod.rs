@@ -268,6 +268,7 @@ impl InterpretationOrchestrator {
             // Struct querying intrinsics
             "hasfield!" if resolve => Ok(AstValue::any(builtin_hasfield())),
             "field_count!" if resolve => Ok(AstValue::any(builtin_field_count())),
+            "method_count!" if resolve => Ok(AstValue::any(builtin_method_count())),
             "field_type!" if resolve => Ok(AstValue::any(builtin_field_type())),
             "struct_size!" if resolve => Ok(AstValue::any(builtin_struct_size())),
             
@@ -766,6 +767,125 @@ impl InterpretationOrchestrator {
                         }
                         
                         return Ok(AstValue::string(result));
+                    }
+                    
+                    // Handle introspection macros
+                    if raw_macro.raw.mac.path.is_ident("sizeof") {
+                        // Parse the argument inside the macro
+                        let tokens = &raw_macro.raw.mac.tokens;
+                        let tokens_str = tokens.to_string();
+                        let arg_name = tokens_str.trim();
+                        
+                        // Try to get the struct type from context
+                        let ident = fp_core::id::Ident::new(arg_name);
+                        
+                        // First try as a type
+                        if let Some(type_value) = ctx.get_type(fp_core::id::Path::from(ident.clone())) {
+                            let sizeof_builtin = builtin_sizeof();
+                            return sizeof_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                        }
+                        
+                        // Then try as a value (which might be a struct definition)
+                        if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
+                            if let AstValue::Type(type_value) = value {
+                                let sizeof_builtin = builtin_sizeof();
+                                return sizeof_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                            }
+                        }
+                        
+                        opt_bail!(format!("sizeof! could not find type: {}", arg_name));
+                    }
+                    
+                    if raw_macro.raw.mac.path.is_ident("field_count") {
+                        let tokens = &raw_macro.raw.mac.tokens;
+                        let tokens_str = tokens.to_string();
+                        let arg_name = tokens_str.trim();
+                        
+                        let ident = fp_core::id::Ident::new(arg_name);
+                        
+                        // First try as a type
+                        if let Some(type_value) = ctx.get_type(fp_core::id::Path::from(ident.clone())) {
+                            let field_count_builtin = builtin_field_count();
+                            return field_count_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                        }
+                        
+                        // Then try as a value (which might be a struct definition)
+                        if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
+                            if let AstValue::Type(type_value) = value {
+                                let field_count_builtin = builtin_field_count();
+                                return field_count_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                            }
+                        }
+                        
+                        opt_bail!(format!("field_count! could not find type: {}", arg_name));
+                    }
+                    
+                    if raw_macro.raw.mac.path.is_ident("method_count") {
+                        let tokens = &raw_macro.raw.mac.tokens;
+                        let tokens_str = tokens.to_string();
+                        let arg_name = tokens_str.trim();
+                        
+                        let ident = fp_core::id::Ident::new(arg_name);
+                        
+                        // First try as a type
+                        if let Some(type_value) = ctx.get_type(fp_core::id::Path::from(ident.clone())) {
+                            let method_count_builtin = builtin_method_count();
+                            return method_count_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                        }
+                        
+                        // Then try as a value (which might be a struct definition)
+                        if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
+                            if let AstValue::Type(type_value) = value {
+                                let method_count_builtin = builtin_method_count();
+                                return method_count_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                            }
+                        }
+                        
+                        opt_bail!(format!("method_count! could not find type: {}", arg_name));
+                    }
+                    
+                    if raw_macro.raw.mac.path.is_ident("hasfield") {
+                        let tokens = &raw_macro.raw.mac.tokens;
+                        let tokens_str = tokens.to_string();
+                        
+                        // Parse: Type, "field_name"
+                        if let Some((type_name, field_name)) = tokens_str.split_once(',') {
+                            let type_name = type_name.trim();
+                            let field_name = field_name.trim();
+                            
+                            // Remove quotes from field_name
+                            let field_name = if field_name.starts_with('"') && field_name.ends_with('"') {
+                                &field_name[1..field_name.len()-1]
+                            } else {
+                                field_name
+                            };
+                            
+                            let ident = fp_core::id::Ident::new(type_name);
+                            
+                            // First try as a type
+                            if let Some(type_value) = ctx.get_type(fp_core::id::Path::from(ident.clone())) {
+                                let hasfield_builtin = builtin_hasfield();
+                                return hasfield_builtin.invoke(&[
+                                    AstValue::Type(type_value),
+                                    AstValue::string(field_name.to_string())
+                                ], ctx);
+                            }
+                            
+                            // Then try as a value (which might be a struct definition)
+                            if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
+                                if let AstValue::Type(type_value) = value {
+                                    let hasfield_builtin = builtin_hasfield();
+                                    return hasfield_builtin.invoke(&[
+                                        AstValue::Type(type_value),
+                                        AstValue::string(field_name.to_string())
+                                    ], ctx);
+                                }
+                            }
+                            
+                            opt_bail!(format!("hasfield! could not find type: {}", type_name));
+                        } else {
+                            opt_bail!("hasfield! expects 2 arguments: hasfield!(Type, \"field_name\")");
+                        }
                     }
                 }
                 Ok(AstValue::Any(n.clone()))
