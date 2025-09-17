@@ -211,30 +211,40 @@ pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
 /// println! macro - print arguments with newline
 pub fn builtin_println(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("println!".into(), move |args, ctx| {
-        let formatted: Vec<_> = args
-            .into_iter()
-            .map(|x| {
-                // Format values for display (like Rust's println!)
-                match x {
-                    AstValue::String(s) => s.value.clone(),
-                    AstValue::Int(i) => i.value.to_string(),
-                    AstValue::Bool(b) => b.value.to_string(),
-                    AstValue::Decimal(d) => d.value.to_string(),
-                    AstValue::Unit(_) => "()".to_string(),
-                    _ => format!("{:?}", x), // Fallback for complex types
-                }
-            })
-            .collect();
-        
         let output = if args.is_empty() {
             String::new()
+        } else if args.len() == 1 {
+            // Single argument - just format it directly
+            format_value(&args[0])
         } else {
-            formatted.join(" ")
+            // First argument is format string, rest are values to interpolate
+            let format_str = format_value(&args[0]);
+            let values: Vec<_> = args[1..].iter().map(format_value).collect();
+            
+            // Simple {} placeholder replacement
+            let mut result = format_str;
+            for value in values {
+                if let Some(pos) = result.find("{}") {
+                    result.replace_range(pos..pos+2, &value);
+                }
+            }
+            result
         };
         
         ctx.root().print_str(format!("{}\n", output));
         Ok(AstValue::unit())
     })
+}
+
+fn format_value(value: &AstValue) -> String {
+    match value {
+        AstValue::String(s) => s.value.clone(),
+        AstValue::Int(i) => i.value.to_string(),
+        AstValue::Bool(b) => b.value.to_string(),
+        AstValue::Decimal(d) => d.value.to_string(),
+        AstValue::Unit(_) => "()".to_string(),
+        _ => format!("{:?}", value), // Fallback for complex types
+    }
 }
 pub fn builtin_some() -> BuiltinFn {
     BuiltinFn::new_with_ident("Some".into(), move |args, _ctx| {
