@@ -13,6 +13,7 @@ fp-core = { path = "../fp-core" }
 fp-optimize = { path = "../fp-optimize" }
 fp-rust-lang = { path = "../fp-rust-lang" }
 fp-javascript = { path = "../fp-javascript" }
+fp-csharp = { path = "../fp-csharp" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }

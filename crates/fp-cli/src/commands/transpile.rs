@@ -10,6 +10,7 @@ use fp_core::context::SharedScopedContext;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::printer::RustPrinter;
 use fp_javascript::ts::printer::TsPrinter;
+use fp_csharp::CSharpPrinter;
 use fp_core::ast::register_threadlocal_serializer;
 use std::sync::Arc;
 
@@ -166,6 +167,7 @@ async fn transpile_file(
     let transpile_output = match args.target.as_str() {
         "typescript" | "ts" => transpile_to_typescript(&processed_ast, args).await?,
         "javascript" | "js" => transpile_to_javascript(&processed_ast, args).await?,
+        "csharp" | "cs" | "c#" => transpile_to_csharp(&processed_ast, args).await?,
         "python" | "py" => transpile_to_python(&processed_ast, args).await?,
         "go" => transpile_to_go(&processed_ast, args).await?,
         _ => return Err(CliError::InvalidInput(format!("Unsupported target language: {}", args.target))),
@@ -203,6 +205,19 @@ async fn transpile_to_javascript(
         generate_javascript_with_structs(ast, args).await?
     } else {
         generate_basic_javascript().await?
+    };
+    
+    Ok(TranspileOutput::Code(code))
+}
+
+async fn transpile_to_csharp(
+    ast: &fp_core::ast::BExpr,
+    args: &TranspileArgs,
+) -> Result<TranspileOutput> {
+    let code = if args.preserve_structs {
+        generate_csharp_with_structs(ast, args).await?
+    } else {
+        generate_basic_csharp().await?
     };
     
     Ok(TranspileOutput::Code(code))
@@ -468,6 +483,77 @@ async fn generate_basic_javascript() -> Result<String> {
     Ok("// Generated JavaScript code".to_string())
 }
 
+// C# generation implementations
+async fn generate_csharp_with_structs(ast: &fp_core::ast::BExpr, args: &TranspileArgs) -> Result<String> {
+    let mut structs = Vec::new();
+    let mut enums = Vec::new();
+    let mut const_values = std::collections::HashMap::new();
+    
+    // First, perform const evaluation to get compile-time values
+    if args.const_eval {
+        const_values = evaluate_const_expressions(ast).await?;
+    }
+    
+    // Extract structs, enums and other items
+    extract_types_from_ast(ast, &mut structs, &mut enums);
+    
+    // Convert const values to strings for C#
+    let csharp_const_values: std::collections::HashMap<String, String> = const_values
+        .iter()
+        .map(|(k, v)| (k.clone(), format!("{}", astvalue_to_csharp_literal(v))))
+        .collect();
+    
+    // Generate main logic with const values substituted
+    let main_code = generate_csharp_main_logic(&structs, &csharp_const_values).await?;
+    
+    // Detect JSON usage in the source AST
+    let has_json = detect_json_usage_in_ast(ast);
+    
+    // Use CSharpPrinter to generate all types and combine with main code
+    let printer = CSharpPrinter::new().with_json_support(has_json);
+    printer.generate_types_and_code(&structs, &enums, &main_code, true) // true = use classes
+        .map_err(|e| CliError::Transpile(e.to_string()))
+}
+
+async fn generate_basic_csharp() -> Result<String> {
+    Ok("// Generated C# code\nusing System;\n\npublic class Program\n{\n    public static void Main(string[] args)\n    {\n        Console.WriteLine(\"Hello, World!\");\n    }\n}".to_string())
+}
+
+async fn generate_csharp_main_logic(
+    structs: &[TypeStruct],
+    const_values: &std::collections::HashMap<String, String>
+) -> Result<String> {
+    let printer = CSharpPrinter::new();
+    printer.generate_main_with_examples(structs, const_values)
+        .map_err(|e| CliError::Transpile(e.to_string()))
+}
+
+fn astvalue_to_csharp_literal(value: &AstValue) -> String {
+    match value {
+        AstValue::Int(i) => i.value.to_string(),
+        AstValue::Decimal(d) => format!("{}d", d.value),
+        AstValue::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
+        AstValue::String(s) => format!("\"{}\"", s.value),
+        _ => "null".to_string(),
+    }
+}
+
+/// Detect if JSON support should be enabled based on struct analysis
+/// For now, we'll enable JSON for all structs with fields since FerroPhase doesn't
+/// have explicit derive support yet. In the future, this could check for 
+/// derive attributes like #[derive(Serialize, Deserialize)]
+fn detect_json_usage_in_ast(ast: &fp_core::ast::BExpr) -> bool {
+    let mut structs = Vec::new();
+    let mut enums = Vec::new();
+    
+    // Extract all structs from the AST
+    extract_types_from_ast(ast, &mut structs, &mut enums);
+    
+    // Enable JSON if we have any structs with fields
+    // This is a simple heuristic - in practice you might want more sophisticated logic
+    structs.iter().any(|s| !s.fields.is_empty())
+}
+
 fn generate_javascript_struct_factory(struct_def: &TypeStruct) -> Result<String> {
     let mut factory = String::new();
     
@@ -561,7 +647,7 @@ async fn generate_basic_go() -> Result<String> {
 async fn write_transpile_output(
     output: &TranspileOutput,
     path: &Path,
-    args: &TranspileArgs,
+    _args: &TranspileArgs,
 ) -> Result<()> {
     // Ensure output directory exists
     if let Some(parent) = path.parent() {
@@ -621,8 +707,8 @@ fn validate_transpile_inputs(args: &TranspileArgs) -> Result<()> {
     
     // Validate target language
     match args.target.as_str() {
-        "typescript" | "ts" | "javascript" | "js" | "python" | "py" | "go" => {},
-        _ => return Err(CliError::InvalidInput(format!("Unsupported target language: {}. Supported: typescript, javascript, python, go", args.target))),
+        "typescript" | "ts" | "javascript" | "js" | "csharp" | "cs" | "c#" | "python" | "py" | "go" => {},
+        _ => return Err(CliError::InvalidInput(format!("Unsupported target language: {}. Supported: typescript, javascript, csharp, python, go", args.target))),
     }
     
     Ok(())
@@ -635,6 +721,7 @@ fn determine_transpile_output_path(input: &Path, output: Option<&PathBuf>, targe
         let extension = match target {
             "typescript" | "ts" => "ts",
             "javascript" | "js" => "js",
+            "csharp" | "cs" | "c#" => "cs",
             "python" | "py" => "py",
             "go" => "go",
             _ => return Err(CliError::InvalidInput(format!("Unknown target for output extension: {}", target))),

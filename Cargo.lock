@@ -807,6 +807,7 @@ dependencies = [
  "dirs",
  "eyre",
  "fp-core",
+ "fp-csharp",
  "fp-javascript",
  "fp-optimize",
  "fp-rust-lang",
@@ -850,6 +851,16 @@ dependencies = [
  "thiserror 2.0.0",
  "tracing",
  "tree-sitter",
+]
+
+[[package]]
+name = "fp-csharp"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+ "itertools 0.13.0",
+ "tracing",
 ]
 
 [[package]]
