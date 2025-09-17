@@ -1,0 +1,12 @@
+[package]
+name = "fp-csharp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+tracing = "0.1"
+itertools = "0.13"
+eyre = "0.6.12"
+
+[dev-dependencies]
