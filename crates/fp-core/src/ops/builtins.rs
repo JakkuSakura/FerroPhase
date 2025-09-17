@@ -587,6 +587,33 @@ pub fn builtin_field_count() -> BuiltinFn {
     })
 }
 
+/// method_count! intrinsic - get the number of methods in a struct
+pub fn builtin_method_count() -> BuiltinFn {
+    BuiltinFn::new_with_ident("method_count!".into(), move |args, _ctx| {
+        if args.len() != 1 {
+            bail!("method_count! expects 1 argument (struct_type), got: {:?}", args)
+        }
+        
+        // For now, return 0 as methods are not yet tracked in the AST
+        // This will be enhanced when the full method registry is implemented
+        let method_count = match &args[0] {
+            AstValue::Type(AstType::Struct(_type_struct)) => {
+                // Methods are not yet tracked in TypeStruct
+                // This is a placeholder for future implementation
+                0
+            },
+            AstValue::Struct(_value_struct) => {
+                // Methods are not yet tracked in ValueStruct
+                // This is a placeholder for future implementation
+                0
+            },
+            _ => bail!("method_count! expects a struct type or instance, got: {:?}", args[0])
+        };
+        
+        Ok(AstValue::int(method_count as i64))
+    })
+}
+
 /// field_type! intrinsic - get the type of a specific field
 pub fn builtin_field_type() -> BuiltinFn {
     BuiltinFn::new_with_ident("field_type!".into(), move |args, _ctx| {
