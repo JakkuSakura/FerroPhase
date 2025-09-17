@@ -82,19 +82,65 @@ impl InterpretationOrchestrator {
                     )
                 }
             }
-            ExprInvokeTarget::Method(select) => match select.field.as_str() {
-                "to_string" => match &select.obj.get() {
-                    AstExpr::Value(value) => match value.as_ref() {
-                        AstValue::String(obj) => {
-                            let mut obj = obj.clone();
+            ExprInvokeTarget::Method(select) => {
+                // First evaluate the object
+                let obj_value = self.interpret_expr(&select.obj.get(), ctx)?;
+                
+                match select.field.as_str() {
+                    "to_string" => match obj_value {
+                        AstValue::String(mut obj) => {
                             obj.owned = true;
                             Ok(AstValue::String(obj))
                         }
-                        _ => opt_bail!(format!("Expected string for {:?}", select)),
+                        _ => opt_bail!(format!("to_string not supported for {:?}", obj_value)),
                     },
-                    _ => opt_bail!(format!("Expected struct for {:?}", select)),
-                },
-                x => opt_bail!(format!("Could not invoke {:?}", x)),
+                    "len" => match obj_value {
+                        AstValue::String(s) => Ok(AstValue::int(s.value.len() as i64)),
+                        _ => opt_bail!(format!("len() not supported for {:?}", obj_value)),
+                    },
+                    "contains" => {
+                        if node.args.len() != 1 {
+                            opt_bail!(format!("contains() expects 1 argument, got {}", node.args.len()));
+                        }
+                        let search_arg = self.interpret_expr(&node.args[0], ctx)?;
+                        match (&obj_value, &search_arg) {
+                            (AstValue::String(s), AstValue::String(search)) => {
+                                Ok(AstValue::bool(s.value.contains(&search.value)))
+                            }
+                            _ => opt_bail!(format!("contains() expects string arguments, got {:?}.contains({:?})", obj_value, search_arg)),
+                        }
+                    },
+                    "find" => {
+                        if node.args.len() != 1 {
+                            opt_bail!(format!("find() expects 1 argument, got {}", node.args.len()));
+                        }
+                        let search_arg = self.interpret_expr(&node.args[0], ctx)?;
+                        match (&obj_value, &search_arg) {
+                            (AstValue::String(s), AstValue::String(search)) => {
+                                match s.value.find(&search.value) {
+                                    Some(pos) => {
+                                        // Return Some(pos) - for now just return the position as int
+                                        Ok(AstValue::int(pos as i64))
+                                    }
+                                    None => {
+                                        // Return None - for now return -1 to indicate not found
+                                        Ok(AstValue::int(-1))
+                                    }
+                                }
+                            }
+                            _ => opt_bail!(format!("find() expects string arguments, got {:?}.find({:?})", obj_value, search_arg)),
+                        }
+                    },
+                    "as_bytes" => match obj_value {
+                        AstValue::String(s) => {
+                            // Return the byte representation as a list of integers
+                            let bytes: Vec<AstValue> = s.value.bytes().map(|b| AstValue::int(b as i64)).collect();
+                            Ok(AstValue::List(fp_core::ast::ValueList { values: bytes }))
+                        }
+                        _ => opt_bail!(format!("as_bytes() not supported for {:?}", obj_value)),
+                    },
+                    x => opt_bail!(format!("Method '{}' not implemented", x)),
+                }
             },
             ExprInvokeTarget::Expr(e) => match e.as_ref() {
                 AstExpr::Value(value) => match value.as_ref() {
@@ -254,6 +300,38 @@ impl InterpretationOrchestrator {
         })
     }
 
+    // Logical AND operation
+    pub fn builtin_logical_and(&self) -> BuiltinFn {
+        BuiltinFn::new_with_ident("&&".into(), move |args, _ctx| {
+            if args.len() != 2 {
+                return Err(optimization_error(format!("LogicalAnd expects 2 arguments, got: {}", args.len())));
+            }
+            
+            match (&args[0], &args[1]) {
+                (AstValue::Bool(a), AstValue::Bool(b)) => {
+                    Ok(AstValue::bool(a.value && b.value))
+                },
+                _ => Err(optimization_error(format!("LogicalAnd operation not supported for types: {:?} && {:?}", args[0], args[1])))
+            }
+        })
+    }
+
+    // Logical OR operation
+    pub fn builtin_logical_or(&self) -> BuiltinFn {
+        BuiltinFn::new_with_ident("||".into(), move |args, _ctx| {
+            if args.len() != 2 {
+                return Err(optimization_error(format!("LogicalOr expects 2 arguments, got: {}", args.len())));
+            }
+            
+            match (&args[0], &args[1]) {
+                (AstValue::Bool(a), AstValue::Bool(b)) => {
+                    Ok(AstValue::bool(a.value || b.value))
+                },
+                _ => Err(optimization_error(format!("LogicalOr operation not supported for types: {:?} || {:?}", args[0], args[1])))
+            }
+        })
+    }
+
     // Division operation
     pub fn builtin_div(&self) -> BuiltinFn {
         BuiltinFn::new_with_ident("/".into(), move |args, _ctx| {
@@ -343,8 +421,8 @@ impl InterpretationOrchestrator {
             BinOpKind::Eq => Ok(builtin_eq()),
             BinOpKind::Ne => Ok(builtin_ne()),
             BinOpKind::BitAnd => Ok(self.builtin_bitand()),
-            // BinOpKind::LogicalOr => {}
-            // BinOpKind::LogicalAnd => {}
+            BinOpKind::Or => Ok(self.builtin_logical_or()),
+            BinOpKind::And => Ok(self.builtin_logical_and()),
             // BinOpKind::BitOr => {}
             // BinOpKind::BitXor => {}
             // BinOpKind::Any(_) => {}
@@ -620,13 +698,74 @@ impl InterpretationOrchestrator {
             AstExpr::Match(c) => self.interpret_cond(c, ctx),
             AstExpr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
             AstExpr::BinOp(op) => self.interpret_binop(op, ctx),
+            AstExpr::UnOp(op) => {
+                let arg = self.interpret_expr(&op.val, ctx)?;
+                self.interpret_invoke_unop(op.op.clone(), arg, ctx)
+            },
             AstExpr::Any(n) => {
-                // Handle cfg! macro specially
+                // Handle macros specially
                 if let Some(raw_macro) = n.downcast_ref::<fp_rust_lang::RawExprMacro>() {
                     // Check if this is a cfg! macro by looking at the macro path
                     if raw_macro.raw.mac.path.is_ident("cfg") {
                         // cfg! macro - for now, assume debug mode is disabled in const evaluation
                         return Ok(AstValue::bool(false));
+                    }
+                    
+                    // Handle strlen! macro
+                    if raw_macro.raw.mac.path.is_ident("strlen") {
+                        // Parse the argument inside the macro
+                        let tokens = &raw_macro.raw.mac.tokens;
+                        let tokens_str = tokens.to_string();
+                        
+                        // Simple parsing: remove whitespace and try to interpret as identifier
+                        let arg_name = tokens_str.trim();
+                        
+                        // Try to get the value from context
+                        let ident = fp_core::id::Ident::new(arg_name);
+                        if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
+                            match value {
+                                AstValue::String(s) => return Ok(AstValue::int(s.value.len() as i64)),
+                                _ => opt_bail!(format!("strlen! expects string argument, got {:?}", value)),
+                            }
+                        } else {
+                            opt_bail!(format!("strlen! could not find variable: {}", arg_name));
+                        }
+                    }
+                    
+                    // Handle concat! macro
+                    if raw_macro.raw.mac.path.is_ident("concat") {
+                        // Parse the arguments inside the macro
+                        let tokens = &raw_macro.raw.mac.tokens;
+                        let tokens_str = tokens.to_string();
+                        
+                        // Simple parsing: split by comma and evaluate each argument
+                        let mut result = String::new();
+                        
+                        for arg in tokens_str.split(',') {
+                            let arg = arg.trim();
+                            
+                            // Try to interpret as string literal first
+                            if arg.starts_with('"') && arg.ends_with('"') {
+                                // String literal - remove quotes
+                                let literal = &arg[1..arg.len()-1];
+                                result.push_str(literal);
+                            } else {
+                                // Try to get the value from context
+                                let ident = fp_core::id::Ident::new(arg);
+                                if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
+                                    match value {
+                                        AstValue::String(s) => result.push_str(&s.value),
+                                        AstValue::Int(i) => result.push_str(&i.value.to_string()),
+                                        AstValue::Bool(b) => result.push_str(&b.value.to_string()),
+                                        _ => opt_bail!(format!("concat! cannot convert {:?} to string", value)),
+                                    }
+                                } else {
+                                    opt_bail!(format!("concat! could not find variable: {}", arg));
+                                }
+                            }
+                        }
+                        
+                        return Ok(AstValue::string(result));
                     }
                 }
                 Ok(AstValue::Any(n.clone()))
