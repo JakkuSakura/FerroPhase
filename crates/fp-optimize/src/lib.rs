@@ -9,8 +9,11 @@
 pub mod error;
 pub mod orchestrators;
 pub mod passes;
+pub mod pipeline;       // New unified pipeline
 pub mod queries;
 pub mod utils;
+pub mod ir;
+pub mod transformations;
 
 
 // Re-export key types for convenience

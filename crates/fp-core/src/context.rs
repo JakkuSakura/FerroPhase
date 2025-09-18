@@ -6,6 +6,15 @@ use itertools::Itertools;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
 
+/// Execution mode for the interpreter
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    /// Compile-time evaluation (const items, types, etc.)
+    CompileTime,
+    /// Runtime evaluation (function bodies)
+    Runtime,
+}
+
 #[derive(Clone, Default)]
 pub struct ValueSlot {
     value: Option<AstValue>,
@@ -63,6 +72,7 @@ pub struct ScopedContext {
     #[allow(dead_code)]
     visibility: Visibility,
     access_parent_locals: bool,
+    execution_mode: ExecutionMode,
 }
 
 impl ScopedContext {
@@ -76,7 +86,26 @@ impl ScopedContext {
             buffer: Mutex::new(vec![]),
             visibility: Visibility::Public,
             access_parent_locals: false,
+            execution_mode: ExecutionMode::CompileTime, // Default to compile-time
         }
+    }
+    
+    pub fn new_with_mode(mode: ExecutionMode) -> Self {
+        ScopedContext {
+            parent: None,
+            ident: Ident::root(),
+            path: Path::root(),
+            storages: Default::default(),
+            childs: Default::default(),
+            buffer: Mutex::new(vec![]),
+            visibility: Visibility::Public,
+            access_parent_locals: false,
+            execution_mode: mode,
+        }
+    }
+    
+    pub fn execution_mode(&self) -> ExecutionMode {
+        self.execution_mode
     }
 
     pub fn insert_value(&self, key: impl Into<Ident>, value: AstValue) {
@@ -157,6 +186,11 @@ impl SharedScopedContext {
     pub fn new() -> Self {
         Self(Arc::new(ScopedContext::new()))
     }
+    
+    pub fn new_with_mode(mode: ExecutionMode) -> Self {
+        Self(Arc::new(ScopedContext::new_with_mode(mode)))
+    }
+    
     pub fn child(&self, name: Ident, visibility: Visibility, access_parent_locals: bool) -> Self {
         let child = Self(Arc::new(ScopedContext {
             parent: Some(Arc::downgrade(&self.0)),
@@ -167,6 +201,7 @@ impl SharedScopedContext {
             buffer: Mutex::new(vec![]),
             visibility,
             access_parent_locals,
+            execution_mode: self.execution_mode, // Inherit execution mode from parent
         }));
         self.childs.insert(name, child.0.clone());
         child

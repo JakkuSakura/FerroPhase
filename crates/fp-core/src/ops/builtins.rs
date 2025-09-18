@@ -253,6 +253,8 @@ pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
 /// println! macro - print arguments with newline
 pub fn builtin_println(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("println!".into(), move |args, ctx| {
+        use crate::context::ExecutionMode;
+        
         let output = if args.is_empty() {
             String::new()
         } else if args.len() == 1 {
@@ -263,17 +265,35 @@ pub fn builtin_println(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
             let format_str = format_value(&args[0]);
             let values: Vec<_> = args[1..].iter().map(format_value).collect();
             
-            // Simple {} placeholder replacement
+            // Sequential {} placeholder replacement
             let mut result = format_str;
             for value in values {
                 if let Some(pos) = result.find("{}") {
                     result.replace_range(pos..pos+2, &value);
+                } else {
+                    // No more placeholders, append remaining values
+                    break;
                 }
             }
             result
         };
         
-        ctx.root().print_str(format!("{}\n", output));
+        tracing::debug!("builtin_println called with mode: {:?}", ctx.root().execution_mode());
+        match ctx.root().execution_mode() {
+            ExecutionMode::CompileTime => {
+                // Execute immediately during const evaluation
+                tracing::debug!("Executing printf at compile-time: {}", output);
+                ctx.root().print_str(format!("{}\n", output));
+            }
+            ExecutionMode::Runtime => {
+                // TODO: Generate side effect for runtime printf call
+                // For now, create a runtime value that represents a printf call
+                // This should be handled by the pipeline to generate actual LLVM calls
+                tracing::debug!("Runtime printf call: {}", output);
+                // The call should be preserved in the AST for later compilation phases
+            }
+        }
+        
         Ok(AstValue::unit())
     })
 }

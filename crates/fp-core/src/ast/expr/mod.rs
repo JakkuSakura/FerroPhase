@@ -46,6 +46,8 @@ common_enum! {
         Closured(ExprClosured),
         Paren(ExprParen),
         Range(ExprRange),
+        /// Format string expression (f-string) for println! and similar built-ins
+        FormatString(ExprFormatString),
 
         Splat(ExprSplat),
         SplatDict(ExprSplatDict),

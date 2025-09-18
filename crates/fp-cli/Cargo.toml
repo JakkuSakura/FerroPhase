@@ -14,6 +14,7 @@ fp-optimize = { path = "../fp-optimize" }
 fp-rust-lang = { path = "../fp-rust-lang" }
 fp-javascript = { path = "../fp-javascript" }
 fp-csharp = { path = "../fp-csharp" }
+fp-llvm = { path = "../fp-llvm" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
@@ -48,6 +49,9 @@ thiserror = "1.0"
 dirs = "5.0"
 pathdiff = "0.2"
 syn = { version = "2.0", features = ["full"] }
+tempfile = "3.8"
+quote = "1.0"
+proc-macro2 = "1.0"
 
 # SWC for TypeScript code generation
 swc_ecma_ast = "0.110"

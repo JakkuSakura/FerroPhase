@@ -51,6 +51,109 @@ impl Display for ExprInvoke {
         f.write_str(&s)
     }
 }
+
+common_struct! {
+    pub struct ExprFormatString {
+        /// Template parts - alternating literals and placeholders
+        pub parts: Vec<FormatTemplatePart>,
+        /// Positional arguments to substitute into placeholders
+        pub args: Vec<AstExpr>,
+        /// Named keyword arguments for named placeholders
+        pub kwargs: Vec<FormatKwArg>,
+    }
+}
+
+common_enum! {
+    pub enum FormatTemplatePart {
+        /// A literal string part
+        Literal(String),
+        /// A placeholder that references an argument
+        Placeholder(FormatPlaceholder),
+    }
+}
+
+common_struct! {
+    pub struct FormatPlaceholder {
+        /// Argument reference - can be positional index, name, or implicit
+        pub arg_ref: FormatArgRef,
+        /// Optional format specification (e.g., ":02d", ":.2f")
+        pub format_spec: Option<String>,
+    }
+}
+
+common_enum! {
+    pub enum FormatArgRef {
+        /// Implicit positional argument (next in sequence)
+        Implicit,
+        /// Explicit positional argument by index (e.g., {0}, {1})
+        Positional(usize),
+        /// Named argument (e.g., {name}, {value})
+        Named(String),
+    }
+}
+
+common_struct! {
+    pub struct FormatKwArg {
+        /// The keyword name
+        pub name: String,
+        /// The expression value
+        pub value: AstExpr,
+    }
+}
+
+impl Display for ExprFormatString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "format!(\"")?;
+        // Reconstruct the template string from parts
+        for part in &self.parts {
+            write!(f, "{}", part)?;
+        }
+        write!(f, "\"")?;
+        for arg in &self.args {
+            write!(f, ", {}", arg)?;
+        }
+        for kwarg in &self.kwargs {
+            write!(f, ", {}={}", kwarg.name, kwarg.value)?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl Display for FormatTemplatePart {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FormatTemplatePart::Literal(s) => write!(f, "{}", s),
+            FormatTemplatePart::Placeholder(placeholder) => write!(f, "{{{}}}", placeholder),
+        }
+    }
+}
+
+impl Display for FormatPlaceholder {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.arg_ref)?;
+        if let Some(spec) = &self.format_spec {
+            write!(f, ":{}", spec)?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for FormatArgRef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FormatArgRef::Implicit => Ok(()), // Empty for implicit {}
+            FormatArgRef::Positional(idx) => write!(f, "{}", idx),
+            FormatArgRef::Named(name) => write!(f, "{}", name),
+        }
+    }
+}
+
+impl Display for FormatKwArg {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}={}", self.name, self.value)
+    }
+}
+
 common_enum! {
     pub enum ExprSelectType {
         Unknown,
