@@ -2,6 +2,7 @@ use crate::ast::{AstExpr, ExprId};
 use crate::ast::{AstType, AstValue, FunctionParam};
 use crate::ctx::Context;
 use crate::error::Result;
+use eyre::eyre;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -82,10 +83,10 @@ impl TypeRegistry {
     pub fn register_type(&self, type_info: TypeInfo) -> TypeId {
         let mut types = self.types.write().unwrap();
         let mut name_to_id = self.name_to_id.write().unwrap();
-        
+
         types.insert(type_info.id, type_info.clone());
         name_to_id.insert(type_info.name.clone(), type_info.id);
-        
+
         type_info.id
     }
 
@@ -107,20 +108,23 @@ impl TypeRegistry {
             if let Some(size) = type_info.size_bytes {
                 return Ok(size);
             }
-            
+
             // Calculate size based on type
             match &type_info.ast_type {
                 AstType::Expr(expr) => {
                     if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
                         if let Some(ident) = locator.as_ident() {
                             let sizes = self.primitive_sizes.read().unwrap();
-                            return sizes.get(&ident.name)
-                                .copied()
-                                .ok_or_else(|| crate::error::Error::Generic(format!("Unknown primitive type: {}", ident.name)));
+                            return sizes.get(&ident.name).copied().ok_or_else(|| {
+                                crate::error::Error::Generic(eyre!(
+                                    "Unknown primitive type: {}",
+                                    ident.name
+                                ))
+                            });
                         }
                     }
                     Ok(8) // Default size for complex expressions
-                },
+                }
                 AstType::Struct(_) => {
                     // Calculate struct size as sum of field sizes
                     let mut total_size = 0;
@@ -128,11 +132,14 @@ impl TypeRegistry {
                         total_size += self.get_size(field.type_id)?;
                     }
                     Ok(total_size)
-                },
+                }
                 _ => Ok(8), // Default size
             }
         } else {
-            Err(crate::error::Error::Generic(format!("Type not found: {:?}", type_id)))
+            Err(crate::error::Error::Generic(eyre!(
+                "Type not found: {:?}",
+                type_id
+            )))
         }
     }
 
@@ -141,14 +148,20 @@ impl TypeRegistry {
         if let Some(type_info) = self.get_type_info(type_id) {
             Ok(type_info.fields)
         } else {
-            Err(crate::error::Error::Generic(format!("Type not found: {:?}", type_id)))
+            Err(crate::error::Error::Generic(eyre!(
+                "Type not found: {:?}",
+                type_id
+            )))
         }
     }
 
     /// Check if a type has a specific method
     pub fn type_has_method(&self, type_id: TypeId, method_name: &str) -> bool {
         if let Some(type_info) = self.get_type_info(type_id) {
-            type_info.methods.iter().any(|method| method.name == method_name)
+            type_info
+                .methods
+                .iter()
+                .any(|method| method.name == method_name)
         } else {
             false
         }
@@ -159,7 +172,10 @@ impl TypeRegistry {
         if let Some(type_info) = self.get_type_info(type_id) {
             Ok(type_info.methods)
         } else {
-            Err(crate::error::Error::Generic(format!("Type not found: {:?}", type_id)))
+            Err(crate::error::Error::Generic(eyre!(
+                "Type not found: {:?}",
+                type_id
+            )))
         }
     }
 
@@ -170,7 +186,10 @@ impl TypeRegistry {
             type_info.methods.push(method);
             Ok(())
         } else {
-            Err(crate::error::Error::Generic(format!("Type not found: {:?}", type_id)))
+            Err(crate::error::Error::Generic(eyre!(
+                "Type not found: {:?}",
+                type_id
+            )))
         }
     }
 
@@ -183,14 +202,20 @@ impl TypeRegistry {
             type_info.size_bytes = None;
             Ok(())
         } else {
-            Err(crate::error::Error::Generic(format!("Type not found: {:?}", type_id)))
+            Err(crate::error::Error::Generic(eyre!(
+                "Type not found: {:?}",
+                type_id
+            )))
         }
     }
 
     /// Get all registered types
     pub fn list_types(&self) -> Vec<(TypeId, String)> {
         let types = self.types.read().unwrap();
-        types.iter().map(|(id, info)| (*id, info.name.clone())).collect()
+        types
+            .iter()
+            .map(|(id, info)| (*id, info.name.clone()))
+            .collect()
     }
 }
 
@@ -215,7 +240,7 @@ pub trait TypeSystem {
         let _ = id;
         unimplemented!()
     }
-    
+
     /// Get the type registry for introspection (if supported)
     fn get_type_registry(&self) -> Option<&TypeRegistry> {
         None

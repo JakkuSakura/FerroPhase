@@ -1,5 +1,6 @@
 // Side effect tracker - utility for collecting and applying side effects
 
+use eyre::eyre;
 use fp_core::ast::*;
 use fp_core::error::Result;
 
@@ -35,12 +36,13 @@ pub enum SideEffect {
         struct_name: String,
     },
     /// Emit compile-time error - corresponds to compile_error! intrinsic
-    CompileError {
-        message: String,
-    },
+    CompileError { message: String },
     /// Emit compile-time warning - corresponds to compile_warning! intrinsic
-    CompileWarning {
-        message: String,
+    CompileWarning { message: String },
+    /// Generate runtime function call - for functions like printf
+    GenerateFunctionCall {
+        function_name: String,
+        args: Vec<AstValue>,
     },
 }
 
@@ -77,32 +79,60 @@ impl SideEffectTracker {
 
         for effect in &self.side_effects {
             match effect {
-                SideEffect::GenerateField { target_type, field_name, field_type } => {
+                SideEffect::GenerateField {
+                    target_type,
+                    field_name,
+                    field_type,
+                } => {
                     self.apply_field_generation(ast, target_type, field_name, field_type)?;
                     changes_made = true;
-                },
-                SideEffect::GenerateMethod { target_type, method_name, method_body } => {
+                }
+                SideEffect::GenerateMethod {
+                    target_type,
+                    method_name,
+                    method_body,
+                } => {
                     self.apply_method_generation(ast, target_type, method_name, method_body)?;
                     changes_made = true;
-                },
-                SideEffect::GenerateImpl { target_type, trait_name, methods } => {
+                }
+                SideEffect::GenerateImpl {
+                    target_type,
+                    trait_name,
+                    methods,
+                } => {
                     self.apply_impl_generation(ast, target_type, trait_name, methods)?;
                     changes_made = true;
-                },
-                SideEffect::GenerateType { type_name, type_definition } => {
+                }
+                SideEffect::GenerateType {
+                    type_name,
+                    type_definition,
+                } => {
                     self.apply_type_generation(ast, type_name, type_definition)?;
                     changes_made = true;
-                },
-                SideEffect::CreateStructBuilder { builder_name, struct_name } => {
+                }
+                SideEffect::CreateStructBuilder {
+                    builder_name,
+                    struct_name,
+                } => {
                     self.apply_struct_builder_creation(ast, builder_name, struct_name)?;
                     changes_made = true;
-                },
+                }
                 SideEffect::CompileError { message } => {
-                    return Err(fp_core::error::Error::Generic(format!("Compile error: {}", message)));
-                },
+                    return Err(fp_core::error::Error::Generic(eyre!(
+                        "Compile error: {}",
+                        message
+                    )));
+                }
                 SideEffect::CompileWarning { message } => {
-                    eprintln!("Warning: {}", message);
-                },
+                    tracing::warn!("Compile warning: {}", message);
+                }
+                SideEffect::GenerateFunctionCall {
+                    function_name,
+                    args,
+                } => {
+                    self.apply_function_call_generation(ast, function_name, args)?;
+                    changes_made = true;
+                }
             }
         }
 
@@ -111,32 +141,74 @@ impl SideEffectTracker {
         Ok(changes_made)
     }
 
+    /// Apply function call generation side effect
+    /// For now this is a stub that preserves the intent without mutating the AST.
+    /// A future implementation can inject an explicit call node into the AST.
+    fn apply_function_call_generation(
+        &self,
+        _ast: &mut AstNode,
+        _function_name: &str,
+        _args: &Vec<AstValue>,
+    ) -> Result<()> {
+        // Intentionally a no-op for now. This ensures side effects are accounted for
+        // without causing compilation failures until full lowering is implemented.
+        Ok(())
+    }
+
     /// Apply field generation side effect
-    fn apply_field_generation(&self, _ast: &mut AstNode, _target_type: &str, _field_name: &str, _field_type: &AstType) -> Result<()> {
+    fn apply_field_generation(
+        &self,
+        _ast: &mut AstNode,
+        _target_type: &str,
+        _field_name: &str,
+        _field_type: &AstType,
+    ) -> Result<()> {
         // TODO: Implement field addition to struct definitions
         Ok(())
     }
 
     /// Apply method generation side effect
-    fn apply_method_generation(&self, _ast: &mut AstNode, _target_type: &str, _method_name: &str, _method_body: &AstExpr) -> Result<()> {
+    fn apply_method_generation(
+        &self,
+        _ast: &mut AstNode,
+        _target_type: &str,
+        _method_name: &str,
+        _method_body: &AstExpr,
+    ) -> Result<()> {
         // TODO: Implement method addition to struct definitions
         Ok(())
     }
 
     /// Apply impl generation side effect
-    fn apply_impl_generation(&self, _ast: &mut AstNode, _target_type: &str, _trait_name: &str, _methods: &[(String, AstExpr)]) -> Result<()> {
+    fn apply_impl_generation(
+        &self,
+        _ast: &mut AstNode,
+        _target_type: &str,
+        _trait_name: &str,
+        _methods: &[(String, AstExpr)],
+    ) -> Result<()> {
         // TODO: Implement trait implementation generation
         Ok(())
     }
 
     /// Apply type generation side effect
-    fn apply_type_generation(&self, _ast: &mut AstNode, _type_name: &str, _type_definition: &AstType) -> Result<()> {
+    fn apply_type_generation(
+        &self,
+        _ast: &mut AstNode,
+        _type_name: &str,
+        _type_definition: &AstType,
+    ) -> Result<()> {
         // TODO: Implement new type generation
         Ok(())
     }
 
     /// Apply struct builder creation side effect
-    fn apply_struct_builder_creation(&self, _ast: &mut AstNode, _builder_name: &str, _struct_name: &str) -> Result<()> {
+    fn apply_struct_builder_creation(
+        &self,
+        _ast: &mut AstNode,
+        _builder_name: &str,
+        _struct_name: &str,
+    ) -> Result<()> {
         // TODO: Implement struct builder creation
         Ok(())
     }
@@ -146,27 +218,57 @@ impl SideEffect {
     /// Get a description of this side effect for debugging
     pub fn description(&self) -> String {
         match self {
-            SideEffect::GenerateField { target_type, field_name, .. } => {
+            SideEffect::GenerateField {
+                target_type,
+                field_name,
+                ..
+            } => {
                 format!("Add field {} to {}", field_name, target_type)
-            },
-            SideEffect::GenerateMethod { target_type, method_name, .. } => {
+            }
+            SideEffect::GenerateMethod {
+                target_type,
+                method_name,
+                ..
+            } => {
                 format!("Add method {} to {}", method_name, target_type)
-            },
-            SideEffect::GenerateImpl { target_type, trait_name, methods } => {
-                format!("Implement {} for {} with {} methods", trait_name, target_type, methods.len())
-            },
+            }
+            SideEffect::GenerateImpl {
+                target_type,
+                trait_name,
+                methods,
+            } => {
+                format!(
+                    "Implement {} for {} with {} methods",
+                    trait_name,
+                    target_type,
+                    methods.len()
+                )
+            }
             SideEffect::GenerateType { type_name, .. } => {
                 format!("Generate type {}", type_name)
-            },
-            SideEffect::CreateStructBuilder { builder_name, struct_name } => {
+            }
+            SideEffect::CreateStructBuilder {
+                builder_name,
+                struct_name,
+            } => {
                 format!("Create struct builder {} for {}", builder_name, struct_name)
-            },
+            }
             SideEffect::CompileError { message } => {
                 format!("Compile error: {}", message)
-            },
+            }
             SideEffect::CompileWarning { message } => {
                 format!("Compile warning: {}", message)
-            },
+            }
+            SideEffect::GenerateFunctionCall {
+                function_name,
+                args,
+            } => {
+                format!(
+                    "Generate function call {} with {} args",
+                    function_name,
+                    args.len()
+                )
+            }
         }
     }
 }

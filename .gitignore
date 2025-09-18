@@ -10,4 +10,5 @@ target
 project/project
 .metals
 .DS_Store
-
+*.out
+*.o

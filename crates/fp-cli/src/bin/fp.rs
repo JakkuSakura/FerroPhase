@@ -48,12 +48,12 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
     
-    /// Enable verbose logging
-    #[arg(short, long, global = true)]
-    verbose: bool,
+    /// Enable verbose logging (use multiple times for increased verbosity)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
     
     /// Suppress non-error output
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    #[arg(short, long, global = true)]
     quiet: bool,
     
     /// Configuration file path
@@ -102,8 +102,8 @@ struct CompileArgs {
     #[arg(required = true)]
     input: Vec<PathBuf>,
     
-    /// Output target (rust, llvm, wasm, interpret)
-    #[arg(short, long, default_value = "rust")]
+    /// Output target (binary, rust, llvm, wasm, interpret)
+    #[arg(short, long, default_value = "binary")]
     target: String,
     
     /// Output file or directory
@@ -220,6 +220,10 @@ struct RunArgs {
     /// Print optimization passes
     #[arg(long)]
     print_passes: bool,
+    
+    /// Runtime semantics to use (literal, rust)
+    #[arg(long, default_value = "literal")]
+    runtime: String,
 }
 
 #[derive(Args)]
@@ -355,16 +359,14 @@ async fn main() -> Result<()> {
             commands::parse_command(parse_args, &config).await
         },
         Commands::Run(args) => {
-            // Run is an alias for eval --file
-            let eval_args = commands::eval::EvalArgs {
-                expr: None,
-                file: Some(args.file),
+            // Use dedicated run command with simplified pipeline
+            let run_args = commands::run::RunArgs {
+                file: args.file,
                 print_ast: args.print_ast,
                 print_passes: args.print_passes,
-                print_result: false, // For run command, don't print result
-                runtime: None, // Use default literal runtime for run
+                runtime: Some(args.runtime), // Use specified runtime
             };
-            commands::eval_command(eval_args, &config).await
+            commands::run_command(run_args, &config).await
         },
         Commands::Check(args) => {
             let check_args = commands::check::CheckArgs {
@@ -403,14 +405,14 @@ async fn main() -> Result<()> {
     
     match result {
         Ok(_) => {
-            if cli.verbose {
+            if cli.verbose > 0 {
                 info!("Command completed successfully");
             }
             Ok(())
         }
         Err(e) => {
             eprintln!("{} {}", style("Error:").red().bold(), e);
-            if cli.verbose {
+            if cli.verbose > 0 {
                 eprintln!("{:?}", e);
             }
             std::process::exit(1);
@@ -418,15 +420,18 @@ async fn main() -> Result<()> {
     }
 }
 
-fn setup_logging(verbose: bool, quiet: bool) -> Result<()> {
+fn setup_logging(verbose: u8, quiet: bool) -> Result<()> {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
     
-    let filter = if verbose {
-        EnvFilter::new("debug")
-    } else if quiet {
+    let filter = if quiet {
         EnvFilter::new("error")
     } else {
-        EnvFilter::new("info")
+        match verbose {
+            0 => EnvFilter::new("info"),
+            1 => EnvFilter::new("debug"),
+            2 => EnvFilter::new("trace"),
+            _ => EnvFilter::new("trace").add_directive("fp=trace".parse().unwrap()),
+        }
     };
     
     tracing_subscriber::registry()

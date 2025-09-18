@@ -35,7 +35,7 @@ pub fn optimization_error_with_span(message: impl Into<String>, span: Span) -> E
 }
 
 /// Create a generic error (when we don't have specific error information)
-pub fn generic_error(message: impl Into<String>) -> Error {
+pub fn generic_error(message: impl Into<eyre::Error>) -> Error {
     Error::Generic(message.into())
 }
 
