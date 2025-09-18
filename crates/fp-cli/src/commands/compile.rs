@@ -130,6 +130,7 @@ async fn compile_file(
         print_ast: false,
         print_passes: false,
         target: args.target.clone(),
+        runtime: "literal".to_string(),
     };
     
     // Execute pipeline
@@ -153,6 +154,10 @@ async fn compile_file(
         PipelineOutput::Value(_) => {
             // For interpret target, we don't write to file
             info!("Interpretation completed");
+        },
+        PipelineOutput::RuntimeValue(_) => {
+            // For runtime interpretation, we don't write to file
+            info!("Runtime interpretation completed");
         },
     }
     

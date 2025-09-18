@@ -27,6 +27,7 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
         print_ast: false,
         print_passes: false,
         target: "rust".to_string(),
+        runtime: "literal".to_string(),
     };
 
     // Parse the input and get the AST
