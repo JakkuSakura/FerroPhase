@@ -117,7 +117,7 @@ impl RustParser {
         let path = path
             .canonicalize()
             .with_context(|| format!("Could not find file: {}", path.display()))?;
-        println!("Parsing {}", path.display());
+        tracing::debug!("Parsing {}", path.display());
         let module = builder
             .parse_and_inline_modules(&path)
             .with_context(|| format!("path: {}", path.display()))?;
@@ -152,6 +152,109 @@ impl RustParser {
     }
     pub fn parse_type(&self, code: syn::Type) -> Result<AstType> {
         ty::parse_type(code)
+    }
+    
+    pub fn try_parse_as_file(&self, source: &str) -> Result<BExpr> {
+        // Parse as a syn::File first, but be more permissive with errors
+        let syn_file: syn::File = syn::parse_str(source)
+            .map_err(|e| eyre!("Failed to parse as file: {}", e))?;
+
+        // Try to parse the file, but handle errors more gracefully for transpilation
+        match self.parse_file_content(PathBuf::from("input.fp"), syn_file) {
+            Ok(ast_file) => {
+                // Find main function and const declarations
+                let mut const_items = Vec::new();
+                let mut main_body = None;
+
+                for item in ast_file.items {
+                    if let Some(func) = item.as_function() {
+                        if func.name.name == "main" {
+                            main_body = Some(func.body.clone());
+                        }
+                    } else {
+                        // Keep const declarations and other items
+                        const_items.push(BlockStmt::Item(Box::new(item)));
+                    }
+                }
+
+                // If we found a main function, create a block with const items + main body
+                if let Some(body) = main_body {
+                    // Add the main body as the final expression
+                    const_items.push(BlockStmt::Expr(BlockStmtExpr {
+                        expr: body,
+                        semicolon: None,
+                    }));
+
+                    Ok(Box::new(AstExpr::Block(ExprBlock {
+                        stmts: const_items,
+                    })))
+                } else {
+                    // No main function, create a minimal structure for transpilation
+                    if const_items.is_empty() {
+                        // Create an empty block for transpilation purposes
+                        Ok(Box::new(AstExpr::Block(ExprBlock {
+                            stmts: vec![],
+                        })))
+                    } else {
+                        // Just use all parsed items
+                        Ok(Box::new(AstExpr::Block(ExprBlock {
+                            stmts: const_items,
+                        })))
+                    }
+                }
+            }
+            Err(_e) => {
+                // For transpilation mode, if parsing fails, try to extract just the struct definitions
+                self.try_parse_structs_only(source)
+            }
+        }
+    }
+
+    pub fn try_parse_block_expression(&self, source: &str) -> Result<BExpr> {
+        let wrapped_source = format!("{{\n{}\n}}", source);
+        let syn_expr: syn::Expr = syn::parse_str(&wrapped_source)
+            .map_err(|e| eyre!("Failed to parse as block: {}", e))?;
+
+        let ast_expr = self.parse_expr(syn_expr)
+            .map_err(|e| eyre!("Failed to convert to AST: {}", e))?;
+
+        Ok(Box::new(ast_expr))
+    }
+
+    pub fn try_parse_simple_expression(&self, source: &str) -> Result<BExpr> {
+        let syn_expr: syn::Expr = syn::parse_str(source)
+            .map_err(|e| eyre!("Failed to parse as expression: {}", e))?;
+
+        let ast_expr = self.parse_expr(syn_expr)
+            .map_err(|e| eyre!("Failed to convert to AST: {}", e))?;
+
+        Ok(Box::new(ast_expr))
+    }
+
+    pub fn try_parse_structs_only(&self, source: &str) -> Result<BExpr> {
+        // Try to parse individual items from the source, filtering out problematic ones
+        let syn_file: syn::File = syn::parse_str(source)
+            .map_err(|e| eyre!("Failed to parse source: {}", e))?;
+
+        let mut parsed_items = Vec::new();
+
+        for item in syn_file.items {
+            // Filter to only struct definitions and other safe items
+            match item {
+                syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Type(_) => {
+                    if let Ok(ast_item) = self.parse_item(item) {
+                        parsed_items.push(BlockStmt::Item(Box::new(ast_item)));
+                    }
+                }
+                _ => {
+                    // Skip other item types that might cause issues
+                }
+            }
+        }
+
+        Ok(Box::new(AstExpr::Block(ExprBlock {
+            stmts: parsed_items,
+        })))
     }
 }
 

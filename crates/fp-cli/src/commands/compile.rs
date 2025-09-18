@@ -140,20 +140,27 @@ async fn compile_file(
     // Write output to file
     match pipeline_output {
         PipelineOutput::Code(code) => {
-            // Ensure output directory exists
-            if let Some(parent) = output.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| CliError::Io(e))?;
+            match args.target.as_str() {
+                "binary" => {
+                    compile_llvm_to_binary(&code, output, args).await?;
+                    info!("Generated binary: {}", output.display());
+                }
+                _ => {
+                    if let Some(parent) = output.parent() {
+                        std::fs::create_dir_all(parent)
+                            .map_err(|e| CliError::Io(e))?;
+                    }
+
+                    std::fs::write(output, &code)
+                        .map_err(|e| CliError::Io(e))?;
+
+                    info!("Generated code: {}", output.display());
+                }
             }
-            
-            std::fs::write(output, code)
-                .map_err(|e| CliError::Io(e))?;
-            
-            info!("Generated code: {}", output.display());
         },
         PipelineOutput::Value(_) => {
-            // For interpret target, we don't write to file
-            info!("Interpretation completed");
+            // For interpret target or binary target (already compiled), we don't write to file
+            info!("Operation completed");
         },
         PipelineOutput::RuntimeValue(_) => {
             // For runtime interpretation, we don't write to file
@@ -207,6 +214,115 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
     Ok(())
 }
 
+async fn compile_llvm_to_binary(llvm_ir: &str, output: &Path, args: &CompileArgs) -> Result<()> {
+    use tokio::fs;
+    
+    // Create a temporary LLVM IR file (use different name to avoid conflict)
+    let temp_ll = output.with_extension("tmp.ll");
+    
+    // Ensure output directory exists
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| CliError::Io(e))?;
+    }
+    
+    // Write LLVM IR to temporary file
+    fs::write(&temp_ll, llvm_ir).await
+        .map_err(|e| CliError::Io(e))?;
+    
+    info!("Generated LLVM IR: {}", temp_ll.display());
+    
+    // Try to compile with LLVM tools (llc + ld/clang)
+    if let Err(e) = compile_with_llvm_tools(&temp_ll, output, args).await {
+        warn!("LLVM compilation failed: {}, falling back to saving LLVM IR", e);
+        
+        // Fallback: just save the LLVM IR as the output
+        fs::write(output.with_extension("ll"), llvm_ir).await
+            .map_err(|e| CliError::Io(e))?;
+        
+        info!("Saved LLVM IR as: {}", output.with_extension("ll").display());
+        info!("To compile manually, use: llc {} -o {}.s && clang {}.s -o {}", 
+              output.with_extension("ll").display(),
+              output.display(),
+              output.display(),
+              output.display());
+    }
+    
+    // Clean up temporary LLVM IR file
+    let _ = fs::remove_file(&temp_ll).await;
+    
+    Ok(())
+}
+
+async fn compile_with_llvm_tools(llvm_ir_file: &Path, output: &Path, args: &CompileArgs) -> Result<()> {
+    use tokio::process::Command;
+    
+    // Check if LLVM tools are available
+    if Command::new("llc").arg("--version").output().await.is_err() {
+        return Err(CliError::Compilation("llc (LLVM compiler) not found. Please install LLVM toolchain.".to_string()));
+    }
+    
+    let assembly_file = output.with_extension("s");
+    
+    // Step 1: Compile LLVM IR to assembly with llc
+    let mut llc_cmd = Command::new("llc");
+    llc_cmd.arg(llvm_ir_file);
+    llc_cmd.arg("-o");
+    llc_cmd.arg(&assembly_file);
+    
+    // Add optimization flags
+    match args.opt_level {
+        0 => { llc_cmd.arg("-O0"); },
+        1 => { llc_cmd.arg("-O1"); },
+        2 => { llc_cmd.arg("-O2"); },
+        3 => { llc_cmd.arg("-O3"); },
+        _ => { llc_cmd.arg("-O2"); },
+    }
+    
+    info!("Compiling LLVM IR to assembly...");
+    let llc_output = llc_cmd.output().await
+        .map_err(|e| CliError::Compilation(format!("Failed to run llc: {}", e)))?;
+    
+    if !llc_output.status.success() {
+        let stderr = String::from_utf8_lossy(&llc_output.stderr);
+        return Err(CliError::Compilation(format!("llc failed:\n{}", stderr)));
+    }
+    
+    // Step 2: Link assembly to executable with clang/gcc
+    let linker = if Command::new("clang").arg("--version").output().await.is_ok() {
+        "clang"
+    } else if Command::new("gcc").arg("--version").output().await.is_ok() {
+        "gcc"
+    } else {
+        return Err(CliError::Compilation("No suitable linker found (clang or gcc required)".to_string()));
+    };
+    
+    let mut link_cmd = Command::new(linker);
+    link_cmd.arg(&assembly_file);
+    link_cmd.arg("-o");
+    link_cmd.arg(output);
+    
+    // Add debug info if requested
+    if args.debug {
+        link_cmd.arg("-g");
+    }
+    
+    info!("Linking to binary: {}", output.display());
+    let link_output = link_cmd.output().await
+        .map_err(|e| CliError::Compilation(format!("Failed to run {}: {}", linker, e)))?;
+    
+    if !link_output.status.success() {
+        let stderr = String::from_utf8_lossy(&link_output.stderr);
+        return Err(CliError::Compilation(format!("{} linking failed:\n{}", linker, stderr)));
+    }
+    
+    // Clean up assembly file
+    let _ = tokio::fs::remove_file(&assembly_file).await;
+    
+    info!("Successfully compiled binary: {}", output.display());
+    Ok(())
+}
+
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
     for input in &args.input {
         if !input.exists() {
@@ -231,6 +347,14 @@ fn determine_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -
         Ok(output.clone())
     } else {
         let extension = match target {
+            "binary" => {
+                // Use platform-specific executable extension
+                if cfg!(target_os = "windows") {
+                    "exe"
+                } else {
+                    "out"  // Use .out extension on Unix systems for clarity
+                }
+            },
             "rust" => "rs",
             "llvm" => "ll",
             "wasm" => "wasm",

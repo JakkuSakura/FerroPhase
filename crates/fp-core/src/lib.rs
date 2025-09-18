@@ -17,6 +17,8 @@ pub mod pat;
 pub mod printer;
 pub mod span;
 pub mod thir;
+pub mod types;
+pub mod lir;
 pub mod utils;
 
 

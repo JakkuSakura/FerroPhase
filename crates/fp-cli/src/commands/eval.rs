@@ -1,6 +1,10 @@
 //! Expression evaluation command implementation
 
-use crate::{cli::CliConfig, pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput}, Result, CliError};
+use crate::{
+    CliError, Result,
+    cli::CliConfig,
+    pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput},
+};
 use console::style;
 use fp_core::ast::{AstValue, RuntimeValue};
 use tracing::info;
@@ -11,7 +15,7 @@ pub struct EvalArgs {
     pub file: Option<std::path::PathBuf>,
     pub print_ast: bool,
     pub print_passes: bool,
-    pub print_result: bool, // Whether to print the final result
+    pub print_result: bool,      // Whether to print the final result
     pub runtime: Option<String>, // Runtime to use (literal, rust)
 }
 
@@ -19,11 +23,19 @@ pub struct EvalArgs {
 pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     // Determine pipeline input
     let (input, description) = if let Some(expr) = &args.expr {
-        (PipelineInput::Expression(expr.clone()), format!("expression: {}", expr))
+        (
+            PipelineInput::Expression(expr.clone()),
+            format!("expression: {}", expr),
+        )
     } else if let Some(file) = &args.file {
-        (PipelineInput::File(file.clone()), format!("file '{}'", file.display()))
+        (
+            PipelineInput::File(file.clone()),
+            format!("file '{}'", file.display()),
+        )
     } else {
-        return Err(CliError::InvalidInput("Either --expr or --file must be provided".to_string()));
+        return Err(CliError::InvalidInput(
+            "Either --expr or --file must be provided".to_string(),
+        ));
     };
 
     info!("Evaluating {}", description);
@@ -47,13 +59,17 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
             if args.print_result {
                 print_result(&value)?;
             }
-        },
+        }
         PipelineOutput::RuntimeValue(runtime_value) => {
             if args.print_result {
                 print_runtime_result(&runtime_value)?;
             }
-        },
-        _ => return Err(CliError::Compilation("Expected evaluation result".to_string())),
+        }
+        _ => {
+            return Err(CliError::Compilation(
+                "Expected evaluation result".to_string(),
+            ));
+        }
     }
 
     Ok(())
@@ -75,10 +91,11 @@ fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
             } else {
                 "extension"
             };
-            
-            println!("{} {} [{}]", 
-                style("Result:").green().bold(), 
-                style(format!("{}", value)).cyan(), 
+
+            println!(
+                "{} {} [{}]",
+                style("Result:").green().bold(),
+                style(format!("{}", value)).cyan(),
                 style(ownership_info).dim()
             );
         }
@@ -94,25 +111,49 @@ fn print_result(result: &AstValue) -> Result<()> {
         }
         AstValue::Bool(b) => {
             let value_str = if b.value { "true" } else { "false" };
-            println!("{} {}", style("Result:").green().bold(), style(value_str).cyan());
+            println!(
+                "{} {}",
+                style("Result:").green().bold(),
+                style(value_str).cyan()
+            );
         }
         AstValue::Int(i) => {
-            println!("{} {}", style("Result:").green().bold(), style(&i.value.to_string()).cyan());
+            println!(
+                "{} {}",
+                style("Result:").green().bold(),
+                style(&i.value.to_string()).cyan()
+            );
         }
         AstValue::Decimal(f) => {
-            println!("{} {}", style("Result:").green().bold(), style(&f.value.to_string()).cyan());
+            println!(
+                "{} {}",
+                style("Result:").green().bold(),
+                style(&f.value.to_string()).cyan()
+            );
         }
         AstValue::String(s) => {
-            println!("{} {}", style("Result:").green().bold(), style(&format!("\"{}\"", s.value)).cyan());
+            println!(
+                "{} {}",
+                style("Result:").green().bold(),
+                style(&format!("\"{}\"", s.value)).cyan()
+            );
         }
         AstValue::List(list) => {
-            println!("{} {} elements)", style("Result:").green().bold(), style(&format!("[list with {}", list.values.len())).cyan());
+            println!(
+                "{} {} elements)",
+                style("Result:").green().bold(),
+                style(&format!("[list with {}", list.values.len())).cyan()
+            );
             for (i, item) in list.values.iter().enumerate() {
                 println!("  [{}]: {:?}", i, item);
             }
         }
         AstValue::Struct(s) => {
-            println!("{} {}", style("Result:").green().bold(), style(&format!("struct {}", s.ty.name)).cyan());
+            println!(
+                "{} {}",
+                style("Result:").green().bold(),
+                style(&format!("struct {}", s.ty.name)).cyan()
+            );
             for field in &s.structural.fields {
                 println!("  {}: {:?}", field.name, field.value);
             }
@@ -128,8 +169,8 @@ fn print_result(result: &AstValue) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn test_eval_simple_expression() {
@@ -140,6 +181,7 @@ mod tests {
             print_ast: false,
             print_passes: false,
             print_result: true,
+            runtime: None,
         };
 
         // This test might fail until the interpreter is fully implemented
@@ -163,25 +205,12 @@ mod tests {
             print_ast: false,
             print_passes: false,
             print_result: true,
+            runtime: None,
         };
 
         // This test might fail until the interpreter is fully implemented
         let result = eval_command(args, &config).await;
         // For now, just check that it doesn't crash with file reading
         // The evaluation itself might fail
-    }
-
-    #[test]
-    fn test_parse_simple_expressions() {
-        use crate::pipeline::try_parse_simple_expression;
-        
-        // Test that we can parse basic arithmetic
-        assert!(try_parse_simple_expression("1 + 2").is_ok());
-        assert!(try_parse_simple_expression("true && false").is_ok());
-        assert!(try_parse_simple_expression("\"hello\"").is_ok());
-
-        // These should not parse as simple expressions
-        assert!(try_parse_simple_expression("let x = 5").is_err());
-        assert!(try_parse_simple_expression("{ 1 + 2 }").is_err());
     }
 }

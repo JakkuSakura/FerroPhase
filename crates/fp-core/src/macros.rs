@@ -2,7 +2,7 @@
 #[macro_export]
 macro_rules! bail {
     ($($arg:tt)*) => {
-        return Err($crate::error::Error::Generic(eyre::Report::msg(format!($($arg)*)).to_string()))
+        return Err($crate::error::Error::Generic(eyre::Error::msg(format!($($arg)*))))
     };
 }
 

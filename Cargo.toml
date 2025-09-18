@@ -1,9 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/*"
+    "crates/*",
 ]
-exclude = []
 
 [workspace.dependencies]
 common = { git = "https://github.com/JakkuSakura/common-rs" }

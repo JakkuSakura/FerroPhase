@@ -36,8 +36,9 @@ pub fn parse_expr(expr: syn::Expr) -> Result<AstExpr> {
         syn::Expr::Let(l) => AstExpr::Let(parse_expr_let(l)?),
         syn::Expr::Closure(c) => AstExpr::Closure(parse_expr_closure(c)?),
         syn::Expr::Array(a) => AstExpr::Array(parse_expr_array(a)?),
+        syn::Expr::Assign(a) => AstExpr::Assign(parse_expr_assign(a)?.into()),
         raw => {
-            eprintln!("RawExpr {:?}", raw);
+            tracing::debug!("RawExpr {:?}", raw);
             AstExpr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };
@@ -316,6 +317,7 @@ pub fn parse_stmt_macro(raw: syn::StmtMacro) -> Result<BlockStmt> {
     // Check if this is a println! macro
     if is_println_macro(&raw.mac) {
         let call_expr = parse_println_macro_to_function_call(&raw.mac)?;
+        tracing::debug!("parsed println! macro to function call");
         return Ok(BlockStmt::Expr(BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some())));
     }
     
@@ -347,6 +349,28 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
         Ok(call_expr) => {
             let args: Vec<_> = call_expr.args.into_iter().map(parse_expr).collect::<Result<Vec<_>>>()?;
             
+            // Check if the first argument is a string literal (format string)
+            if !args.is_empty() {
+                if let AstExpr::Value(value) = &args[0] {
+                    if let AstValue::String(format_str) = &**value {
+                        // Parse format string into template parts
+                        let format_args = args[1..].to_vec();
+                        let parts = parse_format_template(&format_str.value)?;
+                        let format_expr = AstExpr::FormatString(ExprFormatString {
+                            parts,
+                            args: format_args,
+                            kwargs: Vec::new(), // No named args for now
+                        });
+                        
+                        return Ok(AstExpr::Invoke(ExprInvoke {
+                            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+                            args: vec![format_expr],
+                        }));
+                    }
+                }
+            }
+            
+            // Fallback to regular function call
             Ok(AstExpr::Invoke(ExprInvoke {
                 target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
                 args,
@@ -360,4 +384,120 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
             }))
         }
     }
+}
+
+/// Parse a format template string into structured parts
+fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTemplatePart>> {
+    let mut parts = Vec::new();
+    let mut current_literal = String::new();
+    let mut chars = template.chars().peekable();
+    
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            if let Some(&next_ch) = chars.peek() {
+                if next_ch == '}' {
+                    // Found a simple placeholder {}
+                    chars.next(); // consume the '}'
+                    
+                    // Add the current literal part if not empty
+                    if !current_literal.is_empty() {
+                        parts.push(fp_core::ast::FormatTemplatePart::Literal(current_literal.clone()));
+                        current_literal.clear();
+                    }
+                    
+                    // Add an implicit placeholder
+                    parts.push(fp_core::ast::FormatTemplatePart::Placeholder(
+                        fp_core::ast::FormatPlaceholder {
+                            arg_ref: fp_core::ast::FormatArgRef::Implicit,
+                            format_spec: None,
+                        }
+                    ));
+                } else {
+                    // More complex placeholder like {0}, {name}, {0:02d}
+                    // For now, just handle {} - could extend to parse more complex cases
+                    let mut placeholder_content = String::new();
+                    chars.next(); // skip the character we peeked
+                    
+                    // Read until closing }
+                    while let Some(inner_ch) = chars.next() {
+                        if inner_ch == '}' {
+                            break;
+                        }
+                        placeholder_content.push(inner_ch);
+                    }
+                    
+                    // Add the current literal part if not empty
+                    if !current_literal.is_empty() {
+                        parts.push(fp_core::ast::FormatTemplatePart::Literal(current_literal.clone()));
+                        current_literal.clear();
+                    }
+                    
+                    // Parse placeholder content
+                    let placeholder = parse_placeholder_content(&placeholder_content)?;
+                    parts.push(fp_core::ast::FormatTemplatePart::Placeholder(placeholder));
+                }
+            } else {
+                // '{' at the end of string
+                current_literal.push(ch);
+            }
+        } else {
+            current_literal.push(ch);
+        }
+    }
+    
+    // Add any remaining literal part
+    if !current_literal.is_empty() {
+        parts.push(fp_core::ast::FormatTemplatePart::Literal(current_literal));
+    }
+    
+    Ok(parts)
+}
+
+/// Parse placeholder content like "0", "name", "0:02d"
+fn parse_placeholder_content(content: &str) -> Result<fp_core::ast::FormatPlaceholder> {
+    if content.is_empty() {
+        // Empty placeholder {} is implicit
+        return Ok(fp_core::ast::FormatPlaceholder {
+            arg_ref: fp_core::ast::FormatArgRef::Implicit,
+            format_spec: None,
+        });
+    }
+    
+    // Split on : for format specification
+    if let Some(colon_pos) = content.find(':') {
+        let arg_part = &content[..colon_pos];
+        let format_spec = &content[colon_pos + 1..];
+        
+        let arg_ref = if arg_part.is_empty() {
+            fp_core::ast::FormatArgRef::Implicit
+        } else if let Ok(index) = arg_part.parse::<usize>() {
+            fp_core::ast::FormatArgRef::Positional(index)
+        } else {
+            fp_core::ast::FormatArgRef::Named(arg_part.to_string())
+        };
+        
+        Ok(fp_core::ast::FormatPlaceholder {
+            arg_ref,
+            format_spec: Some(format_spec.to_string()),
+        })
+    } else {
+        // No format specification
+        let arg_ref = if let Ok(index) = content.parse::<usize>() {
+            fp_core::ast::FormatArgRef::Positional(index)
+        } else {
+            fp_core::ast::FormatArgRef::Named(content.to_string())
+        };
+        
+        Ok(fp_core::ast::FormatPlaceholder {
+            arg_ref,
+            format_spec: None,
+        })
+    }
+}
+
+fn parse_expr_assign(a: syn::ExprAssign) -> Result<ExprAssign> {
+    Ok(ExprAssign {
+        target: parse_expr(*a.left)?.into(),
+        value: parse_expr(*a.right)?.into(),
+    })
 }

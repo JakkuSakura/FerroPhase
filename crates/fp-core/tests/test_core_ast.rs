@@ -172,7 +172,7 @@ fn test_core_error_types() -> Result<()> {
     
     // For now, just test that Result types work
     let success: Result<i32> = Ok(42);
-    let _failure: Result<i32> = Err(fp_core::Error::Generic("test error".to_string()));
+    let _failure: Result<i32> = Err("test error".to_string().into());
 
     assert!(success.is_ok());
     assert!(_failure.is_err());
