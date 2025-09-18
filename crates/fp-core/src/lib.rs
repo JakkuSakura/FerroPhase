@@ -12,12 +12,12 @@ pub mod hir;
 pub mod id;
 pub mod mir;
 pub mod ops;
+pub mod passes;
 pub mod pat;
 pub mod printer;
 pub mod span;
 pub mod thir;
 pub mod utils;
-pub mod vm;
 
 
 // Re-export commonly used items for convenience
