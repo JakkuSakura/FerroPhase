@@ -1,8 +1,9 @@
 // Evaluation context - utility for tracking const blocks and their state
 
+use crate::queries::TypeQueries;
+use eyre::eyre;
 use fp_core::ast::*;
 use fp_core::error::Result;
-use crate::queries::TypeQueries;
 use std::collections::{HashMap, HashSet};
 
 /// Represents a const block or expression that needs evaluation
@@ -61,8 +62,9 @@ impl EvaluationContext {
 
     /// Get a specific const block
     pub fn get_const_block(&self, block_id: u64) -> Result<&ConstBlock> {
-        self.const_blocks.get(&block_id)
-            .ok_or_else(|| fp_core::error::Error::Generic(format!("Const block {} not found", block_id)))
+        self.const_blocks.get(&block_id).ok_or_else(|| {
+            fp_core::error::Error::Generic(eyre!("Const block {} not found", block_id))
+        })
     }
 
     /// Set dependencies for const blocks
@@ -82,7 +84,10 @@ impl EvaluationContext {
             block.state = ConstEvalState::Evaluated;
             Ok(())
         } else {
-            Err(fp_core::error::Error::Generic(format!("Const block {} not found", block_id)))
+            Err(fp_core::error::Error::Generic(eyre!(
+                "Const block {} not found",
+                block_id
+            )))
         }
     }
 

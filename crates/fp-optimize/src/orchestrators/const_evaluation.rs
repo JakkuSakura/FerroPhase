@@ -184,4 +184,87 @@ impl ConstEvaluationOrchestrator {
     pub fn get_side_effects(&self) -> Vec<crate::utils::SideEffect> {
         self.side_effect_tracker.get_side_effects()
     }
+
+    /// Evaluate only const items (const declarations, structs) in an AST expression,
+    /// leaving function call expressions for runtime execution
+    pub fn evaluate_const_items_only(
+        &mut self,
+        ast: &mut AstExpr,
+        context: &SharedScopedContext,
+    ) -> Result<()> {
+        use fp_core::ast::{AstExpr, BlockStmt};
+        
+        // Process items and format string expressions
+        match ast {
+            AstExpr::Block(block) => {
+                // Process Item statements for const evaluation
+                for stmt in block.stmts.iter_mut() {
+                    match stmt {
+                        BlockStmt::Item(item_box) => {
+                            // Evaluate const items - dereference the Box to get the AstItem
+                            let mut item_node = AstNode::Item((**item_box).clone());
+                            self.evaluate(&mut item_node, context)?;
+                            
+                            // Update the item in the AST with the evaluated result
+                            if let AstNode::Item(evaluated_item) = item_node {
+                                **item_box = evaluated_item;
+                            }
+                        }
+                        BlockStmt::Expr(expr_stmt) => {
+                            // Process expression statements that contain format strings
+                            self.evaluate_expr_const_parts(&mut expr_stmt.expr, context)?;
+                        }
+                        _ => {
+                            // For other statement types, recursively process if they contain expressions
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For non-block expressions, skip const evaluation completely
+                // This preserves function calls and other runtime expressions
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Recursively evaluate const parts within expressions (like format strings)
+    fn evaluate_expr_const_parts(
+        &mut self,
+        expr: &mut BExpr,
+        context: &SharedScopedContext,
+    ) -> Result<()> {
+        use fp_core::ast::AstExpr;
+        
+        match &mut **expr {
+            AstExpr::FormatString(_) => {
+                // Format strings are now resolved during AST→HIR transformation
+                // No const evaluation needed here
+                debug!("Format string found - will be resolved during HIR transformation");
+            }
+            AstExpr::Invoke(invoke) => {
+                // Recursively process arguments that might contain format strings
+                for arg in invoke.args.iter_mut() {
+                    let mut boxed_arg = Box::new(arg.clone());
+                    self.evaluate_expr_const_parts(&mut boxed_arg, context)?;
+                    *arg = *boxed_arg;
+                }
+            }
+            AstExpr::Block(block) => {
+                // Recursively process nested blocks
+                for stmt in block.stmts.iter_mut() {
+                    if let BlockStmt::Expr(expr_stmt) = stmt {
+                        self.evaluate_expr_const_parts(&mut expr_stmt.expr, context)?;
+                    }
+                }
+            }
+            _ => {
+                // For other expression types, we don't need to evaluate them as const
+                // since we're focusing on format strings
+            }
+        }
+        
+        Ok(())
+    }
 }

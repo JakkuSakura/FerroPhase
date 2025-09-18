@@ -1,0 +1,179 @@
+pub mod codegen;
+pub mod context;
+pub mod debug_info;
+pub mod linking;
+pub mod target;
+
+use crate::codegen::LirCodegen;
+use crate::context::LlvmContext;
+use crate::debug_info::DebugInfoBuilder;
+use crate::linking::{LinkerConfig, ModuleLinker};
+use crate::target::{TargetCodegen, TargetConfig};
+use anyhow::Context as AnyhowContext;
+use fp_core::error::Result;
+use fp_core::lir::LirProgram;
+// use llvm_ir::Module; // Not needed currently
+use std::path::{Path, PathBuf};
+
+/// Configuration for LLVM compilation
+#[derive(Debug, Clone)]
+pub struct LlvmConfig {
+    pub target: TargetConfig,
+    pub linker: LinkerConfig,
+    pub enable_debug_info: bool,
+    pub producer_name: String,
+    pub module_name: String,
+}
+
+impl Default for LlvmConfig {
+    fn default() -> Self {
+        Self {
+            target: TargetConfig::default(),
+            linker: LinkerConfig::default(),
+            enable_debug_info: true,
+            producer_name: "fp-compiler".to_string(),
+            module_name: "main".to_string(),
+        }
+    }
+}
+
+impl LlvmConfig {
+    /// Create a new LLVM config with default settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Configure for executable output
+    pub fn executable(output_path: impl Into<PathBuf>) -> Self {
+        Self {
+            linker: LinkerConfig::executable(output_path),
+            ..Self::default()
+        }
+    }
+
+    /// Configure for static library output
+    pub fn static_library(output_path: impl Into<PathBuf>) -> Self {
+        Self {
+            linker: LinkerConfig::static_library(output_path),
+            ..Self::default()
+        }
+    }
+
+    /// Configure for dynamic library output
+    pub fn dynamic_library(output_path: impl Into<PathBuf>) -> Self {
+        Self {
+            linker: LinkerConfig::dynamic_library(output_path),
+            ..Self::default()
+        }
+    }
+
+    /// Set target configuration
+    pub fn with_target(mut self, target: TargetConfig) -> Self {
+        self.target = target;
+        self
+    }
+
+    /// Set linker configuration
+    pub fn with_linker(mut self, linker: LinkerConfig) -> Self {
+        self.linker = linker;
+        self
+    }
+
+    /// Enable or disable debug information
+    pub fn with_debug_info(mut self, enable: bool) -> Self {
+        self.enable_debug_info = enable;
+        self
+    }
+
+    /// Set the producer name for debug info
+    pub fn with_producer(mut self, producer: impl Into<String>) -> Self {
+        self.producer_name = producer.into();
+        self
+    }
+
+    /// Set the module name
+    pub fn with_module_name(mut self, name: impl Into<String>) -> Self {
+        self.module_name = name.into();
+        self
+    }
+}
+
+/// Main LLVM compilation interface
+pub struct LlvmCompiler {
+    config: LlvmConfig,
+}
+
+impl LlvmCompiler {
+    /// Create a new LLVM compiler with the given configuration
+    pub fn new(config: LlvmConfig) -> Self {
+        Self { config }
+    }
+
+    /// Compile a LIR program to native code (generates LLVM IR for now)
+    pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+        // Create LLVM context
+        let mut llvm_ctx = LlvmContext::new(&self.config.module_name);
+
+        // Initialize target machine
+        llvm_ctx
+            .init_target_machine()
+            .map_err(fp_core::error::Error::from)?;
+
+        // Create target codegen
+        let target_codegen = TargetCodegen::new(self.config.target.clone())
+            .with_context(|| "Failed to create target codegen")
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        // Create debug info builder if enabled
+        let debug_builder = if self.config.enable_debug_info {
+            let source_path = source_file.unwrap_or_else(|| Path::new("unknown.fp"));
+            Some(
+                DebugInfoBuilder::new(&llvm_ctx.module, source_path, &self.config.producer_name)
+                    .with_context(|| "Failed to create debug info builder")
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let mut global_map = std::collections::HashMap::new();
+        for global in lir_program.globals.clone() {
+            global_map.insert(global.name.clone(), global.initializer.unwrap());
+        }
+        let mut codegen = LirCodegen::new(&mut llvm_ctx, global_map);
+
+        codegen
+            .generate_program(lir_program)
+            .with_context(|| "Failed to generate LLVM IR from LIR")
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        // Finalize debug info
+        if let Some(ref debug_info) = debug_builder {
+            debug_info.finalize();
+        }
+
+        // Verify the module
+        llvm_ctx
+            .verify_module()
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        // Create module linker and compile to final output
+        let module_linker = ModuleLinker::new(self.config.linker.clone());
+        let output_path = module_linker
+            .link_modules(&[&llvm_ctx.module], &target_codegen)
+            .with_context(|| "Failed to link LLVM modules")
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        Ok(output_path)
+    }
+
+    /// Get the configuration
+    pub fn config(&self) -> &LlvmConfig {
+        &self.config
+    }
+}
+
+/// Check if LLVM backend is available
+pub fn is_available() -> bool {
+    // For now, always return true since we're using llvm-ir which is pure Rust
+    true
+}

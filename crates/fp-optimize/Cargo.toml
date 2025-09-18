@@ -14,6 +14,7 @@ itertools = "0.12.1"
 tracing = "0.1"
 syn = "2"
 proc-macro2 = "1"
+eyre = "0.6"
 fp-rust-lang = { path = "../fp-rust-lang" }
 
 [dev-dependencies]

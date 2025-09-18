@@ -15,7 +15,7 @@ fn test_const_optimization(expr: AstExpr) -> Result<AstExpr> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
     
     let serializer = Arc::new(RustPrinter::new());
-    let const_pass = ConstEvaluationPass::new(serializer.clone());
+    let const_pass = ConstEvaluationOrchestrator::new(serializer.clone());
     let optimizer = FoldOptimizer::new(serializer, Box::new(const_pass));
     let ctx = SharedScopedContext::new();
     
@@ -200,7 +200,7 @@ fn test_const_evaluation_pass_integration() -> Result<()> {
 
     // Test integration with the const evaluation pass system
     let serializer = Arc::new(RustPrinter::new());
-    let const_pass = ConstEvaluationPass::new(serializer.clone());
+    let const_pass = ConstEvaluationOrchestrator::new(serializer.clone());
     
     // Verify pass has correct name
     assert_eq!(const_pass.name(), "const_evaluation");

@@ -1,0 +1,1328 @@
+ThirProgram {
+    items: [
+        ThirItem {
+            thir_id: 0,
+            kind: Function(
+                ThirFunction {
+                    sig: ThirFunctionSig {
+                        inputs: [],
+                        output: Ty {
+                            kind: Int(
+                                I32,
+                            ),
+                            flags: TypeFlags(
+                                0x0,
+                            ),
+                        },
+                        c_variadic: false,
+                    },
+                    body_id: Some(
+                        BodyId(
+                            0,
+                        ),
+                    ),
+                    is_const: false,
+                },
+            ),
+            ty: Ty {
+                kind: FnDef(
+                    0,
+                    [],
+                ),
+                flags: TypeFlags(
+                    0x0,
+                ),
+            },
+            span: Span {
+                file: 0,
+                lo: 119,
+                hi: 123,
+            },
+        },
+    ],
+    bodies: {
+        BodyId(
+            0,
+        ): ThirBody {
+            params: [],
+            value: ThirExpr {
+                thir_id: 1,
+                kind: Block(
+                    ThirBlock {
+                        targeted_by_break: false,
+                        region: 0,
+                        span: Span {
+                            file: 0,
+                            lo: 0,
+                            hi: 0,
+                        },
+                        stmts: [
+                            ThirStmt {
+                                kind: Expr(
+                                    ThirExpr {
+                                        thir_id: 2,
+                                        kind: Block(
+                                            ThirBlock {
+                                                targeted_by_break: false,
+                                                region: 0,
+                                                span: Span {
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
+                                                },
+                                                stmts: [
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 3,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 4,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 5,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 6,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 7,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 8,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 9,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 10,
+                                                                kind: Literal(
+                                                                    Int(
+                                                                        0,
+                                                                        I32,
+                                                                    ),
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 11,
+                                                                kind: Call {
+                                                                    fun: ThirExpr {
+                                                                        thir_id: 12,
+                                                                        kind: Path(
+                                                                            "println",
+                                                                        ),
+                                                                        ty: Ty {
+                                                                            kind: Int(
+                                                                                I32,
+                                                                            ),
+                                                                            flags: TypeFlags(
+                                                                                0x0,
+                                                                            ),
+                                                                        },
+                                                                        span: Span {
+                                                                            file: 0,
+                                                                            lo: 0,
+                                                                            hi: 0,
+                                                                        },
+                                                                    },
+                                                                    args: [
+                                                                        ThirExpr {
+                                                                            thir_id: 13,
+                                                                            kind: Literal(
+                                                                                Str(
+                                                                                    "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
+                                                                                ),
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: RawPtr(
+                                                                                    TypeAndMut {
+                                                                                        ty: Ty {
+                                                                                            kind: Int(
+                                                                                                I8,
+                                                                                            ),
+                                                                                            flags: TypeFlags(
+                                                                                                0x0,
+                                                                                            ),
+                                                                                        },
+                                                                                        mutbl: Not,
+                                                                                    },
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 0,
+                                                                                hi: 0,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 14,
+                                                                            kind: Binary(
+                                                                                Div,
+                                                                                ThirExpr {
+                                                                                    thir_id: 15,
+                                                                                    kind: Field {
+                                                                                        base: ThirExpr {
+                                                                                            thir_id: 16,
+                                                                                            kind: Path(
+                                                                                                "DEFAULT_CONFIG",
+                                                                                            ),
+                                                                                            ty: Ty {
+                                                                                                kind: Int(
+                                                                                                    I32,
+                                                                                                ),
+                                                                                                flags: TypeFlags(
+                                                                                                    0x0,
+                                                                                                ),
+                                                                                            },
+                                                                                            span: Span {
+                                                                                                file: 0,
+                                                                                                lo: 49,
+                                                                                                hi: 50,
+                                                                                            },
+                                                                                        },
+                                                                                        field_idx: 0,
+                                                                                    },
+                                                                                    ty: Ty {
+                                                                                        kind: Int(
+                                                                                            I32,
+                                                                                        ),
+                                                                                        flags: TypeFlags(
+                                                                                            0x0,
+                                                                                        ),
+                                                                                    },
+                                                                                    span: Span {
+                                                                                        file: 0,
+                                                                                        lo: 48,
+                                                                                        hi: 49,
+                                                                                    },
+                                                                                },
+                                                                                ThirExpr {
+                                                                                    thir_id: 17,
+                                                                                    kind: Literal(
+                                                                                        Int(
+                                                                                            1024,
+                                                                                            I32,
+                                                                                        ),
+                                                                                    ),
+                                                                                    ty: Ty {
+                                                                                        kind: Int(
+                                                                                            I32,
+                                                                                        ),
+                                                                                        flags: TypeFlags(
+                                                                                            0x0,
+                                                                                        ),
+                                                                                    },
+                                                                                    span: Span {
+                                                                                        file: 0,
+                                                                                        lo: 50,
+                                                                                        hi: 51,
+                                                                                    },
+                                                                                },
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 47,
+                                                                                hi: 48,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 18,
+                                                                            kind: Field {
+                                                                                base: ThirExpr {
+                                                                                    thir_id: 19,
+                                                                                    kind: Path(
+                                                                                        "DEFAULT_CONFIG",
+                                                                                    ),
+                                                                                    ty: Ty {
+                                                                                        kind: Int(
+                                                                                            I32,
+                                                                                        ),
+                                                                                        flags: TypeFlags(
+                                                                                            0x0,
+                                                                                        ),
+                                                                                    },
+                                                                                    span: Span {
+                                                                                        file: 0,
+                                                                                        lo: 52,
+                                                                                        hi: 53,
+                                                                                    },
+                                                                                },
+                                                                                field_idx: 0,
+                                                                            },
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 51,
+                                                                                hi: 52,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 20,
+                                                                            kind: Field {
+                                                                                base: ThirExpr {
+                                                                                    thir_id: 21,
+                                                                                    kind: Path(
+                                                                                        "DEFAULT_CONFIG",
+                                                                                    ),
+                                                                                    ty: Ty {
+                                                                                        kind: Int(
+                                                                                            I32,
+                                                                                        ),
+                                                                                        flags: TypeFlags(
+                                                                                            0x0,
+                                                                                        ),
+                                                                                    },
+                                                                                    span: Span {
+                                                                                        file: 0,
+                                                                                        lo: 54,
+                                                                                        hi: 55,
+                                                                                    },
+                                                                                },
+                                                                                field_idx: 0,
+                                                                            },
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 53,
+                                                                                hi: 54,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 22,
+                                                                            kind: Field {
+                                                                                base: ThirExpr {
+                                                                                    thir_id: 23,
+                                                                                    kind: Path(
+                                                                                        "DEFAULT_CONFIG",
+                                                                                    ),
+                                                                                    ty: Ty {
+                                                                                        kind: Int(
+                                                                                            I32,
+                                                                                        ),
+                                                                                        flags: TypeFlags(
+                                                                                            0x0,
+                                                                                        ),
+                                                                                    },
+                                                                                    span: Span {
+                                                                                        file: 0,
+                                                                                        lo: 56,
+                                                                                        hi: 57,
+                                                                                    },
+                                                                                },
+                                                                                field_idx: 0,
+                                                                            },
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 55,
+                                                                                hi: 56,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    from_hir_call: true,
+                                                                },
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 46,
+                                                                    hi: 47,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                    ThirStmt {
+                                                        kind: Expr(
+                                                            ThirExpr {
+                                                                thir_id: 24,
+                                                                kind: Call {
+                                                                    fun: ThirExpr {
+                                                                        thir_id: 25,
+                                                                        kind: Path(
+                                                                            "println",
+                                                                        ),
+                                                                        ty: Ty {
+                                                                            kind: Int(
+                                                                                I32,
+                                                                            ),
+                                                                            flags: TypeFlags(
+                                                                                0x0,
+                                                                            ),
+                                                                        },
+                                                                        span: Span {
+                                                                            file: 0,
+                                                                            lo: 0,
+                                                                            hi: 0,
+                                                                        },
+                                                                    },
+                                                                    args: [
+                                                                        ThirExpr {
+                                                                            thir_id: 26,
+                                                                            kind: Literal(
+                                                                                Str(
+                                                                                    "Computed: factorial={}, is_pow2={}",
+                                                                                ),
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: RawPtr(
+                                                                                    TypeAndMut {
+                                                                                        ty: Ty {
+                                                                                            kind: Int(
+                                                                                                I8,
+                                                                                            ),
+                                                                                            flags: TypeFlags(
+                                                                                                0x0,
+                                                                                            ),
+                                                                                        },
+                                                                                        mutbl: Not,
+                                                                                    },
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 0,
+                                                                                hi: 0,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 27,
+                                                                            kind: Path(
+                                                                                "FACTORIAL_5",
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 58,
+                                                                                hi: 59,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 28,
+                                                                            kind: Path(
+                                                                                "IS_POWER_OF_TWO",
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 59,
+                                                                                hi: 60,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    from_hir_call: true,
+                                                                },
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 57,
+                                                                    hi: 58,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                ],
+                                                expr: None,
+                                                safety_mode: Safe,
+                                            },
+                                        ),
+                                        ty: Ty {
+                                            kind: Tuple(
+                                                [],
+                                            ),
+                                            flags: TypeFlags(
+                                                0x0,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 1,
+                                            hi: 2,
+                                        },
+                                    },
+                                ),
+                            },
+                        ],
+                        expr: Some(
+                            ThirExpr {
+                                thir_id: 29,
+                                kind: Block(
+                                    ThirBlock {
+                                        targeted_by_break: false,
+                                        region: 0,
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                        stmts: [
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 30,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 31,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 32,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 33,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 34,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 35,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 36,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 37,
+                                                        kind: Literal(
+                                                            Int(
+                                                                0,
+                                                                I32,
+                                                            ),
+                                                        ),
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 38,
+                                                        kind: Call {
+                                                            fun: ThirExpr {
+                                                                thir_id: 39,
+                                                                kind: Path(
+                                                                    "println",
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                            args: [
+                                                                ThirExpr {
+                                                                    thir_id: 40,
+                                                                    kind: Literal(
+                                                                        Str(
+                                                                            "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
+                                                                        ),
+                                                                    ),
+                                                                    ty: Ty {
+                                                                        kind: RawPtr(
+                                                                            TypeAndMut {
+                                                                                ty: Ty {
+                                                                                    kind: Int(
+                                                                                        I8,
+                                                                                    ),
+                                                                                    flags: TypeFlags(
+                                                                                        0x0,
+                                                                                    ),
+                                                                                },
+                                                                                mutbl: Not,
+                                                                            },
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 0,
+                                                                        hi: 0,
+                                                                    },
+                                                                },
+                                                                ThirExpr {
+                                                                    thir_id: 41,
+                                                                    kind: Binary(
+                                                                        Div,
+                                                                        ThirExpr {
+                                                                            thir_id: 42,
+                                                                            kind: Field {
+                                                                                base: ThirExpr {
+                                                                                    thir_id: 43,
+                                                                                    kind: Path(
+                                                                                        "DEFAULT_CONFIG",
+                                                                                    ),
+                                                                                    ty: Ty {
+                                                                                        kind: Int(
+                                                                                            I32,
+                                                                                        ),
+                                                                                        flags: TypeFlags(
+                                                                                            0x0,
+                                                                                        ),
+                                                                                    },
+                                                                                    span: Span {
+                                                                                        file: 0,
+                                                                                        lo: 108,
+                                                                                        hi: 109,
+                                                                                    },
+                                                                                },
+                                                                                field_idx: 0,
+                                                                            },
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 107,
+                                                                                hi: 108,
+                                                                            },
+                                                                        },
+                                                                        ThirExpr {
+                                                                            thir_id: 44,
+                                                                            kind: Literal(
+                                                                                Int(
+                                                                                    1024,
+                                                                                    I32,
+                                                                                ),
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 109,
+                                                                                hi: 110,
+                                                                            },
+                                                                        },
+                                                                    ),
+                                                                    ty: Ty {
+                                                                        kind: Int(
+                                                                            I32,
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 106,
+                                                                        hi: 107,
+                                                                    },
+                                                                },
+                                                                ThirExpr {
+                                                                    thir_id: 45,
+                                                                    kind: Field {
+                                                                        base: ThirExpr {
+                                                                            thir_id: 46,
+                                                                            kind: Path(
+                                                                                "DEFAULT_CONFIG",
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 111,
+                                                                                hi: 112,
+                                                                            },
+                                                                        },
+                                                                        field_idx: 0,
+                                                                    },
+                                                                    ty: Ty {
+                                                                        kind: Int(
+                                                                            I32,
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 110,
+                                                                        hi: 111,
+                                                                    },
+                                                                },
+                                                                ThirExpr {
+                                                                    thir_id: 47,
+                                                                    kind: Field {
+                                                                        base: ThirExpr {
+                                                                            thir_id: 48,
+                                                                            kind: Path(
+                                                                                "DEFAULT_CONFIG",
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 113,
+                                                                                hi: 114,
+                                                                            },
+                                                                        },
+                                                                        field_idx: 0,
+                                                                    },
+                                                                    ty: Ty {
+                                                                        kind: Int(
+                                                                            I32,
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 112,
+                                                                        hi: 113,
+                                                                    },
+                                                                },
+                                                                ThirExpr {
+                                                                    thir_id: 49,
+                                                                    kind: Field {
+                                                                        base: ThirExpr {
+                                                                            thir_id: 50,
+                                                                            kind: Path(
+                                                                                "DEFAULT_CONFIG",
+                                                                            ),
+                                                                            ty: Ty {
+                                                                                kind: Int(
+                                                                                    I32,
+                                                                                ),
+                                                                                flags: TypeFlags(
+                                                                                    0x0,
+                                                                                ),
+                                                                            },
+                                                                            span: Span {
+                                                                                file: 0,
+                                                                                lo: 115,
+                                                                                hi: 116,
+                                                                            },
+                                                                        },
+                                                                        field_idx: 0,
+                                                                    },
+                                                                    ty: Ty {
+                                                                        kind: Int(
+                                                                            I32,
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 114,
+                                                                        hi: 115,
+                                                                    },
+                                                                },
+                                                            ],
+                                                            from_hir_call: true,
+                                                        },
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 105,
+                                                            hi: 106,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            ThirStmt {
+                                                kind: Expr(
+                                                    ThirExpr {
+                                                        thir_id: 51,
+                                                        kind: Call {
+                                                            fun: ThirExpr {
+                                                                thir_id: 52,
+                                                                kind: Path(
+                                                                    "println",
+                                                                ),
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I32,
+                                                                    ),
+                                                                    flags: TypeFlags(
+                                                                        0x0,
+                                                                    ),
+                                                                },
+                                                                span: Span {
+                                                                    file: 0,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                            args: [
+                                                                ThirExpr {
+                                                                    thir_id: 53,
+                                                                    kind: Literal(
+                                                                        Str(
+                                                                            "Computed: factorial={}, is_pow2={}",
+                                                                        ),
+                                                                    ),
+                                                                    ty: Ty {
+                                                                        kind: RawPtr(
+                                                                            TypeAndMut {
+                                                                                ty: Ty {
+                                                                                    kind: Int(
+                                                                                        I8,
+                                                                                    ),
+                                                                                    flags: TypeFlags(
+                                                                                        0x0,
+                                                                                    ),
+                                                                                },
+                                                                                mutbl: Not,
+                                                                            },
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 0,
+                                                                        hi: 0,
+                                                                    },
+                                                                },
+                                                                ThirExpr {
+                                                                    thir_id: 54,
+                                                                    kind: Path(
+                                                                        "FACTORIAL_5",
+                                                                    ),
+                                                                    ty: Ty {
+                                                                        kind: Int(
+                                                                            I32,
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 117,
+                                                                        hi: 118,
+                                                                    },
+                                                                },
+                                                                ThirExpr {
+                                                                    thir_id: 55,
+                                                                    kind: Path(
+                                                                        "IS_POWER_OF_TWO",
+                                                                    ),
+                                                                    ty: Ty {
+                                                                        kind: Int(
+                                                                            I32,
+                                                                        ),
+                                                                        flags: TypeFlags(
+                                                                            0x0,
+                                                                        ),
+                                                                    },
+                                                                    span: Span {
+                                                                        file: 0,
+                                                                        lo: 118,
+                                                                        hi: 119,
+                                                                    },
+                                                                },
+                                                            ],
+                                                            from_hir_call: true,
+                                                        },
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I32,
+                                                            ),
+                                                            flags: TypeFlags(
+                                                                0x0,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 0,
+                                                            lo: 116,
+                                                            hi: 117,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                        ],
+                                        expr: None,
+                                        safety_mode: Safe,
+                                    },
+                                ),
+                                ty: Ty {
+                                    kind: Tuple(
+                                        [],
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                span: Span {
+                                    file: 0,
+                                    lo: 60,
+                                    hi: 61,
+                                },
+                            },
+                        ),
+                        safety_mode: Safe,
+                    },
+                ),
+                ty: Ty {
+                    kind: Tuple(
+                        [],
+                    ),
+                    flags: TypeFlags(
+                        0x0,
+                    ),
+                },
+                span: Span {
+                    file: 0,
+                    lo: 0,
+                    hi: 1,
+                },
+            },
+            locals: [],
+        },
+    },
+    next_thir_id: 56,
+}

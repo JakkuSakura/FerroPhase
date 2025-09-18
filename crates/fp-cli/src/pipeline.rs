@@ -1,11 +1,20 @@
+use crate::codegen::CodeGenerator;
+use crate::compilation::BinaryCompiler;
+use crate::config::{PipelineOptions, PipelineTarget, RuntimeConfig};
+
+// Re-export for backward compatibility
 use crate::CliError;
-use fp_core::ast::{AstValue, BExpr, AstExpr, RuntimeValue};
+pub use crate::config::PipelineConfig;
+use fp_core::ast::register_threadlocal_serializer;
+use fp_core::ast::{AstValue, BExpr, RuntimeValue};
 use fp_core::context::SharedScopedContext;
-use fp_core::passes::{RuntimePass, LiteralRuntimePass, RustRuntimePass};
+use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
+use fp_llvm;
+use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
+use fp_optimize::transformations::{HirGenerator, LirGenerator, MirGenerator, ThirGenerator};
 use fp_rust_lang::parser::RustParser;
 use fp_rust_lang::printer::RustPrinter;
-use fp_core::ast::register_threadlocal_serializer;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,15 +22,6 @@ use std::sync::Arc;
 pub enum PipelineInput {
     Expression(String),
     File(PathBuf),
-}
-
-#[derive(Debug)]
-pub struct PipelineConfig {
-    pub optimization_level: u8,
-    pub print_ast: bool,
-    pub print_passes: bool,
-    pub target: String,
-    pub runtime: String,
 }
 
 #[derive(Debug)]
@@ -43,19 +43,19 @@ impl Pipeline {
             runtime_pass: Arc::new(LiteralRuntimePass::default()),
         }
     }
-    
+
     pub fn with_runtime(runtime_name: &str) -> Self {
         let runtime_pass: Arc<dyn RuntimePass> = match runtime_name {
             "rust" => Arc::new(RustRuntimePass::new()),
             "literal" | _ => Arc::new(LiteralRuntimePass::default()),
         };
-        
+
         Self {
             parser: RustParser::new(),
             runtime_pass,
         }
     }
-    
+
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.runtime_pass = match runtime_name {
             "rust" => Arc::new(RustRuntimePass::new()),
@@ -63,42 +63,234 @@ impl Pipeline {
         };
     }
 
-    pub async fn execute(&self, input: PipelineInput, config: &PipelineConfig) -> Result<PipelineOutput, CliError> {
-        let source = match input {
-            PipelineInput::Expression(expr) => expr,
+    /// Unified execution method using PipelineOptions
+    pub async fn execute_with_options(
+        &self,
+        input: PipelineInput,
+        mut options: PipelineOptions,
+    ) -> Result<PipelineOutput, CliError> {
+        let (source, base_path) = match input {
+            PipelineInput::Expression(expr) => (expr, PathBuf::from("expression")),
             PipelineInput::File(path) => {
-                std::fs::read_to_string(&path)
-                    .map_err(|e| CliError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read file {}: {}", path.display(), e))))?
+                let source = std::fs::read_to_string(&path).map_err(|e| {
+                    CliError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to read file {}: {}", path.display(), e),
+                    ))
+                })?;
+                let base_path = path.with_extension("");
+                (source, base_path)
             }
         };
 
+        // Set base path for intermediate files
+        options.base_path = Some(base_path);
+
         let ast = self.parse_source(&source)?;
-        
-        // Choose execution mode based on runtime configuration
-        match config.runtime.as_str() {
-            "literal" => {
-                let result = self.interpret_ast(&ast).await?;
-                Ok(PipelineOutput::Value(result))
-            },
-            "rust" | _ => {
-                let result = self.interpret_ast_runtime(&ast, &config.runtime).await?;
-                Ok(PipelineOutput::RuntimeValue(result))
+
+        // Execute based on target
+        match options.target {
+            PipelineTarget::Rust => {
+                let rust_code = CodeGenerator::generate_rust_code(&ast)?;
+                Ok(PipelineOutput::Code(rust_code))
             }
+            PipelineTarget::Llvm => {
+                let llvm_ir = self.compile_to_llvm_ir(&ast, &options)?;
+                Ok(PipelineOutput::Code(llvm_ir.to_str().unwrap().to_string()))
+            }
+            PipelineTarget::Binary => {
+                let binary_result = self.compile_to_binary(&ast, &options)?;
+                // For binary compilation, print the result and return success
+                // The binary files have already been created by compile_to_binary
+                println!("{}", binary_result);
+                Ok(PipelineOutput::Value(AstValue::string(
+                    "Binary compilation completed".to_string(),
+                )))
+            }
+            PipelineTarget::Interpret => match options.runtime.runtime_type.as_str() {
+                "literal" => {
+                    let result = self.interpret_ast(&ast).await?;
+                    Ok(PipelineOutput::Value(result))
+                }
+                "rust" | _ => {
+                    let result = self
+                        .interpret_ast_runtime(&ast, &options.runtime.runtime_type)
+                        .await?;
+                    Ok(PipelineOutput::RuntimeValue(result))
+                }
+            },
         }
     }
-    
-    /// Execute with runtime semantics
-    pub async fn execute_runtime(&self, input: PipelineInput, runtime_name: &str) -> Result<RuntimeValue, CliError> {
-        let source = match input {
-            PipelineInput::Expression(expr) => expr,
-            PipelineInput::File(path) => {
-                std::fs::read_to_string(&path)
-                    .map_err(|e| CliError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read file {}: {}", path.display(), e))))?
-            }
+
+    /// Unified compilation method that handles intermediate file saving
+    fn compile_to_llvm_ir(
+        &self,
+        ast: &BExpr,
+        options: &PipelineOptions,
+    ) -> Result<PathBuf, CliError> {
+        let base_path = options.base_path.as_ref().unwrap();
+
+        // Register serializer for AST operations
+        let serializer = Arc::new(RustPrinter::new());
+        register_threadlocal_serializer(serializer.clone());
+
+        let context = SharedScopedContext::new();
+
+        // Save intermediate files if requested
+        if options.save_intermediates {
+            // Step 1: Save AST (Abstract Syntax Tree)
+            std::fs::write(base_path.with_extension("ast"), format!("{:#?}", ast)).ok();
+        }
+
+        // Step 2: Const Evaluation
+        let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
+        let mut evaluated_ast = (*ast).clone();
+
+        const_evaluator
+            .evaluate_const_items_only(&mut evaluated_ast, &context)
+            .map_err(|e| CliError::Compilation(format!("Const evaluation failed: {}", e)))?;
+
+        let evaluated_ast = Box::new(evaluated_ast);
+
+        if options.save_intermediates {
+            std::fs::write(
+                base_path.with_extension("east"),
+                format!("{:#?}", evaluated_ast),
+            )
+            .ok();
+        }
+
+        // Step 3: AST → HIR (High-level IR)
+        let mut hir_generator = HirGenerator::new();
+        let hir_program = hir_generator.transform_expr(&evaluated_ast).map_err(|e| {
+            CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
+        })?;
+
+        if options.save_intermediates {
+            std::fs::write(
+                base_path.with_extension("hir"),
+                format!("{:#?}", hir_program),
+            )
+            .ok();
+        }
+
+        // Step 4: HIR → THIR (Typed HIR)
+        let mut thir_generator = ThirGenerator::new();
+        let thir_program = thir_generator.transform(hir_program).map_err(|e| {
+            CliError::Compilation(format!("HIR to THIR transformation failed: {}", e))
+        })?;
+
+        if options.save_intermediates {
+            std::fs::write(
+                base_path.with_extension("thir"),
+                format!("{:#?}", thir_program),
+            )
+            .ok();
+        }
+
+        // Step 5: THIR → MIR (Mid-level IR)
+        let mut mir_generator = MirGenerator::new();
+        let mir_program = mir_generator.transform(thir_program).map_err(|e| {
+            CliError::Compilation(format!("THIR to MIR transformation failed: {}", e))
+        })?;
+
+        if options.save_intermediates {
+            std::fs::write(
+                base_path.with_extension("mir"),
+                format!("{:#?}", mir_program),
+            )
+            .ok();
+        }
+
+        // Step 6: MIR → LIR (Low-level IR)
+        let mut lir_generator = LirGenerator::new();
+        let lir_program = lir_generator.transform(mir_program).map_err(|e| {
+            CliError::Compilation(format!("MIR to LIR transformation failed: {}", e))
+        })?;
+
+        if options.save_intermediates {
+            std::fs::write(
+                base_path.with_extension("lir"),
+                format!("{:#?}", lir_program),
+            )
+            .ok();
+        }
+
+        // Step 7: LIR → LLVM IR
+        let llvm_config = fp_llvm::LlvmConfig::new();
+        let llvm_compiler = fp_llvm::LlvmCompiler::new(llvm_config);
+
+        // Pass the global const map to LLVM compiler
+        let llvm_ir = llvm_compiler
+            .compile(lir_program, None)
+            .map_err(|e| CliError::Compilation(format!("LLVM IR generation failed: {}", e)))?;
+
+        Ok(llvm_ir)
+    }
+
+    /// Unified binary compilation method using llc + lld
+    fn compile_to_binary(
+        &self,
+        ast: &BExpr,
+        options: &PipelineOptions,
+    ) -> Result<String, CliError> {
+        let base_path = options.base_path.as_ref().unwrap();
+
+        // First generate LLVM IR. the write path is already decided -- want to control all here
+        let llvm_ir = self.compile_to_llvm_ir(ast, options)?;
+
+        // Step 1: Compile LLVM IR to object file using llc
+        let obj_path = base_path.with_extension("o");
+        let llc_result = BinaryCompiler::run_llc(&llvm_ir, &obj_path, options)?;
+
+        // Step 2: Link object file to binary (clang preferred, lld/ld fallback)
+        let binary_extension = if cfg!(windows) { "exe" } else { "out" };
+        let binary_path = base_path.with_extension(binary_extension);
+        let link_result = BinaryCompiler::link_binary(&obj_path, &binary_path, options)?;
+
+        // Return information about the compilation
+        Ok(format!(
+            "Binary compiled successfully:\n  LLVM IR: {}\n  Object: {}\n  Binary: {}\n  LLC: {}\n  Linker: {}",
+            llvm_ir.display(),
+            obj_path.display(),
+            binary_path.display(),
+            llc_result,
+            link_result
+        ))
+    }
+
+    /// Legacy execute method for backward compatibility
+    pub async fn execute(
+        &self,
+        input: PipelineInput,
+        config: &PipelineConfig,
+    ) -> Result<PipelineOutput, CliError> {
+        // Convert legacy config to new options
+        let options = PipelineOptions::from(config);
+
+        // Execute using the unified method
+        self.execute_with_options(input, options).await
+    }
+
+    /// Legacy execute_runtime method for backward compatibility
+    pub async fn execute_runtime(
+        &self,
+        input: PipelineInput,
+        runtime_name: &str,
+    ) -> Result<RuntimeValue, CliError> {
+        let options = PipelineOptions {
+            target: PipelineTarget::Interpret,
+            runtime: RuntimeConfig {
+                runtime_type: runtime_name.to_string(),
+                options: std::collections::HashMap::new(),
+            },
+            ..Default::default()
         };
 
-        let ast = self.parse_source(&source)?;
-        self.interpret_ast_runtime(&ast, runtime_name).await
+        match self.execute_with_options(input, options).await? {
+            PipelineOutput::RuntimeValue(val) => Ok(val),
+            _ => Err(CliError::Compilation("Expected runtime value".to_string())),
+        }
     }
 
     pub fn parse_source_public(&self, source: &str) -> Result<BExpr, CliError> {
@@ -114,142 +306,38 @@ impl Pipeline {
         };
 
         // Try parsing as file first
-        if let Ok(ast) = self.try_parse_as_file(&cleaned_source) {
+        if let Ok(ast) = self
+            .parser
+            .try_parse_as_file(&cleaned_source)
+            .map_err(|e| CliError::Compilation(e.to_string()))
+        {
             return Ok(ast);
         }
 
         // Try parsing as block expression
-        if let Ok(ast) = self.try_parse_block_expression(&cleaned_source) {
+        if let Ok(ast) = self
+            .parser
+            .try_parse_block_expression(&cleaned_source)
+            .map_err(|e| CliError::Compilation(e.to_string()))
+        {
             return Ok(ast);
         }
 
         // Try parsing as simple expression
-        self.try_parse_simple_expression(&cleaned_source)
+        self.parser
+            .try_parse_simple_expression(&cleaned_source)
+            .map_err(|e| CliError::Compilation(e.to_string()))
     }
 
-    fn try_parse_as_file(&self, source: &str) -> Result<BExpr, CliError> {
-        // Parse as a syn::File first, but be more permissive with errors
-        let syn_file: syn::File = syn::parse_str(source)
-            .map_err(|e| CliError::Compilation(format!("Failed to parse as file: {}", e)))?;
-
-        // Try to parse the file, but handle errors more gracefully for transpilation
-        match self.parser.parse_file_content(PathBuf::from("input.fp"), syn_file) {
-            Ok(ast_file) => {
-                // Find main function and const declarations
-                let mut const_items = Vec::new();
-                let mut main_body = None;
-                
-                for item in ast_file.items {
-                    if let Some(func) = item.as_function() {
-                        if func.name.name == "main" {
-                            main_body = Some(func.body.clone());
-                        }
-                    } else {
-                        // Keep const declarations and other items
-                        const_items.push(fp_core::ast::BlockStmt::Item(Box::new(item)));
-                    }
-                }
-                
-                // If we found a main function, create a block with const items + main body
-                if let Some(body) = main_body {
-                    // Add the main body as the final expression
-                    const_items.push(fp_core::ast::BlockStmt::Expr(fp_core::ast::BlockStmtExpr {
-                        expr: body,
-                        semicolon: None,
-                    }));
-                    
-                    Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
-                        stmts: const_items,
-                    })))
-                } else {
-                    // No main function, create a minimal structure for transpilation
-                    if const_items.is_empty() {
-                        // Create an empty block for transpilation purposes
-                        Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
-                            stmts: vec![],
-                        })))
-                    } else {
-                        // Just use all parsed items
-                        Ok(Box::new(AstExpr::Block(fp_core::ast::ExprBlock {
-                            stmts: const_items,
-                        })))
-                    }
-                }
-            },
-            Err(_e) => {
-                // For transpilation mode, if parsing fails, try to extract just the struct definitions
-                self.try_parse_structs_only(source)
-            }
-        }
-    }
-
-    fn try_parse_block_expression(&self, source: &str) -> Result<BExpr, CliError> {
-        let wrapped_source = format!("{{\n{}\n}}", source);
-        let syn_expr: syn::Expr = syn::parse_str(&wrapped_source)
-            .map_err(|e| CliError::Compilation(format!("Failed to parse as block: {}", e)))?;
-
-        let ast_expr = self.parser.parse_expr(syn_expr)
-            .map_err(|e| CliError::Compilation(format!("Failed to convert to AST: {}", e)))?;
-
-        Ok(Box::new(ast_expr))
-    }
-
-    fn try_parse_simple_expression(&self, source: &str) -> Result<BExpr, CliError> {
-        let syn_expr: syn::Expr = syn::parse_str(source)
-            .map_err(|e| CliError::Compilation(format!("Failed to parse as expression: {}", e)))?;
-
-        let ast_expr = self.parser.parse_expr(syn_expr)
-            .map_err(|e| CliError::Compilation(format!("Failed to convert to AST: {}", e)))?;
-
-        Ok(Box::new(ast_expr))
-    }
-
-    fn try_parse_structs_only(&self, source: &str) -> Result<BExpr, CliError> {
-        // Try to parse individual items from the source, filtering out problematic ones
-        let syn_file: syn::File = syn::parse_str(source)
-            .map_err(|e| CliError::Compilation(format!("Failed to parse source: {}", e)))?;
-        
-        let mut parsed_items = Vec::new();
-        
-        // Try to parse each item individually, skipping ones that fail
-        for item in syn_file.items {
-            match item {
-                syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Type(_) => {
-                    // Try to parse struct/enum definitions
-                    if let Ok(ast_item) = self.parser.parse_item(item) {
-                        parsed_items.push(fp_core::ast::BlockStmt::Item(Box::new(ast_item)));
-                    }
-                },
-                syn::Item::Fn(_) => {
-                    // Try to parse function definitions, but don't fail if they use unsupported features
-                    if let Ok(ast_item) = self.parser.parse_item(item) {
-                        parsed_items.push(fp_core::ast::BlockStmt::Item(Box::new(ast_item)));
-                    }
-                },
-                syn::Item::Const(_) => {
-                    // Try to parse const definitions
-                    if let Ok(ast_item) = self.parser.parse_item(item) {
-                        parsed_items.push(fp_core::ast::BlockStmt::Item(Box::new(ast_item)));
-                    }
-                },
-                _ => {
-                    // Skip other items like use statements, impl blocks, etc.
-                    continue;
-                }
-            }
-        }
-        
-        // Create a block with whatever we managed to parse
-        Ok(Box::new(fp_core::ast::AstExpr::Block(fp_core::ast::ExprBlock {
-            stmts: parsed_items,
-        })))
-    }
-
-    async fn interpret_ast_runtime(&self, ast: &BExpr, runtime_name: &str) -> Result<RuntimeValue, CliError> {
+    async fn interpret_ast_runtime(
+        &self,
+        ast: &BExpr,
+        runtime_name: &str,
+    ) -> Result<RuntimeValue, CliError> {
         // Create a serializer using RustPrinter
         let serializer = Arc::new(RustPrinter::new());
         register_threadlocal_serializer(serializer.clone());
-        
+
         // Create runtime pass based on name
         let runtime_pass: Arc<dyn RuntimePass> = match runtime_name {
             "rust" => Arc::new(RustRuntimePass::new()),
@@ -257,28 +345,30 @@ impl Pipeline {
         };
 
         // Create an orchestrator with the runtime pass
-        let orchestrator = InterpretationOrchestrator::new(serializer)
-            .with_runtime_pass(runtime_pass);
+        let orchestrator =
+            InterpretationOrchestrator::new(serializer).with_runtime_pass(runtime_pass);
 
         // Create a context for interpretation
         let context = SharedScopedContext::new();
 
         // Interpret with runtime semantics
-        orchestrator.interpret_expr_runtime(ast, &context)
+        orchestrator
+            .interpret_expr_runtime(ast, &context)
             .map_err(|e| CliError::Compilation(format!("Runtime interpretation failed: {}", e)))
     }
 
     async fn interpret_ast(&self, ast: &BExpr) -> Result<AstValue, CliError> {
         // Create a serializer using RustPrinter
         let serializer = Arc::new(RustPrinter::new());
-        
+
         // Register the serializer for thread-local access
         register_threadlocal_serializer(serializer.clone());
-        
+
         let orchestrator = InterpretationOrchestrator::new(serializer);
         let context = SharedScopedContext::new();
-        
-        let result = orchestrator.interpret_expr(ast, &context)
+
+        let result = orchestrator
+            .interpret_expr(ast, &context)
             .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?;
 
         // Retrieve and print any println! outputs
@@ -289,9 +379,4 @@ impl Pipeline {
 
         Ok(result)
     }
-}
-
-pub fn try_parse_simple_expression(source: &str) -> Result<BExpr, CliError> {
-    let pipeline = Pipeline::new();
-    pipeline.try_parse_simple_expression(source)
 }
