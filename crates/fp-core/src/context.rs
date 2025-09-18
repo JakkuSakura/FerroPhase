@@ -1,5 +1,5 @@
 use crate::ast::{AstExpr, ExprClosured, Visibility};
-use crate::ast::{AstType, AstValue, ValueFunction};
+use crate::ast::{AstType, AstValue, ValueFunction, RuntimeValue};
 use crate::id::{Ident, Path};
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 #[derive(Clone, Default)]
 pub struct ValueSlot {
     value: Option<AstValue>,
+    runtime_value: Option<RuntimeValue>,
     ty: Option<AstType>,
     closure: Option<Arc<ScopedContext>>,
 }
@@ -34,6 +35,12 @@ impl SharedValueSlot {
     }
     pub fn set_value(&self, value: AstValue) {
         self.with_storage(|x| x.value = Some(value));
+    }
+    pub fn runtime_value(&self) -> Option<RuntimeValue> {
+        self.with_storage(|x| x.runtime_value.clone())
+    }
+    pub fn set_runtime_value(&self, value: RuntimeValue) {
+        self.with_storage(|x| x.runtime_value = Some(value));
     }
     pub fn set_ty(&self, ty: AstType) {
         self.with_storage(|x| x.ty = Some(ty));
@@ -81,6 +88,38 @@ impl ScopedContext {
 
     pub fn insert_expr(&self, key: impl Into<Ident>, value: AstExpr) {
         self.insert_value(key, AstValue::expr(value));
+    }
+
+    pub fn insert_runtime_value(&self, key: impl Into<Ident>, value: RuntimeValue) {
+        self.storages
+            .entry(key.into())
+            .or_default()
+            .set_runtime_value(value);
+    }
+
+    pub fn get_runtime_value(&self, key: &Ident) -> Option<RuntimeValue> {
+        self.storages.get(key)?.runtime_value()
+    }
+
+    pub fn get_runtime_value_recursive(&self, path: &Path) -> Option<RuntimeValue> {
+        if path.is_root() {
+            return None;
+        }
+
+        if path.segments.len() == 1 {
+            if let Some(runtime_value) = self.get_runtime_value(&path.segments[0]) {
+                return Some(runtime_value);
+            }
+        }
+
+        // Search in parent contexts
+        if let Some(parent_ref) = &self.parent {
+            if let Some(parent) = parent_ref.upgrade() {
+                return parent.get_runtime_value_recursive(path);
+            }
+        }
+
+        None
     }
 
     pub fn print_local_values(&self) -> Result<(), crate::Error> {
@@ -198,6 +237,42 @@ impl SharedScopedContext {
             store.value = Some(value);
             store.closure = Some(self.clone().0);
         });
+    }
+    
+    pub fn insert_runtime_value_with_ctx(&self, key: impl Into<Ident>, value: RuntimeValue) {
+        let store = self.storages.entry(key.into()).or_default();
+        store.with_storage(|store| {
+            store.runtime_value = Some(value);
+            store.closure = Some(self.clone().0);
+        });
+    }
+    
+    pub fn get_runtime_value_storage(&self, key: impl Into<Path>) -> Option<RuntimeValue> {
+        let storage = self.get_storage(key, true)?;
+        storage.runtime_value()
+    }
+    
+    pub fn get_runtime_value_recursive_path(&self, key: impl Into<Path>) -> Option<RuntimeValue> {
+        let key = key.into();
+        debug!("get_runtime_value_recursive {}", key);
+        
+        // Try direct lookup first
+        if let Some(runtime_value) = self.get_runtime_value_storage(&key) {
+            return Some(runtime_value);
+        }
+        
+        // If we have a regular value, convert it to runtime value
+        if let Some(ast_value) = self.get_value(&key) {
+            return Some(RuntimeValue::literal(ast_value));
+        }
+        
+        None
+    }
+    
+    pub fn get_runtime_value_mut(&self, key: &str) -> Option<RuntimeValue> {
+        // Note: This is a simplified implementation
+        // In a full implementation, we'd need to track mutability properly
+        self.get_runtime_value_storage(Ident::new(key))
     }
     /// insert type inference
     pub fn insert_type(&self, key: impl Into<Ident>, ty: AstType) {

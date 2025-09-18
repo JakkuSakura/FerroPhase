@@ -1,6 +1,7 @@
 use crate::CliError;
-use fp_core::ast::{AstValue, BExpr, AstExpr};
+use fp_core::ast::{AstValue, BExpr, AstExpr, RuntimeValue};
 use fp_core::context::SharedScopedContext;
+use fp_core::passes::{RuntimePass, LiteralRuntimePass, RustRuntimePass};
 use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust_lang::parser::RustParser;
 use fp_rust_lang::printer::RustPrinter;
@@ -20,26 +21,49 @@ pub struct PipelineConfig {
     pub print_ast: bool,
     pub print_passes: bool,
     pub target: String,
+    pub runtime: String,
 }
 
 #[derive(Debug)]
 pub enum PipelineOutput {
     Value(AstValue),
+    RuntimeValue(RuntimeValue),
     Code(String),
 }
 
 pub struct Pipeline {
     parser: RustParser,
+    runtime_pass: Arc<dyn RuntimePass>,
 }
 
 impl Pipeline {
     pub fn new() -> Self {
         Self {
             parser: RustParser::new(),
+            runtime_pass: Arc::new(LiteralRuntimePass::default()),
         }
     }
+    
+    pub fn with_runtime(runtime_name: &str) -> Self {
+        let runtime_pass: Arc<dyn RuntimePass> = match runtime_name {
+            "rust" => Arc::new(RustRuntimePass::new()),
+            "literal" | _ => Arc::new(LiteralRuntimePass::default()),
+        };
+        
+        Self {
+            parser: RustParser::new(),
+            runtime_pass,
+        }
+    }
+    
+    pub fn set_runtime(&mut self, runtime_name: &str) {
+        self.runtime_pass = match runtime_name {
+            "rust" => Arc::new(RustRuntimePass::new()),
+            "literal" | _ => Arc::new(LiteralRuntimePass::default()),
+        };
+    }
 
-    pub async fn execute(&self, input: PipelineInput, _config: &PipelineConfig) -> Result<PipelineOutput, CliError> {
+    pub async fn execute(&self, input: PipelineInput, config: &PipelineConfig) -> Result<PipelineOutput, CliError> {
         let source = match input {
             PipelineInput::Expression(expr) => expr,
             PipelineInput::File(path) => {
@@ -49,9 +73,32 @@ impl Pipeline {
         };
 
         let ast = self.parse_source(&source)?;
-        let result = self.interpret_ast(&ast).await?;
         
-        Ok(PipelineOutput::Value(result))
+        // Choose execution mode based on runtime configuration
+        match config.runtime.as_str() {
+            "literal" => {
+                let result = self.interpret_ast(&ast).await?;
+                Ok(PipelineOutput::Value(result))
+            },
+            "rust" | _ => {
+                let result = self.interpret_ast_runtime(&ast, &config.runtime).await?;
+                Ok(PipelineOutput::RuntimeValue(result))
+            }
+        }
+    }
+    
+    /// Execute with runtime semantics
+    pub async fn execute_runtime(&self, input: PipelineInput, runtime_name: &str) -> Result<RuntimeValue, CliError> {
+        let source = match input {
+            PipelineInput::Expression(expr) => expr,
+            PipelineInput::File(path) => {
+                std::fs::read_to_string(&path)
+                    .map_err(|e| CliError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read file {}: {}", path.display(), e))))?
+            }
+        };
+
+        let ast = self.parse_source(&source)?;
+        self.interpret_ast_runtime(&ast, runtime_name).await
     }
 
     pub fn parse_source_public(&self, source: &str) -> Result<BExpr, CliError> {
@@ -196,6 +243,29 @@ impl Pipeline {
         Ok(Box::new(fp_core::ast::AstExpr::Block(fp_core::ast::ExprBlock {
             stmts: parsed_items,
         })))
+    }
+
+    async fn interpret_ast_runtime(&self, ast: &BExpr, runtime_name: &str) -> Result<RuntimeValue, CliError> {
+        // Create a serializer using RustPrinter
+        let serializer = Arc::new(RustPrinter::new());
+        register_threadlocal_serializer(serializer.clone());
+        
+        // Create runtime pass based on name
+        let runtime_pass: Arc<dyn RuntimePass> = match runtime_name {
+            "rust" => Arc::new(RustRuntimePass::new()),
+            "literal" | _ => Arc::new(LiteralRuntimePass::default()),
+        };
+
+        // Create an orchestrator with the runtime pass
+        let orchestrator = InterpretationOrchestrator::new(serializer)
+            .with_runtime_pass(runtime_pass);
+
+        // Create a context for interpretation
+        let context = SharedScopedContext::new();
+
+        // Interpret with runtime semantics
+        orchestrator.interpret_expr_runtime(ast, &context)
+            .map_err(|e| CliError::Compilation(format!("Runtime interpretation failed: {}", e)))
     }
 
     async fn interpret_ast(&self, ast: &BExpr) -> Result<AstValue, CliError> {

@@ -10,6 +10,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::ctx::{Context, ValueSystem};
 use fp_core::id::{Ident, Locator};
 use fp_core::ops::*;
+use fp_core::passes::{RuntimePass, LiteralRuntimePass};
 use fp_core::utils::conv::TryConv;
 use std::sync::Arc;
 // use std::any::Any;
@@ -23,6 +24,7 @@ use crate::opt_bail;
 pub struct InterpretationOrchestrator {
     pub serializer: Arc<dyn AstSerializer>,
     pub ignore_missing_items: bool,
+    pub runtime_pass: Arc<dyn RuntimePass>,
 }
 
 impl InterpretationOrchestrator {
@@ -30,7 +32,73 @@ impl InterpretationOrchestrator {
         Self {
             serializer,
             ignore_missing_items: false,
+            runtime_pass: Arc::new(LiteralRuntimePass::default()),
         }
+    }
+    
+    pub fn with_runtime_pass(mut self, runtime_pass: Arc<dyn RuntimePass>) -> Self {
+        self.runtime_pass = runtime_pass;
+        self
+    }
+    
+    pub fn set_runtime_pass(&mut self, runtime_pass: Arc<dyn RuntimePass>) {
+        self.runtime_pass = runtime_pass;
+    }
+    
+    /// Interpret expression with runtime semantics
+    pub fn interpret_expr_runtime(&self, expr: &AstExpr, ctx: &SharedScopedContext) -> Result<RuntimeValue> {
+        match expr {
+            AstExpr::Locator(Locator::Ident(ident)) => {
+                // Try to get runtime value first
+                if let Some(runtime_value) = ctx.get_runtime_value_recursive_path(ident) {
+                    Ok(runtime_value)
+                } else {
+                    // Fall back to literal interpretation
+                    let literal = self.interpret_ident(ident, ctx, true)?;
+                    Ok(self.runtime_pass.create_runtime_value(literal))
+                }
+            },
+            AstExpr::Select(select) => {
+                let obj = self.interpret_expr_runtime(&select.obj.get(), ctx)?;
+                self.runtime_pass.access_field(obj, &select.field.name)
+                    .map_err(|e| optimization_error(format!("Field access failed: {}", e)))
+            },
+            AstExpr::Invoke(invoke) => {
+                self.interpret_invoke_runtime(invoke, ctx)
+            },
+            _ => {
+                // For other expressions, interpret as literal then wrap
+                let literal = self.interpret_expr(expr, ctx)?;
+                Ok(self.runtime_pass.create_runtime_value(literal))
+            }
+        }
+    }
+    
+    /// Runtime-aware method invocation
+    pub fn interpret_invoke_runtime(&self, node: &ExprInvoke, ctx: &SharedScopedContext) -> Result<RuntimeValue> {
+        match &node.target {
+            ExprInvokeTarget::Method(select) => {
+                // Method call with runtime semantics
+                let obj = self.interpret_expr_runtime(&select.obj.get(), ctx)?;
+                let args: Vec<RuntimeValue> = node.args.iter()
+                    .map(|arg| self.interpret_expr_runtime(arg, ctx))
+                    .try_collect()?;
+                
+                self.runtime_pass.call_method(obj, &select.field.name, args)
+                    .map_err(|e| optimization_error(format!("Method call failed: {}", e)))
+            },
+            _ => {
+                // Fall back to regular interpretation for non-method calls
+                let result = self.interpret_invoke(node, ctx)?;
+                Ok(self.runtime_pass.create_runtime_value(result))
+            }
+        }
+    }
+    
+    /// Runtime-aware assignment
+    pub fn assign_runtime(&self, target: &AstExpr, value: RuntimeValue, ctx: &SharedScopedContext) -> Result<()> {
+        self.runtime_pass.assign(target, value, ctx)
+            .map_err(|e| optimization_error(format!("Assignment failed: {}", e)))
     }
 
     pub fn interpret_items(&self, node: &ItemChunk, ctx: &SharedScopedContext) -> Result<AstValue> {
