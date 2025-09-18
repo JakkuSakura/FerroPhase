@@ -17,6 +17,8 @@ pub enum Error {
     SyntaxError(Span, SyntaxError),
     #[error("Optimization error: {0}")]
     OptimizationError(Span, OptimizationError),
+    #[error("Runtime error: {0}")]
+    RuntimeError(crate::ast::RuntimeError),
     #[error("Generic error: {0}")]
     Generic(String),
 }
@@ -41,8 +43,18 @@ impl From<String> for Error {
         Error::Generic(s)
     }
 }
+impl From<&str> for Error {
+    fn from(s: &str) -> Self {
+        Error::Generic(s.to_string())
+    }
+}
 impl From<serde_json::Error> for Error {
     fn from(e: serde_json::Error) -> Self {
         Error::Generic(e.to_string())
+    }
+}
+impl From<crate::ast::RuntimeError> for Error {
+    fn from(e: crate::ast::RuntimeError) -> Self {
+        Error::RuntimeError(e)
     }
 }

@@ -13,7 +13,7 @@ pub mod project;
 pub mod utils;
 
 // Re-export core types for convenience, avoiding conflicts
-pub use fp_core::{Result as CoreResult, Error as CoreError, ast, context, span, id, ops, vm};
+pub use fp_core::{Result as CoreResult, Error as CoreError, ast, context, span, id, ops};
 pub use fp_optimize::*;
 pub use fp_rust_lang::parser;
 

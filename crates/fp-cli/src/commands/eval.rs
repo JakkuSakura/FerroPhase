@@ -2,7 +2,7 @@
 
 use crate::{cli::CliConfig, pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput}, Result, CliError};
 use console::style;
-use fp_core::ast::AstValue;
+use fp_core::ast::{AstValue, RuntimeValue};
 use tracing::info;
 
 /// Arguments for the eval command
@@ -12,6 +12,7 @@ pub struct EvalArgs {
     pub print_ast: bool,
     pub print_passes: bool,
     pub print_result: bool, // Whether to print the final result
+    pub runtime: Option<String>, // Runtime to use (literal, rust)
 }
 
 /// Execute the eval command
@@ -33,6 +34,7 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
         print_ast: args.print_ast,
         print_passes: args.print_passes,
         target: "eval".to_string(),
+        runtime: args.runtime.unwrap_or_else(|| "literal".to_string()),
     };
 
     // Execute pipeline
@@ -46,9 +48,41 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
                 print_result(&value)?;
             }
         },
+        PipelineOutput::RuntimeValue(runtime_value) => {
+            if args.print_result {
+                print_runtime_result(&runtime_value)?;
+            }
+        },
         _ => return Err(CliError::Compilation("Expected evaluation result".to_string())),
     }
 
+    Ok(())
+}
+
+fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
+    // Print the runtime value with ownership information
+    match result {
+        _ => {
+            let value = result.get_value();
+            let ownership_info = if result.is_literal() {
+                "literal"
+            } else if result.is_owned() {
+                "owned"
+            } else if result.is_borrowed() {
+                "borrowed"
+            } else if result.is_shared() {
+                "shared"
+            } else {
+                "extension"
+            };
+            
+            println!("{} {} [{}]", 
+                style("Result:").green().bold(), 
+                style(format!("{}", value)).cyan(), 
+                style(ownership_info).dim()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -139,6 +173,8 @@ mod tests {
 
     #[test]
     fn test_parse_simple_expressions() {
+        use crate::pipeline::try_parse_simple_expression;
+        
         // Test that we can parse basic arithmetic
         assert!(try_parse_simple_expression("1 + 2").is_ok());
         assert!(try_parse_simple_expression("true && false").is_ok());

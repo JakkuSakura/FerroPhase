@@ -2,9 +2,9 @@ use common::*;
 
 use fp_core::context::SharedScopedContext;
 use fp_optimize::utils::{load_optimizers, FoldOptimizer};
-use proc_macro::TokenStream;
 use fp_rust_lang::parser::RustParser;
 use fp_rust_lang::printer::RustPrinter;
+use proc_macro::TokenStream;
 
 use fp_core::ast::{AstExpr, AstFile, AstModule};
 use std::sync::Arc;
@@ -71,13 +71,5 @@ pub fn specialize(input: TokenStream) -> TokenStream {
     let input = RustParser::new()
         .parse_file_content("".into(), input)
         .unwrap();
-    specialize_inner(input).unwrap().into()
-}
-
-#[proc_macro_attribute]
-pub fn specialize_module(_attr: TokenStream, input: TokenStream) -> TokenStream {
-    let input: syn::ItemMod = syn::parse(input.into()).unwrap();
-    let input = RustParser::new().parse_module(input).unwrap();
-
     specialize_inner(input).unwrap().into()
 }

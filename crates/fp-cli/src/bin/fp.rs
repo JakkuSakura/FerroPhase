@@ -191,6 +191,10 @@ struct EvalArgs {
     /// Print optimization passes
     #[arg(long)]
     print_passes: bool,
+    
+    /// Runtime semantics to use (literal, rust)
+    #[arg(long, default_value = "literal")]
+    runtime: String,
 }
 
 #[derive(Args)]
@@ -339,6 +343,7 @@ async fn main() -> Result<()> {
                 print_ast: args.print_ast,
                 print_passes: args.print_passes,
                 print_result: true, // For eval command, always print result
+                runtime: Some(args.runtime),
             };
             commands::eval_command(eval_args, &config).await
         },
@@ -357,6 +362,7 @@ async fn main() -> Result<()> {
                 print_ast: args.print_ast,
                 print_passes: args.print_passes,
                 print_result: false, // For run command, don't print result
+                runtime: None, // Use default literal runtime for run
             };
             commands::eval_command(eval_args, &config).await
         },
