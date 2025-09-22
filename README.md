@@ -5,6 +5,7 @@ A meta-compilation framework that extends Rust with powerful compile-time comput
 ## Overview
 
 FerroPhase is a **meta-compilation framework** that enhances Rust with:
+
 - **Rich compile-time introspection** - `sizeof!()`, `hasfield!()`, `field_count!()`
 - **Dynamic type generation** - declarative `type T = { ... }` syntax
 - **Structural metaprogramming** - conditional fields and type inheritance
@@ -13,6 +14,7 @@ FerroPhase is a **meta-compilation framework** that enhances Rust with:
 ## Quick Start
 
 ### Installation
+
 ```bash
 git clone https://github.com/your-org/FerroPhase
 cd FerroPhase
@@ -21,6 +23,7 @@ export PATH="$PATH:$(pwd)/target/release"
 ```
 
 ### Create Your First Project
+
 ```bash
 fp init my-project --template basic
 cd my-project
@@ -28,6 +31,7 @@ fp compile src/main.fp --target rust --run
 ```
 
 ### Example: Advanced Type Generation
+
 ```rust
 #!/usr/bin/env fp run
 
@@ -80,6 +84,7 @@ fn main() {
 ## Key Features
 
 ### Compile-time Introspection
+
 ```rust
 const SIZE: usize = sizeof!(MyStruct);
 const FIELDS: usize = field_count!(MyStruct);
@@ -87,6 +92,7 @@ const HAS_FIELD: bool = hasfield!(MyStruct, "name");
 ```
 
 ### Parametric Type Generation
+
 ```rust
 const fn create_entity<const FEATURES: EntityFeatures>() -> Type {
     type Entity = {
@@ -131,33 +137,34 @@ type AdminUser = create_entity<EntityFeatures {
 ```
 
 ### Advanced Type Composition
+
 ```rust
 // Type inheritance with conditional extensions
 type Employee = {
-    ...User,  // Inherit all User fields and methods
-    department: String,
-    salary: u64,
-    
-    // Conditional mixins based on department
-    if department == "Engineering" {
-        ...DeveloperMixin,  // Git access, code review permissions
-        github_username: String,
-    }
-    
-    if department == "Management" {
-        ...ManagerMixin,    // Team management, budget access
-        direct_reports: Vec<UserId>,
-        budget_limit: u64,
-    }
-    
-    // Generate department-specific methods
-    fn get_role_permissions(&self) -> Vec<Permission> {
-        match_department!(self.department, {
-            "Engineering" => generate_dev_permissions!(),
-            "Management" => generate_mgmt_permissions!(),
-            _ => generate_default_permissions!()
-        })
-    }
+...User,  // Inherit all User fields and methods
+department: String,
+salary: u64,
+
+// Conditional mixins based on department
+if department == "Engineering" {
+...DeveloperMixin,  // Git access, code review permissions
+github_username: String,
+}
+
+if department == "Management" {
+...ManagerMixin,    // Team management, budget access
+direct_reports: Vec < UserId >,
+budget_limit: u64,
+}
+
+// Generate department-specific methods
+fn get_role_permissions( & self ) -> Vec < Permission> {
+match_department ! ( self.department, {
+"Engineering" => generate_dev_permissions ! (),
+"Management" => generate_mgmt_permissions! (),
+_ => generate_default_permissions ! ()
+})
+}
 };
 
 // Automatic validation
@@ -165,21 +172,22 @@ const EMPLOYEE_SIZE: usize = sizeof!(Employee);
 const MAX_ROLES: usize = count_conditional_fields!(Employee);
 
 if MAX_ROLES > 10 {
-    compile_error!("Too many role variants - consider refactoring");
+compile_error ! ("Too many role variants - consider refactoring");
 }
 ```
 
 ## CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `fp init <name>` | Create new project |
+| Command             | Description             |
+|---------------------|-------------------------|
+| `fp init <name>`    | Create new project      |
 | `fp compile <file>` | Compile FerroPhase code |
-| `fp eval <expr>` | Evaluate expressions |
-| `fp check <path>` | Validate code |
-| `fp format <files>` | Format code |
+| `fp eval <expr>`    | Evaluate expressions    |
+| `fp check <path>`   | Validate code           |
+| `fp format <files>` | Format code             |
 
 ### Project Templates
+
 - `basic` - Simple project with examples
 - `library` - Library with advanced features
 - `binary` - CLI application template
@@ -191,7 +199,7 @@ FerroPhase/
 ├── crates/
 │   ├── fp-core/           # Core AST and operations
 │   ├── fp-optimize/       # Optimization passes
-│   ├── fp-rust-lang/      # Rust frontend
+│   ├── fp-rust/      # Rust frontend
 │   └── fp-cli/            # Command-line interface
 ├── examples/              # Example programs
 └── docs/                  # Documentation
@@ -200,6 +208,7 @@ FerroPhase/
 ## Implementation Status
 
 ### ✅ Current Features
+
 - Core AST infrastructure
 - Const evaluation with 15+ intrinsics
 - Rust transpiler
@@ -207,11 +216,13 @@ FerroPhase/
 - Declarative type syntax examples
 
 ### 🚧 In Progress
+
 - Enhanced parser for macro syntax
 - Side effect tracking system
 - 3-phase const evaluation
 
 ### 📋 Planned
+
 - LLVM backend
 - WebAssembly output
 - Language server support
@@ -219,6 +230,7 @@ FerroPhase/
 ## Meta-Compilation Philosophy
 
 **FerroPhase** acts as a meta-compilation layer that:
+
 - **Complements Rust** rather than replacing it
 - **Generates clean, idiomatic Rust code** from enhanced syntax
 - **Provides compile-time computation** beyond Rust's const capabilities
@@ -229,6 +241,7 @@ FerroPhase/
 See `examples/` directory for advanced FerroPhase capabilities:
 
 ### 1. Parametric Struct Generation (`05_parametric_structs.fp`)
+
 ```rust
 // Generate vector types with dimension-based methods
 const fn create_vector_type<const DIM: usize, T>() -> Type {
@@ -263,6 +276,7 @@ type Vector8D = create_vector_type<8, f32>();
 ```
 
 ### 2. Generic Specialization (`08_generic_specialization.fp`)
+
 ```rust
 // Automatic container optimization based on type properties
 const fn create_container<T>() -> Type {
@@ -292,6 +306,7 @@ const fn create_container<T>() -> Type {
 ```
 
 ### 3. Database ORM Generation (`10_metaprogramming_patterns.fp`)
+
 ```rust
 // Generate complete ORM from schema definition
 const SCHEMA = {
@@ -321,6 +336,7 @@ type User = {
 ```
 
 Run examples:
+
 ```bash
 # Direct execution with shebang
 ./examples/05_parametric_structs.fp
@@ -335,6 +351,7 @@ fp compile examples/08_generic_specialization.fp --target rust
 ## Contributing
 
 FerroPhase welcomes contributions in:
+
 - Language design and syntax
 - Optimization passes
 - Type system features

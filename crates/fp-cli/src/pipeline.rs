@@ -13,8 +13,8 @@ use fp_llvm;
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_optimize::transformations::{HirGenerator, LirGenerator, MirGenerator, ThirGenerator};
-use fp_rust_lang::parser::RustParser;
-use fp_rust_lang::printer::RustPrinter;
+use fp_rust::parser::RustParser;
+use fp_rust::printer::RustPrinter;
 use std::path::PathBuf;
 use std::sync::Arc;
 

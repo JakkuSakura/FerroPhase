@@ -1,14 +1,14 @@
 //! Run command implementation - executes FerroPhase files directly using AST interpretation
 
-use crate::{cli::CliConfig, Result, CliError};
+use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{AstValue, RuntimeValue, BExpr};
 use fp_core::ast::register_threadlocal_serializer;
+use fp_core::ast::{AstValue, BExpr, RuntimeValue};
 use fp_core::context::SharedScopedContext;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_optimize::orchestrators::InterpretationOrchestrator;
-use fp_rust_lang::parser::RustParser;
-use fp_rust_lang::printer::RustPrinter;
+use fp_rust::parser::RustParser;
+use fp_rust::printer::RustPrinter;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
@@ -49,7 +49,11 @@ pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
             if let AstValue::Unit(_) = result {
                 // Don't print unit results
             } else {
-                println!("{} {}", style("Result:").green().bold(), format_result(&result));
+                println!(
+                    "{} {}",
+                    style("Result:").green().bold(),
+                    format_result(&result)
+                );
             }
         }
         "rust" => {
@@ -60,7 +64,10 @@ pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
             }
         }
         _ => {
-            return Err(CliError::InvalidInput(format!("Unknown runtime: {}", runtime)));
+            return Err(CliError::InvalidInput(format!(
+                "Unknown runtime: {}",
+                runtime
+            )));
         }
     }
 
@@ -70,7 +77,7 @@ pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
 /// Parse source code to AST without using HIR or later compilation stages
 fn parse_source_to_ast(source: &str) -> Result<BExpr> {
     let parser = RustParser::new();
-    
+
     // Strip shebang line if present
     let cleaned_source = if source.starts_with("#!") {
         source.lines().skip(1).collect::<Vec<_>>().join("\n")
@@ -210,10 +217,11 @@ fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
     } else {
         "extension"
     };
-    
-    println!("{} {} [{}]", 
-        style("Result:").green().bold(), 
-        style(format!("{}", value)).cyan(), 
+
+    println!(
+        "{} {} [{}]",
+        style("Result:").green().bold(),
+        style(format!("{}", value)).cyan(),
         style(ownership_info).dim()
     );
     Ok(())
@@ -235,8 +243,8 @@ fn format_result(result: &AstValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn test_run_simple_expression_file() {

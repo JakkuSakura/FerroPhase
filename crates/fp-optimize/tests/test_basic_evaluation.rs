@@ -7,9 +7,9 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
+use fp_rust::printer::RustPrinter;
+use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::{shll_parse_expr, shll_parse_value};
 use std::sync::Arc;
 
 // TODO: Fix interpreter API - use InterpretationOrchestrator instead of Interpreter
@@ -122,7 +122,7 @@ fn test_error_handling() -> Result<()> {
     // Test that interpreter properly handles unsupported operations
     let unsupported_expr = shll_parse_expr!(20 / 4); // Division not supported
     let result = interpreter.interpret_expr(unsupported_expr, &ctx);
-    
+
     // Should return an error, not crash
     assert!(result.is_err());
 
@@ -142,7 +142,7 @@ fn test_supported_operations() -> Result<()> {
     // Document what operations the interpreter currently supports
     let supported_operations = vec![
         "Addition (+)",
-        "Subtraction (-)", 
+        "Subtraction (-)",
         "Multiplication (*)",
         "Equality (==)",
         "Inequality (!=)",
@@ -167,7 +167,11 @@ fn test_supported_operations() -> Result<()> {
     // All of these should evaluate successfully
     for (i, expr) in test_expressions.into_iter().enumerate() {
         let result = interpreter.interpret_expr(expr, &ctx);
-        assert!(result.is_ok(), "Operation '{}' should be supported", supported_operations[i]);
+        assert!(
+            result.is_ok(),
+            "Operation '{}' should be supported",
+            supported_operations[i]
+        );
     }
 
     Ok(())
@@ -187,13 +191,20 @@ fn test_unsupported_operations() -> Result<()> {
         ("Logical AND", shll_parse_expr!(true && false)),
         ("Logical OR", shll_parse_expr!(true || false)),
         ("Logical NOT", shll_parse_expr!(!true)),
-        ("If expressions", shll_parse_expr!(if true { 42 } else { 24 })),
+        (
+            "If expressions",
+            shll_parse_expr!(if true { 42 } else { 24 }),
+        ),
         // Note: Basic block expressions now work, but complex scoping may still fail
     ];
 
     for (operation_name, expr) in unsupported_expressions {
         let result = interpreter.interpret_expr(expr, &ctx);
-        assert!(result.is_err(), "Operation '{}' should fail (not yet supported)", operation_name);
+        assert!(
+            result.is_err(),
+            "Operation '{}' should fail (not yet supported)",
+            operation_name
+        );
     }
 
     Ok(())
@@ -257,16 +268,19 @@ fn test_const_evaluation_readiness() -> Result<()> {
     // Test that interpreter can handle expressions that would be good candidates
     // for const evaluation (compile-time computation)
     let const_evaluable_exprs = vec![
-        shll_parse_expr!(2 + 3),        // Simple arithmetic
-        shll_parse_expr!(10 * 5),       // Multiplication
-        shll_parse_expr!(1 + 2 * 3),    // With precedence
-        shll_parse_expr!(5 == 5),       // Boolean comparisons
-        shll_parse_expr!(100 > 50),     // Ordering
+        shll_parse_expr!(2 + 3),     // Simple arithmetic
+        shll_parse_expr!(10 * 5),    // Multiplication
+        shll_parse_expr!(1 + 2 * 3), // With precedence
+        shll_parse_expr!(5 == 5),    // Boolean comparisons
+        shll_parse_expr!(100 > 50),  // Ordering
     ];
 
     for expr in const_evaluable_exprs {
         let result = interpreter.interpret_expr(expr, &ctx);
-        assert!(result.is_ok(), "Expression should be evaluable (const evaluation candidate)");
+        assert!(
+            result.is_ok(),
+            "Expression should be evaluable (const evaluation candidate)"
+        );
     }
 
     Ok(())
