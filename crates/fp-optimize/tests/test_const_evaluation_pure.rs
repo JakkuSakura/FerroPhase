@@ -7,18 +7,18 @@ use fp_core::context::SharedScopedContext;
 use fp_core::Result;
 use fp_optimize::orchestrators::ConstEvaluationOrchestrator;
 use fp_optimize::utils::{FoldOptimizer, OptimizePass};
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::shll_parse_expr;
+use fp_rust::printer::RustPrinter;
+use fp_rust::shll_parse_expr;
 use std::sync::Arc;
 
 fn test_const_optimization(expr: AstExpr) -> Result<AstExpr> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    
+
     let serializer = Arc::new(RustPrinter::new());
     let const_pass = ConstEvaluationOrchestrator::new(serializer.clone());
     let optimizer = FoldOptimizer::new(serializer, Box::new(const_pass));
     let ctx = SharedScopedContext::new();
-    
+
     optimizer.optimize_expr(expr, &ctx)
 }
 
@@ -73,7 +73,7 @@ fn test_const_variable_propagation() -> Result<()> {
     Ok(())
 }
 
-#[test] 
+#[test]
 #[ignore] // Complex dependency analysis not fully implemented yet
 fn test_const_dependency_chain() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
@@ -81,7 +81,7 @@ fn test_const_dependency_chain() -> Result<()> {
     // Test chained const dependencies
     let expr = shll_parse_expr!({
         let a = 5;
-        let b = a + 3;  
+        let b = a + 3;
         let c = b * 2;
         c
     });
@@ -115,7 +115,9 @@ fn test_const_function_folding() -> Result<()> {
 
     // Test const function evaluation
     let expr = shll_parse_expr!({
-        fn add_const(a: i64, b: i64) -> i64 { a + b }
+        fn add_const(a: i64, b: i64) -> i64 {
+            a + b
+        }
         add_const(10, 20)
     });
     let _result = test_const_optimization(expr)?;
@@ -140,7 +142,7 @@ fn test_sizeof_intrinsic() -> Result<()> {
 }
 
 #[test]
-#[ignore] // Intrinsics not implemented yet  
+#[ignore] // Intrinsics not implemented yet
 fn test_type_introspection() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
@@ -201,7 +203,7 @@ fn test_const_evaluation_pass_integration() -> Result<()> {
     // Test integration with the const evaluation pass system
     let serializer = Arc::new(RustPrinter::new());
     let const_pass = ConstEvaluationOrchestrator::new(serializer.clone());
-    
+
     // Verify pass has correct name
     assert_eq!(const_pass.name(), "const_evaluation");
 

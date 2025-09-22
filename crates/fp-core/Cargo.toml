@@ -21,7 +21,7 @@ bitflags = "2.4"
 
 [dev-dependencies]
 fp-optimize = { path = "../fp-optimize" }
-fp-rust-lang = { path = "../fp-rust-lang" }
+fp-rust = { path = "../fp-rust" }
 pretty_assertions = "1.4.0"
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"

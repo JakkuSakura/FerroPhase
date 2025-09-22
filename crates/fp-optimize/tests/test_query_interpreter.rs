@@ -6,8 +6,8 @@ use fp_core::ast::*;
 use fp_core::ctx::Context;
 use fp_core::Result;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::{shll_parse_expr, shll_parse_value};
+use fp_rust::printer::RustPrinter;
+use fp_rust::{shll_parse_expr, shll_parse_value};
 
 fn interpret_shll_expr(expr: AstExpr) -> Result<AstValue> {
     let interpreter = InterpreterPass::new(Arc::new(RustPrinter::new()));

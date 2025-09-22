@@ -1145,7 +1145,7 @@ impl InterpretationOrchestrator {
             }
             AstExpr::Any(n) => {
                 // Handle macros specially
-                if let Some(raw_macro) = n.downcast_ref::<fp_rust_lang::RawExprMacro>() {
+                if let Some(raw_macro) = n.downcast_ref::<fp_rust::RawExprMacro>() {
                     // Check if this is a cfg! macro by looking at the macro path
                     if raw_macro.raw.mac.path.is_ident("cfg") {
                         // cfg! macro - for now, assume debug mode is disabled in const evaluation
@@ -1444,10 +1444,7 @@ impl InterpretationOrchestrator {
             BlockStmt::Item(item) => self.interpret_item(item, ctx).map(|_| None),
             BlockStmt::Any(any_box) => {
                 // Handle macro statements
-                if any_box
-                    .downcast_ref::<fp_rust_lang::RawStmtMacro>()
-                    .is_some()
-                {
+                if any_box.downcast_ref::<fp_rust::RawStmtMacro>().is_some() {
                     // Macros like println! are now converted to function calls at parse time
                     // For any remaining macros, just return unit
                     Ok(None)

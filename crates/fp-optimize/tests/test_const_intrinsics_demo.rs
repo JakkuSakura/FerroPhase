@@ -8,8 +8,8 @@ use fp_core::context::SharedScopedContext;
 use fp_core::id::Ident;
 use fp_core::Result;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::{shll_parse_expr};
+use fp_rust::printer::RustPrinter;
+use fp_rust::shll_parse_expr;
 use std::sync::Arc;
 
 fn create_evaluator() -> InterpretationOrchestrator {
@@ -31,10 +31,10 @@ fn test_basic_intrinsic_registration() -> Result<()> {
     // The intrinsic functions are properly registered in fp-optimize/src/pass/interpret/mod.rs
     // but shll_parse_expr! uses syn::parse_quote! which requires valid Rust syntax
     // @ symbols are not valid Rust identifiers, so parser enhancement is needed
-    
+
     // For now, test that basic expression evaluation still works
     let code = shll_parse_expr!(10 + 20);
-    
+
     let result = eval_expr(code);
     // Should successfully evaluate basic arithmetic
     assert!(result.is_ok());
@@ -54,7 +54,7 @@ fn test_create_struct_intrinsic_demo() -> Result<()> {
         let result = true;
         result
     };
-    
+
     let result = eval_expr(code);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), AstValue::bool(true));
@@ -73,7 +73,7 @@ fn test_reflect_fields_intrinsic_demo() -> Result<()> {
         let test_val = 42;
         test_val == 42
     };
-    
+
     let result = eval_expr(code);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), AstValue::bool(true));
@@ -92,7 +92,7 @@ fn test_hasfield_intrinsic_demo() -> Result<()> {
         let condition = true;
         if condition { 100 } else { 200 }
     };
-    
+
     let result = eval_expr(code);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), AstValue::int(100));
@@ -112,7 +112,7 @@ fn test_field_count_intrinsic_demo() -> Result<()> {
         let b = 3;
         a * b + 1
     };
-    
+
     let result = eval_expr(code);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), AstValue::int(16));
@@ -135,7 +135,7 @@ fn test_multiple_intrinsics_available() -> Result<()> {
         let avg = sum / 3;
         avg == 20
     };
-    
+
     let result = eval_expr(code)?;
     assert_eq!(result, AstValue::bool(true));
 
@@ -153,7 +153,7 @@ fn test_compile_error_intrinsic_demo() -> Result<()> {
         let msg = "test";
         msg == "test"
     };
-    
+
     let result = eval_expr(code);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), AstValue::bool(true));
@@ -166,14 +166,14 @@ fn test_compile_error_intrinsic_demo() -> Result<()> {
 fn test_compile_warning_intrinsic_demo() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // NOTE: compile_warning intrinsic implemented, but @ parsing not yet supported  
+    // NOTE: compile_warning intrinsic implemented, but @ parsing not yet supported
     // Test boolean logic
     let code = shll_parse_expr! {
         let a = true;
         let b = false;
         (a && !b) || (b && !a)
     };
-    
+
     let result = eval_expr(code);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), AstValue::bool(true));
@@ -188,7 +188,7 @@ fn test_intrinsic_registry_completeness() -> Result<()> {
 
     // NOTE: All major const evaluation intrinsics are implemented and registered:
     // Core introspection: sizeof, reflect_fields, type_name
-    // Struct creation: create_struct, clone_struct, addfield  
+    // Struct creation: create_struct, clone_struct, addfield
     // Struct querying: hasfield, field_count, field_type, struct_size
     // Validation: compile_error, compile_warning
     // But @ parsing not yet supported. Test nested expressions instead.
@@ -202,7 +202,7 @@ fn test_intrinsic_registry_completeness() -> Result<()> {
         };
         outer == 92
     };
-    
+
     let result = eval_expr(code)?;
     assert_eq!(result, AstValue::bool(true));
 
@@ -210,7 +210,7 @@ fn test_intrinsic_registry_completeness() -> Result<()> {
 }
 
 #[test]
-#[ignore = "TODO: Fix API usage after refactoring"] 
+#[ignore = "TODO: Fix API usage after refactoring"]
 fn test_basic_arithmetic_still_works() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
@@ -221,7 +221,7 @@ fn test_basic_arithmetic_still_works() -> Result<()> {
         let result = x + y;
         result == 30
     };
-    
+
     let result = eval_expr(code)?;
     assert_eq!(result, AstValue::bool(true));
 

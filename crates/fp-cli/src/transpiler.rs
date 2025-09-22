@@ -91,7 +91,8 @@ impl TranspileContext {
 /// Template trait to eliminate the massive duplication in language-specific generation
 trait CodeTemplate {
     fn render(&self, context: &TranspileContext) -> String;
-    fn type_name(&self, rust_type: &str) -> &str;
+    fn type_name<'a>(&self, rust_type: &'a str) -> &'a str;
+    #[allow(dead_code)]
     fn default_value(&self, type_name: &str) -> &str;
 }
 
@@ -99,29 +100,30 @@ struct TypeScriptTemplate;
 impl CodeTemplate for TypeScriptTemplate {
     fn render(&self, context: &TranspileContext) -> String {
         let mut output = String::new();
-        
+
         // Generate interfaces
         for struct_def in &context.structs {
             output.push_str(&format!("interface {} {{\n", struct_def.name.name));
             for field in &struct_def.fields {
-                let ts_type = self.type_name(&field.value.to_string());
+                let field_value_str = field.value.to_string();
+                let ts_type = self.type_name(&field_value_str);
                 output.push_str(&format!("  {}: {};\n", field.name.name, ts_type));
             }
             output.push_str("}\n\n");
         }
-        
+
         // Generate main function
         output.push_str("function main(): void {\n");
         output.push_str("  console.log('TypeScript output');\n");
         output.push_str("}\n\nmain();\n");
-        
+
         output
     }
 
-    fn type_name(&self, rust_type: &str) -> &str {
+    fn type_name<'a>(&self, rust_type: &'a str) -> &'a str {
         match rust_type {
             "f64" | "f32" | "i64" | "i32" | "u64" | "u32" => "number",
-            "bool" => "boolean", 
+            "bool" => "boolean",
             "String" => "string",
             _ => "any",
         }
@@ -141,31 +143,37 @@ struct JavaScriptTemplate;
 impl CodeTemplate for JavaScriptTemplate {
     fn render(&self, context: &TranspileContext) -> String {
         let mut output = String::new();
-        
+
         // Generate factory functions
         for struct_def in &context.structs {
             output.push_str(&format!("function create{}(", struct_def.name.name));
-            let params: Vec<_> = struct_def.fields.iter()
+            let params: Vec<_> = struct_def
+                .fields
+                .iter()
                 .map(|f| f.name.name.as_str())
                 .collect();
             output.push_str(&params.join(", "));
             output.push_str(") {\n  return {\n");
-            
+
             for field in &struct_def.fields {
                 output.push_str(&format!("    {}: {},\n", field.name.name, field.name.name));
             }
             output.push_str("  };\n}\n\n");
         }
-        
+
         output.push_str("function main() {\n");
         output.push_str("  console.log('JavaScript output');\n");
         output.push_str("}\n\nmain();\n");
-        
+
         output
     }
 
-    fn type_name(&self, _rust_type: &str) -> &str { "any" }
-    fn default_value(&self, _type_name: &str) -> &str { "null" }
+    fn type_name<'a>(&self, _rust_type: &'a str) -> &'a str {
+        "any"
+    }
+    fn default_value(&self, _type_name: &str) -> &str {
+        "null"
+    }
 }
 
 struct CSharpTemplate;
@@ -173,31 +181,34 @@ impl CodeTemplate for CSharpTemplate {
     fn render(&self, context: &TranspileContext) -> String {
         let mut output = String::new();
         output.push_str("using System;\n\n");
-        
+
         // Generate classes
         for struct_def in &context.structs {
             output.push_str(&format!("public class {} {{\n", struct_def.name.name));
             for field in &struct_def.fields {
-                let cs_type = self.type_name(&field.value.to_string());
-                output.push_str(&format!("    public {} {} {{ get; set; }}\n", 
-                    cs_type, field.name.name));
+                let field_value_str = field.value.to_string();
+                let cs_type = self.type_name(&field_value_str);
+                output.push_str(&format!(
+                    "    public {} {} {{ get; set; }}\n",
+                    cs_type, field.name.name
+                ));
             }
             output.push_str("}\n\n");
         }
-        
+
         output.push_str("public class Program {\n");
         output.push_str("    public static void Main(string[] args) {\n");
         output.push_str("        Console.WriteLine(\"C# output\");\n");
         output.push_str("    }\n}\n");
-        
+
         output
     }
 
-    fn type_name(&self, rust_type: &str) -> &str {
+    fn type_name<'a>(&self, rust_type: &'a str) -> &'a str {
         match rust_type {
             "f64" | "f32" => "double",
             "i64" => "long",
-            "i32" => "int", 
+            "i32" => "int",
             "u32" => "uint",
             "bool" => "bool",
             "String" => "string",
@@ -205,32 +216,39 @@ impl CodeTemplate for CSharpTemplate {
         }
     }
 
-    fn default_value(&self, _type_name: &str) -> &str { "default" }
+    fn default_value(&self, _type_name: &str) -> &str {
+        "default"
+    }
 }
 
 struct RustTemplate;
 impl CodeTemplate for RustTemplate {
     fn render(&self, context: &TranspileContext) -> String {
         let mut output = String::new();
-        
+
         // Generate structs
         for struct_def in &context.structs {
-            output.push_str(&format!("#[derive(Debug, Clone)]\npub struct {} {{\n", 
-                struct_def.name.name));
+            output.push_str(&format!(
+                "#[derive(Debug, Clone)]\npub struct {} {{\n",
+                struct_def.name.name
+            ));
             for field in &struct_def.fields {
-                output.push_str(&format!("    pub {}: {},\n", 
-                    field.name.name, field.value));
+                output.push_str(&format!("    pub {}: {},\n", field.name.name, field.value));
             }
             output.push_str("}\n\n");
         }
-        
+
         output.push_str("fn main() {\n");
         output.push_str("    println!(\"Rust output\");\n");
         output.push_str("}\n");
-        
+
         output
     }
 
-    fn type_name(&self, rust_type: &str) -> &str { rust_type }
-    fn default_value(&self, _type_name: &str) -> &str { "Default::default()" }
+    fn type_name<'a>(&self, rust_type: &'a str) -> &'a str {
+        rust_type
+    }
+    fn default_value(&self, _type_name: &str) -> &str {
+        "Default::default()"
+    }
 }
