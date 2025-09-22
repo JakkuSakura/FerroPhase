@@ -3,8 +3,8 @@ use fp_core::context::SharedScopedContext;
 use fp_core::id::Ident;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_optimize::orchestrators::InterpretationOrchestrator;
-use fp_rust_lang::parser::RustParser;
-use fp_rust_lang::printer::RustPrinter;
+use fp_rust::parser::RustParser;
+use fp_rust::printer::RustPrinter;
 use std::sync::Arc;
 
 #[test]

@@ -1,4 +1,4 @@
-use fp_rust_lang::t;
+use fp_rust::t;
 use std::fmt::Display;
 
 fn print(i: impl Display) {

@@ -3,9 +3,9 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
+use fp_rust::printer::RustPrinter;
+use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::{shll_parse_expr, shll_parse_value};
 use std::sync::Arc;
 
 fn interpret_const_expr(expr: AstExpr) -> Result<AstValue> {
@@ -55,7 +55,9 @@ fn test_phase1_generic_context_preparation() -> Result<()> {
 
     // Test generic context - function with generics
     let code = shll_parse_expr!({
-        fn identity<T>(x: T) -> T { x }
+        fn identity<T>(x: T) -> T {
+            x
+        }
         identity(42)
     });
     let value = interpret_const_expr(code)?;
@@ -132,7 +134,9 @@ fn test_phase3_generic_specialization() -> Result<()> {
     // Test generic specialization - this is partially implemented in test_specializer.rs
     // Test basic generic function
     let code = shll_parse_expr!({
-        fn add<T>(a: T, b: T) -> T { a + b }
+        fn add<T>(a: T, b: T) -> T {
+            a + b
+        }
         add(1, 2)
     });
     let value = interpret_const_expr(code)?;
@@ -150,7 +154,10 @@ fn test_phase3_code_generation_ast_modification() -> Result<()> {
     // Test code generation - this would involve side effects like addfield
     // For now, test struct field access which is basic code generation
     let code = shll_parse_expr!({
-        struct Point { x: i64, y: i64 }
+        struct Point {
+            x: i64,
+            y: i64,
+        }
         let p = Point { x: 10, y: 20 };
         p.x
     });

@@ -1,17 +1,17 @@
 use std::sync::Arc;
 
 use eyre::Result;
-use pretty_assertions::assert_eq;
 use fp_core::bail;
 use fp_core::info;
 use fp_core::warn;
+use pretty_assertions::assert_eq;
 
 use fp_core::ast::*;
 use fp_core::ast::{AstItem, ItemDefFunction, ItemImpl, Visibility};
 use fp_core::ast::{AstType, FunctionParam, FunctionSignature, TypePrimitive};
 use fp_core::id::Locator;
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::{shll_parse_expr, shll_parse_item};
+use fp_rust::printer::RustPrinter;
+use fp_rust::{shll_parse_expr, shll_parse_item};
 
 #[test]
 fn test_parse_fn() -> Result<()> {
