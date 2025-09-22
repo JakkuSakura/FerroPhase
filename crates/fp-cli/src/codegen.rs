@@ -1,6 +1,6 @@
 use crate::CliError;
 use fp_core::ast::BExpr;
-use fp_rust_lang::printer::RustPrinter;
+use fp_rust::printer::RustPrinter;
 use quote::quote;
 
 /// Code generation utilities

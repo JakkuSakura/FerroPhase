@@ -1,13 +1,13 @@
 use common::*;
 
-use itertools::Itertools;
 use fp_core::ast::{AstDeserializer, AstSerializer};
 use fp_core::context::SharedScopedContext;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_optimize::utils::load_optimizers;
-use fp_rust_lang::parser::RustParser;
-use fp_rust_lang::printer::rustfmt::format_code;
-use fp_rust_lang::printer::RustPrinter;
+use fp_rust::parser::RustParser;
+use fp_rust::printer::rustfmt::format_code;
+use fp_rust::printer::RustPrinter;
+use itertools::Itertools;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
 use std::sync::Arc;

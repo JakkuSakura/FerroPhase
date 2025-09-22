@@ -811,7 +811,7 @@ dependencies = [
  "fp-javascript",
  "fp-llvm",
  "fp-optimize",
- "fp-rust-lang",
+ "fp-rust",
  "globset",
  "indicatif",
  "miette 5.10.0",
@@ -843,7 +843,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "fp-optimize",
- "fp-rust-lang",
+ "fp-rust",
  "itertools 0.13.0",
  "miette 7.2.0",
  "pretty_assertions",
@@ -905,7 +905,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "fp-core",
- "fp-rust-lang",
+ "fp-rust",
  "itertools 0.12.1",
  "pretty_assertions",
  "proc-macro2",
@@ -917,7 +917,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fp-rust-lang"
+name = "fp-rust"
 version = "0.1.0"
 dependencies = [
  "clap",

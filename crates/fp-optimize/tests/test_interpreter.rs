@@ -6,9 +6,9 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
+use fp_rust::printer::RustPrinter;
+use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
-use fp_rust_lang::printer::RustPrinter;
-use fp_rust_lang::{shll_parse_expr, shll_parse_value};
 use std::sync::Arc;
 
 fn interpret_expr(expr: AstExpr) -> Result<AstValue> {
@@ -43,7 +43,9 @@ fn test_interpreter_function_specialization_context() -> Result<()> {
 
     // Test interpreter role in function specialization optimization
     let code = shll_parse_expr!({
-        fn add(a: i64, b: i64) -> i64 { a + b }
+        fn add(a: i64, b: i64) -> i64 {
+            a + b
+        }
         add(1, 2)
     });
     let value = interpret_expr(code)?;
@@ -75,13 +77,15 @@ fn test_interpreter_with_const_values() -> Result<()> {
 
 #[test]
 #[ignore = "TODO: Fix API usage after refactoring"]
-#[ignore] // Function calls don't work yet in interpreter  
+#[ignore] // Function calls don't work yet in interpreter
 fn test_interpreter_identity_function_specialization() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     // Test interpreter in context of function specialization
     let code = shll_parse_expr!({
-        fn identity(x: i64) -> i64 { x }
+        fn identity(x: i64) -> i64 {
+            x
+        }
         identity(42)
     });
     let value = interpret_expr(code)?;
@@ -118,14 +122,14 @@ fn test_interpreter_expression_caching_support() -> Result<()> {
     // Test interpreter support for expression caching
     let expr1 = shll_parse_expr!(7 * 2);
     let expr2 = shll_parse_expr!(7 * 2); // Identical expression
-    
+
     let value1 = interpret_expr(expr1)?;
     let value2 = interpret_expr(expr2)?;
-    
+
     assert_eq!(value1, shll_parse_value!(14));
     assert_eq!(value2, shll_parse_value!(14));
     assert_eq!(value1, value2);
-    
+
     Ok(())
 }
 
@@ -136,8 +140,12 @@ fn test_interpreter_main_function_evaluation() -> Result<()> {
 
     // Test interpreter handling of main function patterns
     let code = shll_parse_expr!({
-        fn helper(a: i64, b: i64) -> i64 { a + b }
-        fn main() -> i64 { helper(1, 2) }
+        fn helper(a: i64, b: i64) -> i64 {
+            a + b
+        }
+        fn main() -> i64 {
+            helper(1, 2)
+        }
         main()
     });
     let value = interpret_expr(code)?;
