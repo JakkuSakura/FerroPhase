@@ -1,6 +1,10 @@
 //! Compilation command implementation
 
-use crate::{cli::CliConfig, pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput}, Result, CliError};
+use crate::{
+    CliError, Result,
+    cli::CliConfig,
+    pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput},
+};
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
@@ -23,10 +27,10 @@ pub struct CompileArgs {
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
     info!("Starting compilation with target: {}", args.target);
-    
+
     // Validate inputs
     validate_inputs(&args)?;
-    
+
     if args.watch {
         compile_with_watch(args, config).await
     } else {
@@ -36,45 +40,45 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
 
 async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(args.input.len());
-    
+
     let mut compiled_files = Vec::new();
-    
+
     for (_i, input_file) in args.input.iter().enumerate() {
         progress.set_message(format!("Compiling {}", input_file.display()));
-        
+
         let output_file = determine_output_path(input_file, args.output.as_ref(), &args.target)?;
-        
+
         // Compile single file
         compile_file(input_file, &output_file, &args, config).await?;
-        
+
         compiled_files.push(output_file);
         progress.inc(1);
     }
-    
+
     progress.finish_with_message(format!(
         "{} Compiled {} file(s) successfully",
         style("✓").green(),
         args.input.len()
     ));
-    
+
     // Run if requested
     if args.run {
         run_compiled_output(&compiled_files, &args.target).await?;
     }
-    
+
     Ok(())
 }
 
 async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    use tokio::time::{sleep, Duration};
-    
+    use tokio::time::{Duration, sleep};
+
     println!("{} Watching for changes...", style("👀").cyan());
-    
+
     let mut last_modified = std::collections::HashMap::new();
-    
+
     loop {
         let mut needs_recompile = false;
-        
+
         for input_file in &args.input {
             if let Ok(metadata) = std::fs::metadata(input_file) {
                 if let Ok(modified) = metadata.modified() {
@@ -89,10 +93,13 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                 }
             }
         }
-        
+
         if needs_recompile {
-            println!("{} File changes detected, recompiling...", style("🔄").yellow());
-            
+            println!(
+                "{} File changes detected, recompiling...",
+                style("🔄").yellow()
+            );
+
             match compile_once(
                 CompileArgs {
                     input: args.input.clone(),
@@ -106,12 +113,14 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     watch: false, // Prevent recursion
                 },
                 config,
-            ).await {
+            )
+            .await
+            {
                 Ok(_) => println!("{} Recompilation successful", style("✓").green()),
                 Err(e) => eprintln!("{} Recompilation failed: {}", style("✗").red(), e),
             }
         }
-        
+
         sleep(Duration::from_millis(500)).await;
     }
 }
@@ -123,7 +132,7 @@ async fn compile_file(
     _config: &CliConfig,
 ) -> Result<()> {
     info!("Compiling: {} -> {}", input.display(), output.display());
-    
+
     // Configure pipeline for compilation
     let pipeline_config = PipelineConfig {
         optimization_level: args.opt_level as u8,
@@ -132,42 +141,40 @@ async fn compile_file(
         target: args.target.clone(),
         runtime: "literal".to_string(),
     };
-    
+
     // Execute pipeline
     let pipeline = Pipeline::new();
-    let pipeline_output = pipeline.execute(PipelineInput::File(input.to_path_buf()), &pipeline_config).await?;
-    
+    let pipeline_output = pipeline
+        .execute(PipelineInput::File(input.to_path_buf()), &pipeline_config)
+        .await?;
+
     // Write output to file
     match pipeline_output {
-        PipelineOutput::Code(code) => {
-            match args.target.as_str() {
-                "binary" => {
-                    compile_llvm_to_binary(&code, output, args).await?;
-                    info!("Generated binary: {}", output.display());
+        PipelineOutput::Code(code) => match args.target.as_str() {
+            "binary" => {
+                compile_llvm_to_binary(&code, output, args).await?;
+                info!("Generated binary: {}", output.display());
+            }
+            _ => {
+                if let Some(parent) = output.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
                 }
-                _ => {
-                    if let Some(parent) = output.parent() {
-                        std::fs::create_dir_all(parent)
-                            .map_err(|e| CliError::Io(e))?;
-                    }
 
-                    std::fs::write(output, &code)
-                        .map_err(|e| CliError::Io(e))?;
+                std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
 
-                    info!("Generated code: {}", output.display());
-                }
+                info!("Generated code: {}", output.display());
             }
         },
         PipelineOutput::Value(_) => {
             // For interpret target or binary target (already compiled), we don't write to file
             info!("Operation completed");
-        },
+        }
         PipelineOutput::RuntimeValue(_) => {
             // For runtime interpretation, we don't write to file
             info!("Runtime interpretation completed");
-        },
+        }
     }
-    
+
     Ok(())
 }
 
@@ -177,7 +184,7 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
             for file in files {
                 if file.extension().map_or(false, |ext| ext == "rs") {
                     println!("{} Running compiled Rust code...", style("🚀").cyan());
-                    
+
                     // Compile with rustc and run
                     let output = tokio::process::Command::new("rustc")
                         .arg(file)
@@ -185,20 +192,24 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
                         .arg(file.with_extension(""))
                         .output()
                         .await
-                        .map_err(|e| CliError::Compilation(format!("Failed to run rustc: {}", e)))?;
-                    
+                        .map_err(|e| {
+                            CliError::Compilation(format!("Failed to run rustc: {}", e))
+                        })?;
+
                     if !output.status.success() {
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         return Err(CliError::Compilation(format!("rustc failed: {}", stderr)));
                     }
-                    
+
                     // Run the executable
                     let exe_path = file.with_extension("");
                     let run_output = tokio::process::Command::new(&exe_path)
                         .output()
                         .await
-                        .map_err(|e| CliError::Compilation(format!("Failed to run executable: {}", e)))?;
-                    
+                        .map_err(|e| {
+                            CliError::Compilation(format!("Failed to run executable: {}", e))
+                        })?;
+
                     println!("{}", String::from_utf8_lossy(&run_output.stdout));
                     if !run_output.stderr.is_empty() {
                         eprintln!("{}", String::from_utf8_lossy(&run_output.stderr));
@@ -210,115 +221,154 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
             warn!("Running {} output not yet supported", target);
         }
     }
-    
+
     Ok(())
 }
 
 async fn compile_llvm_to_binary(llvm_ir: &str, output: &Path, args: &CompileArgs) -> Result<()> {
     use tokio::fs;
-    
+
     // Create a temporary LLVM IR file (use different name to avoid conflict)
     let temp_ll = output.with_extension("tmp.ll");
-    
+
     // Ensure output directory exists
     if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| CliError::Io(e))?;
+        std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
     }
-    
+
     // Write LLVM IR to temporary file
-    fs::write(&temp_ll, llvm_ir).await
+    fs::write(&temp_ll, llvm_ir)
+        .await
         .map_err(|e| CliError::Io(e))?;
-    
+
     info!("Generated LLVM IR: {}", temp_ll.display());
-    
+
     // Try to compile with LLVM tools (llc + ld/clang)
     if let Err(e) = compile_with_llvm_tools(&temp_ll, output, args).await {
-        warn!("LLVM compilation failed: {}, falling back to saving LLVM IR", e);
-        
+        warn!(
+            "LLVM compilation failed: {}, falling back to saving LLVM IR",
+            e
+        );
+
         // Fallback: just save the LLVM IR as the output
-        fs::write(output.with_extension("ll"), llvm_ir).await
+        fs::write(output.with_extension("ll"), llvm_ir)
+            .await
             .map_err(|e| CliError::Io(e))?;
-        
-        info!("Saved LLVM IR as: {}", output.with_extension("ll").display());
-        info!("To compile manually, use: llc {} -o {}.s && clang {}.s -o {}", 
-              output.with_extension("ll").display(),
-              output.display(),
-              output.display(),
-              output.display());
+
+        info!(
+            "Saved LLVM IR as: {}",
+            output.with_extension("ll").display()
+        );
+        info!(
+            "To compile manually, use: llc {} -o {}.s && clang {}.s -o {}",
+            output.with_extension("ll").display(),
+            output.display(),
+            output.display(),
+            output.display()
+        );
     }
-    
+
     // Clean up temporary LLVM IR file
     let _ = fs::remove_file(&temp_ll).await;
-    
+
     Ok(())
 }
 
-async fn compile_with_llvm_tools(llvm_ir_file: &Path, output: &Path, args: &CompileArgs) -> Result<()> {
+async fn compile_with_llvm_tools(
+    llvm_ir_file: &Path,
+    output: &Path,
+    args: &CompileArgs,
+) -> Result<()> {
     use tokio::process::Command;
-    
+
     // Check if LLVM tools are available
     if Command::new("llc").arg("--version").output().await.is_err() {
-        return Err(CliError::Compilation("llc (LLVM compiler) not found. Please install LLVM toolchain.".to_string()));
+        return Err(CliError::Compilation(
+            "llc (LLVM compiler) not found. Please install LLVM toolchain.".to_string(),
+        ));
     }
-    
+
     let assembly_file = output.with_extension("s");
-    
+
     // Step 1: Compile LLVM IR to assembly with llc
     let mut llc_cmd = Command::new("llc");
     llc_cmd.arg(llvm_ir_file);
     llc_cmd.arg("-o");
     llc_cmd.arg(&assembly_file);
-    
+
     // Add optimization flags
     match args.opt_level {
-        0 => { llc_cmd.arg("-O0"); },
-        1 => { llc_cmd.arg("-O1"); },
-        2 => { llc_cmd.arg("-O2"); },
-        3 => { llc_cmd.arg("-O3"); },
-        _ => { llc_cmd.arg("-O2"); },
+        0 => {
+            llc_cmd.arg("-O0");
+        }
+        1 => {
+            llc_cmd.arg("-O1");
+        }
+        2 => {
+            llc_cmd.arg("-O2");
+        }
+        3 => {
+            llc_cmd.arg("-O3");
+        }
+        _ => {
+            llc_cmd.arg("-O2");
+        }
     }
-    
+
     info!("Compiling LLVM IR to assembly...");
-    let llc_output = llc_cmd.output().await
+    let llc_output = llc_cmd
+        .output()
+        .await
         .map_err(|e| CliError::Compilation(format!("Failed to run llc: {}", e)))?;
-    
+
     if !llc_output.status.success() {
         let stderr = String::from_utf8_lossy(&llc_output.stderr);
         return Err(CliError::Compilation(format!("llc failed:\n{}", stderr)));
     }
-    
+
     // Step 2: Link assembly to executable with clang/gcc
-    let linker = if Command::new("clang").arg("--version").output().await.is_ok() {
+    let linker = if Command::new("clang")
+        .arg("--version")
+        .output()
+        .await
+        .is_ok()
+    {
         "clang"
     } else if Command::new("gcc").arg("--version").output().await.is_ok() {
         "gcc"
     } else {
-        return Err(CliError::Compilation("No suitable linker found (clang or gcc required)".to_string()));
+        return Err(CliError::Compilation(
+            "No suitable linker found (clang or gcc required)".to_string(),
+        ));
     };
-    
+
     let mut link_cmd = Command::new(linker);
     link_cmd.arg(&assembly_file);
     link_cmd.arg("-o");
     link_cmd.arg(output);
-    
+
     // Add debug info if requested
     if args.debug {
         link_cmd.arg("-g");
     }
-    
+
     info!("Linking to binary: {}", output.display());
-    let link_output = link_cmd.output().await
+    let link_output = link_cmd
+        .output()
+        .await
         .map_err(|e| CliError::Compilation(format!("Failed to run {}: {}", linker, e)))?;
-    
+
     if !link_output.status.success() {
         let stderr = String::from_utf8_lossy(&link_output.stderr);
-        return Err(CliError::Compilation(format!("{} linking failed:\n{}", linker, stderr)));
+        return Err(CliError::Compilation(format!(
+            "{} linking failed:\n{}",
+            linker, stderr
+        )));
     }
-    
+
     // Clean up assembly file
     let _ = tokio::fs::remove_file(&assembly_file).await;
-    
+
     info!("Successfully compiled binary: {}", output.display());
     Ok(())
 }
@@ -326,19 +376,27 @@ async fn compile_with_llvm_tools(llvm_ir_file: &Path, output: &Path, args: &Comp
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
     for input in &args.input {
         if !input.exists() {
-            return Err(CliError::InvalidInput(format!("Input file does not exist: {}", input.display())));
+            return Err(CliError::InvalidInput(format!(
+                "Input file does not exist: {}",
+                input.display()
+            )));
         }
-        
+
         if !input.is_file() {
-            return Err(CliError::InvalidInput(format!("Input path is not a file: {}", input.display())));
+            return Err(CliError::InvalidInput(format!(
+                "Input path is not a file: {}",
+                input.display()
+            )));
         }
     }
-    
+
     // Validate optimization level
     if args.opt_level > 3 {
-        return Err(CliError::InvalidInput("Optimization level must be 0-3".to_string()));
+        return Err(CliError::InvalidInput(
+            "Optimization level must be 0-3".to_string(),
+        ));
     }
-    
+
     Ok(())
 }
 
@@ -352,15 +410,20 @@ fn determine_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -
                 if cfg!(target_os = "windows") {
                     "exe"
                 } else {
-                    "out"  // Use .out extension on Unix systems for clarity
+                    "out" // Use .out extension on Unix systems for clarity
                 }
-            },
+            }
             "rust" => "rs",
             "llvm" => "ll",
             "wasm" => "wasm",
-            _ => return Err(CliError::InvalidInput(format!("Unknown target for output extension: {}", target))),
+            _ => {
+                return Err(CliError::InvalidInput(format!(
+                    "Unknown target for output extension: {}",
+                    target
+                )));
+            }
         };
-        
+
         Ok(input.with_extension(extension))
     }
 }

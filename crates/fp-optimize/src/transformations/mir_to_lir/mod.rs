@@ -8,6 +8,8 @@ mod println;
 
 // Internal submodules; items are used via inherent methods
 
+use super::IrTransform;
+
 /// Generator for transforming MIR to LIR (Low-level IR)
 pub struct LirGenerator {
     next_lir_id: lir::LirId,
@@ -367,6 +369,12 @@ impl LirGenerator {
         let id = self.next_lir_id;
         self.next_lir_id += 1;
         id
+    }
+}
+
+impl IrTransform<mir::MirProgram, lir::LirProgram> for LirGenerator {
+    fn transform(&mut self, source: mir::MirProgram) -> Result<lir::LirProgram> {
+        LirGenerator::transform(self, source)
     }
 }
 

@@ -6,6 +6,8 @@ use fp_core::{mir, thir};
 // use fp_core::ast::Visibility; // not used here
 use std::collections::HashMap;
 
+use super::IrTransform;
+
 /// Generator for transforming THIR to MIR (Mid-level IR)
 pub struct MirGenerator {
     next_mir_id: mir::MirId,
@@ -84,8 +86,7 @@ impl MirGenerator {
 
         let (body_id, body_opt) = if let Some(body_id) = func.body_id {
             if let Some(thir_body) = thir_program.bodies.get(&body_id) {
-                let mir_body =
-                    self.transform_body(thir_body.clone(), return_local, param_count)?;
+                let mir_body = self.transform_body(thir_body.clone(), return_local, param_count)?;
                 (mir::BodyId(body_id.0), Some(mir_body))
             } else {
                 let mir_body = self.create_external_function_body(return_local, param_count)?;
@@ -541,6 +542,12 @@ impl MirGenerator {
         // For now, just clone the THIR type since MIR can use the same type system
         // In a full implementation, this might transform types to MIR-specific representations
         ty.clone()
+    }
+}
+
+impl IrTransform<thir::ThirProgram, mir::MirProgram> for MirGenerator {
+    fn transform(&mut self, source: thir::ThirProgram) -> Result<mir::MirProgram> {
+        MirGenerator::transform(self, source)
     }
 }
 

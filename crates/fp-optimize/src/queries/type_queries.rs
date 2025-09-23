@@ -23,7 +23,11 @@ impl TypeQueries {
     }
 
     /// Validate basic type references (non-const)
-    pub fn validate_basic_references(&self, _ast: &AstNode, _ctx: &SharedScopedContext) -> Result<()> {
+    pub fn validate_basic_references(
+        &self,
+        _ast: &AstNode,
+        _ctx: &SharedScopedContext,
+    ) -> Result<()> {
         // TODO: Implement basic reference validation
         Ok(())
     }
@@ -35,7 +39,11 @@ impl TypeQueries {
     }
 
     /// Validate all type references including generated ones
-    pub fn validate_all_references(&self, _ast: &AstNode, _ctx: &SharedScopedContext) -> Result<()> {
+    pub fn validate_all_references(
+        &self,
+        _ast: &AstNode,
+        _ctx: &SharedScopedContext,
+    ) -> Result<()> {
         // TODO: Implement comprehensive reference validation
         Ok(())
     }

@@ -1,6 +1,6 @@
 //! Simplified transpilation command using the new unified transpiler
 
-use crate::{cli::CliConfig, languages::*, pipeline::Pipeline, Result, CliError, transpiler::*};
+use crate::{CliError, Result, cli::CliConfig, languages::*, pipeline::Pipeline, transpiler::*};
 use console::style;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -22,9 +22,9 @@ pub struct TranspileArgs {
 /// Execute the transpile command
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     info!("Starting transpilation to target: {}", args.target);
-    
+
     validate_transpile_inputs(&args)?;
-    
+
     if args.watch {
         transpile_with_watch(args, config).await
     } else {
@@ -34,36 +34,37 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
 
 async fn transpile_once(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(args.input.len());
-    
+
     for input_file in &args.input {
         progress.set_message(format!("Transpiling {}", input_file.display()));
-        
-        let output_file = determine_transpile_output_path(input_file, args.output.as_ref(), &args.target)?;
+
+        let output_file =
+            determine_transpile_output_path(input_file, args.output.as_ref(), &args.target)?;
         transpile_file(input_file, &output_file, &args, config).await?;
-        
+
         progress.inc(1);
     }
-    
+
     progress.finish_with_message(format!(
         "{} Transpiled {} file(s) to {}",
         style("✓").green(),
         args.input.len(),
         args.target
     ));
-    
+
     Ok(())
 }
 
 async fn transpile_with_watch(args: TranspileArgs, config: &CliConfig) -> Result<()> {
-    use tokio::time::{sleep, Duration};
-    
+    use tokio::time::{Duration, sleep};
+
     println!("{} Watching for changes...", style("👀").cyan());
-    
+
     let mut last_modified = std::collections::HashMap::new();
-    
+
     loop {
         let mut needs_retranspile = false;
-        
+
         for input_file in &args.input {
             if let Ok(metadata) = std::fs::metadata(input_file) {
                 if let Ok(modified) = metadata.modified() {
@@ -78,10 +79,10 @@ async fn transpile_with_watch(args: TranspileArgs, config: &CliConfig) -> Result
                 }
             }
         }
-        
+
         if needs_retranspile {
             println!("{} Re-transpiling...", style("🔄").yellow());
-            
+
             match transpile_once(
                 TranspileArgs {
                     input: args.input.clone(),
@@ -95,12 +96,14 @@ async fn transpile_with_watch(args: TranspileArgs, config: &CliConfig) -> Result
                     watch: false,
                 },
                 config,
-            ).await {
+            )
+            .await
+            {
                 Ok(_) => println!("{} Success", style("✓").green()),
                 Err(e) => eprintln!("{} Failed: {}", style("✗").red(), e),
             }
         }
-        
+
         sleep(Duration::from_millis(500)).await;
     }
 }
@@ -111,29 +114,38 @@ async fn transpile_file(
     args: &TranspileArgs,
     _config: &CliConfig,
 ) -> Result<()> {
-    info!("Transpiling: {} -> {} ({})", input.display(), output.display(), args.target);
-    
+    info!(
+        "Transpiling: {} -> {} ({})",
+        input.display(),
+        output.display(),
+        args.target
+    );
+
     // Parse source
     let pipeline = Pipeline::new();
-    let source = std::fs::read_to_string(input)
-        .map_err(|e| CliError::Io(e))?;
+    let source = std::fs::read_to_string(input).map_err(|e| CliError::Io(e))?;
     let ast = pipeline.parse_source_public(&source)?;
-    
+
     // Use simplified transpiler
     let target = match args.target.as_str() {
         TYPESCRIPT | "ts" => TranspileTarget::TypeScript,
         JAVASCRIPT | "js" => TranspileTarget::JavaScript,
         CSHARP | "cs" | "c#" => TranspileTarget::CSharp,
-        _ => return Err(CliError::InvalidInput(format!("Unsupported target: {}", args.target))),
+        _ => {
+            return Err(CliError::InvalidInput(format!(
+                "Unsupported target: {}",
+                args.target
+            )));
+        }
     };
-    
+
     let transpiler = Transpiler::new(target);
     let code = transpiler.transpile(&ast)?;
-    
+
     // Write output
     std::fs::write(output, code).map_err(|e| CliError::Io(e))?;
     info!("Generated: {}", output.display());
-    
+
     Ok(())
 }
 
@@ -141,21 +153,33 @@ async fn transpile_file(
 fn validate_transpile_inputs(args: &TranspileArgs) -> Result<()> {
     for input in &args.input {
         if !input.exists() {
-            return Err(CliError::InvalidInput(format!("Input file does not exist: {}", input.display())));
+            return Err(CliError::InvalidInput(format!(
+                "Input file does not exist: {}",
+                input.display()
+            )));
         }
     }
     Ok(())
 }
 
-fn determine_transpile_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -> Result<PathBuf> {
+fn determine_transpile_output_path(
+    input: &Path,
+    output: Option<&PathBuf>,
+    target: &str,
+) -> Result<PathBuf> {
     if let Some(output) = output {
         Ok(output.clone())
     } else {
         let extension = match target {
             "typescript" | "ts" => "ts",
-            "javascript" | "js" => "js", 
+            "javascript" | "js" => "js",
             "csharp" | "cs" => "cs",
-            _ => return Err(CliError::InvalidInput(format!("Unknown target: {}", target))),
+            _ => {
+                return Err(CliError::InvalidInput(format!(
+                    "Unknown target: {}",
+                    target
+                )));
+            }
         };
         Ok(input.with_extension(extension))
     }

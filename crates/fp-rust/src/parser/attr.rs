@@ -1,10 +1,10 @@
 use crate::parser::expr::parse_expr;
 use crate::parser::parse_path;
-use fp_core::bail;
-use fp_core::error::Result;
 use fp_core::ast::{
     AstAttrMeta, AstAttrMetaList, AstAttrMetaNameValue, AstAttrStyle, AstAttribute,
 };
+use fp_core::bail;
+use fp_core::error::Result;
 fn parse_attr_style(s: syn::AttrStyle) -> Result<AstAttrStyle> {
     Ok(match s {
         syn::AttrStyle::Outer => AstAttrStyle::Outer,

@@ -1,14 +1,14 @@
 use crate::orchestrators::InterpretationOrchestrator;
 use crate::utils::OptimizePass;
 // Replace common::* with specific imports
-use itertools::{zip_eq, Itertools};
-use tracing::{debug, warn};
-use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
+use fp_core::error::Result;
 use fp_core::id::{Ident, Locator};
+use itertools::{zip_eq, Itertools};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tracing::{debug, warn};
 
 // Import our error helpers
 use crate::error::optimization_error;
@@ -45,9 +45,9 @@ impl SpecializePass {
         let mut args: Vec<BExpr> = vec![];
         for arg in invoke.args.iter() {
             let x = match arg.get() {
-                AstExpr::Locator(v) => ctx
-                    .get_expr(v.to_path())
-                    .ok_or_else(|| optimization_error(format!("Couldn't find {:?} in context", v)))?,
+                AstExpr::Locator(v) => ctx.get_expr(v.to_path()).ok_or_else(|| {
+                    optimization_error(format!("Couldn't find {:?} in context", v))
+                })?,
                 x => x,
             };
             args.push(x.into())

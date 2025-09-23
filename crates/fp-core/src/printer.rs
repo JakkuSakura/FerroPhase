@@ -92,7 +92,7 @@ impl IndentationConfig {
             size,
         }
     }
-    
+
     /// Create a new indentation config with tabs
     pub fn tabs(size: usize) -> Self {
         Self {
@@ -100,7 +100,7 @@ impl IndentationConfig {
             size,
         }
     }
-    
+
     /// Generate an indentation string for the given level
     pub fn indent_string(&self, level: usize) -> String {
         let unit = match self.style {
@@ -116,7 +116,7 @@ impl LineEnding {
     pub fn as_str(&self) -> &'static str {
         match self {
             LineEnding::Unix => "\n",
-            LineEnding::Windows => "\r\n", 
+            LineEnding::Windows => "\r\n",
             LineEnding::Mac => "\r",
         }
     }
@@ -138,7 +138,7 @@ impl AstSerializerConfig {
             source_maps: false,
         }
     }
-    
+
     /// Create a new config with 4-space indentation (common for systems languages)
     pub fn standard() -> Self {
         Self {
@@ -154,7 +154,7 @@ impl AstSerializerConfig {
             source_maps: false,
         }
     }
-    
+
     /// Create a minified config
     pub fn minified() -> Self {
         Self {
