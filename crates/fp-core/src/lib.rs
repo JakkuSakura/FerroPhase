@@ -10,6 +10,7 @@ pub mod ctx;
 pub mod error;
 pub mod hir;
 pub mod id;
+pub mod lir;
 pub mod mir;
 pub mod ops;
 pub mod passes;
@@ -18,9 +19,7 @@ pub mod printer;
 pub mod span;
 pub mod thir;
 pub mod types;
-pub mod lir;
 pub mod utils;
-
 
 // Re-export commonly used items for convenience
 pub use tracing;

@@ -1,7 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
-use crate::{common_enum, common_struct};
 use crate::error::Result;
+use crate::{common_enum, common_struct};
 use std::path::{Path, PathBuf};
 
 pub use deserialize::*;

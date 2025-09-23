@@ -1,5 +1,5 @@
-use fp_core::error::Result;
 use fp_core::bail;
+use fp_core::error::Result;
 use std::io::Write;
 use std::process::{Command, Stdio};
 

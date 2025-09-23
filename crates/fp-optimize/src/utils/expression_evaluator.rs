@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 // Update imports to use our new error module
-use fp_core::error::Result;
 use crate::error::optimization_error;
+use fp_core::error::Result;
 
 use fp_core::ast::{AstExpr, AstItem, AstModule, AstNode, AstSerializer};
 use fp_core::ast::{AstFile, AstValue};
 use fp_core::context::SharedScopedContext;
 
-use crate::utils::FoldOptimizer;
 use crate::orchestrators::InterpretationOrchestrator;
+use crate::utils::FoldOptimizer;
 
 /// Simple expression evaluator utility
 /// Wraps the interpretation orchestrator for basic expression evaluation
@@ -39,7 +39,7 @@ impl ExpressionEvaluator {
                             fp_core::ast::BlockStmt::Expr(block_expr) => {
                                 // Extract value from the expression
                                 self.extract_expr(*block_expr.expr.clone())
-                            },
+                            }
                             _ => {
                                 // Non-expression statement, block evaluates to unit
                                 Ok(AstValue::unit())
@@ -49,8 +49,11 @@ impl ExpressionEvaluator {
                         Ok(AstValue::unit())
                     }
                 }
-            },
-            _ => Err(optimization_error(format!("Failed to extract Value from {}", node))),
+            }
+            _ => Err(optimization_error(format!(
+                "Failed to extract Value from {}",
+                node
+            ))),
         }
     }
     fn extract_module(&self, _node: AstModule) -> Result<AstValue> {
@@ -63,7 +66,10 @@ impl ExpressionEvaluator {
         match node {
             AstItem::Expr(expr) => self.extract_expr(expr),
             AstItem::Module(module) => self.extract_module(module),
-            _ => Err(optimization_error(format!("Failed to extract Value from {:?}", node))),
+            _ => Err(optimization_error(format!(
+                "Failed to extract Value from {:?}",
+                node
+            ))),
         }
     }
     fn extract_tree(&self, node: AstNode) -> Result<AstValue> {

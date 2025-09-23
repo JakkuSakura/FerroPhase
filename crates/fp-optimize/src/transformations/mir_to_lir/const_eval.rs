@@ -1,5 +1,5 @@
-use fp_core::{lir, mir};
 use fp_core::error::Result;
+use fp_core::{lir, mir};
 
 use super::LirGenerator;
 

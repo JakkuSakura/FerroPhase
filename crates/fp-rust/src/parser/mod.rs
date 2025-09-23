@@ -8,13 +8,13 @@ mod ty;
 use crate::parser::expr::parse_block;
 
 use crate::parser::item::parse_fn_sig;
-use itertools::Itertools;
 use fp_core::ast::*;
+use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use fp_core::{bail};
+use itertools::Itertools;
 
+use eyre::{ensure, eyre, Context};
 use fp_core::error::Result;
-use eyre::{eyre, ensure, Context};
 use std::path::PathBuf;
 use syn::parse_str;
 use syn_inline_mod::InlinerBuilder;
@@ -153,11 +153,11 @@ impl RustParser {
     pub fn parse_type(&self, code: syn::Type) -> Result<AstType> {
         ty::parse_type(code)
     }
-    
+
     pub fn try_parse_as_file(&self, source: &str) -> Result<BExpr> {
         // Parse as a syn::File first, but be more permissive with errors
-        let syn_file: syn::File = syn::parse_str(source)
-            .map_err(|e| eyre!("Failed to parse as file: {}", e))?;
+        let syn_file: syn::File =
+            syn::parse_str(source).map_err(|e| eyre!("Failed to parse as file: {}", e))?;
 
         // Try to parse the file, but handle errors more gracefully for transpilation
         match self.parse_file_content(PathBuf::from("input.fp"), syn_file) {
@@ -185,21 +185,15 @@ impl RustParser {
                         semicolon: None,
                     }));
 
-                    Ok(Box::new(AstExpr::Block(ExprBlock {
-                        stmts: const_items,
-                    })))
+                    Ok(Box::new(AstExpr::Block(ExprBlock { stmts: const_items })))
                 } else {
                     // No main function, create a minimal structure for transpilation
                     if const_items.is_empty() {
                         // Create an empty block for transpilation purposes
-                        Ok(Box::new(AstExpr::Block(ExprBlock {
-                            stmts: vec![],
-                        })))
+                        Ok(Box::new(AstExpr::Block(ExprBlock { stmts: vec![] })))
                     } else {
                         // Just use all parsed items
-                        Ok(Box::new(AstExpr::Block(ExprBlock {
-                            stmts: const_items,
-                        })))
+                        Ok(Box::new(AstExpr::Block(ExprBlock { stmts: const_items })))
                     }
                 }
             }
@@ -215,17 +209,19 @@ impl RustParser {
         let syn_expr: syn::Expr = syn::parse_str(&wrapped_source)
             .map_err(|e| eyre!("Failed to parse as block: {}", e))?;
 
-        let ast_expr = self.parse_expr(syn_expr)
+        let ast_expr = self
+            .parse_expr(syn_expr)
             .map_err(|e| eyre!("Failed to convert to AST: {}", e))?;
 
         Ok(Box::new(ast_expr))
     }
 
     pub fn try_parse_simple_expression(&self, source: &str) -> Result<BExpr> {
-        let syn_expr: syn::Expr = syn::parse_str(source)
-            .map_err(|e| eyre!("Failed to parse as expression: {}", e))?;
+        let syn_expr: syn::Expr =
+            syn::parse_str(source).map_err(|e| eyre!("Failed to parse as expression: {}", e))?;
 
-        let ast_expr = self.parse_expr(syn_expr)
+        let ast_expr = self
+            .parse_expr(syn_expr)
             .map_err(|e| eyre!("Failed to convert to AST: {}", e))?;
 
         Ok(Box::new(ast_expr))
@@ -233,8 +229,8 @@ impl RustParser {
 
     pub fn try_parse_structs_only(&self, source: &str) -> Result<BExpr> {
         // Try to parse individual items from the source, filtering out problematic ones
-        let syn_file: syn::File = syn::parse_str(source)
-            .map_err(|e| eyre!("Failed to parse source: {}", e))?;
+        let syn_file: syn::File =
+            syn::parse_str(source).map_err(|e| eyre!("Failed to parse source: {}", e))?;
 
         let mut parsed_items = Vec::new();
 

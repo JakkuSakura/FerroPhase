@@ -1,7 +1,9 @@
-use fp_core::{hir, thir, types};
 use fp_core::error::Result;
 use fp_core::span::Span;
+use fp_core::{hir, thir, types};
 use std::collections::HashMap;
+
+use super::IrTransform;
 
 /// Generator for transforming HIR to THIR (Typed High-level IR)
 /// This transformation performs type checking and inference
@@ -90,12 +92,15 @@ impl ThirGenerator {
         for item in &hir_program.items {
             match &item.kind {
                 hir::HirItemKind::Function(func) => {
-                    let input_types = func.sig.inputs.iter()
+                    let input_types = func
+                        .sig
+                        .inputs
+                        .iter()
                         .map(|param| self.hir_ty_to_ty(&param.ty))
                         .collect::<Result<Vec<_>>>()?;
-                    
+
                     let output_type = self.hir_ty_to_ty(&func.sig.output)?;
-                    
+
                     let fn_sig = types::FnSig {
                         inputs: input_types.into_iter().map(Box::new).collect(),
                         output: Box::new(output_type),
@@ -103,11 +108,10 @@ impl ThirGenerator {
                         unsafety: types::Unsafety::Normal,
                         abi: types::Abi::Rust,
                     };
-                    
-                    self.type_context.function_signatures.insert(
-                        func.sig.name.clone(),
-                        fn_sig
-                    );
+
+                    self.type_context
+                        .function_signatures
+                        .insert(func.sig.name.clone(), fn_sig);
                 }
                 _ => {} // Handle other items as needed
             }
@@ -118,7 +122,7 @@ impl ThirGenerator {
     /// Transform HIR item to THIR
     fn transform_item(&mut self, hir_item: hir::HirItem) -> Result<thir::ThirItem> {
         let thir_id = self.next_id();
-        
+
         let (kind, ty) = match hir_item.kind {
             hir::HirItemKind::Function(func) => {
                 let thir_func = self.transform_function(func)?;
@@ -132,7 +136,8 @@ impl ThirGenerator {
             }
             hir::HirItemKind::Const(const_def) => {
                 // Record initializer for inlining and transform const
-                self.const_init_map.insert(const_def.name.to_string(), const_def.body.value.clone());
+                self.const_init_map
+                    .insert(const_def.name.to_string(), const_def.body.value.clone());
                 let thir_const = self.transform_const(const_def.clone())?;
                 let const_ty = thir_const.ty.clone();
                 (thir::ThirItemKind::Const(thir_const), const_ty)
@@ -165,12 +170,15 @@ impl ThirGenerator {
 
     /// Transform HIR function to THIR
     fn transform_function(&mut self, hir_func: hir::HirFunction) -> Result<thir::ThirFunction> {
-        let inputs = hir_func.sig.inputs.iter()
+        let inputs = hir_func
+            .sig
+            .inputs
+            .iter()
             .map(|param| self.hir_ty_to_ty(&param.ty))
             .collect::<Result<Vec<_>>>()?;
-        
+
         let output = self.hir_ty_to_ty(&hir_func.sig.output)?;
-        
+
         let sig = thir::ThirFunctionSig {
             inputs,
             output,
@@ -195,7 +203,9 @@ impl ThirGenerator {
 
     /// Transform HIR struct to THIR
     fn transform_struct(&mut self, hir_struct: hir::HirStruct) -> Result<thir::ThirStruct> {
-        let fields = hir_struct.fields.into_iter()
+        let fields = hir_struct
+            .fields
+            .into_iter()
             .map(|field| self.transform_struct_field(field))
             .collect::<Result<Vec<_>>>()?;
 
@@ -206,16 +216,15 @@ impl ThirGenerator {
     }
 
     /// Transform HIR struct field to THIR
-    fn transform_struct_field(&mut self, hir_field: hir::HirStructField) -> Result<thir::ThirStructField> {
+    fn transform_struct_field(
+        &mut self,
+        hir_field: hir::HirStructField,
+    ) -> Result<thir::ThirStructField> {
         let thir_id = self.next_id();
         let ty = self.hir_ty_to_ty(&hir_field.ty)?;
         let vis = self.transform_visibility(hir_field.vis);
 
-        Ok(thir::ThirStructField {
-            thir_id,
-            ty,
-            vis,
-        })
+        Ok(thir::ThirStructField { thir_id, ty, vis })
     }
 
     /// Transform HIR const to THIR
@@ -225,19 +234,19 @@ impl ThirGenerator {
         let thir_body = self.transform_body(hir_const.body)?;
         self.body_map.insert(body_id, thir_body);
         // Record constant symbol for later path resolution
-        self.const_symbols.insert(hir_const.name.to_string(), body_id);
+        self.const_symbols
+            .insert(hir_const.name.to_string(), body_id);
 
-        Ok(thir::ThirConst {
-            ty,
-            body_id,
-        })
+        Ok(thir::ThirConst { ty, body_id })
     }
 
     /// Transform HIR body to THIR
     fn transform_body(&mut self, hir_body: hir::HirBody) -> Result<thir::ThirBody> {
         let value = self.transform_expr(hir_body.value)?;
-        
-        let params = hir_body.params.into_iter()
+
+        let params = hir_body
+            .params
+            .into_iter()
             .map(|param| {
                 let ty = self.hir_ty_to_ty(&param.ty)?;
                 Ok(thir::Param {
@@ -257,7 +266,7 @@ impl ThirGenerator {
     /// Transform HIR expression to THIR with type checking
     fn transform_expr(&mut self, hir_expr: hir::HirExpr) -> Result<thir::ThirExpr> {
         let thir_id = self.next_id();
-        
+
         let (kind, ty) = match hir_expr.kind {
             hir::HirExprKind::Literal(lit) => {
                 let (thir_lit, ty) = self.transform_literal(lit)?;
@@ -270,7 +279,11 @@ impl ThirGenerator {
                     path.segments[0].name.clone()
                 } else {
                     // Join segments for a simple dotted name, if needed
-                    path.segments.iter().map(|s| s.name.clone()).collect::<Vec<_>>().join("::")
+                    path.segments
+                        .iter()
+                        .map(|s| s.name.clone())
+                        .collect::<Vec<_>>()
+                        .join("::")
                 };
                 // If this is a reference to a known constant, inline its initializer
                 if let Some(init_expr) = self.const_init_map.get(&name) {
@@ -296,16 +309,30 @@ impl ThirGenerator {
                             thir::BinOp::Add => a + b,
                             thir::BinOp::Sub => a - b,
                             thir::BinOp::Mul => a * b,
-                            thir::BinOp::Div => if *b != 0 { a / b } else { *a },
+                            thir::BinOp::Div => {
+                                if *b != 0 {
+                                    a / b
+                                } else {
+                                    *a
+                                }
+                            }
                             _ => unreachable!(),
                         };
-                        (thir::ThirExprKind::Literal(thir::ThirLit::Int(val, thir::IntTy::I32)), self.create_i32_type())
+                        (
+                            thir::ThirExprKind::Literal(thir::ThirLit::Int(val, thir::IntTy::I32)),
+                            self.create_i32_type(),
+                        )
                     }
                     _ => {
                         // Type checking: ensure operands are compatible
-                        let result_ty = self.check_binary_op_types(&left_thir.ty, &right_thir.ty, &op_thir)?;
+                        let result_ty =
+                            self.check_binary_op_types(&left_thir.ty, &right_thir.ty, &op_thir)?;
                         (
-                            thir::ThirExprKind::Binary(op_thir, Box::new(left_thir), Box::new(right_thir)),
+                            thir::ThirExprKind::Binary(
+                                op_thir,
+                                Box::new(left_thir),
+                                Box::new(right_thir),
+                            ),
                             result_ty,
                         )
                     }
@@ -313,24 +340,31 @@ impl ThirGenerator {
             }
             hir::HirExprKind::Call(func, args) => {
                 let func_thir = self.transform_expr(*func)?;
-                let args_thir: Vec<_> = args.into_iter()
+                let args_thir: Vec<_> = args
+                    .into_iter()
                     .map(|arg| self.transform_expr(arg))
                     .collect::<Result<Vec<_>>>()?;
-                
+
                 let return_ty = self.infer_call_return_type(&func_thir, &args_thir)?;
-                
-                (thir::ThirExprKind::Call {
-                    fun: Box::new(func_thir),
-                    args: args_thir,
-                    from_hir_call: true,
-                }, return_ty)
+
+                (
+                    thir::ThirExprKind::Call {
+                        fun: Box::new(func_thir),
+                        args: args_thir,
+                        from_hir_call: true,
+                    },
+                    return_ty,
+                )
             }
             hir::HirExprKind::Return(expr) => {
                 let return_ty = self.create_never_type();
                 let expr_thir = expr.map(|e| self.transform_expr(*e)).transpose()?;
-                (thir::ThirExprKind::Return {
-                    value: expr_thir.map(Box::new),
-                }, return_ty)
+                (
+                    thir::ThirExprKind::Return {
+                        value: expr_thir.map(Box::new),
+                    },
+                    return_ty,
+                )
             }
             hir::HirExprKind::Block(block) => {
                 let block_thir = self.transform_block(block)?;
@@ -341,16 +375,21 @@ impl ThirGenerator {
                 let expr_thir = self.transform_expr(*expr)?;
                 let op_thir = self.transform_unary_op(op);
                 let result_ty = self.check_unary_op_type(&expr_thir.ty, &op_thir)?;
-                (thir::ThirExprKind::Unary(op_thir, Box::new(expr_thir)), result_ty)
+                (
+                    thir::ThirExprKind::Unary(op_thir, Box::new(expr_thir)),
+                    result_ty,
+                )
             }
             hir::HirExprKind::MethodCall(receiver, method_name, args) => {
                 // Convert method call to function call for simplicity
                 let receiver_thir = self.transform_expr(*receiver)?;
-                let args_thir: Vec<_> = args.into_iter()
+                let args_thir: Vec<_> = args
+                    .into_iter()
                     .map(|arg| self.transform_expr(arg))
                     .collect::<Result<Vec<_>>>()?;
-                let return_ty = self.infer_method_call_return_type(&receiver_thir, &method_name, &args_thir)?;
-                
+                let return_ty =
+                    self.infer_method_call_return_type(&receiver_thir, &method_name, &args_thir)?;
+
                 // Create a function call with method name
                 let func_expr = thir::ThirExpr {
                     thir_id: self.next_id(),
@@ -358,15 +397,18 @@ impl ThirGenerator {
                     ty: self.create_unit_type(), // Simplified
                     span: Span::new(0, 0, 0),
                 };
-                
+
                 let mut all_args = vec![receiver_thir];
                 all_args.extend(args_thir);
-                
-                (thir::ThirExprKind::Call {
-                    fun: Box::new(func_expr),
-                    args: all_args,
-                    from_hir_call: true,
-                }, return_ty)
+
+                (
+                    thir::ThirExprKind::Call {
+                        fun: Box::new(func_expr),
+                        args: all_args,
+                        from_hir_call: true,
+                    },
+                    return_ty,
+                )
             }
             hir::HirExprKind::FieldAccess(expr, field_name) => {
                 // If base is a const struct, inline the specific field initializer
@@ -375,7 +417,9 @@ impl ThirGenerator {
                         let base_name = p.segments[0].name.to_string();
                         if let Some(init) = self.const_init_map.get(&base_name) {
                             if let hir::HirExprKind::Struct(_path, fields) = &init.kind {
-                                if let Some(f) = fields.iter().find(|f| f.name.to_string() == field_name) {
+                                if let Some(f) =
+                                    fields.iter().find(|f| f.name.to_string() == field_name)
+                                {
                                     let thir_expr = self.transform_expr(f.expr.clone())?;
                                     return Ok(thir_expr);
                                 }
@@ -386,12 +430,21 @@ impl ThirGenerator {
                 // Fallback: regular field selection
                 let expr_thir = self.transform_expr(*expr)?;
                 let field_ty = self.infer_field_type(&expr_thir.ty, &field_name)?;
-                (thir::ThirExprKind::Field { base: Box::new(expr_thir), field_idx: 0 }, field_ty)
+                (
+                    thir::ThirExprKind::Field {
+                        base: Box::new(expr_thir),
+                        field_idx: 0,
+                    },
+                    field_ty,
+                )
             }
             hir::HirExprKind::Struct(_path, _fields) => {
                 // Struct expressions are complex - simplify to unit for now
                 let unit_ty = self.create_unit_type();
-                (thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)), unit_ty)
+                (
+                    thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)),
+                    unit_ty,
+                )
             }
             hir::HirExprKind::If(cond, then_expr, else_expr) => {
                 let cond_thir = self.transform_expr(*cond)?;
@@ -402,40 +455,55 @@ impl ThirGenerator {
                 } else {
                     self.create_unit_type()
                 };
-                (thir::ThirExprKind::If {
-                    cond: Box::new(cond_thir),
-                    then: Box::new(then_thir),
-                    else_opt: else_thir.map(Box::new),
-                }, result_ty)
+                (
+                    thir::ThirExprKind::If {
+                        cond: Box::new(cond_thir),
+                        then: Box::new(then_thir),
+                        else_opt: else_thir.map(Box::new),
+                    },
+                    result_ty,
+                )
             }
             hir::HirExprKind::Let(pat, _ty, init) => {
                 let init_thir = init.map(|e| self.transform_expr(*e)).transpose()?;
                 let unit_ty = self.create_unit_type();
                 if let Some(init_expr) = init_thir {
-                    (thir::ThirExprKind::Let {
-                        expr: Box::new(init_expr),
-                        pat: self.transform_pattern(pat)?,
-                    }, unit_ty)
+                    (
+                        thir::ThirExprKind::Let {
+                            expr: Box::new(init_expr),
+                            pat: self.transform_pattern(pat)?,
+                        },
+                        unit_ty,
+                    )
                 } else {
                     // No initializer, return unit literal
-                    (thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)), unit_ty)
+                    (
+                        thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)),
+                        unit_ty,
+                    )
                 }
             }
             hir::HirExprKind::Assign(lhs, rhs) => {
                 let lhs_thir = self.transform_expr(*lhs)?;
                 let rhs_thir = self.transform_expr(*rhs)?;
                 let unit_ty = self.create_unit_type();
-                (thir::ThirExprKind::Assign {
-                    lhs: Box::new(lhs_thir),
-                    rhs: Box::new(rhs_thir),
-                }, unit_ty)
+                (
+                    thir::ThirExprKind::Assign {
+                        lhs: Box::new(lhs_thir),
+                        rhs: Box::new(rhs_thir),
+                    },
+                    unit_ty,
+                )
             }
             hir::HirExprKind::Break(expr) => {
                 let expr_thir = expr.map(|e| self.transform_expr(*e)).transpose()?;
                 let never_ty = self.create_never_type();
-                (thir::ThirExprKind::Break {
-                    value: expr_thir.map(Box::new),
-                }, never_ty)
+                (
+                    thir::ThirExprKind::Break {
+                        value: expr_thir.map(Box::new),
+                    },
+                    never_ty,
+                )
             }
             hir::HirExprKind::Continue => {
                 let never_ty = self.create_never_type();
@@ -451,9 +519,12 @@ impl ThirGenerator {
                     ty: never_ty.clone(),
                     span: Span::new(0, 0, 0),
                 };
-                (thir::ThirExprKind::Loop {
-                    body: Box::new(block_expr),
-                }, never_ty)
+                (
+                    thir::ThirExprKind::Loop {
+                        body: Box::new(block_expr),
+                    },
+                    never_ty,
+                )
             }
             hir::HirExprKind::While(cond, block) => {
                 // Convert while loop to infinite loop with conditional break
@@ -505,9 +576,12 @@ impl ThirGenerator {
                     span: Span::new(0, 0, 0),
                 };
 
-                (thir::ThirExprKind::Loop {
-                    body: Box::new(loop_body_expr),
-                }, unit_ty)
+                (
+                    thir::ThirExprKind::Loop {
+                        body: Box::new(loop_body_expr),
+                    },
+                    unit_ty,
+                )
             }
         };
 
@@ -521,15 +595,20 @@ impl ThirGenerator {
 
     /// Transform HIR block to THIR
     fn transform_block(&mut self, hir_block: hir::HirBlock) -> Result<thir::ThirBlock> {
-        let stmts = hir_block.stmts.into_iter()
+        let stmts = hir_block
+            .stmts
+            .into_iter()
             .map(|stmt| self.transform_stmt(stmt))
             .collect::<Result<Vec<_>>>()?;
-        
-        let expr = hir_block.expr.map(|e| self.transform_expr(*e)).transpose()?;
+
+        let expr = hir_block
+            .expr
+            .map(|e| self.transform_expr(*e))
+            .transpose()?;
 
         Ok(thir::ThirBlock {
             targeted_by_break: false,
-            region: 0, // Simplified scope handling
+            region: 0,                // Simplified scope handling
             span: Span::new(0, 0, 0), // Will be updated with proper span
             stmts,
             expr: expr.map(Box::new),
@@ -583,8 +662,14 @@ impl ThirGenerator {
     fn transform_literal(&mut self, hir_lit: hir::HirLit) -> Result<(thir::ThirLit, types::Ty)> {
         let (thir_lit, ty) = match hir_lit {
             hir::HirLit::Bool(b) => (thir::ThirLit::Bool(b), types::Ty::bool()),
-            hir::HirLit::Integer(i) => (thir::ThirLit::Int(i as i128, thir::IntTy::I32), types::Ty::int(types::IntTy::I32)),
-            hir::HirLit::Float(f) => (thir::ThirLit::Float(f, thir::FloatTy::F64), types::Ty::float(types::FloatTy::F64)),
+            hir::HirLit::Integer(i) => (
+                thir::ThirLit::Int(i as i128, thir::IntTy::I32),
+                types::Ty::int(types::IntTy::I32),
+            ),
+            hir::HirLit::Float(f) => (
+                thir::ThirLit::Float(f, thir::FloatTy::F64),
+                types::Ty::float(types::FloatTy::F64),
+            ),
             hir::HirLit::Str(s) => (thir::ThirLit::Str(s), self.create_string_type()),
             hir::HirLit::Char(c) => (thir::ThirLit::Char(c), types::Ty::char()),
         };
@@ -639,7 +724,12 @@ impl ThirGenerator {
     }
 
     /// Type checking for binary operations
-    fn check_binary_op_types(&self, left_ty: &types::Ty, right_ty: &types::Ty, _op: &thir::BinOp) -> Result<types::Ty> {
+    fn check_binary_op_types(
+        &self,
+        left_ty: &types::Ty,
+        right_ty: &types::Ty,
+        _op: &thir::BinOp,
+    ) -> Result<types::Ty> {
         // Simplified type checking - assume same types for operands
         if left_ty == right_ty {
             Ok(left_ty.clone())
@@ -656,7 +746,11 @@ impl ThirGenerator {
     }
 
     /// Infer return type of function call
-    fn infer_call_return_type(&self, _func: &thir::ThirExpr, _args: &[thir::ThirExpr]) -> Result<types::Ty> {
+    fn infer_call_return_type(
+        &self,
+        _func: &thir::ThirExpr,
+        _args: &[thir::ThirExpr],
+    ) -> Result<types::Ty> {
         // Simplified - return i32 for now
         Ok(types::Ty::int(types::IntTy::I32))
     }
@@ -679,18 +773,21 @@ impl ThirGenerator {
     /// Get struct type
     fn get_struct_type(&self, _struct_def: &thir::ThirStruct) -> Result<types::Ty> {
         // Simplified - return struct type
-        Ok(types::Ty::new(types::TyKind::Adt(types::AdtDef {
-            did: 0,
-            variants: Vec::new(),
-            flags: types::AdtFlags::IS_STRUCT,
-            repr: types::ReprOptions {
-                int: None,
-                align: None,
-                pack: None,
-                flags: types::ReprFlags::empty(),
-                field_shuffle_seed: 0,
+        Ok(types::Ty::new(types::TyKind::Adt(
+            types::AdtDef {
+                did: 0,
+                variants: Vec::new(),
+                flags: types::AdtFlags::IS_STRUCT,
+                repr: types::ReprOptions {
+                    int: None,
+                    align: None,
+                    pack: None,
+                    flags: types::ReprFlags::empty(),
+                    field_shuffle_seed: 0,
+                },
             },
-        }, Vec::new())))
+            Vec::new(),
+        )))
     }
 
     /// Transform visibility
@@ -747,7 +844,12 @@ impl ThirGenerator {
     }
 
     /// Infer method call return type
-    fn infer_method_call_return_type(&self, _receiver: &thir::ThirExpr, _method_name: &str, _args: &[thir::ThirExpr]) -> Result<types::Ty> {
+    fn infer_method_call_return_type(
+        &self,
+        _receiver: &thir::ThirExpr,
+        _method_name: &str,
+        _args: &[thir::ThirExpr],
+    ) -> Result<types::Ty> {
         // Simplified - return unit type for method calls
         Ok(self.create_unit_type())
     }
@@ -757,7 +859,6 @@ impl ThirGenerator {
         // Simplified - return i32 for field access
         Ok(types::Ty::int(types::IntTy::I32))
     }
-
 
     /// Unify two types
     fn unify_types(&self, ty1: &types::Ty, ty2: &types::Ty) -> Result<types::Ty> {
@@ -777,6 +878,12 @@ impl ThirGenerator {
             ty: self.create_unit_type(),
             span: Span::new(0, 0, 0),
         })
+    }
+}
+
+impl IrTransform<hir::HirProgram, thir::ThirProgram> for ThirGenerator {
+    fn transform(&mut self, source: hir::HirProgram) -> Result<thir::ThirProgram> {
+        ThirGenerator::transform(self, source)
     }
 }
 
@@ -807,15 +914,21 @@ mod tests {
     #[test]
     fn test_literal_transformation() -> Result<()> {
         let mut generator = ThirGenerator::new();
-        let (thir_lit, ty) = generator.transform_literal(hir::HirLit::Integer(42)).unwrap();
-        
+        let (thir_lit, ty) = generator
+            .transform_literal(hir::HirLit::Integer(42))
+            .unwrap();
+
         match thir_lit {
             thir::ThirLit::Int(value, thir::IntTy::I32) => {
                 assert_eq!(value, 42);
             }
-            _ => return Err(crate::error::optimization_error("Expected i32 literal".to_string())),
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "Expected i32 literal".to_string(),
+                ))
+            }
         }
-        
+
         assert!(ty.is_integral());
         Ok(())
     }

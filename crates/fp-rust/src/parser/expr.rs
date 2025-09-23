@@ -2,13 +2,13 @@ use crate::parser::item::parse_item;
 use crate::parser::pat::parse_pat;
 use crate::parser::ty::{parse_member, parse_type};
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
+use fp_core::ast::*;
 use fp_core::bail;
 use fp_core::error::Result;
-use itertools::Itertools;
-use fp_core::ast::*;
 use fp_core::id::Ident;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::utils::anybox::AnyBox;
+use itertools::Itertools;
 use quote::ToTokens;
 
 pub fn parse_expr(expr: syn::Expr) -> Result<AstExpr> {
@@ -98,8 +98,12 @@ pub fn parse_field_member(f: syn::Member) -> Ident {
 }
 pub fn parse_literal(lit: syn::Lit) -> Result<AstValue> {
     Ok(match lit {
-        syn::Lit::Int(i) => AstValue::Int(ValueInt::new(i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?)),
-        syn::Lit::Float(i) => AstValue::Decimal(ValueDecimal::new(i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?)),
+        syn::Lit::Int(i) => AstValue::Int(ValueInt::new(
+            i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?,
+        )),
+        syn::Lit::Float(i) => AstValue::Decimal(ValueDecimal::new(
+            i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?,
+        )),
         syn::Lit::Str(s) => AstValue::String(ValueString::new_ref(s.value())),
         syn::Lit::Bool(b) => AstValue::Bool(ValueBool::new(b.value)),
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
@@ -308,7 +312,7 @@ pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<AstExpr> {
     if is_println_macro(&m.mac) {
         return parse_println_macro_to_function_call(&m.mac);
     }
-    
+
     // For other macros, preserve the original behavior
     Ok(AstExpr::any(RawExprMacro { raw: m }))
 }
@@ -318,37 +322,44 @@ pub fn parse_stmt_macro(raw: syn::StmtMacro) -> Result<BlockStmt> {
     if is_println_macro(&raw.mac) {
         let call_expr = parse_println_macro_to_function_call(&raw.mac)?;
         tracing::debug!("parsed println! macro to function call");
-        return Ok(BlockStmt::Expr(BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some())));
+        return Ok(BlockStmt::Expr(
+            BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
+        ));
     }
-    
+
     // For other macros, preserve the original behavior
     Ok(BlockStmt::any(RawStmtMacro { raw }))
 }
 
 fn is_println_macro(mac: &syn::Macro) -> bool {
-    mac.path.segments.len() == 1 && 
-    mac.path.segments[0].ident == "println"
+    mac.path.segments.len() == 1 && mac.path.segments[0].ident == "println"
 }
 
 fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
     // Parse the macro tokens as function arguments
     let tokens_str = mac.tokens.to_string();
-    
+
     // Handle empty println!()
     if tokens_str.trim().is_empty() {
         return Ok(AstExpr::Invoke(ExprInvoke {
-            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new(
+                "println",
+            )))),
             args: vec![],
         }));
     }
-    
+
     // Parse as function call arguments - wrap in parentheses to make it a valid function call
     let wrapped_tokens = format!("dummy({})", tokens_str);
-    
+
     match syn::parse_str::<syn::ExprCall>(&wrapped_tokens) {
         Ok(call_expr) => {
-            let args: Vec<_> = call_expr.args.into_iter().map(parse_expr).collect::<Result<Vec<_>>>()?;
-            
+            let args: Vec<_> = call_expr
+                .args
+                .into_iter()
+                .map(parse_expr)
+                .collect::<Result<Vec<_>>>()?;
+
             // Check if the first argument is a string literal (format string)
             if !args.is_empty() {
                 if let AstExpr::Value(value) = &args[0] {
@@ -361,26 +372,34 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
                             args: format_args,
                             kwargs: Vec::new(), // No named args for now
                         });
-                        
+
                         return Ok(AstExpr::Invoke(ExprInvoke {
-                            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+                            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(
+                                Ident::new("println"),
+                            ))),
                             args: vec![format_expr],
                         }));
                     }
                 }
             }
-            
+
             // Fallback to regular function call
             Ok(AstExpr::Invoke(ExprInvoke {
-                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
+                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new(
+                    "println",
+                )))),
                 args,
             }))
         }
         Err(_) => {
             // If parsing fails, fall back to treating it as a string literal
             Ok(AstExpr::Invoke(ExprInvoke {
-                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new("println")))),
-                args: vec![AstExpr::value(AstValue::String(ValueString::new_ref(tokens_str)))],
+                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new(
+                    "println",
+                )))),
+                args: vec![AstExpr::value(AstValue::String(ValueString::new_ref(
+                    tokens_str,
+                )))],
             }))
         }
     }
@@ -391,33 +410,35 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
     let mut parts = Vec::new();
     let mut current_literal = String::new();
     let mut chars = template.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         if ch == '{' {
             if let Some(&next_ch) = chars.peek() {
                 if next_ch == '}' {
                     // Found a simple placeholder {}
                     chars.next(); // consume the '}'
-                    
+
                     // Add the current literal part if not empty
                     if !current_literal.is_empty() {
-                        parts.push(fp_core::ast::FormatTemplatePart::Literal(current_literal.clone()));
+                        parts.push(fp_core::ast::FormatTemplatePart::Literal(
+                            current_literal.clone(),
+                        ));
                         current_literal.clear();
                     }
-                    
+
                     // Add an implicit placeholder
                     parts.push(fp_core::ast::FormatTemplatePart::Placeholder(
                         fp_core::ast::FormatPlaceholder {
                             arg_ref: fp_core::ast::FormatArgRef::Implicit,
                             format_spec: None,
-                        }
+                        },
                     ));
                 } else {
                     // More complex placeholder like {0}, {name}, {0:02d}
                     // For now, just handle {} - could extend to parse more complex cases
                     let mut placeholder_content = String::new();
                     chars.next(); // skip the character we peeked
-                    
+
                     // Read until closing }
                     while let Some(inner_ch) = chars.next() {
                         if inner_ch == '}' {
@@ -425,13 +446,15 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
                         }
                         placeholder_content.push(inner_ch);
                     }
-                    
+
                     // Add the current literal part if not empty
                     if !current_literal.is_empty() {
-                        parts.push(fp_core::ast::FormatTemplatePart::Literal(current_literal.clone()));
+                        parts.push(fp_core::ast::FormatTemplatePart::Literal(
+                            current_literal.clone(),
+                        ));
                         current_literal.clear();
                     }
-                    
+
                     // Parse placeholder content
                     let placeholder = parse_placeholder_content(&placeholder_content)?;
                     parts.push(fp_core::ast::FormatTemplatePart::Placeholder(placeholder));
@@ -444,12 +467,12 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
             current_literal.push(ch);
         }
     }
-    
+
     // Add any remaining literal part
     if !current_literal.is_empty() {
         parts.push(fp_core::ast::FormatTemplatePart::Literal(current_literal));
     }
-    
+
     Ok(parts)
 }
 
@@ -462,12 +485,12 @@ fn parse_placeholder_content(content: &str) -> Result<fp_core::ast::FormatPlaceh
             format_spec: None,
         });
     }
-    
+
     // Split on : for format specification
     if let Some(colon_pos) = content.find(':') {
         let arg_part = &content[..colon_pos];
         let format_spec = &content[colon_pos + 1..];
-        
+
         let arg_ref = if arg_part.is_empty() {
             fp_core::ast::FormatArgRef::Implicit
         } else if let Ok(index) = arg_part.parse::<usize>() {
@@ -475,7 +498,7 @@ fn parse_placeholder_content(content: &str) -> Result<fp_core::ast::FormatPlaceh
         } else {
             fp_core::ast::FormatArgRef::Named(arg_part.to_string())
         };
-        
+
         Ok(fp_core::ast::FormatPlaceholder {
             arg_ref,
             format_spec: Some(format_spec.to_string()),
@@ -487,7 +510,7 @@ fn parse_placeholder_content(content: &str) -> Result<fp_core::ast::FormatPlaceh
         } else {
             fp_core::ast::FormatArgRef::Named(content.to_string())
         };
-        
+
         Ok(fp_core::ast::FormatPlaceholder {
             arg_ref,
             format_spec: None,

@@ -1,11 +1,11 @@
 use crate::printer::RustPrinter;
-use fp_core::bail;
-use fp_core::error::Result;
-use itertools::Itertools;
 use fp_core::ast::{
     AstType, DecimalType, ExprInvoke, StructuralField, TypeInt, TypePrimitive, TypeReference,
     TypeSlice, TypeStruct, TypeStructural,
 };
+use fp_core::bail;
+use fp_core::error::Result;
+use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::quote;
 

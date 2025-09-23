@@ -46,16 +46,16 @@ impl TsPrinter {
     pub fn new() -> Self {
         Self::with_config(AstSerializerConfig::compact())
     }
-    
+
     pub fn with_config(config: AstSerializerConfig) -> Self {
         let writer = SharedWriter::new();
         let source_map = Lrc::new(SourceMap::default());
-        
+
         let mut swc_config = swc_ecma_codegen::Config::default();
         swc_config.minify = config.minify;
-        
+
         let line_ending = config.formatting.line_ending.as_str();
-        
+
         Self {
             emitter: Mutex::new(Emitter {
                 cfg: swc_config,
@@ -67,7 +67,7 @@ impl TsPrinter {
             config,
         }
     }
-    
+
     pub fn config(&self) -> &AstSerializerConfig {
         &self.config
     }
@@ -97,7 +97,10 @@ impl TsPrinter {
         })
     }
 
-    pub fn to_struct_interface(&self, struct_def: &TypeStruct) -> Result<swc_ecma_ast::TsInterfaceDecl> {
+    pub fn to_struct_interface(
+        &self,
+        struct_def: &TypeStruct,
+    ) -> Result<swc_ecma_ast::TsInterfaceDecl> {
         use swc_ecma_ast::*;
 
         Ok(TsInterfaceDecl {
@@ -108,23 +111,28 @@ impl TsPrinter {
             extends: vec![],
             body: TsInterfaceBody {
                 span: DUMMY_SP,
-                body: struct_def.fields.iter().map(|field| {
-                    let ts_type = self.rust_type_to_typescript_type(&field.value.to_string())?;
-                    Ok(TsTypeElement::TsPropertySignature(TsPropertySignature {
-                        span: DUMMY_SP,
-                        readonly: false,
-                        key: Box::new(Expr::Ident(self.to_ident(&field.name))),
-                        computed: false,
-                        optional: false,
-                        init: None,
-                        params: vec![],
-                        type_params: None,
-                        type_ann: Some(Box::new(TsTypeAnn {
+                body: struct_def
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let ts_type =
+                            self.rust_type_to_typescript_type(&field.value.to_string())?;
+                        Ok(TsTypeElement::TsPropertySignature(TsPropertySignature {
                             span: DUMMY_SP,
-                            type_ann: Box::new(ts_type),
-                        })),
-                    }))
-                }).collect::<Result<Vec<_>>>()?,
+                            readonly: false,
+                            key: Box::new(Expr::Ident(self.to_ident(&field.name))),
+                            computed: false,
+                            optional: false,
+                            init: None,
+                            params: vec![],
+                            type_params: None,
+                            type_ann: Some(Box::new(TsTypeAnn {
+                                span: DUMMY_SP,
+                                type_ann: Box::new(ts_type),
+                            })),
+                        }))
+                    })
+                    .collect::<Result<Vec<_>>>()?,
             },
         })
     }
@@ -133,29 +141,27 @@ impl TsPrinter {
         use swc_ecma_ast::*;
 
         let ts_type = match rust_type {
-            "f64" | "f32" | "i64" | "i32" | "i16" | "i8" | "u64" | "u32" | "u16" | "u8" | "usize" | "isize" => {
-                TsType::TsKeywordType(TsKeywordType {
-                    span: DUMMY_SP,
-                    kind: TsKeywordTypeKind::TsNumberKeyword,
-                })
-            },
-            "bool" => {
-                TsType::TsKeywordType(TsKeywordType {
-                    span: DUMMY_SP,
-                    kind: TsKeywordTypeKind::TsBooleanKeyword,
-                })
-            },
-            "String" | "str" => {
-                TsType::TsKeywordType(TsKeywordType {
-                    span: DUMMY_SP,
-                    kind: TsKeywordTypeKind::TsStringKeyword,
-                })
-            },
+            "f64" | "f32" | "i64" | "i32" | "i16" | "i8" | "u64" | "u32" | "u16" | "u8"
+            | "usize" | "isize" => TsType::TsKeywordType(TsKeywordType {
+                span: DUMMY_SP,
+                kind: TsKeywordTypeKind::TsNumberKeyword,
+            }),
+            "bool" => TsType::TsKeywordType(TsKeywordType {
+                span: DUMMY_SP,
+                kind: TsKeywordTypeKind::TsBooleanKeyword,
+            }),
+            "String" | "str" => TsType::TsKeywordType(TsKeywordType {
+                span: DUMMY_SP,
+                kind: TsKeywordTypeKind::TsStringKeyword,
+            }),
             _ => {
                 // Custom type reference
                 TsType::TsTypeRef(TsTypeRef {
                     span: DUMMY_SP,
-                    type_name: TsEntityName::Ident(swc_ecma_ast::Ident::new(rust_type.into(), DUMMY_SP)),
+                    type_name: TsEntityName::Ident(swc_ecma_ast::Ident::new(
+                        rust_type.into(),
+                        DUMMY_SP,
+                    )),
                     type_params: None,
                 })
             }
@@ -167,7 +173,7 @@ impl TsPrinter {
         self.emitter.lock().unwrap().emit_script(script)?;
         Ok(self.writer.take_string())
     }
-    
+
     pub fn print_multiple_scripts(&self, scripts: &[Script]) -> Result<String> {
         let mut output = String::new();
         for script in scripts {
@@ -182,39 +188,44 @@ impl TsPrinter {
         use swc_ecma_ast::*;
 
         let interface_decl = self.to_struct_interface(struct_def)?;
-        
+
         let script = Script {
             span: DUMMY_SP,
             body: vec![Stmt::Decl(Decl::TsInterface(Box::new(interface_decl)))],
             shebang: None,
         };
-        
+
         self.print_script(&script)
     }
 
-    pub fn print_types_and_code(&self, structs: &[TypeStruct], enums: &[TypeEnum], main_code: &str) -> Result<String> {
+    pub fn print_types_and_code(
+        &self,
+        structs: &[TypeStruct],
+        enums: &[TypeEnum],
+        main_code: &str,
+    ) -> Result<String> {
         use swc_ecma_ast::*;
-        
+
         let mut body = Vec::new();
-        
+
         // Add enums first
         for enum_def in enums {
             let enum_decl = self.to_enum(enum_def)?;
             body.push(Stmt::Decl(Decl::TsEnum(Box::new(enum_decl))));
         }
-        
+
         // Add interfaces
         for struct_def in structs {
             let interface_decl = self.to_struct_interface(struct_def)?;
             body.push(Stmt::Decl(Decl::TsInterface(Box::new(interface_decl))));
         }
-        
+
         let script = Script {
             span: DUMMY_SP,
             body,
             shebang: None,
         };
-        
+
         let types_output = self.print_script(&script)?;
         Ok(format!("{}\n{}", types_output, main_code))
     }

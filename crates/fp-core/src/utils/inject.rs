@@ -53,8 +53,7 @@ impl Injector {
     ) -> Result<Vec<crate::id::Ident>> {
         let mut ids = vec![];
         for arg in args {
-            let id = self
-                .pick(arg, ctx);
+            let id = self.pick(arg, ctx);
             if let None = id {
                 bail!("Could not find value for type: {}", arg);
             }

@@ -1,10 +1,10 @@
 use crate::parser::{parse_ident, parse_locator, ty};
 use fp_core::bail;
 use fp_core::error::Result;
-use itertools::Itertools;
 use fp_core::pat::{
     Pattern, PatternIdent, PatternTuple, PatternTupleStruct, PatternType, PatternWildcard,
 };
+use itertools::Itertools;
 use quote::ToTokens;
 
 pub fn parse_pat_ident(i: syn::PatIdent) -> Result<PatternIdent> {

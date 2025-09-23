@@ -1,4 +1,8 @@
-use crate::{cli::CliConfig, pipeline::{Pipeline, PipelineInput, PipelineConfig}, Result};
+use crate::{
+    Result,
+    cli::CliConfig,
+    pipeline::{Pipeline, PipelineConfig, PipelineInput},
+};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -14,10 +18,14 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
         (Some(expr), None) => PipelineInput::Expression(expr),
         (None, Some(file)) => PipelineInput::File(file),
         (Some(_), Some(_)) => {
-            return Err(crate::CliError::Compilation("Cannot specify both --expr and --file".to_string()));
+            return Err(crate::CliError::Compilation(
+                "Cannot specify both --expr and --file".to_string(),
+            ));
         }
         (None, None) => {
-            return Err(crate::CliError::Compilation("Must specify either --expr or --file".to_string()));
+            return Err(crate::CliError::Compilation(
+                "Must specify either --expr or --file".to_string(),
+            ));
         }
     };
 
@@ -33,14 +41,16 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
     // Parse the input and get the AST
     let source = match &input {
         PipelineInput::Expression(expr) => expr.clone(),
-        PipelineInput::File(path) => {
-            std::fs::read_to_string(&path)
-                .map_err(|e| crate::CliError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read file {}: {}", path.display(), e))))?
-        }
+        PipelineInput::File(path) => std::fs::read_to_string(&path).map_err(|e| {
+            crate::CliError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read file {}: {}", path.display(), e),
+            ))
+        })?,
     };
 
     let ast = pipeline.parse_source_public(&source)?;
-    
+
     // Print the AST using Debug formatting for now
     println!("{:#?}", ast);
 

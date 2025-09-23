@@ -6,13 +6,15 @@ use crate::config::{PipelineOptions, PipelineTarget, RuntimeConfig};
 use crate::CliError;
 pub use crate::config::PipelineConfig;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstValue, BExpr, RuntimeValue};
+use fp_core::ast::{AstNode, AstValue, BExpr, RuntimeValue};
 use fp_core::context::SharedScopedContext;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_llvm;
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::InterpretationOrchestrator;
-use fp_optimize::transformations::{HirGenerator, LirGenerator, MirGenerator, ThirGenerator};
+use fp_optimize::transformations::{
+    HirGenerator, IrTransform, LirGenerator, MirGenerator, ThirGenerator,
+};
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
 use std::path::PathBuf;
@@ -144,27 +146,36 @@ impl Pipeline {
 
         // Step 2: Const Evaluation
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
-        let mut evaluated_ast = (*ast).clone();
+        let mut evaluated_node = AstNode::Expr((**ast).clone());
 
         const_evaluator
-            .evaluate_const_items_only(&mut evaluated_ast, &context)
+            .evaluate(&mut evaluated_node, &context)
             .map_err(|e| CliError::Compilation(format!("Const evaluation failed: {}", e)))?;
-
-        let evaluated_ast = Box::new(evaluated_ast);
 
         if options.save_intermediates {
             std::fs::write(
                 base_path.with_extension("east"),
-                format!("{:#?}", evaluated_ast),
+                format!("{:#?}", evaluated_node),
             )
             .ok();
         }
 
+        let evaluated_ast = match evaluated_node {
+            AstNode::Expr(expr) => Box::new(expr),
+            AstNode::Item(_) | AstNode::File(_) => {
+                return Err(CliError::Compilation(
+                    "Const evaluation produced unsupported node for compile pipeline".to_string(),
+                ));
+            }
+        };
+
         // Step 3: AST → HIR (High-level IR)
         let mut hir_generator = HirGenerator::new();
-        let hir_program = hir_generator.transform_expr(&evaluated_ast).map_err(|e| {
-            CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
-        })?;
+        let hir_program = hir_generator
+            .transform(evaluated_ast.as_ref())
+            .map_err(|e| {
+                CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
+            })?;
 
         if options.save_intermediates {
             std::fs::write(
