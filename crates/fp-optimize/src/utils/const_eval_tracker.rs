@@ -1,13 +1,13 @@
-// Side effect tracker - utility for collecting and applying side effects
+// Const-eval tracker - collects compile-time mutations requested during evaluation
 
 use eyre::eyre;
 use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::id::{Ident, Locator};
 
-/// Side effects that const evaluation can produce
+/// Const-eval operations produced by intrinsics during interpretation
 #[derive(Debug, Clone)]
-pub enum SideEffect {
+pub enum ConstEval {
     /// Add field to struct - corresponds to addfield! intrinsic
     GenerateField {
         target_type: String,
@@ -47,40 +47,40 @@ pub enum SideEffect {
     },
 }
 
-/// Utility for tracking and applying side effects
-pub struct SideEffectTracker {
-    side_effects: Vec<SideEffect>,
+/// Utility for staging and applying const-eval mutations
+pub struct ConstEvalTracker {
+    pending: Vec<ConstEval>,
 }
 
-impl SideEffectTracker {
+impl ConstEvalTracker {
     pub fn new() -> Self {
         Self {
-            side_effects: Vec::new(),
+            pending: Vec::new(),
         }
     }
 
-    /// Add a side effect to be processed later
-    pub fn add_side_effect(&mut self, effect: SideEffect) {
-        self.side_effects.push(effect);
+    /// Record a const-eval operation produced during interpretation
+    pub fn record(&mut self, op: ConstEval) {
+        self.pending.push(op);
     }
 
-    /// Get all accumulated side effects
-    pub fn get_side_effects(&self) -> Vec<SideEffect> {
-        self.side_effects.clone()
+    /// Inspect queued const-eval operations without consuming them
+    pub fn pending(&self) -> Vec<ConstEval> {
+        self.pending.clone()
     }
 
-    /// Clear all side effects
-    pub fn clear_side_effects(&mut self) {
-        self.side_effects.clear();
+    /// Clear queued operations
+    pub fn clear(&mut self) {
+        self.pending.clear();
     }
 
-    /// Apply all accumulated side effects to the AST
-    pub fn apply_side_effects(&mut self, ast: &mut AstNode) -> Result<bool> {
+    /// Apply all queued const-eval operations to the AST
+    pub fn apply(&mut self, ast: &mut AstNode) -> Result<bool> {
         let mut changes_made = false;
 
-        for effect in &self.side_effects {
-            match effect {
-                SideEffect::GenerateField {
+        for op in &self.pending {
+            match op {
+                ConstEval::GenerateField {
                     target_type,
                     field_name,
                     field_type,
@@ -88,7 +88,7 @@ impl SideEffectTracker {
                     self.apply_field_generation(ast, target_type, field_name, field_type)?;
                     changes_made = true;
                 }
-                SideEffect::GenerateMethod {
+                ConstEval::GenerateMethod {
                     target_type,
                     method_name,
                     method_body,
@@ -96,7 +96,7 @@ impl SideEffectTracker {
                     self.apply_method_generation(ast, target_type, method_name, method_body)?;
                     changes_made = true;
                 }
-                SideEffect::GenerateImpl {
+                ConstEval::GenerateImpl {
                     target_type,
                     trait_name,
                     methods,
@@ -104,14 +104,14 @@ impl SideEffectTracker {
                     self.apply_impl_generation(ast, target_type, trait_name, methods)?;
                     changes_made = true;
                 }
-                SideEffect::GenerateType {
+                ConstEval::GenerateType {
                     type_name,
                     type_definition,
                 } => {
                     self.apply_type_generation(ast, type_name, type_definition)?;
                     changes_made = true;
                 }
-                SideEffect::CreateStructBuilder {
+                ConstEval::CreateStructBuilder {
                     builder_name,
                     struct_name,
                 } => {
@@ -119,16 +119,16 @@ impl SideEffectTracker {
                         changes_made = true;
                     }
                 }
-                SideEffect::CompileError { message } => {
+                ConstEval::CompileError { message } => {
                     return Err(fp_core::error::Error::Generic(eyre!(
                         "Compile error: {}",
                         message
                     )));
                 }
-                SideEffect::CompileWarning { message } => {
+                ConstEval::CompileWarning { message } => {
                     tracing::warn!("Compile warning: {}", message);
                 }
-                SideEffect::GenerateFunctionCall {
+                ConstEval::GenerateFunctionCall {
                     function_name,
                     args,
                 } => {
@@ -138,12 +138,12 @@ impl SideEffectTracker {
             }
         }
 
-        // Clear applied side effects
-        self.clear_side_effects();
+        // Clear applied operations before returning
+        self.clear();
         Ok(changes_made)
     }
 
-    /// Apply function call generation side effect
+    /// Apply function call generation request
     /// For now this is a stub that preserves the intent without mutating the AST.
     /// A future implementation can inject an explicit call node into the AST.
     fn apply_function_call_generation(
@@ -152,12 +152,12 @@ impl SideEffectTracker {
         _function_name: &str,
         _args: &Vec<AstValue>,
     ) -> Result<()> {
-        // Intentionally a no-op for now. This ensures side effects are accounted for
+        // Intentionally a no-op for now. This ensures const-eval operations are accounted for
         // without causing compilation failures until full lowering is implemented.
         Ok(())
     }
 
-    /// Apply field generation side effect
+    /// Apply field generation request
     fn apply_field_generation(
         &self,
         ast: &mut AstNode,
@@ -189,7 +189,7 @@ impl SideEffectTracker {
         }
     }
 
-    /// Apply method generation side effect
+    /// Apply method generation request
     fn apply_method_generation(
         &self,
         ast: &mut AstNode,
@@ -214,7 +214,7 @@ impl SideEffectTracker {
         }
     }
 
-    /// Apply impl generation side effect
+    /// Apply impl generation request
     fn apply_impl_generation(
         &self,
         ast: &mut AstNode,
@@ -249,7 +249,7 @@ impl SideEffectTracker {
         push_item(ast, AstItem::Impl(impl_item))
     }
 
-    /// Apply type generation side effect
+    /// Apply type generation request
     fn apply_type_generation(
         &self,
         ast: &mut AstNode,
@@ -276,7 +276,7 @@ impl SideEffectTracker {
         Ok(())
     }
 
-    /// Apply struct builder creation side effect
+    /// Apply struct builder creation request
     fn apply_struct_builder_creation(
         &self,
         _ast: &mut AstNode,
@@ -288,25 +288,25 @@ impl SideEffectTracker {
     }
 }
 
-impl SideEffect {
-    /// Get a description of this side effect for debugging
+impl ConstEval {
+    /// Get a description of this const-eval operation for debugging
     pub fn description(&self) -> String {
         match self {
-            SideEffect::GenerateField {
+            ConstEval::GenerateField {
                 target_type,
                 field_name,
                 ..
             } => {
                 format!("Add field {} to {}", field_name, target_type)
             }
-            SideEffect::GenerateMethod {
+            ConstEval::GenerateMethod {
                 target_type,
                 method_name,
                 ..
             } => {
                 format!("Add method {} to {}", method_name, target_type)
             }
-            SideEffect::GenerateImpl {
+            ConstEval::GenerateImpl {
                 target_type,
                 trait_name,
                 methods,
@@ -318,22 +318,22 @@ impl SideEffect {
                     methods.len()
                 )
             }
-            SideEffect::GenerateType { type_name, .. } => {
+            ConstEval::GenerateType { type_name, .. } => {
                 format!("Generate type {}", type_name)
             }
-            SideEffect::CreateStructBuilder {
+            ConstEval::CreateStructBuilder {
                 builder_name,
                 struct_name,
             } => {
                 format!("Create struct builder {} for {}", builder_name, struct_name)
             }
-            SideEffect::CompileError { message } => {
+            ConstEval::CompileError { message } => {
                 format!("Compile error: {}", message)
             }
-            SideEffect::CompileWarning { message } => {
+            ConstEval::CompileWarning { message } => {
                 format!("Compile warning: {}", message)
             }
-            SideEffect::GenerateFunctionCall {
+            ConstEval::GenerateFunctionCall {
                 function_name,
                 args,
             } => {
