@@ -3,7 +3,7 @@ use fp_core::id::Locator;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, hir};
-use std::path::PathBuf;
+use std::path::Path;
 
 use super::IrTransform;
 
@@ -27,13 +27,13 @@ impl HirGenerator {
     }
 
     /// Create a new HIR generator with file context
-    pub fn with_file(file_path: &PathBuf) -> Self {
+    pub fn with_file<P: AsRef<Path>>(file_path: P) -> Self {
         // Generate a simple hash-based file ID from the path
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
         let mut hasher = DefaultHasher::new();
-        file_path.hash(&mut hasher);
+        file_path.as_ref().hash(&mut hasher);
         let file_id = hasher.finish();
 
         Self {
@@ -626,8 +626,12 @@ impl HirGenerator {
         &mut self,
         format_str: &ast::ExprFormatString,
     ) -> Result<hir::HirExprKind> {
-        tracing::debug!("Preserving structured format string with {} parts, {} args, and {} kwargs for const evaluation", 
-                       format_str.parts.len(), format_str.args.len(), format_str.kwargs.len());
+        tracing::debug!(
+            "Preserving structured format string with {} parts, {} args, and {} kwargs for const evaluation",
+            format_str.parts.len(),
+            format_str.args.len(),
+            format_str.kwargs.len()
+        );
 
         // For now, create a special HIR node that preserves the format string structure
         // This will be resolved during const evaluation when variable values are available
@@ -775,7 +779,7 @@ mod tests {
             _ => {
                 return Err(crate::error::optimization_error(
                     "Expected integer literal".to_string(),
-                ))
+                ));
             }
         }
         Ok(())
@@ -793,7 +797,7 @@ mod tests {
             _ => {
                 return Err(crate::error::optimization_error(
                     "Expected path type".to_string(),
-                ))
+                ));
             }
         }
         Ok(())

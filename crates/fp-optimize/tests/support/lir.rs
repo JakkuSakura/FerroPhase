@@ -1,4 +1,6 @@
-use fp_core::lir::{self, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator, LirType};
+use fp_core::lir::{
+    self, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator, LirType,
+};
 
 pub fn empty_program() -> LirProgram {
     LirProgram {
