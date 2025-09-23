@@ -1,6 +1,6 @@
-use fp_optimize::transformations::{HirGenerator, IrTransform};
-use fp_optimize::error::Result as OptimizeResult;
 use fp_core::hir::{self, HirItemKind};
+use fp_optimize::error::Result as OptimizeResult;
+use fp_optimize::transformations::{HirGenerator, IrTransform};
 
 mod support;
 
@@ -34,7 +34,9 @@ fn propagates_unimplemented_expression_error() {
     use fp_core::ast::{AstExpr, ExprTry};
 
     let mut generator = HirGenerator::new();
-    let unsupported = AstExpr::Try(ExprTry { expr: Box::new(AstExpr::unit()) });
+    let unsupported = AstExpr::Try(ExprTry {
+        expr: Box::new(AstExpr::unit()),
+    });
     let result = generator.transform(&unsupported);
     assert!(result.is_err());
 }
