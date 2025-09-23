@@ -3,7 +3,7 @@
 
 use crate::orchestrators::InterpretationOrchestrator;
 use crate::queries::{DependencyQueries, TypeQueries};
-use crate::utils::{EvaluationContext, IntrinsicEvaluationContext, SideEffectTracker};
+use crate::utils::{ConstEval, ConstEvalTracker, EvaluationContext, IntrinsicEvaluationContext};
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
@@ -30,8 +30,8 @@ pub struct ConstEvaluationOrchestrator {
     /// Dependency analysis
     dependency_queries: DependencyQueries,
 
-    /// Side effect tracking and application
-    side_effect_tracker: SideEffectTracker,
+    /// Const-eval mutation staging and application
+    const_eval_tracker: ConstEvalTracker,
 
     /// Context for intrinsic evaluation
     intrinsic_context: IntrinsicEvaluationContext,
@@ -51,7 +51,7 @@ impl ConstEvaluationOrchestrator {
         Self {
             type_queries: TypeQueries::new(type_registry.clone()),
             dependency_queries: DependencyQueries::new(),
-            side_effect_tracker: SideEffectTracker::new(),
+            const_eval_tracker: ConstEvalTracker::new(),
             intrinsic_context,
             interpreter: InterpretationOrchestrator::new(serializer.clone()),
             evaluation_context: EvaluationContext::new(),
@@ -102,7 +102,7 @@ impl ConstEvaluationOrchestrator {
     /// Discover const blocks and build dependency graph
     /// Evaluate const expressions in topological order
     /// Execute intrinsics like sizeof!, create_struct!, addfield!
-    /// Collect side effects (generated fields, methods, new types)
+    /// Collect const-eval mutations (generated fields, methods, new types)
     /// Apply metaprogramming changes to AST
     /// Query established types from Phase 1 as needed
     fn phase2_const_evaluation_metaprogramming(
@@ -130,17 +130,16 @@ impl ConstEvaluationOrchestrator {
             self.evaluate_const_block(block_id, ctx)?;
         }
 
-        // Collect side effects from intrinsic context
-        let intrinsic_side_effects = self.intrinsic_context.get_side_effects();
-        for effect in intrinsic_side_effects {
-            self.side_effect_tracker.add_side_effect(effect);
+        // Collect const-eval mutations from intrinsic context
+        let intrinsic_ops = self.intrinsic_context.take_const_eval_ops();
+        for op in intrinsic_ops {
+            self.const_eval_tracker.record(op);
         }
-        self.intrinsic_context.clear_side_effects();
 
-        // Apply accumulated side effects to AST
-        self.side_effect_tracker.apply_side_effects(ast)?;
+        // Apply accumulated mutations to AST
+        self.const_eval_tracker.apply(ast)?;
 
-        debug!("Phase 2 completed: Const evaluation and side effects applied");
+        debug!("Phase 2 completed: Const evaluation operations applied");
         Ok(())
     }
 
@@ -177,8 +176,8 @@ impl ConstEvaluationOrchestrator {
         let const_block = self.evaluation_context.get_const_block(block_id)?;
 
         // Delegate actual expression evaluation to the interpretation orchestrator
-        // The interpretation orchestrator knows how to handle const expressions,
-        // intrinsics, and side effect generation
+        // The interpretation orchestrator knows how to handle const expressions and
+        // intrinsics that may request AST mutations
         let result = self.interpreter.evaluate_const_expression(
             &const_block.expr,
             ctx,
@@ -196,9 +195,34 @@ impl ConstEvaluationOrchestrator {
         self.evaluation_context.get_all_results()
     }
 
-    /// Get accumulated side effects
-    pub fn get_side_effects(&self) -> Vec<crate::utils::SideEffect> {
-        self.side_effect_tracker.get_side_effects()
+    /// Get accumulated const-eval operations without consuming them
+    pub fn get_const_eval_ops(&self) -> Vec<ConstEval> {
+        self.const_eval_tracker.pending()
+    }
+
+    /// Manually queue a const-eval operation (mainly used by tests harnesses)
+    pub fn record_const_eval(&mut self, op: ConstEval) {
+        self.const_eval_tracker.record(op);
+    }
+
+    /// Drop any queued const-eval operations without applying them
+    pub fn clear_const_eval_ops(&mut self) {
+        self.const_eval_tracker.clear();
+    }
+
+    /// Apply queued const-eval operations to a module in-place
+    pub fn apply_const_eval_ops_to_module(&mut self, module: &mut AstModule) -> Result<bool> {
+        let mut node = AstNode::Item(AstItem::Module(module.clone()));
+        let changed = self.const_eval_tracker.apply(&mut node)?;
+        if changed {
+            match node {
+                AstNode::Item(AstItem::Module(updated)) => {
+                    *module = updated;
+                }
+                _ => unreachable!("const-eval tracker should yield a module node"),
+            }
+        }
+        Ok(changed)
     }
 
     /// Evaluate only const items (const declarations, structs) in an AST expression,
