@@ -15,80 +15,80 @@ pub struct Ty {
 pub enum TyKind {
     /// The primitive boolean type. Written as `bool`.
     Bool,
-    
+
     /// The primitive character type; holds a Unicode scalar value.
     Char,
-    
+
     /// A primitive signed integer type. For example, `i32`.
     Int(IntTy),
-    
+
     /// A primitive unsigned integer type. For example, `u32`.
     Uint(UintTy),
-    
+
     /// A primitive floating-point type. For example, `f64`.
     Float(FloatTy),
-    
+
     /// Algebraic data types (ADT). For example: structures, enumerations and unions.
     Adt(AdtDef, SubstsRef),
-    
+
     /// An array with the given length. `[T; n]`.
     Array(Box<Ty>, ConstKind),
-    
+
     /// The pointee of an array slice. Written as `[T]`.
     Slice(Box<Ty>),
-    
+
     /// A raw pointer. Written as `*const T` or `*mut T`
     RawPtr(TypeAndMut),
-    
+
     /// A reference; a pointer with an associated lifetime. Written as
     /// `&'a mut T` or `&'a T`.
     Ref(Region, Box<Ty>, Mutability),
-    
+
     /// The anonymous type of a function declaration/definition. Each
     /// function has a unique type.
     FnDef(DefId, SubstsRef),
-    
+
     /// A pointer to a function. Written as `fn() -> i32`.
     FnPtr(PolyFnSig),
-    
+
     /// A trait object. Written as `dyn for<'b> Trait<'b, Assoc = u32> + Send + 'a`.
     Dynamic(Vec<ExistentialPredicate>, Region),
-    
+
     /// The anonymous type of a closure. Used to represent the type of `|a| a`.
     Closure(DefId, SubstsRef),
-    
+
     /// The anonymous type of a generator. Used to represent the type of
     /// `|a| yield a`.
     Generator(DefId, SubstsRef, Movability),
-    
+
     /// A type representing the types stored inside a generator.
     GeneratorWitness(Vec<Box<Ty>>),
-    
+
     /// The never type `!`.
     Never,
-    
+
     /// A tuple type. For example, `(i32, bool)`.
     Tuple(Vec<Box<Ty>>),
-    
+
     /// The projection of an associated type. For example,
     /// `<T as Trait<..>>::N`.
     Projection(ProjectionTy),
-    
+
     /// Opaque (`impl Trait`) type found in a return type.
     Opaque(DefId, SubstsRef),
-    
+
     /// A type parameter; for example, `T` in `fn f<T>(x: T) {}`.
     Param(ParamTy),
-    
+
     /// Bound type variable, used only when preparing a trait query.
     Bound(DebruijnIndex, BoundTy),
-    
+
     /// A placeholder type - universally quantified higher-ranked type.
     Placeholder(PlaceholderType),
-    
+
     /// A type variable used during type checking.
     Infer(InferTy),
-    
+
     /// A placeholder for a type which could not be computed; this is
     /// propagated to avoid useless error messages.
     Error(ErrorGuaranteed),
@@ -259,22 +259,22 @@ pub struct ProjectionTy {
 pub enum ConstKind {
     /// A const generic parameter.
     Param(ParamConst),
-    
+
     /// Infer the value of the const.
     Infer(InferConst),
-    
+
     /// Bound const variable, used only when preparing a trait query.
     Bound(DebruijnIndex, BoundVar),
-    
+
     /// A placeholder const - universally quantified higher-ranked const.
     Placeholder(PlaceholderConst),
-    
+
     /// An unnormalized const item such as an anon const or assoc const or free const item.
     Unevaluated(UnevaluatedConst),
-    
+
     /// Used to hold computed value.
     Value(ConstValue),
-    
+
     /// A placeholder for a const which could not be computed; this is
     /// propagated to avoid useless error messages.
     Error(ErrorGuaranteed),
@@ -313,8 +313,15 @@ pub struct UnevaluatedConst {
 pub enum ConstValue {
     Scalar(Scalar),
     ZeroSized,
-    Slice { data: Vec<u8>, start: usize, end: usize },
-    ByRef { alloc: AllocId, offset: Size },
+    Slice {
+        data: Vec<u8>,
+        start: usize,
+        end: usize,
+    },
+    ByRef {
+        alloc: AllocId,
+        offset: Size,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -387,7 +394,10 @@ pub enum VariantDiscr {
 pub enum Visibility {
     Public,
     Crate,
-    Restricted { path: SimplifiedType, id: LocalDefId },
+    Restricted {
+        path: SimplifiedType,
+        id: LocalDefId,
+    },
     Inherited,
 }
 
@@ -588,54 +598,57 @@ impl Ty {
         let flags = TypeFlags::from_ty_kind(&kind);
         Self { kind, flags }
     }
-    
+
     pub fn bool() -> Self {
         Self::new(TyKind::Bool)
     }
-    
+
     pub fn char() -> Self {
         Self::new(TyKind::Char)
     }
-    
+
     pub fn int(int_ty: IntTy) -> Self {
         Self::new(TyKind::Int(int_ty))
     }
-    
+
     pub fn uint(uint_ty: UintTy) -> Self {
         Self::new(TyKind::Uint(uint_ty))
     }
-    
+
     pub fn float(float_ty: FloatTy) -> Self {
         Self::new(TyKind::Float(float_ty))
     }
-    
+
     pub fn never() -> Self {
         Self::new(TyKind::Never)
     }
-    
+
     pub fn is_primitive(&self) -> bool {
         matches!(
             self.kind,
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
         )
     }
-    
+
     pub fn is_numeric(&self) -> bool {
-        matches!(self.kind, TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_))
+        matches!(
+            self.kind,
+            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
+        )
     }
-    
+
     pub fn is_integral(&self) -> bool {
         matches!(self.kind, TyKind::Int(_) | TyKind::Uint(_))
     }
-    
+
     pub fn is_floating_point(&self) -> bool {
         matches!(self.kind, TyKind::Float(_))
     }
-    
+
     pub fn is_signed(&self) -> bool {
         matches!(self.kind, TyKind::Int(_))
     }
-    
+
     pub fn is_machine(&self) -> bool {
         matches!(
             self.kind,
@@ -647,7 +660,7 @@ impl Ty {
 impl TypeFlags {
     pub fn from_ty_kind(kind: &TyKind) -> Self {
         let mut flags = TypeFlags::empty();
-        
+
         match kind {
             TyKind::Param(_) => {
                 flags |= TypeFlags::HAS_PARAMS;
@@ -670,7 +683,7 @@ impl TypeFlags {
             }
             _ => {}
         }
-        
+
         flags
     }
 }

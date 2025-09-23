@@ -1,11 +1,11 @@
 use crate::utils::OptimizePass;
 // Replace common::* with specific imports
-use tracing::warn;
-use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
+use fp_core::error::Result;
 use fp_core::id::Locator;
 use std::sync::Arc;
+use tracing::warn;
 
 pub struct InlinePass {
     pub serializer: Arc<dyn AstSerializer>,

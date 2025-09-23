@@ -1,14 +1,14 @@
 use crate::passes::{InlinePass, SpecializePass};
 use crate::utils::OptimizePass;
 // Replace common::* with specific imports
-use itertools::Itertools;
-use tracing::{debug, info, warn};
-use fp_core::error::Result;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
+use fp_core::error::Result;
 use fp_core::id::Ident;
+use itertools::Itertools;
 use std::mem::take;
 use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 // Import our custom error helpers
 use crate::error::optimization_error;
@@ -90,8 +90,12 @@ impl FoldOptimizer {
                                 .map(|x| x.child("__invoke__".into(), Visibility::Private, false))
                                 .unwrap_or_else(|| SharedScopedContext::new());
                             for (i, arg) in invoke.args.clone().into_iter().enumerate() {
-                                let param = f.params.get(i)
-                                    .ok_or_else(|| optimization_error(format!("Couldn't find {} parameter of {:?}", i, f)))?;
+                                let param = f.params.get(i).ok_or_else(|| {
+                                    optimization_error(format!(
+                                        "Couldn't find {} parameter of {:?}",
+                                        i, f
+                                    ))
+                                })?;
 
                                 sub_ctx.insert_expr(param.name.clone(), arg.into());
                             }
@@ -238,10 +242,12 @@ impl FoldOptimizer {
         if let Some(init) = &let_.init {
             let init = self.optimize_expr(init.clone(), ctx)?;
             let value = self.pass.try_evaluate_expr(&init, ctx)?;
-            let ident = let_.pat.as_ident()
+            let ident = let_
+                .pat
+                .as_ident()
                 .ok_or_else(|| optimization_error("Only supports ident"))?
                 .clone();
-            
+
             ctx.insert_expr(ident, value.clone());
 
             Ok(StmtLet::new(let_.pat.clone(), value.into(), None))

@@ -1,10 +1,10 @@
 use crate::printer::RustPrinter;
-use itertools::Itertools;
 use fp_core::ast::{
     AstExpr, AstValue, ValueBool, ValueChar, ValueDecimal, ValueInt, ValueList, ValueString,
     ValueStruct, ValueUndefined, ValueUnit,
 };
 use fp_core::bail;
+use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 

@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
+use fp_core::ast::{AstAttrMeta, AstAttrStyle, AstAttribute};
 use fp_core::error::Result;
 use itertools::Itertools;
-use fp_core::ast::{AstAttrMeta, AstAttrStyle, AstAttribute};
 use proc_macro2::TokenStream;
 use quote::quote;
 

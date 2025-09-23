@@ -1,9 +1,11 @@
 use fp_core::error::Result;
 use fp_core::id::Locator;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::span::{Span, FileId};
+use fp_core::span::{FileId, Span};
 use fp_core::{ast, hir};
 use std::path::PathBuf;
+
+use super::IrTransform;
 
 /// Generator for transforming AST to HIR (High-level IR)
 pub struct HirGenerator {
@@ -29,11 +31,11 @@ impl HirGenerator {
         // Generate a simple hash-based file ID from the path
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         file_path.hash(&mut hasher);
         let file_id = hasher.finish();
-        
+
         Self {
             next_hir_id: 0,
             next_def_id: 0,
@@ -44,7 +46,11 @@ impl HirGenerator {
 
     /// Create a span for the current position
     fn create_span(&mut self, length: u32) -> Span {
-        let span = Span::new(self.current_file, self.current_position, self.current_position + length);
+        let span = Span::new(
+            self.current_file,
+            self.current_position,
+            self.current_position + length,
+        );
         self.current_position += length;
         span
     }
@@ -217,13 +223,19 @@ impl HirGenerator {
                     let mut template_str = String::new();
                     for part in &fmt.parts {
                         match part {
-                            ast::FormatTemplatePart::Literal(literal) => template_str.push_str(literal),
+                            ast::FormatTemplatePart::Literal(literal) => {
+                                template_str.push_str(literal)
+                            }
                             ast::FormatTemplatePart::Placeholder(_) => template_str.push_str("{}"),
                         }
                     }
 
                     // Transform arguments inside the format string
-                    let hir_args: Result<Vec<_>> = fmt.args.iter().map(|a| self.transform_expr_to_hir(a)).collect();
+                    let hir_args: Result<Vec<_>> = fmt
+                        .args
+                        .iter()
+                        .map(|a| self.transform_expr_to_hir(a))
+                        .collect();
                     let mut call_args = vec![hir::HirExpr {
                         hir_id: self.next_id(),
                         kind: hir::HirExprKind::Literal(hir::HirLit::Str(template_str)),
@@ -234,7 +246,10 @@ impl HirGenerator {
                     let func = Box::new(hir::HirExpr {
                         hir_id: self.next_id(),
                         kind: hir::HirExprKind::Path(hir::HirPath {
-                            segments: vec![hir::HirPathSegment { name: "println".to_string(), args: None }],
+                            segments: vec![hir::HirPathSegment {
+                                name: "println".to_string(),
+                                args: None,
+                            }],
                             res: None,
                         }),
                         span: Span::new(0, 0, 0),
@@ -414,7 +429,7 @@ impl HirGenerator {
                 let ty = if let Some(ty) = &const_def.ty {
                     self.transform_type_to_hir(ty)?
                 } else {
-                    // Use unit type as placeholder for type inference  
+                    // Use unit type as placeholder for type inference
                     hir::HirTy::new(
                         self.next_id(),
                         hir::HirTyKind::Tuple(Vec::new()),
@@ -444,12 +459,12 @@ impl HirGenerator {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                
+
                 let generics = hir::HirGenerics {
                     params: vec![], // Simplified generic handling
                     where_clause: None,
                 };
-                
+
                 hir::HirItemKind::Struct(hir::HirStruct {
                     name,
                     fields,
@@ -478,16 +493,16 @@ impl HirGenerator {
             ast::AstType::Primitive(prim) => {
                 let type_name = match prim {
                     ast::TypePrimitive::Bool => "bool",
-                    ast::TypePrimitive::Char => "char", 
+                    ast::TypePrimitive::Char => "char",
                     ast::TypePrimitive::String => "String",
                     ast::TypePrimitive::Int(int_ty) => match int_ty {
                         ast::TypeInt::I8 => "i8",
-                        ast::TypeInt::I16 => "i16", 
+                        ast::TypeInt::I16 => "i16",
                         ast::TypeInt::I32 => "i32",
                         ast::TypeInt::I64 => "i64",
                         ast::TypeInt::U8 => "u8",
                         ast::TypeInt::U16 => "u16",
-                        ast::TypeInt::U32 => "u32", 
+                        ast::TypeInt::U32 => "u32",
                         ast::TypeInt::U64 => "u64",
                         ast::TypeInt::BigInt => "i64", // Map BigInt to i64 for now
                     },
@@ -563,7 +578,6 @@ impl HirGenerator {
         }
     }
 
-
     /// Convert AST binary operator to HIR
     fn convert_binop_kind(&self, op: &BinOpKind) -> hir::HirBinOp {
         match op {
@@ -608,21 +622,26 @@ impl HirGenerator {
     }
 
     /// Transform format string to HIR - keep it as FormatString for later const evaluation
-    fn transform_format_string_to_hir(&mut self, format_str: &ast::ExprFormatString) -> Result<hir::HirExprKind> {
+    fn transform_format_string_to_hir(
+        &mut self,
+        format_str: &ast::ExprFormatString,
+    ) -> Result<hir::HirExprKind> {
         tracing::debug!("Preserving structured format string with {} parts, {} args, and {} kwargs for const evaluation", 
                        format_str.parts.len(), format_str.args.len(), format_str.kwargs.len());
-        
+
         // For now, create a special HIR node that preserves the format string structure
         // This will be resolved during const evaluation when variable values are available
-        
+
         // Transform all arguments to HIR
-        let hir_args: Result<Vec<_>> = format_str.args.iter()
+        let hir_args: Result<Vec<_>> = format_str
+            .args
+            .iter()
             .map(|arg| self.transform_expr_to_hir(arg))
             .collect();
         let hir_args = hir_args?;
-        
+
         // Note: kwargs handling simplified for now
-        
+
         // Create a special println function call that can be handled during const evaluation
         let println_path = hir::HirPath {
             segments: vec![hir::HirPathSegment {
@@ -631,7 +650,7 @@ impl HirGenerator {
             }],
             res: None,
         };
-        
+
         // Encode the format string structure as a special argument
         // We'll pass the template as the first argument and the args as remaining arguments
         let mut template_str = String::new();
@@ -645,28 +664,31 @@ impl HirGenerator {
                 }
             }
         }
-        
+
         let mut call_args = vec![hir::HirExpr {
             hir_id: self.next_id(),
             kind: hir::HirExprKind::Literal(hir::HirLit::Str(template_str)),
             span: self.create_span(1),
         }];
-        
+
         // Add the actual arguments
         call_args.extend(hir_args);
-        
-        tracing::debug!("Created println call with template and {} arguments", call_args.len() - 1);
-        
+
+        tracing::debug!(
+            "Created println call with template and {} arguments",
+            call_args.len() - 1
+        );
+
         // Convert HirPath to HirExpr for the function call
         let println_expr = Box::new(hir::HirExpr {
             hir_id: self.next_id(),
             kind: hir::HirExprKind::Path(println_path),
             span: self.create_span(1),
         });
-        
+
         Ok(hir::HirExprKind::Call(println_expr, call_args))
     }
-    
+
     /// Transform let expression to HIR
     fn transform_let_to_hir(&mut self, let_expr: &ast::ExprLet) -> Result<hir::HirExprKind> {
         // For now, create a simple local binding
@@ -718,6 +740,12 @@ impl HirGenerator {
     }
 }
 
+impl<'a> IrTransform<&'a ast::AstExpr, hir::HirProgram> for HirGenerator {
+    fn transform(&mut self, source: &'a ast::AstExpr) -> Result<hir::HirProgram> {
+        self.transform_expr(source)
+    }
+}
+
 impl Default for HirGenerator {
     fn default() -> Self {
         Self::new()
@@ -744,7 +772,11 @@ mod tests {
             hir::HirExprKind::Literal(hir::HirLit::Integer(value)) => {
                 assert_eq!(value, 42);
             }
-            _ => return Err(crate::error::optimization_error("Expected integer literal".to_string())),
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "Expected integer literal".to_string(),
+                ))
+            }
         }
         Ok(())
     }
@@ -758,7 +790,11 @@ mod tests {
             hir::HirTyKind::Path(path) => {
                 assert_eq!(path.segments[0].name, "i32");
             }
-            _ => return Err(crate::error::optimization_error("Expected path type".to_string())),
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "Expected path type".to_string(),
+                ))
+            }
         }
         Ok(())
     }

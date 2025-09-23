@@ -17,7 +17,7 @@ pub fn setup_error_reporting() -> Result<()> {
         )
     }))
     .map_err(|e| crate::CliError::Config(format!("Failed to setup error reporting: {}", e)))?;
-    
+
     Ok(())
 }
 
@@ -35,7 +35,7 @@ pub enum FerroPhaseError {
         #[label("syntax error here")]
         err_span: miette::SourceSpan,
     },
-    
+
     #[error("Type error in FerroPhase code")]
     #[diagnostic(
         code(ferrophase::type_error),
@@ -48,7 +48,7 @@ pub enum FerroPhaseError {
         err_span: miette::SourceSpan,
         message: String,
     },
-    
+
     #[error("Compilation error")]
     #[diagnostic(
         code(ferrophase::compilation_error),
@@ -60,7 +60,7 @@ pub enum FerroPhaseError {
         #[label("error occurred here")]
         err_span: Option<miette::SourceSpan>,
     },
-    
+
     #[error("Project configuration error")]
     #[diagnostic(
         code(ferrophase::config_error),
@@ -76,12 +76,19 @@ pub enum FerroPhaseError {
 
 /// Helper function to create a syntax error with source context
 pub fn syntax_error(src: String, span: miette::SourceSpan) -> FerroPhaseError {
-    FerroPhaseError::SyntaxError { src, err_span: span }
+    FerroPhaseError::SyntaxError {
+        src,
+        err_span: span,
+    }
 }
 
 /// Helper function to create a type error with source context
 pub fn type_error(src: String, span: miette::SourceSpan, message: String) -> FerroPhaseError {
-    FerroPhaseError::TypeError { src, err_span: span, message }
+    FerroPhaseError::TypeError {
+        src,
+        err_span: span,
+        message,
+    }
 }
 
 /// Helper function to create a compilation error
@@ -123,31 +130,38 @@ pub fn print_diagnostic(error: &dyn Diagnostic) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_syntax_error_creation() {
         let src = "fn main() { let x = ".to_string();
         let span = miette::SourceSpan::new(16.into(), 1.into());
         let error = syntax_error(src.clone(), span);
-        
+
         match error {
-            FerroPhaseError::SyntaxError { src: error_src, err_span } => {
+            FerroPhaseError::SyntaxError {
+                src: error_src,
+                err_span,
+            } => {
                 assert_eq!(error_src, src);
                 assert_eq!(err_span, span);
             }
             _ => panic!("Expected SyntaxError"),
         }
     }
-    
+
     #[test]
     fn test_type_error_creation() {
         let src = "let x: i32 = \"hello\";".to_string();
         let span = miette::SourceSpan::new(13.into(), 7.into());
         let message = "Cannot assign string to integer variable".to_string();
         let error = type_error(src.clone(), span, message.clone());
-        
+
         match error {
-            FerroPhaseError::TypeError { src: error_src, err_span, message: error_msg } => {
+            FerroPhaseError::TypeError {
+                src: error_src,
+                err_span,
+                message: error_msg,
+            } => {
                 assert_eq!(error_src, src);
                 assert_eq!(err_span, span);
                 assert_eq!(error_msg, message);

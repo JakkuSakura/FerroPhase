@@ -1,6 +1,6 @@
 //! Code checking and validation command implementation
 
-use crate::{cli::CliConfig, Result};
+use crate::{Result, cli::CliConfig};
 use console::style;
 use std::path::PathBuf;
 
@@ -15,10 +15,13 @@ pub struct CheckArgs {
 /// Execute the check command
 pub async fn check_command(args: CheckArgs, _config: &CliConfig) -> Result<()> {
     println!("{} Checking FerroPhase code...", style("🔍").cyan());
-    
+
     // TODO: Implement comprehensive code checking
-    println!("{} Code checking not yet fully implemented", style("ℹ").blue());
+    println!(
+        "{} Code checking not yet fully implemented",
+        style("ℹ").blue()
+    );
     println!("Paths to check: {:?}", args.paths);
-    
+
     Ok(())
 }

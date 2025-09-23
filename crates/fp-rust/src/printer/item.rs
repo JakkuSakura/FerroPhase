@@ -1,10 +1,10 @@
 use eyre::ContextCompat;
-use fp_core::{bail, Result};
-use itertools::Itertools;
 use fp_core::ast::{
     AstItem, ItemDefConst, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl,
 };
+use fp_core::{bail, Result};
+use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::quote;
 

@@ -1,5 +1,5 @@
 use crate::ast::{AstExpr, ExprClosured, Visibility};
-use crate::ast::{AstType, AstValue, ValueFunction, RuntimeValue};
+use crate::ast::{AstType, AstValue, RuntimeValue, ValueFunction};
 use crate::id::{Ident, Path};
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -89,7 +89,7 @@ impl ScopedContext {
             execution_mode: ExecutionMode::CompileTime, // Default to compile-time
         }
     }
-    
+
     pub fn new_with_mode(mode: ExecutionMode) -> Self {
         ScopedContext {
             parent: None,
@@ -103,7 +103,7 @@ impl ScopedContext {
             execution_mode: mode,
         }
     }
-    
+
     pub fn execution_mode(&self) -> ExecutionMode {
         self.execution_mode
     }
@@ -186,11 +186,11 @@ impl SharedScopedContext {
     pub fn new() -> Self {
         Self(Arc::new(ScopedContext::new()))
     }
-    
+
     pub fn new_with_mode(mode: ExecutionMode) -> Self {
         Self(Arc::new(ScopedContext::new_with_mode(mode)))
     }
-    
+
     pub fn child(&self, name: Ident, visibility: Visibility, access_parent_locals: bool) -> Self {
         let child = Self(Arc::new(ScopedContext {
             parent: Some(Arc::downgrade(&self.0)),
@@ -273,7 +273,7 @@ impl SharedScopedContext {
             store.closure = Some(self.clone().0);
         });
     }
-    
+
     pub fn insert_runtime_value_with_ctx(&self, key: impl Into<Ident>, value: RuntimeValue) {
         let store = self.storages.entry(key.into()).or_default();
         store.with_storage(|store| {
@@ -281,29 +281,29 @@ impl SharedScopedContext {
             store.closure = Some(self.clone().0);
         });
     }
-    
+
     pub fn get_runtime_value_storage(&self, key: impl Into<Path>) -> Option<RuntimeValue> {
         let storage = self.get_storage(key, true)?;
         storage.runtime_value()
     }
-    
+
     pub fn get_runtime_value_recursive_path(&self, key: impl Into<Path>) -> Option<RuntimeValue> {
         let key = key.into();
         debug!("get_runtime_value_recursive {}", key);
-        
+
         // Try direct lookup first
         if let Some(runtime_value) = self.get_runtime_value_storage(&key) {
             return Some(runtime_value);
         }
-        
+
         // If we have a regular value, convert it to runtime value
         if let Some(ast_value) = self.get_value(&key) {
             return Some(RuntimeValue::literal(ast_value));
         }
-        
+
         None
     }
-    
+
     pub fn get_runtime_value_mut(&self, key: &str) -> Option<RuntimeValue> {
         // Note: This is a simplified implementation
         // In a full implementation, we'd need to track mutability properly

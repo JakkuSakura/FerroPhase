@@ -443,17 +443,17 @@ impl ThirProgram {
             next_thir_id: 0,
         }
     }
-    
+
     pub fn next_id(&mut self) -> ThirId {
         let id = self.next_thir_id;
         self.next_thir_id += 1;
         id
     }
-    
+
     pub fn body(&self, id: BodyId) -> &ThirBody {
         &self.bodies[&id]
     }
-    
+
     pub fn body_mut(&mut self, id: BodyId) -> &mut ThirBody {
         self.bodies.get_mut(&id).unwrap()
     }
@@ -461,13 +461,23 @@ impl ThirProgram {
 
 impl ThirExpr {
     pub fn new(thir_id: ThirId, kind: ThirExprKind, ty: Ty, span: Span) -> Self {
-        Self { thir_id, kind, ty, span }
+        Self {
+            thir_id,
+            kind,
+            ty,
+            span,
+        }
     }
 }
 
 impl ThirPat {
     pub fn new(thir_id: ThirId, kind: ThirPatKind, ty: Ty, span: Span) -> Self {
-        Self { thir_id, kind, ty, span }
+        Self {
+            thir_id,
+            kind,
+            ty,
+            span,
+        }
     }
 }
 
