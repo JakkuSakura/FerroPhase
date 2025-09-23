@@ -4,7 +4,7 @@ use std::path::Path;
 
 // Language identifier constants
 pub const TYPESCRIPT: &str = "typescript";
-pub const JAVASCRIPT: &str = "javascript";  
+pub const JAVASCRIPT: &str = "javascript";
 pub const CSHARP: &str = "csharp";
 pub const PYTHON: &str = "python";
 pub const GO: &str = "go";
@@ -98,19 +98,17 @@ pub fn detect_source_language(path: &Path) -> Option<&'static Language> {
 
 /// Detect target language from string identifier
 pub fn detect_target_language(target: &str) -> Option<&'static Language> {
-    SUPPORTED_LANGUAGES
-        .iter()
-        .find(|lang| {
-            lang.name == target || 
-            lang.extensions.contains(&target) ||
-            match (lang.name, target) {
+    SUPPORTED_LANGUAGES.iter().find(|lang| {
+        lang.name == target
+            || lang.extensions.contains(&target)
+            || match (lang.name, target) {
                 (TYPESCRIPT, "ts") => true,
                 (JAVASCRIPT, "js") => true,
                 (CSHARP, "cs" | "c#") => true,
                 (PYTHON, "py") => true,
                 _ => false,
             }
-        })
+    })
 }
 
 /// Get file extension for a target language

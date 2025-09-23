@@ -1,8 +1,8 @@
-use llvm_ir::Module;
-use std::path::Path;
-use std::collections::HashMap;
-use fp_core::span::Span;
 use anyhow::Result;
+use fp_core::span::Span;
+use llvm_ir::Module;
+use std::collections::HashMap;
+use std::path::Path;
 
 /// Debug information builder for LLVM modules (simplified version)
 pub struct DebugInfoBuilder {
@@ -22,12 +22,9 @@ pub struct DebugMetadata {
 
 impl DebugInfoBuilder {
     /// Create a new debug info builder
-    pub fn new(
-        _module: &Module,
-        source_file: &Path,
-        producer: &str,
-    ) -> Result<Self> {
-        let filename = source_file.file_name()
+    pub fn new(_module: &Module, source_file: &Path, producer: &str) -> Result<Self> {
+        let filename = source_file
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
@@ -42,7 +39,11 @@ impl DebugInfoBuilder {
     /// Finalize debug info generation (placeholder)
     pub fn finalize(&self) {
         // In a full implementation, this would finalize debug metadata
-        tracing::debug!("Debug info finalized for {} (produced by {})", self.source_file, self.producer);
+        tracing::debug!(
+            "Debug info finalized for {} (produced by {})",
+            self.source_file,
+            self.producer
+        );
     }
 
     /// Get the source file name
@@ -56,11 +57,7 @@ impl DebugInfoBuilder {
     }
 
     /// Create debug metadata for a function
-    pub fn create_function_debug_info(
-        &mut self,
-        name: &str,
-        span: Span,
-    ) -> String {
+    pub fn create_function_debug_info(&mut self, name: &str, span: Span) -> String {
         let metadata = DebugMetadata {
             file: self.source_file.clone(),
             line: span.lo, // Use span offset as line number for now
@@ -93,11 +90,7 @@ impl DebugInfoBuilder {
     }
 
     /// Create debug location for an instruction
-    pub fn create_instruction_debug_info(
-        &mut self,
-        instruction_id: &str,
-        span: Span,
-    ) -> String {
+    pub fn create_instruction_debug_info(&mut self, instruction_id: &str, span: Span) -> String {
         let metadata = DebugMetadata {
             file: self.source_file.clone(),
             line: span.lo, // Use span offset as line number for now
@@ -167,10 +160,10 @@ mod tests {
         // TODO: Fix Module::new - use Module::from_ir_str instead
         let module = Module::from_ir_str("; ModuleID = 'test'\n").unwrap();
         let source_file = PathBuf::from("test.fp");
-        
+
         let result = DebugInfoBuilder::new(&module, &source_file, "fp-compiler");
         assert!(result.is_ok());
-        
+
         let debug_builder = result.unwrap();
         assert_eq!(debug_builder.source_file(), "test.fp");
         assert_eq!(debug_builder.producer(), "fp-compiler");
@@ -181,17 +174,18 @@ mod tests {
         // TODO: Fix Module::new - use Module::from_ir_str instead
         let module = Module::from_ir_str("; ModuleID = 'test'\n").unwrap();
         let source_file = PathBuf::from("test.fp");
-        
-        let mut debug_builder = DebugInfoBuilder::new(&module, &source_file, "fp-compiler").unwrap();
-        
+
+        let mut debug_builder =
+            DebugInfoBuilder::new(&module, &source_file, "fp-compiler").unwrap();
+
         let span = Span::new(0, 10, 5);
         let metadata_id = debug_builder.create_function_debug_info("test_func", span);
-        
+
         assert_eq!(metadata_id, "func_test_func");
-        
+
         let metadata = debug_builder.get_metadata(&metadata_id);
         assert!(metadata.is_some());
-        
+
         let metadata = metadata.unwrap();
         assert_eq!(metadata.line, 10);
         assert_eq!(metadata.column, 5);
@@ -203,17 +197,18 @@ mod tests {
         // TODO: Fix Module::new - use Module::from_ir_str instead
         let module = Module::from_ir_str("; ModuleID = 'test'\n").unwrap();
         let source_file = PathBuf::from("test.fp");
-        
-        let mut debug_builder = DebugInfoBuilder::new(&module, &source_file, "fp-compiler").unwrap();
-        
+
+        let mut debug_builder =
+            DebugInfoBuilder::new(&module, &source_file, "fp-compiler").unwrap();
+
         let span = Span::new(0, 15, 8);
         let debug_id = span.to_debug_info(&mut debug_builder, "test_instruction");
-        
+
         assert_eq!(debug_id, "instr_test_instruction");
-        
+
         let metadata = debug_builder.get_metadata(&debug_id);
         assert!(metadata.is_some());
-        
+
         let metadata = metadata.unwrap();
         assert_eq!(metadata.line, 15);
         assert_eq!(metadata.column, 8);
@@ -223,7 +218,7 @@ mod tests {
     fn test_debug_location() {
         let span = Span::new(0, 20, 10);
         let location = DebugLocation::from_span(span, "test.fp".to_string());
-        
+
         assert_eq!(location.file, "test.fp");
         assert_eq!(location.line, 20);
         assert_eq!(location.column, 10);

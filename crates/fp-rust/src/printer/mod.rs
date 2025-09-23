@@ -4,14 +4,14 @@ use proc_macro2::TokenStream;
 use quote::*;
 
 use crate::{RawExpr, RawExprMacro, RawStmtMacro};
-use fp_core::{Error, Result};
 use fp_core::ast::*;
-use fp_core::printer::AstSerializerConfig;
 use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use fp_core::ops::{BuiltinFn, BuiltinFnName};
 use fp_core::pat::{Pattern, PatternIdent};
+use fp_core::printer::AstSerializerConfig;
 use fp_core::utils::anybox::AnyBox;
+use fp_core::{Error, Result};
 
 mod attr;
 mod expr;
@@ -29,19 +29,19 @@ pub struct RustPrinter {
 
 impl RustPrinter {
     pub fn new() -> Self {
-        Self { 
+        Self {
             rustfmt: false,
             config: AstSerializerConfig::standard(),
         }
     }
-    
+
     pub fn with_config(config: AstSerializerConfig) -> Self {
         Self {
             rustfmt: false,
             config,
         }
     }
-    
+
     pub fn config(&self) -> &AstSerializerConfig {
         &self.config
     }
@@ -289,7 +289,8 @@ impl RustPrinter {
         ))
     }
     pub fn print_import(&self, node: &ItemImport) -> Result<TokenStream> {
-        let import: syn::UseTree = syn::parse_str(&node.tree.to_string()).map_err(|e| eyre::eyre!(e.to_string()))?;
+        let import: syn::UseTree =
+            syn::parse_str(&node.tree.to_string()).map_err(|e| eyre::eyre!(e.to_string()))?;
         let vis = self.print_vis(node.visibility);
 
         Ok(quote!(#vis use #import;))
@@ -387,31 +388,37 @@ impl AstSerializer for RustPrinter {
     }
 
     fn serialize_expr(&self, node: &AstExpr) -> fp_core::error::Result<String> {
-        Ok(self.print_expr(node)
+        Ok(self
+            .print_expr(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
     fn serialize_invoke(&self, node: &ExprInvoke) -> fp_core::error::Result<String> {
-        Ok(self.print_invoke(node)
+        Ok(self
+            .print_invoke(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
     fn serialize_item(&self, node: &AstItem) -> fp_core::error::Result<String> {
-        Ok(self.print_item(node)
+        Ok(self
+            .print_item(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
     fn serialize_block(&self, node: &ExprBlock) -> fp_core::error::Result<String> {
-        Ok(self.print_block(node)
+        Ok(self
+            .print_block(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
     fn serialize_file(&self, node: &AstFile) -> fp_core::error::Result<String> {
-        Ok(self.print_file(node)
+        Ok(self
+            .print_file(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
     fn serialize_module(&self, node: &AstModule) -> fp_core::error::Result<String> {
-        Ok(self.print_module(node)
+        Ok(self
+            .print_module(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 

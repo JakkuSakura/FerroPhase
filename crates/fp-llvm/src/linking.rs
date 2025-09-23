@@ -1,7 +1,7 @@
+use anyhow::{bail, Context, Result};
+use llvm_ir::Module;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use anyhow::{Result, Context, bail};
-use llvm_ir::Module;
 
 /// Linker configuration for generating executables and libraries
 #[derive(Debug, Clone)]
@@ -155,60 +155,60 @@ impl LlvmLinker {
     /// Link an executable
     fn link_executable(&self, object_files: &[&Path]) -> Result<()> {
         let mut cmd = self.get_linker_command();
-        
+
         // Add output path
         cmd.arg("-o").arg(&self.config.output_path);
-        
+
         // Add object files
         for obj_file in object_files {
             cmd.arg(obj_file);
         }
-        
+
         // Add library paths
         for lib_path in &self.config.library_paths {
             cmd.arg(format!("-L{}", lib_path.display()));
         }
-        
+
         // Add libraries
         for lib in &self.config.link_libraries {
             cmd.arg(format!("-l{}", lib));
         }
-        
+
         // Add static libraries
         for static_lib in &self.config.static_libraries {
             cmd.arg(static_lib);
         }
-        
+
         // Add dynamic libraries
         for dynamic_lib in &self.config.dynamic_libraries {
             cmd.arg(dynamic_lib);
         }
-        
+
         // Add framework paths (macOS)
         for framework_path in &self.config.framework_paths {
             cmd.arg(format!("-F{}", framework_path.display()));
         }
-        
+
         // Add frameworks (macOS)
         for framework in &self.config.frameworks {
             cmd.arg("-framework").arg(framework);
         }
-        
+
         // Add optimization flags
         if self.config.optimize_for_size {
             cmd.arg("-Os");
         }
-        
+
         // Add symbol stripping
         if self.config.strip_symbols {
             cmd.arg("-s");
         }
-        
+
         // Add custom linker arguments
         for arg in &self.config.linker_args {
             cmd.arg(arg);
         }
-        
+
         self.execute_command(cmd, "linking executable")
     }
 
@@ -216,45 +216,45 @@ impl LlvmLinker {
     fn link_static_library(&self, object_files: &[&Path]) -> Result<()> {
         let mut cmd = Command::new("ar");
         cmd.arg("rcs").arg(&self.config.output_path);
-        
+
         // Add object files
         for obj_file in object_files {
             cmd.arg(obj_file);
         }
-        
+
         self.execute_command(cmd, "creating static library")
     }
 
     /// Link a dynamic library
     fn link_dynamic_library(&self, object_files: &[&Path]) -> Result<()> {
         let mut cmd = self.get_linker_command();
-        
+
         // Add shared library flag
         cmd.arg("-shared");
-        
+
         // Add output path
         cmd.arg("-o").arg(&self.config.output_path);
-        
+
         // Add object files
         for obj_file in object_files {
             cmd.arg(obj_file);
         }
-        
+
         // Add library paths
         for lib_path in &self.config.library_paths {
             cmd.arg(format!("-L{}", lib_path.display()));
         }
-        
+
         // Add libraries
         for lib in &self.config.link_libraries {
             cmd.arg(format!("-l{}", lib));
         }
-        
+
         // Add custom linker arguments
         for arg in &self.config.linker_args {
             cmd.arg(arg);
         }
-        
+
         self.execute_command(cmd, "creating dynamic library")
     }
 
@@ -281,7 +281,8 @@ impl LlvmLinker {
 
     /// Execute a command and handle errors
     fn execute_command(&self, mut cmd: Command, operation: &str) -> Result<()> {
-        let output = cmd.output()
+        let output = cmd
+            .output()
             .with_context(|| format!("Failed to execute command for {}", operation))?;
 
         if !output.status.success() {
@@ -343,13 +344,16 @@ impl ModuleLinker {
     }
 
     /// Link LLVM modules to create the final output
-    pub fn link_modules(&self, modules: &[&Module], target_codegen: &crate::target::TargetCodegen) -> Result<PathBuf> {
+    pub fn link_modules(
+        &self,
+        modules: &[&Module],
+        target_codegen: &crate::target::TargetCodegen,
+    ) -> Result<PathBuf> {
         // Create temporary directory if not provided
         let temp_dir = match &self.temp_dir {
             Some(dir) => dir.clone(),
             None => {
-                let temp = tempfile::tempdir()
-                    .context("Failed to create temporary directory")?;
+                let temp = tempfile::tempdir().context("Failed to create temporary directory")?;
                 temp.path().to_path_buf()
             }
         };

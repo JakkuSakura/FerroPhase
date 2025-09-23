@@ -335,7 +335,7 @@ impl HirProgram {
             next_hir_id: 0,
         }
     }
-    
+
     pub fn next_id(&mut self) -> HirId {
         let id = self.next_hir_id;
         self.next_hir_id += 1;
@@ -345,7 +345,11 @@ impl HirProgram {
 
 impl HirFunction {
     pub fn new(sig: HirFunctionSig, body: Option<HirBody>, is_const: bool) -> Self {
-        Self { sig, body, is_const }
+        Self {
+            sig,
+            body,
+            is_const,
+        }
     }
 }
 

@@ -11,11 +11,11 @@ use fp_core::ctx::{Context, TypeSystem};
 use fp_core::id::{Ident, Locator};
 use fp_core::utils::conv::TryConv;
 
-use crate::utils::FoldOptimizer;
-use crate::orchestrators::InterpretationOrchestrator;
 use crate::error::optimization_error;
 use crate::opt_bail;
 use crate::opt_ensure;
+use crate::orchestrators::InterpretationOrchestrator;
+use crate::utils::FoldOptimizer;
 
 impl InterpretationOrchestrator {
     pub fn type_check_value(&self, lit: &AstValue, ty: &AstType) -> Result<()> {
@@ -80,9 +80,9 @@ impl InterpretationOrchestrator {
     ) -> Result<()> {
         match expr {
             AstExpr::Locator(n) => {
-                let expr = ctx
-                    .get_expr(n.to_path())
-                    .ok_or_else(|| optimization_error(format!("Could not find {:?} in context", n)))?;
+                let expr = ctx.get_expr(n.to_path()).ok_or_else(|| {
+                    optimization_error(format!("Could not find {:?} in context", n))
+                })?;
                 return self.type_check_expr_against_value(&expr, type_value, ctx);
             }
 
@@ -211,7 +211,12 @@ impl InterpretationOrchestrator {
         match callee {
             AstExpr::Locator(Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
-                    return self.infer_expr(params.first().ok_or_else(|| optimization_error("No param"))?, ctx)
+                    return self.infer_expr(
+                        params
+                            .first()
+                            .ok_or_else(|| optimization_error("No param"))?,
+                        ctx,
+                    )
                 }
                 "print" => return Ok(AstType::unit()),
                 "println!" => return Ok(AstType::unit()),

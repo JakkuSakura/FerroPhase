@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use llvm_ir::Module;
 use std::path::Path;
-use anyhow::{Result, Context};
 
 /// Target configuration for LLVM code generation
 #[derive(Debug, Clone)]
@@ -133,7 +133,11 @@ impl TargetCodegen {
     /// Write module to object file (placeholder implementation)
     pub fn write_object_file(&self, module: &Module, output_path: &Path) -> Result<()> {
         // For now, write LLVM IR to file instead of object code
-        let ir_content = format!("Module: {} with {} functions", module.name, module.functions.len());
+        let ir_content = format!(
+            "Module: {} with {} functions",
+            module.name,
+            module.functions.len()
+        );
         std::fs::write(output_path.with_extension("ll"), ir_content)
             .with_context(|| format!("Failed to write IR file to {}", output_path.display()))?;
 
@@ -144,9 +148,14 @@ impl TargetCodegen {
     /// Write module to assembly file (placeholder implementation)
     pub fn write_assembly_file(&self, module: &Module, output_path: &Path) -> Result<()> {
         // For now, write LLVM IR to file instead of assembly
-        let ir_content = format!("Module: {} with {} functions", module.name, module.functions.len());
-        std::fs::write(output_path.with_extension("s"), ir_content)
-            .with_context(|| format!("Failed to write assembly file to {}", output_path.display()))?;
+        let ir_content = format!(
+            "Module: {} with {} functions",
+            module.name,
+            module.functions.len()
+        );
+        std::fs::write(output_path.with_extension("s"), ir_content).with_context(|| {
+            format!("Failed to write assembly file to {}", output_path.display())
+        })?;
 
         eprintln!("Note: Generated LLVM IR file instead of assembly (actual assembly generation requires LLVM compilation)");
         Ok(())
@@ -194,7 +203,10 @@ mod tests {
         assert_eq!(config.triple, "x86_64-unknown-linux-gnu");
         assert_eq!(config.cpu, "native");
         assert_eq!(config.features, "+avx2");
-        assert!(matches!(config.optimization_level, OptimizationLevel::Aggressive));
+        assert!(matches!(
+            config.optimization_level,
+            OptimizationLevel::Aggressive
+        ));
     }
 
     #[test]
@@ -202,8 +214,10 @@ mod tests {
         let targets = TargetConfig::supported_targets();
         assert!(targets.contains(&"x86_64-unknown-linux-gnu"));
         assert!(targets.contains(&"aarch64-apple-darwin"));
-        
-        assert!(TargetConfig::is_target_supported("x86_64-unknown-linux-gnu"));
+
+        assert!(TargetConfig::is_target_supported(
+            "x86_64-unknown-linux-gnu"
+        ));
         assert!(!TargetConfig::is_target_supported("invalid-target"));
     }
 
@@ -212,7 +226,7 @@ mod tests {
         let config = TargetConfig::host();
         let result = TargetCodegen::new(config);
         assert!(result.is_ok());
-        
+
         if let Ok(codegen) = result {
             assert!(codegen.pointer_size_bits() > 0);
         }
