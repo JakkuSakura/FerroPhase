@@ -1,9 +1,15 @@
-use fp_core::mir::{self, BasicBlockData, BodyId, MirBody, MirFunction, MirFunctionSig, MirItem, MirItemKind, MirProgram, Statement, StatementKind, Terminator, TerminatorKind};
+use fp_core::mir::{
+    self, BasicBlockData, BodyId, MirBody, MirFunction, MirFunctionSig, MirItem, MirItemKind,
+    MirProgram, Statement, StatementKind, Terminator, TerminatorKind,
+};
 use fp_core::span::Span;
 use fp_core::types::{IntTy, Ty, TyKind, TypeFlags};
 
 fn int_ty() -> Ty {
-    Ty { kind: TyKind::Int(IntTy::I32), flags: TypeFlags::empty() }
+    Ty {
+        kind: TyKind::Int(IntTy::I32),
+        flags: TypeFlags::empty(),
+    }
 }
 
 pub fn empty_program() -> MirProgram {

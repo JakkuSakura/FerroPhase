@@ -3,6 +3,7 @@
 use eyre::eyre;
 use fp_core::ast::*;
 use fp_core::error::Result;
+use fp_core::id::{Ident, Locator};
 
 /// Side effects that const evaluation can produce
 #[derive(Debug, Clone)]
@@ -114,8 +115,9 @@ impl SideEffectTracker {
                     builder_name,
                     struct_name,
                 } => {
-                    self.apply_struct_builder_creation(ast, builder_name, struct_name)?;
-                    changes_made = true;
+                    if self.apply_struct_builder_creation(ast, builder_name, struct_name)? {
+                        changes_made = true;
+                    }
                 }
                 SideEffect::CompileError { message } => {
                     return Err(fp_core::error::Error::Generic(eyre!(
@@ -158,47 +160,119 @@ impl SideEffectTracker {
     /// Apply field generation side effect
     fn apply_field_generation(
         &self,
-        _ast: &mut AstNode,
-        _target_type: &str,
-        _field_name: &str,
-        _field_type: &AstType,
+        ast: &mut AstNode,
+        target_type: &str,
+        field_name: &str,
+        field_type: &AstType,
     ) -> Result<()> {
-        // TODO: Implement field addition to struct definitions
-        Ok(())
+        if let Some(struct_def) = find_struct_mut(ast, target_type) {
+            if struct_def
+                .value
+                .fields
+                .iter()
+                .any(|field| field.name.as_str() == field_name)
+            {
+                return Ok(());
+            }
+
+            struct_def.value.fields.push(StructuralField::new(
+                Ident::new(field_name),
+                field_type.clone(),
+            ));
+            Ok(())
+        } else {
+            Err(fp_core::error::Error::Generic(eyre!(
+                "Unable to add field {} to unknown struct {}",
+                field_name,
+                target_type
+            )))
+        }
     }
 
     /// Apply method generation side effect
     fn apply_method_generation(
         &self,
-        _ast: &mut AstNode,
-        _target_type: &str,
-        _method_name: &str,
-        _method_body: &AstExpr,
+        ast: &mut AstNode,
+        target_type: &str,
+        method_name: &str,
+        method_body: &AstExpr,
     ) -> Result<()> {
-        // TODO: Implement method addition to struct definitions
-        Ok(())
+        let function = create_method_function(method_name, method_body);
+
+        if let Some(impl_block) = find_impl_mut(ast, target_type, None) {
+            if method_exists(impl_block, method_name) {
+                return Ok(());
+            }
+            impl_block.items.push(AstItem::DefFunction(function));
+            Ok(())
+        } else {
+            let impl_item = ItemImpl::new_ident(
+                Ident::new(target_type),
+                vec![AstItem::DefFunction(function)],
+            );
+            push_item(ast, AstItem::Impl(impl_item))
+        }
     }
 
     /// Apply impl generation side effect
     fn apply_impl_generation(
         &self,
-        _ast: &mut AstNode,
-        _target_type: &str,
-        _trait_name: &str,
-        _methods: &[(String, AstExpr)],
+        ast: &mut AstNode,
+        target_type: &str,
+        trait_name: &str,
+        methods: &[(String, AstExpr)],
     ) -> Result<()> {
-        // TODO: Implement trait implementation generation
-        Ok(())
+        let trait_locator = Locator::Ident(Ident::new(trait_name));
+
+        if let Some(impl_block) = find_impl_mut(ast, target_type, Some(trait_name)) {
+            for (name, body) in methods {
+                if method_exists(impl_block, name) {
+                    continue;
+                }
+                impl_block
+                    .items
+                    .push(AstItem::DefFunction(create_method_function(name, body)));
+            }
+            return Ok(());
+        }
+
+        let mut method_items = Vec::new();
+        for (name, body) in methods {
+            method_items.push(AstItem::DefFunction(create_method_function(name, body)));
+        }
+
+        let impl_item = ItemImpl::new(
+            Some(trait_locator),
+            AstExpr::ident(Ident::new(target_type)),
+            method_items,
+        );
+        push_item(ast, AstItem::Impl(impl_item))
     }
 
     /// Apply type generation side effect
     fn apply_type_generation(
         &self,
-        _ast: &mut AstNode,
-        _type_name: &str,
-        _type_definition: &AstType,
+        ast: &mut AstNode,
+        type_name: &str,
+        type_definition: &AstType,
     ) -> Result<()> {
-        // TODO: Implement new type generation
+        if find_struct_mut(ast, type_name).is_some() {
+            return Ok(());
+        }
+
+        if let AstType::Struct(struct_ty) = type_definition {
+            let mut struct_ty_clone = struct_ty.clone();
+            struct_ty_clone.name = Ident::new(type_name);
+
+            let struct_item = ItemDefStruct {
+                visibility: Visibility::Public,
+                name: Ident::new(type_name),
+                value: struct_ty_clone,
+            };
+
+            push_item(ast, AstItem::DefStruct(struct_item))?;
+        }
+
         Ok(())
     }
 
@@ -208,9 +282,9 @@ impl SideEffectTracker {
         _ast: &mut AstNode,
         _builder_name: &str,
         _struct_name: &str,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // TODO: Implement struct builder creation
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -270,5 +344,130 @@ impl SideEffect {
                 )
             }
         }
+    }
+}
+
+fn find_struct_mut<'a>(node: &'a mut AstNode, target: &str) -> Option<&'a mut ItemDefStruct> {
+    match node {
+        AstNode::File(file) => find_struct_in_items_mut(&mut file.items, target),
+        AstNode::Item(item) => match item {
+            AstItem::DefStruct(def) if def.name.as_str() == target => Some(def),
+            AstItem::Module(module) => find_struct_in_items_mut(&mut module.items, target),
+            _ => None,
+        },
+        AstNode::Expr(_) => None,
+    }
+}
+
+fn find_struct_in_items_mut<'a>(
+    items: &'a mut [AstItem],
+    target: &str,
+) -> Option<&'a mut ItemDefStruct> {
+    for item in items.iter_mut() {
+        match item {
+            AstItem::DefStruct(def) if def.name.as_str() == target => return Some(def),
+            AstItem::Module(module) => {
+                if let Some(found) = find_struct_in_items_mut(&mut module.items, target) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_impl_mut<'a>(
+    node: &'a mut AstNode,
+    target: &str,
+    trait_name: Option<&str>,
+) -> Option<&'a mut ItemImpl> {
+    match node {
+        AstNode::File(file) => find_impl_in_items_mut(&mut file.items, target, trait_name),
+        AstNode::Item(item) => match item {
+            AstItem::Impl(item_impl) => {
+                if impl_matches(item_impl, target, trait_name) {
+                    Some(item_impl)
+                } else {
+                    None
+                }
+            }
+            AstItem::Module(module) => {
+                find_impl_in_items_mut(&mut module.items, target, trait_name)
+            }
+            _ => None,
+        },
+        AstNode::Expr(_) => None,
+    }
+}
+
+fn find_impl_in_items_mut<'a>(
+    items: &'a mut [AstItem],
+    target: &str,
+    trait_name: Option<&str>,
+) -> Option<&'a mut ItemImpl> {
+    for item in items.iter_mut() {
+        match item {
+            AstItem::Impl(item_impl) => {
+                if impl_matches(item_impl, target, trait_name) {
+                    return Some(item_impl);
+                }
+            }
+            AstItem::Module(module) => {
+                if let Some(found) = find_impl_in_items_mut(&mut module.items, target, trait_name) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn impl_matches(impl_block: &ItemImpl, target: &str, trait_name: Option<&str>) -> bool {
+    let self_matches = matches!(
+        &impl_block.self_ty,
+        AstExpr::Locator(Locator::Ident(ident)) if ident.as_str() == target
+    );
+
+    if !self_matches {
+        return false;
+    }
+
+    match (trait_name, &impl_block.trait_ty) {
+        (None, None) => true,
+        (Some(name), Some(locator)) => locator
+            .as_ident()
+            .map(|ident| ident.as_str() == name)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn method_exists(impl_block: &ItemImpl, method_name: &str) -> bool {
+    impl_block.items.iter().any(|item| match item {
+        AstItem::DefFunction(func) => func.name.as_str() == method_name,
+        _ => false,
+    })
+}
+
+fn create_method_function(method_name: &str, method_body: &AstExpr) -> ItemDefFunction {
+    ItemDefFunction::new_simple(Ident::new(method_name), method_body.clone().into())
+        .with_receiver(FunctionParamReceiver::Ref)
+}
+
+fn push_item(ast: &mut AstNode, item: AstItem) -> Result<()> {
+    match ast {
+        AstNode::File(file) => {
+            file.items.push(item);
+            Ok(())
+        }
+        AstNode::Item(AstItem::Module(module)) => {
+            module.items.push(item);
+            Ok(())
+        }
+        _ => Err(fp_core::error::Error::Generic(eyre!(
+            "Unable to insert generated item into AST at this location"
+        ))),
     }
 }

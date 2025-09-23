@@ -1,7 +1,8 @@
 // Dependency queries - stateless operations for dependency analysis
 
+use eyre::eyre;
 use fp_core::error::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Stateless dependency analysis queries
 pub struct DependencyQueries;
@@ -14,18 +15,82 @@ impl DependencyQueries {
     /// Analyze dependencies between const blocks
     pub fn analyze_dependencies(
         &self,
-        _const_blocks: &HashMap<u64, crate::utils::ConstBlock>,
+        const_blocks: &HashMap<u64, crate::utils::ConstBlock>,
     ) -> Result<HashMap<u64, HashSet<u64>>> {
-        // TODO: Implement dependency analysis
-        Ok(HashMap::new())
+        let mut graph = HashMap::new();
+
+        for (id, block) in const_blocks {
+            let dependencies = block
+                .dependencies
+                .iter()
+                .copied()
+                .filter(|dep| const_blocks.contains_key(dep))
+                .collect();
+            graph.insert(*id, dependencies);
+        }
+
+        Ok(graph)
     }
 
     /// Compute topological order for evaluation
     pub fn compute_topological_order(
         &self,
-        _dependencies: &HashMap<u64, HashSet<u64>>,
+        dependencies: &HashMap<u64, HashSet<u64>>,
     ) -> Result<Vec<u64>> {
-        // TODO: Implement topological sort
-        Ok(Vec::new())
+        if dependencies.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut in_degree: HashMap<u64, usize> = HashMap::new();
+        let mut dependants: HashMap<u64, HashSet<u64>> = HashMap::new();
+
+        for (node, deps) in dependencies {
+            in_degree.entry(*node).or_insert(0);
+            for dep in deps {
+                if !dependencies.contains_key(dep) {
+                    return Err(fp_core::error::Error::Generic(eyre!(
+                        "Unknown const dependency {} referenced by {}",
+                        dep,
+                        node
+                    )));
+                }
+                *in_degree.entry(*node).or_insert(0) += 1;
+                in_degree.entry(*dep).or_insert(0);
+                dependants.entry(*dep).or_default().insert(*node);
+            }
+        }
+
+        let mut queue: VecDeque<u64> = in_degree
+            .iter()
+            .filter_map(|(node, degree)| if *degree == 0 { Some(*node) } else { None })
+            .collect();
+
+        let mut ordered = Vec::with_capacity(in_degree.len());
+        let mut remaining = in_degree.clone();
+
+        while let Some(node) = queue.pop_front() {
+            ordered.push(node);
+
+            if let Some(children) = dependants.get(&node) {
+                for child in children {
+                    if let Some(entry) = remaining.get_mut(child) {
+                        if *entry > 0 {
+                            *entry -= 1;
+                            if *entry == 0 {
+                                queue.push_back(*child);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if ordered.len() != remaining.len() {
+            return Err(fp_core::error::Error::Generic(eyre!(
+                "Circular const dependency detected"
+            )));
+        }
+
+        Ok(ordered)
     }
 }
