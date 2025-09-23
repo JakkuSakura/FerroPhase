@@ -84,7 +84,7 @@ impl TypeQueries {
 
     /// Register generated types from metaprogramming
     pub fn register_generated_types(&self, ast: &AstNode) -> Result<()> {
-        // Generated types appear in the AST after side effects are applied. The
+        // Generated types appear in the AST after const-eval mutations are applied. The
         // basic registration path is idempotent, so we can reuse it safely.
         self.register_basic_types(ast)
     }

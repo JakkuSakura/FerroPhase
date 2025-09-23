@@ -1,14 +1,14 @@
-// Intrinsic context - utility for side-effect-aware intrinsic evaluation
+// Intrinsic context - utility for const-eval aware intrinsic evaluation
 
-use crate::utils::SideEffect;
+use crate::utils::ConstEval;
 use fp_core::ctx::ty::TypeRegistry;
 use std::sync::{Arc, RwLock};
 
-/// Context for intrinsic evaluation that can track side effects
+/// Context for intrinsic evaluation that can track const-eval operations
 #[derive(Debug, Clone)]
 pub struct IntrinsicEvaluationContext {
-    /// Side effects accumulated during intrinsic evaluation
-    pub side_effects: Arc<RwLock<Vec<SideEffect>>>,
+    /// Operations accumulated during intrinsic evaluation
+    pub const_eval_ops: Arc<RwLock<Vec<ConstEval>>>,
     /// Type registry for type queries
     pub type_registry: Arc<TypeRegistry>,
 }
@@ -16,23 +16,21 @@ pub struct IntrinsicEvaluationContext {
 impl IntrinsicEvaluationContext {
     pub fn new(type_registry: Arc<TypeRegistry>) -> Self {
         Self {
-            side_effects: Arc::new(RwLock::new(Vec::new())),
+            const_eval_ops: Arc::new(RwLock::new(Vec::new())),
             type_registry,
         }
     }
 
-    /// Add a side effect to be processed later
-    pub fn add_side_effect(&self, effect: SideEffect) {
-        self.side_effects.write().unwrap().push(effect);
+    /// Record a const-eval operation to be processed later
+    pub fn add_const_eval_op(&self, op: ConstEval) {
+        self.const_eval_ops.write().unwrap().push(op);
     }
 
-    /// Get all accumulated side effects
-    pub fn get_side_effects(&self) -> Vec<SideEffect> {
-        self.side_effects.read().unwrap().clone()
-    }
-
-    /// Clear all side effects
-    pub fn clear_side_effects(&self) {
-        self.side_effects.write().unwrap().clear();
+    /// Drain all queued operations for application
+    pub fn take_const_eval_ops(&self) -> Vec<ConstEval> {
+        let mut lock = self.const_eval_ops.write().unwrap();
+        let ops = lock.clone();
+        lock.clear();
+        ops
     }
 }

@@ -1464,7 +1464,7 @@ impl InterpretationOrchestrator {
         }
     }
 
-    /// Evaluate a const expression with side-effect-aware intrinsics
+    /// Evaluate a const expression with const-eval aware intrinsics
     /// This is the main method for const evaluation
     pub fn evaluate_const_expression(
         &self,
