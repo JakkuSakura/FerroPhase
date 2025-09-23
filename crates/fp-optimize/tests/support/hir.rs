@@ -1,8 +1,15 @@
-use fp_core::hir::{self, HirBody, HirExpr, HirExprKind, HirFunction, HirFunctionSig, HirGenerics, HirItem, HirItemKind, HirProgram, HirTy, HirTyKind};
+use fp_core::hir::{
+    self, HirBody, HirExpr, HirExprKind, HirFunction, HirFunctionSig, HirGenerics, HirItem,
+    HirItemKind, HirProgram, HirTy, HirTyKind,
+};
 use fp_core::span::Span;
 
 pub fn literal_expr(value: i64) -> HirExpr {
-    HirExpr::new(0, HirExprKind::Literal(hir::HirLit::Integer(value)), Span::new(0, 0, 0))
+    HirExpr::new(
+        0,
+        HirExprKind::Literal(hir::HirLit::Integer(value)),
+        Span::new(0, 0, 0),
+    )
 }
 
 pub fn unit_type() -> HirTy {

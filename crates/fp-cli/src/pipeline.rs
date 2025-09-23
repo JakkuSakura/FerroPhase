@@ -71,8 +71,8 @@ impl Pipeline {
         input: PipelineInput,
         mut options: PipelineOptions,
     ) -> Result<PipelineOutput, CliError> {
-        let (source, base_path) = match input {
-            PipelineInput::Expression(expr) => (expr, PathBuf::from("expression")),
+        let (source, base_path, input_path) = match input {
+            PipelineInput::Expression(expr) => (expr, PathBuf::from("expression"), None),
             PipelineInput::File(path) => {
                 let source = std::fs::read_to_string(&path).map_err(|e| {
                     CliError::Io(std::io::Error::new(
@@ -81,12 +81,12 @@ impl Pipeline {
                     ))
                 })?;
                 let base_path = path.with_extension("");
-                (source, base_path)
+                (source, base_path, Some(path))
             }
         };
 
         // Set base path for intermediate files
-        options.base_path = Some(base_path);
+        options.base_path = Some(base_path.clone());
 
         let ast = self.parse_source(&source)?;
 
@@ -97,11 +97,12 @@ impl Pipeline {
                 Ok(PipelineOutput::Code(rust_code))
             }
             PipelineTarget::Llvm => {
-                let llvm_ir = self.compile_to_llvm_ir(&ast, &options)?;
+                let llvm_ir = self.compile_to_llvm_ir(&ast, &options, input_path.as_deref())?;
                 Ok(PipelineOutput::Code(llvm_ir.to_str().unwrap().to_string()))
             }
             PipelineTarget::Binary => {
-                let binary_result = self.compile_to_binary(&ast, &options)?;
+                let binary_result =
+                    self.compile_to_binary(&ast, &options, input_path.as_deref())?;
                 // For binary compilation, print the result and return success
                 // The binary files have already been created by compile_to_binary
                 println!("{}", binary_result);
@@ -129,6 +130,7 @@ impl Pipeline {
         &self,
         ast: &BExpr,
         options: &PipelineOptions,
+        file_path: Option<&std::path::Path>,
     ) -> Result<PathBuf, CliError> {
         let base_path = options.base_path.as_ref().unwrap();
 
@@ -170,7 +172,10 @@ impl Pipeline {
         };
 
         // Step 3: AST → HIR (High-level IR)
-        let mut hir_generator = HirGenerator::new();
+        let mut hir_generator = match file_path {
+            Some(path) => HirGenerator::with_file(path),
+            None => HirGenerator::new(),
+        };
         let hir_program = hir_generator
             .transform(evaluated_ast.as_ref())
             .map_err(|e| {
@@ -244,11 +249,12 @@ impl Pipeline {
         &self,
         ast: &BExpr,
         options: &PipelineOptions,
+        file_path: Option<&std::path::Path>,
     ) -> Result<String, CliError> {
         let base_path = options.base_path.as_ref().unwrap();
 
         // First generate LLVM IR. the write path is already decided -- want to control all here
-        let llvm_ir = self.compile_to_llvm_ir(ast, options)?;
+        let llvm_ir = self.compile_to_llvm_ir(ast, options, file_path)?;
 
         // Step 1: Compile LLVM IR to object file using llc
         let obj_path = base_path.with_extension("o");

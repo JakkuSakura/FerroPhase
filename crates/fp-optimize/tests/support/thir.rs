@@ -1,13 +1,24 @@
-use fp_core::thir::{self, BodyId, ThirBody, ThirExpr, ThirExprKind, ThirFunction, ThirFunctionSig, ThirItem, ThirItemKind, ThirLit};
-use fp_core::types::{IntTy, Ty, TyKind, TypeFlags};
 use fp_core::span::Span;
+use fp_core::thir::{
+    self, BodyId, ThirBody, ThirExpr, ThirExprKind, ThirFunction, ThirFunctionSig, ThirItem,
+    ThirItemKind, ThirLit,
+};
+use fp_core::types::{IntTy, Ty, TyKind, TypeFlags};
 
 fn int_ty() -> Ty {
-    Ty { kind: TyKind::Int(IntTy::I32), flags: TypeFlags::empty() }
+    Ty {
+        kind: TyKind::Int(IntTy::I32),
+        flags: TypeFlags::empty(),
+    }
 }
 
 pub fn literal_expr(value: i64) -> ThirExpr {
-    ThirExpr::new(0, ThirExprKind::Literal(ThirLit::Int(value, thir::IntTy::I32)), int_ty(), Span::new(0, 0, 0))
+    ThirExpr::new(
+        0,
+        ThirExprKind::Literal(ThirLit::Int(value, thir::IntTy::I32)),
+        int_ty(),
+        Span::new(0, 0, 0),
+    )
 }
 
 pub fn body_with_expr(expr: ThirExpr) -> (BodyId, ThirBody) {
