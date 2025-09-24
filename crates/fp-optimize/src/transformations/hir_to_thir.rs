@@ -1,3 +1,4 @@
+use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use fp_core::error::Result;
 use fp_core::span::Span;
 use fp_core::{hir, thir, types};
@@ -238,9 +239,15 @@ impl ThirGenerator {
     fn path_to_type_info(
         &mut self,
         path: &hir::HirPath,
-    ) -> Result<(Option<types::DefId>, String, types::SubstsRef)> {
+    ) -> Result<(Option<types::DefId>, String, String, types::SubstsRef)> {
         if let Some(segment) = path.segments.last() {
-            let name = segment.name.clone();
+            let base_name = segment.name.clone();
+            let qualified = path
+                .segments
+                .iter()
+                .map(|seg| seg.name.clone())
+                .collect::<Vec<_>>()
+                .join("::");
             let substs = if let Some(args) = &segment.args {
                 self.convert_hir_generic_args(args)?
             } else {
@@ -250,7 +257,7 @@ impl ThirGenerator {
                 Some(hir::Res::Def(id)) => Some(id as types::DefId),
                 _ => None,
             };
-            Ok((def_id, name, substs))
+            Ok((def_id, qualified, base_name, substs))
         } else {
             Err(crate::error::optimization_error(
                 "Encountered empty path while lowering type".to_string(),
@@ -463,18 +470,12 @@ impl ThirGenerator {
             }
             hir::HirExprKind::Path(path) => {
                 let ty = self.infer_path_type(&path)?;
-                let (def_id_opt, base_name, _substs) = self.path_to_type_info(&path)?;
-                let resolved_def_id =
-                    def_id_opt.or_else(|| self.type_context.lookup_value_def_id(&base_name));
-                let display_name = if path.segments.len() == 1 {
-                    base_name.clone()
-                } else {
-                    path.segments
-                        .iter()
-                        .map(|s| s.name.clone())
-                        .collect::<Vec<_>>()
-                        .join("::")
-                };
+                let (def_id_opt, qualified_name, base_name, _substs) =
+                    self.path_to_type_info(&path)?;
+                let resolved_def_id = def_id_opt
+                    .or_else(|| self.type_context.lookup_value_def_id(&qualified_name))
+                    .or_else(|| self.type_context.lookup_value_def_id(&base_name));
+                let display_name = qualified_name.clone();
 
                 if let Some(def_id) = resolved_def_id {
                     if let Some(init_expr) = self.const_init_map.get(&def_id) {
@@ -625,21 +626,21 @@ impl ThirGenerator {
             hir::HirExprKind::FieldAccess(expr, field_name) => {
                 // If base is a const struct, inline the specific field initializer
                 if let hir::HirExprKind::Path(ref p) = expr.kind {
-                    if p.segments.len() == 1 {
-                        let (base_def_id_opt, base_name, _) = self.path_to_type_info(p)?;
-                        let init_expr = base_def_id_opt
-                            .or_else(|| self.type_context.lookup_value_def_id(&base_name))
-                            .and_then(|id| self.const_init_map.get(&id))
-                            .or_else(|| self.binding_inits.get(&base_name));
+                    let (base_def_id_opt, qualified_name, base_name, _) =
+                        self.path_to_type_info(p)?;
+                    let init_expr = base_def_id_opt
+                        .or_else(|| self.type_context.lookup_value_def_id(&qualified_name))
+                        .or_else(|| self.type_context.lookup_value_def_id(&base_name))
+                        .and_then(|id| self.const_init_map.get(&id))
+                        .or_else(|| self.binding_inits.get(&base_name));
 
-                        if let Some(init) = init_expr {
-                            if let hir::HirExprKind::Struct(_path, fields) = &init.kind {
-                                if let Some(field) =
-                                    fields.iter().find(|f| f.name.to_string() == field_name)
-                                {
-                                    let thir_expr = self.transform_expr(field.expr.clone())?;
-                                    return Ok(thir_expr);
-                                }
+                    if let Some(init) = init_expr {
+                        if let hir::HirExprKind::Struct(_path, fields) = &init.kind {
+                            if let Some(field) =
+                                fields.iter().find(|f| f.name.to_string() == field_name)
+                            {
+                                let thir_expr = self.transform_expr(field.expr.clone())?;
+                                return Ok(thir_expr);
                             }
                         }
                     }
@@ -669,9 +670,11 @@ impl ThirGenerator {
                 }
             }
             hir::HirExprKind::Struct(path, _fields) => {
-                let (def_id_opt, name, substs) = self.path_to_type_info(&path)?;
+                let (def_id_opt, qualified_name, base_name, substs) =
+                    self.path_to_type_info(&path)?;
                 let struct_ty = def_id_opt
-                    .or_else(|| self.type_context.lookup_struct_def_id(&name))
+                    .or_else(|| self.type_context.lookup_struct_def_id(&qualified_name))
+                    .or_else(|| self.type_context.lookup_struct_def_id(&base_name))
                     .and_then(|id| self.type_context.make_struct_ty_by_id(id, substs))
                     .unwrap_or_else(|| self.create_unit_type());
                 (
@@ -935,10 +938,12 @@ impl ThirGenerator {
     /// Convert HIR type to types::Ty
     fn hir_ty_to_ty(&mut self, hir_ty: &hir::HirTy) -> Result<types::Ty> {
         match &hir_ty.kind {
+            hir::HirTyKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
             hir::HirTyKind::Path(path) => {
-                let (def_id_opt, name, substs) = self.path_to_type_info(path)?;
+                let (def_id_opt, qualified_name, base_name, substs) =
+                    self.path_to_type_info(path)?;
 
-                if let Some(primitive) = self.make_primitive_ty(&name) {
+                if let Some(primitive) = self.make_primitive_ty(&base_name) {
                     return Ok(primitive);
                 }
 
@@ -963,7 +968,11 @@ impl ThirGenerator {
                     }
                 }
 
-                if let Some(struct_id) = self.type_context.lookup_struct_def_id(&name) {
+                if let Some(struct_id) = self
+                    .type_context
+                    .lookup_struct_def_id(&qualified_name)
+                    .or_else(|| self.type_context.lookup_struct_def_id(&base_name))
+                {
                     if let Some(ty) = self
                         .type_context
                         .make_struct_ty_by_id(struct_id, substs.clone())
@@ -972,7 +981,8 @@ impl ThirGenerator {
                     }
                 }
 
-                let stub_id = self.type_context.ensure_struct_stub(&name);
+                let lookup_name = qualified_name.clone();
+                let stub_id = self.type_context.ensure_struct_stub(&lookup_name);
                 Ok(self
                     .type_context
                     .make_struct_ty_by_id(stub_id, substs)
@@ -1000,11 +1010,54 @@ impl ThirGenerator {
                     types::ConstKind::Value(types::ConstValue::ZeroSized),
                 )))
             }
+            hir::HirTyKind::Ptr(inner) => {
+                let pointee = self.hir_ty_to_ty(inner)?;
+                Ok(types::Ty::new(types::TyKind::RawPtr(types::TypeAndMut {
+                    ty: Box::new(pointee),
+                    mutbl: types::Mutability::Not,
+                })))
+            }
             hir::HirTyKind::Never => Ok(types::Ty::never()),
             hir::HirTyKind::Infer => Ok(types::Ty::new(types::TyKind::Infer(
                 types::InferTy::FreshTy(0),
             ))),
-            _ => Ok(types::Ty::int(types::IntTy::I32)),
+        }
+    }
+
+    fn primitive_ty_to_ty(&mut self, prim: &TypePrimitive) -> types::Ty {
+        match prim {
+            TypePrimitive::Bool => types::Ty::bool(),
+            TypePrimitive::Char => types::Ty::char(),
+            TypePrimitive::Int(int_ty) => match int_ty {
+                TypeInt::I8 => types::Ty::int(types::IntTy::I8),
+                TypeInt::I16 => types::Ty::int(types::IntTy::I16),
+                TypeInt::I32 => types::Ty::int(types::IntTy::I32),
+                TypeInt::I64 => types::Ty::int(types::IntTy::I64),
+                TypeInt::U8 => types::Ty::uint(types::UintTy::U8),
+                TypeInt::U16 => types::Ty::uint(types::UintTy::U16),
+                TypeInt::U32 => types::Ty::uint(types::UintTy::U32),
+                TypeInt::U64 => types::Ty::uint(types::UintTy::U64),
+                TypeInt::BigInt => types::Ty::int(types::IntTy::I128),
+            },
+            TypePrimitive::Decimal(dec_ty) => match dec_ty {
+                DecimalType::F32 => types::Ty::float(types::FloatTy::F32),
+                DecimalType::F64 => types::Ty::float(types::FloatTy::F64),
+                DecimalType::BigDecimal | DecimalType::Decimal { .. } => {
+                    types::Ty::float(types::FloatTy::F64)
+                }
+            },
+            TypePrimitive::String => {
+                let stub = self.type_context.ensure_struct_stub("String");
+                self.type_context
+                    .make_struct_ty_by_id(stub, Vec::new())
+                    .unwrap_or_else(|| self.create_unit_type())
+            }
+            TypePrimitive::List => {
+                let stub = self.type_context.ensure_struct_stub("List");
+                self.type_context
+                    .make_struct_ty_by_id(stub, Vec::new())
+                    .unwrap_or_else(|| self.create_unit_type())
+            }
         }
     }
 
@@ -1026,7 +1079,7 @@ impl ThirGenerator {
 
     /// Infer type from HIR path
     fn infer_path_type(&mut self, path: &hir::HirPath) -> Result<types::Ty> {
-        let (def_id_opt, name, substs) = self.path_to_type_info(path)?;
+        let (def_id_opt, qualified_name, base_name, substs) = self.path_to_type_info(path)?;
 
         if let Some(def_id) = def_id_opt {
             if let Some(const_ty) = self.type_context.lookup_const_type(def_id) {
@@ -1047,11 +1100,15 @@ impl ThirGenerator {
             }
         }
 
-        if let Some(primitive) = self.make_primitive_ty(&name) {
+        if let Some(primitive) = self.make_primitive_ty(&base_name) {
             return Ok(primitive);
         }
 
-        if let Some(struct_id) = self.type_context.lookup_struct_def_id(&name) {
+        if let Some(struct_id) = self
+            .type_context
+            .lookup_struct_def_id(&qualified_name)
+            .or_else(|| self.type_context.lookup_struct_def_id(&base_name))
+        {
             if let Some(struct_ty) = self
                 .type_context
                 .make_struct_ty_by_id(struct_id, substs.clone())
@@ -1212,16 +1269,16 @@ impl TypeContext {
 
     fn register_function(&mut self, def_id: types::DefId, name: &str, sig: types::FnSig) {
         self.function_signatures.insert(def_id, sig);
-        self.value_names.insert(name.to_string(), def_id);
+        self.insert_value_name(name, def_id);
     }
 
     fn register_const(&mut self, def_id: types::DefId, name: &str, ty: types::Ty) {
         self.const_types.insert(def_id, ty);
-        self.value_names.insert(name.to_string(), def_id);
+        self.insert_value_name(name, def_id);
     }
 
     fn declare_struct(&mut self, def_id: types::DefId, name: &str) {
-        self.struct_names.insert(name.to_string(), def_id);
+        self.insert_struct_name(name, def_id);
         if !self.structs.contains_key(&def_id) {
             let adt_def = self.build_adt_def(def_id, name, Vec::new());
             self.structs.insert(
@@ -1283,6 +1340,20 @@ impl TypeContext {
         if let Some(info) = self.structs.get_mut(&def_id) {
             info.field_map = field_map;
             info.adt_def = new_adt;
+        }
+    }
+
+    fn insert_value_name(&mut self, name: &str, def_id: types::DefId) {
+        self.value_names.insert(name.to_string(), def_id);
+        if let Some(base) = name.rsplit("::").next() {
+            self.value_names.entry(base.to_string()).or_insert(def_id);
+        }
+    }
+
+    fn insert_struct_name(&mut self, name: &str, def_id: types::DefId) {
+        self.struct_names.insert(name.to_string(), def_id);
+        if let Some(base) = name.rsplit("::").next() {
+            self.struct_names.entry(base.to_string()).or_insert(def_id);
         }
     }
 
@@ -1350,7 +1421,7 @@ impl TypeContext {
             *def_id
         } else {
             let def_id = self.allocate_def_id();
-            self.struct_names.insert(name.to_string(), def_id);
+            self.insert_struct_name(name, def_id);
             self.structs.insert(
                 def_id,
                 StructInfo {

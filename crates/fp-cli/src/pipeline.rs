@@ -19,6 +19,7 @@ use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tracing::{debug, info_span};
 
 #[derive(Debug)]
 pub enum PipelineInput {
@@ -71,6 +72,8 @@ impl Pipeline {
         input: PipelineInput,
         mut options: PipelineOptions,
     ) -> Result<PipelineOutput, CliError> {
+        let read_span = info_span!("pipeline.read_input");
+        let _enter_read = read_span.enter();
         let (source, base_path, input_path) = match input {
             PipelineInput::Expression(expr) => (expr, PathBuf::from("expression"), None),
             PipelineInput::File(path) => {
@@ -84,11 +87,17 @@ impl Pipeline {
                 (source, base_path, Some(path))
             }
         };
+        drop(_enter_read);
+        debug!(path = ?input_path, "loaded input source");
 
         // Set base path for intermediate files
         options.base_path = Some(base_path.clone());
 
+        let parse_span = info_span!("pipeline.parse", path = ?input_path);
+        let _enter_parse = parse_span.enter();
         let (ast_expr, ast_file) = self.parse_source_variants(&source, input_path.as_deref())?;
+        drop(_enter_parse);
+        debug!(has_file = ast_file.is_some(), "parsed source");
         let ast_node = if let Some(file) = ast_file {
             AstNode::File(file)
         } else {
@@ -98,17 +107,26 @@ impl Pipeline {
         // Execute based on target
         match options.target {
             PipelineTarget::Rust => {
+                let rust_span = info_span!("pipeline.codegen", target = "rust");
+                let _enter_rust = rust_span.enter();
                 let rust_code = CodeGenerator::generate_rust_code(&ast_node)?;
+                drop(_enter_rust);
                 Ok(PipelineOutput::Code(rust_code))
             }
             PipelineTarget::Llvm => {
+                let llvm_span = info_span!("pipeline.codegen", target = "llvm");
+                let _enter_llvm = llvm_span.enter();
                 let llvm_ir =
                     self.compile_to_llvm_ir(&ast_node, &options, input_path.as_deref())?;
+                drop(_enter_llvm);
                 Ok(PipelineOutput::Code(llvm_ir.to_str().unwrap().to_string()))
             }
             PipelineTarget::Binary => {
+                let binary_span = info_span!("pipeline.codegen", target = "binary");
+                let _enter_binary = binary_span.enter();
                 let binary_result =
                     self.compile_to_binary(&ast_node, &options, input_path.as_deref())?;
+                drop(_enter_binary);
                 // For binary compilation, print the result and return success
                 // The binary files have already been created by compile_to_binary
                 println!("{}", binary_result);
@@ -118,13 +136,22 @@ impl Pipeline {
             }
             PipelineTarget::Interpret => match options.runtime.runtime_type.as_str() {
                 "literal" => {
+                    let interpret_span = info_span!("pipeline.interpret", runtime = "literal");
+                    let _enter_interp = interpret_span.enter();
                     let result = self.interpret_ast(&ast_node).await?;
+                    drop(_enter_interp);
                     Ok(PipelineOutput::Value(result))
                 }
                 "rust" | _ => {
+                    let interpret_span = info_span!(
+                        "pipeline.interpret",
+                        runtime = %options.runtime.runtime_type
+                    );
+                    let _enter_interp = interpret_span.enter();
                     let result = self
                         .interpret_ast_runtime(&ast_node, &options.runtime.runtime_type)
                         .await?;
+                    drop(_enter_interp);
                     Ok(PipelineOutput::RuntimeValue(result))
                 }
             },
@@ -148,19 +175,23 @@ impl Pipeline {
 
         // Save intermediate files if requested
         if options.save_intermediates {
-            // Step 1: Save AST (Abstract Syntax Tree)
+            debug!(path = ?base_path.with_extension("ast"), "persisting AST intermediate");
             std::fs::write(base_path.with_extension("ast"), format!("{:#?}", ast)).ok();
         }
 
         // Step 2: Const Evaluation
+        let const_span = info_span!("pipeline.const_eval");
+        let _enter_const = const_span.enter();
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
         let mut evaluated_node = ast.clone();
 
         const_evaluator
             .evaluate(&mut evaluated_node, &context)
             .map_err(|e| CliError::Compilation(format!("Const evaluation failed: {}", e)))?;
+        drop(_enter_const);
 
         if options.save_intermediates {
+            debug!(path = ?base_path.with_extension("east"), "persisting EAST intermediate");
             std::fs::write(
                 base_path.with_extension("east"),
                 format!("{:#?}", evaluated_node),
@@ -169,6 +200,8 @@ impl Pipeline {
         }
 
         // Step 3: AST → HIR (High-level IR)
+        let hir_span = info_span!("pipeline.lower.hir");
+        let _enter_hir = hir_span.enter();
         let hir_program = match &evaluated_node {
             AstNode::Expr(expr) => {
                 let mut hir_generator = match file_path {
@@ -191,8 +224,10 @@ impl Pipeline {
                 ));
             }
         };
+        drop(_enter_hir);
 
         if options.save_intermediates {
+            debug!(path = ?base_path.with_extension("hir"), "persisting HIR intermediate");
             std::fs::write(
                 base_path.with_extension("hir"),
                 format!("{:#?}", hir_program),
@@ -201,12 +236,16 @@ impl Pipeline {
         }
 
         // Step 4: HIR → THIR (Typed HIR)
+        let thir_span = info_span!("pipeline.lower.thir");
+        let _enter_thir = thir_span.enter();
         let mut thir_generator = ThirGenerator::new();
         let thir_program = thir_generator.transform(hir_program).map_err(|e| {
             CliError::Compilation(format!("HIR to THIR transformation failed: {}", e))
         })?;
+        drop(_enter_thir);
 
         if options.save_intermediates {
+            debug!(path = ?base_path.with_extension("thir"), "persisting THIR intermediate");
             std::fs::write(
                 base_path.with_extension("thir"),
                 format!("{:#?}", thir_program),
@@ -215,12 +254,16 @@ impl Pipeline {
         }
 
         // Step 5: THIR → MIR (Mid-level IR)
+        let mir_span = info_span!("pipeline.lower.mir");
+        let _enter_mir = mir_span.enter();
         let mut mir_generator = MirGenerator::new();
         let mir_program = mir_generator.transform(thir_program).map_err(|e| {
             CliError::Compilation(format!("THIR to MIR transformation failed: {}", e))
         })?;
+        drop(_enter_mir);
 
         if options.save_intermediates {
+            debug!(path = ?base_path.with_extension("mir"), "persisting MIR intermediate");
             std::fs::write(
                 base_path.with_extension("mir"),
                 format!("{:#?}", mir_program),
@@ -229,12 +272,16 @@ impl Pipeline {
         }
 
         // Step 6: MIR → LIR (Low-level IR)
+        let lir_span = info_span!("pipeline.lower.lir");
+        let _enter_lir = lir_span.enter();
         let mut lir_generator = LirGenerator::new();
         let lir_program = lir_generator.transform(mir_program).map_err(|e| {
             CliError::Compilation(format!("MIR to LIR transformation failed: {}", e))
         })?;
+        drop(_enter_lir);
 
         if options.save_intermediates {
+            debug!(path = ?base_path.with_extension("lir"), "persisting LIR intermediate");
             std::fs::write(
                 base_path.with_extension("lir"),
                 format!("{:#?}", lir_program),
@@ -243,6 +290,8 @@ impl Pipeline {
         }
 
         // Step 7: LIR → LLVM IR
+        let llvm_span = info_span!("pipeline.lower.llvm");
+        let _enter_llvm = llvm_span.enter();
         let llvm_config = fp_llvm::LlvmConfig::new();
         let llvm_compiler = fp_llvm::LlvmCompiler::new(llvm_config);
 
@@ -250,6 +299,7 @@ impl Pipeline {
         let llvm_ir = llvm_compiler
             .compile(lir_program, None)
             .map_err(|e| CliError::Compilation(format!("LLVM IR generation failed: {}", e)))?;
+        drop(_enter_llvm);
 
         Ok(llvm_ir)
     }
@@ -264,15 +314,20 @@ impl Pipeline {
         let base_path = options.base_path.as_ref().unwrap();
 
         // First generate LLVM IR. the write path is already decided -- want to control all here
+        let binary_span = info_span!("pipeline.compile.binary");
+        let _enter_binary = binary_span.enter();
         let llvm_ir = self.compile_to_llvm_ir(ast, options, file_path)?;
+        drop(_enter_binary);
 
         // Step 1: Compile LLVM IR to object file using llc
         let obj_path = base_path.with_extension("o");
+        debug!(path = ?obj_path, "invoking llc");
         let llc_result = BinaryCompiler::run_llc(&llvm_ir, &obj_path, options)?;
 
         // Step 2: Link object file to binary (clang preferred, lld/ld fallback)
         let binary_extension = if cfg!(windows) { "exe" } else { "out" };
         let binary_path = base_path.with_extension(binary_extension);
+        debug!(path = ?binary_path, "linking final binary");
         let link_result = BinaryCompiler::link_binary(&obj_path, &binary_path, options)?;
 
         // Return information about the compilation
