@@ -1,8 +1,10 @@
 use fp_core::error::Result;
 use fp_core::id::Locator;
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::pat::Pattern;
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, hir};
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::IrTransform;
@@ -13,6 +15,14 @@ pub struct HirGenerator {
     next_def_id: hir::DefId,
     current_file: FileId,
     current_position: u32,
+    type_symbols: HashMap<String, hir::DefId>,
+    value_symbols: HashMap<String, hir::DefId>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathResolutionScope {
+    Value,
+    Type,
 }
 
 impl HirGenerator {
@@ -23,6 +33,8 @@ impl HirGenerator {
             next_def_id: 0,
             current_file: 0, // Default file ID
             current_position: 0,
+            type_symbols: HashMap::new(),
+            value_symbols: HashMap::new(),
         }
     }
 
@@ -41,6 +53,8 @@ impl HirGenerator {
             next_def_id: 0,
             current_file: file_id,
             current_position: 0,
+            type_symbols: HashMap::new(),
+            value_symbols: HashMap::new(),
         }
     }
 
@@ -52,6 +66,22 @@ impl HirGenerator {
         file_path.as_ref().hash(&mut hasher);
         self.current_file = hasher.finish();
         self.current_position = 0;
+    }
+
+    fn register_type_symbol(&mut self, name: &str, def_id: hir::DefId) {
+        self.type_symbols.insert(name.to_string(), def_id);
+    }
+
+    fn register_value_symbol(&mut self, name: &str, def_id: hir::DefId) {
+        self.value_symbols.insert(name.to_string(), def_id);
+    }
+
+    fn resolve_type_symbol(&self, name: &str) -> Option<hir::DefId> {
+        self.type_symbols.get(name).copied()
+    }
+
+    fn resolve_value_symbol(&self, name: &str) -> Option<hir::DefId> {
+        self.value_symbols.get(name).copied()
     }
 
     /// Create a span for the current position
@@ -86,9 +116,11 @@ impl HirGenerator {
         Ok(hir_program)
     }
 
-    /// Transform an AST file into a HIR program
+    /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::AstFile) -> Result<hir::HirProgram> {
         self.reset_file_context(&file.path);
+        self.type_symbols.clear();
+        self.value_symbols.clear();
         let mut program = hir::HirProgram::new();
 
         for item in &file.items {
@@ -106,7 +138,8 @@ impl HirGenerator {
                 }
             }
             _ => {
-                let hir_item = self.transform_item_to_hir(&Box::new(item.clone()))?;
+                let boxed = Box::new(item.clone());
+                let hir_item = self.transform_item_to_hir(&boxed)?;
                 program.def_map.insert(hir_item.def_id, hir_item.clone());
                 program.items.push(hir_item);
             }
@@ -123,13 +156,9 @@ impl HirGenerator {
 
         let kind = match ast_expr {
             AstExpr::Value(value) => self.transform_value_to_hir(value)?,
-            AstExpr::Locator(locator) => hir::HirExprKind::Path(hir::HirPath {
-                segments: vec![hir::HirPathSegment {
-                    name: locator.to_string(),
-                    args: None,
-                }],
-                res: None,
-            }),
+            AstExpr::Locator(locator) => hir::HirExprKind::Path(
+                self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?,
+            ),
             AstExpr::BinOp(binop) => self.transform_binop_to_hir(binop)?,
             AstExpr::UnOp(unop) => self.transform_unop_to_hir(unop)?,
             AstExpr::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
@@ -194,23 +223,30 @@ impl HirGenerator {
     }
 
     /// Transform a function definition
-    pub fn transform_function(&mut self, func: &ast::ItemDefFunction) -> Result<hir::HirFunction> {
-        let params = self.transform_params(&func.sig.params)?;
+    pub fn transform_function(
+        &mut self,
+        func: &ast::ItemDefFunction,
+        self_ty: Option<hir::HirTy>,
+    ) -> Result<hir::HirFunction> {
+        let mut params = self.transform_params(&func.sig.params)?;
+        if let Some(receiver) = &func.sig.receiver {
+            let receiver_ty = self_ty.unwrap_or_else(|| self.create_unit_type());
+            let self_param = self.make_self_param(receiver, receiver_ty)?;
+            params.insert(0, self_param);
+        }
         let output = if let Some(ret_ty) = &func.sig.ret_ty {
-            self.transform_type_to_hir(ret_ty)
+            self.transform_type_to_hir(ret_ty)?
         } else {
-            Ok(hir::HirTy::new(
-                self.next_id(),
-                hir::HirTyKind::Tuple(Vec::new()),
-                Span::new(self.current_file, 0, 0),
-            ))
-        }?;
+            self.create_unit_type()
+        };
+
+        let generics = self.transform_generics(&func.sig.generics_params);
 
         let sig = hir::HirFunctionSig {
             name: func.name.name.clone(),
             inputs: params.clone(),
             output: output.clone(),
-            generics: hir::HirGenerics::default(),
+            generics,
         };
 
         let body_expr = self.transform_expr_to_hir(&func.body)?;
@@ -242,19 +278,85 @@ impl HirGenerator {
             .collect()
     }
 
+    fn transform_generics(&mut self, params: &[ast::GenericParam]) -> hir::HirGenerics {
+        let mut hir_params = Vec::new();
+        for param in params {
+            hir_params.push(hir::HirGenericParam {
+                hir_id: self.next_id(),
+                name: param.name.name.clone(),
+                kind: hir::HirGenericParamKind::Type { default: None },
+            });
+        }
+
+        hir::HirGenerics {
+            params: hir_params,
+            where_clause: None,
+        }
+    }
+
+    fn wrap_ref_type(&mut self, ty: hir::HirTy) -> hir::HirTy {
+        hir::HirTy::new(
+            self.next_id(),
+            hir::HirTyKind::Ref(Box::new(ty)),
+            Span::new(self.current_file, 0, 0),
+        )
+    }
+
+    fn make_self_param(
+        &mut self,
+        receiver: &ast::FunctionParamReceiver,
+        self_ty: hir::HirTy,
+    ) -> Result<hir::HirParam> {
+        let ty = match receiver {
+            ast::FunctionParamReceiver::Ref
+            | ast::FunctionParamReceiver::RefStatic
+            | ast::FunctionParamReceiver::RefMut
+            | ast::FunctionParamReceiver::RefMutStatic => self.wrap_ref_type(self_ty),
+            _ => self_ty,
+        };
+
+        Ok(hir::HirParam {
+            hir_id: self.next_id(),
+            pat: hir::HirPat {
+                hir_id: self.next_id(),
+                kind: hir::HirPatKind::Binding("self".to_string()),
+            },
+            ty,
+        })
+    }
+
     fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::HirImpl> {
         let self_ty_ast = ast::AstType::expr(impl_block.self_ty.clone());
         let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
+        let trait_ty = if let Some(trait_locator) = &impl_block.trait_ty {
+            Some(hir::HirTy::new(
+                self.next_id(),
+                hir::HirTyKind::Path(
+                    self.locator_to_hir_path_with_scope(trait_locator, PathResolutionScope::Type)?,
+                ),
+                Span::new(self.current_file, 0, 0),
+            ))
+        } else {
+            None
+        };
 
         let mut items = Vec::new();
         for item in &impl_block.items {
             match item {
                 ast::AstItem::DefFunction(func) => {
-                    let method = self.transform_function(func)?;
+                    let method = self.transform_function(func, Some(self_ty.clone()))?;
                     items.push(hir::HirImplItem {
                         hir_id: self.next_id(),
                         name: method.sig.name.clone(),
                         kind: hir::HirImplItemKind::Method(method),
+                    });
+                }
+                ast::AstItem::DefConst(const_item) => {
+                    let assoc_const = self.transform_const_def(const_item)?;
+                    items.push(hir::HirImplItem {
+                        hir_id: self.next_id(),
+                        name: const_item.name.name.clone(),
+                        kind: hir::HirImplItemKind::AssocConst(assoc_const),
                     });
                 }
                 _ => {
@@ -265,6 +367,7 @@ impl HirGenerator {
 
         Ok(hir::HirImpl {
             generics: hir::HirGenerics::default(),
+            trait_ty,
             self_ty,
             items,
         })
@@ -306,85 +409,53 @@ impl HirGenerator {
 
     /// Transform function call/invoke to HIR
     fn transform_invoke_to_hir(&mut self, invoke: &ast::ExprInvoke) -> Result<hir::HirExprKind> {
-        // Special-case: println! macro was parsed into a function invoke
-        // If the first argument is a structured format string, expand it into
-        // a single Call to println with a literal template + transformed args.
-        if let ast::ExprInvokeTarget::Function(loc) = &invoke.target {
-            if loc.to_string() == "println" {
-                if let Some(ast::AstExpr::FormatString(fmt)) = invoke.args.get(0) {
-                    // Build template literal
-                    let mut template_str = String::new();
-                    for part in &fmt.parts {
-                        match part {
-                            ast::FormatTemplatePart::Literal(literal) => {
-                                template_str.push_str(literal)
-                            }
-                            ast::FormatTemplatePart::Placeholder(_) => template_str.push_str("{}"),
-                        }
-                    }
-
-                    // Transform arguments inside the format string
-                    let hir_args: Result<Vec<_>> = fmt
-                        .args
-                        .iter()
-                        .map(|a| self.transform_expr_to_hir(a))
-                        .collect();
-                    let mut call_args = vec![hir::HirExpr {
-                        hir_id: self.next_id(),
-                        kind: hir::HirExprKind::Literal(hir::HirLit::Str(template_str)),
-                        span: Span::new(0, 0, 0),
-                    }];
-                    call_args.extend(hir_args?);
-
-                    let func = Box::new(hir::HirExpr {
-                        hir_id: self.next_id(),
-                        kind: hir::HirExprKind::Path(hir::HirPath {
-                            segments: vec![hir::HirPathSegment {
-                                name: "println".to_string(),
-                                args: None,
-                            }],
-                            res: None,
-                        }),
-                        span: Span::new(0, 0, 0),
-                    });
-                    return Ok(hir::HirExprKind::Call(func, call_args));
+        match &invoke.target {
+            ast::ExprInvokeTarget::Method(select) => {
+                let receiver = self.transform_expr_to_hir(&select.obj)?;
+                let mut args = Vec::new();
+                for arg in &invoke.args {
+                    args.push(self.transform_expr_to_hir(arg)?);
                 }
+                Ok(hir::HirExprKind::MethodCall(
+                    Box::new(receiver),
+                    select.field.name.clone(),
+                    args,
+                ))
             }
+            ast::ExprInvokeTarget::Function(locator) => {
+                // Handle println! formatted calls specially to preserve template
+                if locator.to_string() == "println" {
+                    if let Some(ast::AstExpr::FormatString(fmt)) = invoke.args.get(0) {
+                        return self.transform_format_like_call(fmt, &invoke.args[1..]);
+                    }
+                }
+
+                let func_expr = hir::HirExpr {
+                    hir_id: self.next_id(),
+                    kind: hir::HirExprKind::Path(
+                        self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?,
+                    ),
+                    span: self.create_span(1),
+                };
+                let args = self.transform_call_args(&invoke.args)?;
+                Ok(hir::HirExprKind::Call(Box::new(func_expr), args))
+            }
+            ast::ExprInvokeTarget::Expr(expr) => {
+                let func_expr = self.transform_expr_to_hir(expr)?;
+                let args = self.transform_call_args(&invoke.args)?;
+                Ok(hir::HirExprKind::Call(Box::new(func_expr), args))
+            }
+            _ => Err(crate::error::optimization_error(format!(
+                "Unimplemented invoke target type for HIR transformation: {:?}",
+                invoke.target
+            ))),
         }
-        let func = Box::new(match &invoke.target {
-            ast::ExprInvokeTarget::Function(loc) => hir::HirExpr {
-                hir_id: self.next_id(),
-                kind: hir::HirExprKind::Path(hir::HirPath {
-                    segments: vec![hir::HirPathSegment {
-                        name: loc.to_string(),
-                        args: None,
-                    }],
-                    res: None,
-                }),
-                span: Span::new(0, 0, 0),
-            },
-            ast::ExprInvokeTarget::Expr(expr) => self.transform_expr_to_hir(expr)?,
-            _ => {
-                return Err(crate::error::optimization_error(format!(
-                    "Unimplemented invoke target type for HIR transformation: {:?}",
-                    std::mem::discriminant(&invoke.target)
-                )));
-            }
-        });
-
-        let args = invoke
-            .args
-            .iter()
-            .map(|arg| self.transform_expr_to_hir(arg))
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(hir::HirExprKind::Call(func, args))
     }
 
     /// Transform field selection to HIR
     fn transform_select_to_hir(&mut self, select: &ast::ExprSelect) -> Result<hir::HirExprKind> {
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
-        let field = select.field.to_string();
+        let field = select.field.name.clone();
 
         Ok(hir::HirExprKind::FieldAccess(expr, field))
     }
@@ -394,24 +465,34 @@ impl HirGenerator {
         &mut self,
         struct_expr: &ast::ExprStruct,
     ) -> Result<hir::HirExprKind> {
-        let path = hir::HirPath {
-            segments: vec![hir::HirPathSegment {
-                name: "StructName".to_string(), // Simplified for now
-                args: None,
-            }],
-            res: None,
-        };
+        let path =
+            self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Type)?;
 
         let fields = struct_expr
             .fields
             .iter()
             .map(|field| {
+                let expr = if let Some(value) = field.value.as_ref() {
+                    self.transform_expr_to_hir(value)?
+                } else {
+                    // Shorthand - reference local with same name
+                    hir::HirExpr {
+                        hir_id: self.next_id(),
+                        kind: hir::HirExprKind::Path(hir::HirPath {
+                            segments: vec![hir::HirPathSegment {
+                                name: field.name.name.clone(),
+                                args: None,
+                            }],
+                            res: None,
+                        }),
+                        span: self.create_span(1),
+                    }
+                };
+
                 Ok(hir::HirStructExprField {
                     hir_id: self.next_id(),
-                    name: field.name.to_string(),
-                    expr: self.transform_expr_to_hir(
-                        field.value.as_ref().ok_or("Field must have value")?,
-                    )?,
+                    name: field.name.name.clone(),
+                    expr,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -469,11 +550,7 @@ impl HirGenerator {
                 hir::HirStmtKind::Expr(self.transform_expr_to_hir(&expr_stmt.expr)?)
             }
             ast::BlockStmt::Let(let_stmt) => {
-                let pat = hir::HirPat {
-                    hir_id: self.next_id(),
-                    kind: hir::HirPatKind::Binding("var".to_string()), // Simplified pattern handling
-                };
-
+                let pat = self.transform_pattern(&let_stmt.pat)?;
                 let init = let_stmt
                     .init
                     .as_ref()
@@ -515,29 +592,18 @@ impl HirGenerator {
 
     /// Transform an AST item into a HIR item
     fn transform_item_to_hir(&mut self, item: &ast::BItem) -> Result<hir::HirItem> {
+        let hir_id = self.next_id();
+        let def_id = self.next_def_id();
+        let span = self.create_span(1);
+
         let kind = match item.as_ref() {
             ast::AstItem::DefConst(const_def) => {
-                // Transform const declaration
-                let name = const_def.name.name.clone();
-                let ty = if let Some(ty) = &const_def.ty {
-                    self.transform_type_to_hir(ty)?
-                } else {
-                    // Use unit type as placeholder for type inference
-                    hir::HirTy::new(
-                        self.next_id(),
-                        hir::HirTyKind::Tuple(Vec::new()),
-                        hir::Span::new(0, 0, 0),
-                    )
-                };
-                let body = hir::HirBody {
-                    hir_id: self.next_id(),
-                    params: vec![],
-                    value: self.transform_expr_to_hir(&const_def.value)?,
-                };
-                hir::HirItemKind::Const(hir::HirConst { name, ty, body })
+                self.register_value_symbol(&const_def.name.name, def_id);
+                let hir_const = self.transform_const_def(const_def)?;
+                hir::HirItemKind::Const(hir_const)
             }
             ast::AstItem::DefStruct(struct_def) => {
-                // Transform struct definition
+                self.register_type_symbol(&struct_def.name.name, def_id);
                 let name = struct_def.name.name.clone();
                 let fields = struct_def
                     .value
@@ -548,13 +614,13 @@ impl HirGenerator {
                             hir_id: self.next_id(),
                             name: field.name.name.clone(),
                             ty: self.transform_type_to_hir(&field.value)?,
-                            vis: hir::HirVisibility::Public, // Simplified visibility handling
+                            vis: hir::HirVisibility::Public,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
 
                 let generics = hir::HirGenerics {
-                    params: vec![], // Simplified generic handling
+                    params: vec![],
                     where_clause: None,
                 };
 
@@ -565,7 +631,8 @@ impl HirGenerator {
                 })
             }
             ast::AstItem::DefFunction(func_def) => {
-                let function = self.transform_function(func_def)?;
+                self.register_value_symbol(&func_def.name.name, def_id);
+                let function = self.transform_function(func_def, None)?;
                 hir::HirItemKind::Function(function)
             }
             ast::AstItem::Impl(impl_block) => {
@@ -581,10 +648,31 @@ impl HirGenerator {
         };
 
         Ok(hir::HirItem {
-            hir_id: self.next_id(),
-            def_id: self.next_def_id(),
+            hir_id,
+            def_id,
             kind,
-            span: self.create_span(1), // Proper span for HIR item
+            span,
+        })
+    }
+
+    fn transform_const_def(&mut self, const_def: &ast::ItemDefConst) -> Result<hir::HirConst> {
+        let ty = if let Some(ty) = &const_def.ty {
+            self.transform_type_to_hir(ty)?
+        } else {
+            self.create_unit_type()
+        };
+
+        let value = self.transform_expr_to_hir(&const_def.value)?;
+        let body = hir::HirBody {
+            hir_id: self.next_id(),
+            params: Vec::new(),
+            value,
+        };
+
+        Ok(hir::HirConst {
+            name: const_def.name.name.clone(),
+            ty,
+            body,
         })
     }
 
@@ -618,63 +706,62 @@ impl HirGenerator {
                 Ok(hir::HirTy::new(
                     self.next_id(),
                     hir::HirTyKind::Path(hir::HirPath {
-                        segments: vec![hir::HirPathSegment {
-                            name: type_name.to_string(),
-                            args: None,
-                        }],
+                        segments: vec![self.make_path_segment(type_name, None)],
                         res: None,
                     }),
-                    hir::Span::new(0, 0, 0),
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
-            ast::AstType::Expr(expr) => {
-                // Handle type expressions like Locator(#usize)
-                // For now, extract the type name if possible
-                let type_name = self.extract_type_name_from_expr(expr)?;
+            ast::AstType::Struct(struct_ty) => Ok(hir::HirTy::new(
+                self.next_id(),
+                hir::HirTyKind::Path(hir::HirPath {
+                    segments: vec![self.make_path_segment(&struct_ty.name.name, None)],
+                    res: None,
+                }),
+                Span::new(self.current_file, 0, 0),
+            )),
+            ast::AstType::Reference(reference) => {
+                let inner = self.transform_type_to_hir(&reference.ty)?;
+                Ok(hir::HirTy::new(
+                    self.next_id(),
+                    hir::HirTyKind::Ref(Box::new(inner)),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
+            ast::AstType::Tuple(tuple) => {
+                let elements = tuple
+                    .types
+                    .iter()
+                    .map(|ty| Ok(Box::new(self.transform_type_to_hir(ty)?)))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(hir::HirTy::new(
+                    self.next_id(),
+                    hir::HirTyKind::Tuple(elements),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
+            ast::AstType::Vec(vec_ty) => {
+                let args = self.convert_generic_args(&[*vec_ty.ty.clone()])?;
                 Ok(hir::HirTy::new(
                     self.next_id(),
                     hir::HirTyKind::Path(hir::HirPath {
-                        segments: vec![hir::HirPathSegment {
-                            name: type_name,
-                            args: None,
-                        }],
+                        segments: vec![self.make_path_segment("Vec", Some(args))],
                         res: None,
                     }),
-                    hir::Span::new(0, 0, 0),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
+            ast::AstType::Expr(expr) => {
+                let path = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)?;
+                Ok(hir::HirTy::new(
+                    self.next_id(),
+                    hir::HirTyKind::Path(path),
+                    Span::new(self.current_file, 0, 0),
                 ))
             }
             _ => {
                 // Fallback to unit type for unsupported types
-                Ok(hir::HirTy::new(
-                    self.next_id(),
-                    hir::HirTyKind::Tuple(Vec::new()),
-                    hir::Span::new(0, 0, 0),
-                ))
-            }
-        }
-    }
-
-    /// Extract type name from an expression (like Locator(#usize))
-    fn extract_type_name_from_expr(&self, expr: &ast::AstExpr) -> Result<String> {
-        match expr {
-            ast::AstExpr::Locator(locator) => {
-                // Extract type name from locator
-                match locator {
-                    Locator::Ident(ident) => Ok(ident.name.clone()),
-                    Locator::Path(path) => {
-                        // Use the last segment as the type name
-                        if let Some(last_segment) = path.segments.last() {
-                            Ok(last_segment.name.clone())
-                        } else {
-                            Ok("()".to_string())
-                        }
-                    }
-                    _ => Ok("()".to_string()),
-                }
-            }
-            _ => {
-                // For now, default to a generic type
-                Ok("()".to_string())
+                Ok(self.create_unit_type())
             }
         }
     }
@@ -727,97 +814,164 @@ impl HirGenerator {
         &mut self,
         format_str: &ast::ExprFormatString,
     ) -> Result<hir::HirExprKind> {
+        self.transform_format_like_call(format_str, &[])
+    }
+
+    fn transform_format_like_call(
+        &mut self,
+        format_str: &ast::ExprFormatString,
+        trailing_args: &[ast::AstExpr],
+    ) -> Result<hir::HirExprKind> {
         tracing::debug!(
-            "Preserving structured format string with {} parts, {} args, and {} kwargs for const evaluation",
+            "Preserving structured format string with {} parts and {} captured args",
             format_str.parts.len(),
-            format_str.args.len(),
-            format_str.kwargs.len()
+            format_str.args.len()
         );
 
-        // For now, create a special HIR node that preserves the format string structure
-        // This will be resolved during const evaluation when variable values are available
-
-        // Transform all arguments to HIR
-        let hir_args: Result<Vec<_>> = format_str
-            .args
-            .iter()
-            .map(|arg| self.transform_expr_to_hir(arg))
-            .collect();
-        let hir_args = hir_args?;
-
-        // Note: kwargs handling simplified for now
-
-        // Create a special println function call that can be handled during const evaluation
-        let println_path = hir::HirPath {
-            segments: vec![hir::HirPathSegment {
-                name: "println".to_string(),
-                args: None,
-            }],
-            res: None,
-        };
-
-        // Encode the format string structure as a special argument
-        // We'll pass the template as the first argument and the args as remaining arguments
-        let mut template_str = String::new();
+        let mut template = String::new();
         for part in &format_str.parts {
             match part {
-                ast::FormatTemplatePart::Literal(literal) => {
-                    template_str.push_str(literal);
-                }
-                ast::FormatTemplatePart::Placeholder(_) => {
-                    template_str.push_str("{}");
-                }
+                ast::FormatTemplatePart::Literal(text) => template.push_str(text),
+                ast::FormatTemplatePart::Placeholder(_) => template.push_str("{}"),
             }
         }
 
-        let mut call_args = vec![hir::HirExpr {
+        let mut call_args = Vec::new();
+        call_args.push(hir::HirExpr {
             hir_id: self.next_id(),
-            kind: hir::HirExprKind::Literal(hir::HirLit::Str(template_str)),
-            span: self.create_span(1),
-        }];
-
-        // Add the actual arguments
-        call_args.extend(hir_args);
-
-        tracing::debug!(
-            "Created println call with template and {} arguments",
-            call_args.len() - 1
-        );
-
-        // Convert HirPath to HirExpr for the function call
-        let println_expr = Box::new(hir::HirExpr {
-            hir_id: self.next_id(),
-            kind: hir::HirExprKind::Path(println_path),
+            kind: hir::HirExprKind::Literal(hir::HirLit::Str(template)),
             span: self.create_span(1),
         });
 
-        Ok(hir::HirExprKind::Call(println_expr, call_args))
+        for arg in &format_str.args {
+            call_args.push(self.transform_expr_to_hir(arg)?);
+        }
+        for arg in trailing_args {
+            call_args.push(self.transform_expr_to_hir(arg)?);
+        }
+
+        let func_expr = hir::HirExpr {
+            hir_id: self.next_id(),
+            kind: hir::HirExprKind::Path(hir::HirPath {
+                segments: vec![hir::HirPathSegment {
+                    name: "println".to_string(),
+                    args: None,
+                }],
+                res: None,
+            }),
+            span: self.create_span(1),
+        };
+
+        Ok(hir::HirExprKind::Call(Box::new(func_expr), call_args))
+    }
+
+    fn transform_call_args(&mut self, args: &[ast::AstExpr]) -> Result<Vec<hir::HirExpr>> {
+        args.iter()
+            .map(|arg| self.transform_expr_to_hir(arg))
+            .collect()
+    }
+
+    fn locator_to_hir_path_with_scope(
+        &mut self,
+        locator: &Locator,
+        scope: PathResolutionScope,
+    ) -> Result<hir::HirPath> {
+        let segments = match locator {
+            Locator::Ident(ident) => vec![self.make_path_segment(&ident.name, None)],
+            Locator::Path(path) => path
+                .segments
+                .iter()
+                .map(|seg| self.make_path_segment(&seg.name, None))
+                .collect(),
+            Locator::ParameterPath(param_path) => {
+                let mut segs = Vec::new();
+                for seg in &param_path.segments {
+                    let args = if seg.args.is_empty() {
+                        None
+                    } else {
+                        Some(self.convert_generic_args(&seg.args)?)
+                    };
+                    segs.push(self.make_path_segment(&seg.ident.name, args));
+                }
+                segs
+            }
+        };
+
+        let resolved = segments.last().and_then(|segment| match scope {
+            PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+            PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+        });
+
+        Ok(hir::HirPath {
+            segments,
+            res: resolved.map(hir::Res::Def),
+        })
+    }
+
+    fn ast_expr_to_hir_path(
+        &mut self,
+        expr: &ast::AstExpr,
+        scope: PathResolutionScope,
+    ) -> Result<hir::HirPath> {
+        match expr {
+            ast::AstExpr::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
+            _ => Err(crate::error::optimization_error(format!(
+                "Unsupported path expression: {:?}",
+                expr
+            ))),
+        }
+    }
+
+    fn convert_generic_args(&mut self, args: &[ast::AstType]) -> Result<hir::HirGenericArgs> {
+        let mut hir_args = Vec::new();
+        for arg in args {
+            let ty = self.transform_type_to_hir(arg)?;
+            hir_args.push(hir::HirGenericArg::Type(Box::new(ty)));
+        }
+
+        Ok(hir::HirGenericArgs { args: hir_args })
+    }
+
+    fn make_path_segment(
+        &self,
+        name: &str,
+        args: Option<hir::HirGenericArgs>,
+    ) -> hir::HirPathSegment {
+        hir::HirPathSegment {
+            name: name.to_string(),
+            args,
+        }
+    }
+
+    fn transform_pattern(&mut self, pat: &Pattern) -> Result<hir::HirPat> {
+        match pat {
+            Pattern::Ident(ident) => Ok(hir::HirPat {
+                hir_id: self.next_id(),
+                kind: hir::HirPatKind::Binding(ident.ident.name.clone()),
+            }),
+            Pattern::Wildcard(_) => Ok(hir::HirPat {
+                hir_id: self.next_id(),
+                kind: hir::HirPatKind::Wild,
+            }),
+            Pattern::Type(pattern_type) => self.transform_pattern(&pattern_type.pat),
+            _ => Ok(hir::HirPat {
+                hir_id: self.next_id(),
+                kind: hir::HirPatKind::Binding("_".to_string()),
+            }),
+        }
     }
 
     /// Transform let expression to HIR
     fn transform_let_to_hir(&mut self, let_expr: &ast::ExprLet) -> Result<hir::HirExprKind> {
-        // For now, create a simple local binding
-        // In a more complete implementation, this would handle pattern matching
-        let init_expr = self.transform_expr_to_hir(&let_expr.expr)?;
+        let pat = self.transform_pattern(&let_expr.pat)?;
+        let init = self.transform_expr_to_hir(&let_expr.expr)?;
+        let ty = self.create_unit_type();
 
-        // Create a simple assignment-like expression
-        // This is a simplified implementation for basic let expressions
-        Ok(hir::HirExprKind::Block(hir::HirBlock {
-            hir_id: self.next_id(),
-            stmts: vec![hir::HirStmt {
-                hir_id: self.next_id(),
-                kind: hir::HirStmtKind::Local(hir::HirLocal {
-                    hir_id: self.next_id(),
-                    pat: hir::HirPat {
-                        hir_id: self.next_id(),
-                        kind: hir::HirPatKind::Binding("var".to_string()),
-                    },
-                    ty: None,
-                    init: Some(init_expr),
-                }),
-            }],
-            expr: None,
-        }))
+        Ok(hir::HirExprKind::Let(
+            pat,
+            Box::new(ty),
+            Some(Box::new(init)),
+        ))
     }
 
     /// Create a simple HIR literal expression
@@ -841,6 +995,14 @@ impl HirGenerator {
                 res: None,
             }),
             Span::new(0, 0, 0),
+        )
+    }
+
+    fn create_unit_type(&mut self) -> hir::HirTy {
+        hir::HirTy::new(
+            self.next_id(),
+            hir::HirTyKind::Tuple(Vec::new()),
+            Span::new(self.current_file, 0, 0),
         )
     }
 }
@@ -951,6 +1113,72 @@ mod tests {
 
         assert!(names.contains(&"Point".to_string()));
         assert!(names.contains(&"add".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn transform_generic_function_and_method() -> Result<()> {
+        let printer = Arc::new(RustPrinter::new());
+        register_threadlocal_serializer(printer.clone());
+
+        let items = shll_parse_items! {
+            struct Container {
+                value: i64,
+            }
+
+            impl Container {
+                fn get(&self) -> i64 {
+                    self.value
+                }
+            }
+
+            fn identity<T>(x: T) -> T {
+                x
+            }
+        };
+
+        let ast_file = ast::AstFile {
+            path: "generics.fp".into(),
+            items,
+        };
+
+        let mut generator = HirGenerator::new();
+        let program = generator.transform_file(&ast_file)?;
+
+        let identity = program
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::HirItemKind::Function(func) if func.sig.name == "identity" => Some(func),
+                _ => None,
+            })
+            .expect("identity function present");
+        assert_eq!(identity.sig.generics.params.len(), 1);
+
+        let impl_item = program
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::HirItemKind::Impl(impl_block) => Some(impl_block),
+                _ => None,
+            })
+            .expect("impl block present");
+        assert!(impl_item.trait_ty.is_none());
+
+        let method = impl_item
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::HirImplItemKind::Method(func) => Some(func),
+                _ => None,
+            })
+            .expect("method present");
+        assert_eq!(method.sig.inputs.len(), 1);
+        match &method.sig.inputs[0].pat.kind {
+            hir::HirPatKind::Binding(name) => assert_eq!(name, "self"),
+            other => panic!("expected self binding, got {other:?}"),
+        }
 
         Ok(())
     }

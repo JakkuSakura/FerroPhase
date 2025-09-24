@@ -214,15 +214,15 @@ impl MirGenerator {
 
                 Ok(place)
             }
-            thir::ThirExprKind::Path(name) => {
+            thir::ThirExprKind::Path(item_ref) => {
                 let mir_ty = self.transform_type(&expr.ty);
                 // Use type information to distinguish between function references and global constants
                 let constant_kind = if self.is_function_type(&expr.ty) {
-                    mir::ConstantKind::Fn(name.clone(), mir_ty)
+                    mir::ConstantKind::Fn(item_ref.name.clone(), mir_ty)
                 } else {
                     // If it's not a function type, treat it as a global constant
                     // Use unit type as placeholder since MIR Ty is defined as ()
-                    mir::ConstantKind::Global(name.clone(), mir_ty)
+                    mir::ConstantKind::Global(item_ref.name.clone(), mir_ty)
                 };
 
                 let temp_local = self.create_local(expr.ty);
@@ -273,7 +273,7 @@ impl MirGenerator {
                 // Transform callee and arguments
                 // Get callee name if it's a Path; otherwise lower callee to operand
                 let func_name_opt = match fun.kind {
-                    thir::ThirExprKind::Path(ref n) => Some(n.clone()),
+                    thir::ThirExprKind::Path(ref item) => Some(item.name.clone()),
                     _ => None,
                 };
 

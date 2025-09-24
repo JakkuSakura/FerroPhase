@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+pub mod ty;
+pub use ty::Ty;
+
 pub type ThirId = u32;
 pub type LocalId = u32;
 
@@ -113,8 +116,8 @@ pub struct ThirExpr {
 pub enum ThirExprKind {
     Literal(ThirLit),
     Local(LocalId),
-    /// Reference to a function or global by name (simple path for now)
-    Path(Symbol),
+    /// Reference to a function, constant, or global item.
+    Path(ItemRef),
     Binary(BinOp, Box<ThirExpr>, Box<ThirExpr>),
     Unary(UnOp, Box<ThirExpr>),
     Cast(Box<ThirExpr>, Ty),
@@ -197,6 +200,12 @@ pub struct ThirBlock {
     pub stmts: Vec<ThirStmt>,
     pub expr: Option<Box<ThirExpr>>,
     pub safety_mode: BlockSafetyMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemRef {
+    pub name: Symbol,
+    pub def_id: Option<DefId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -407,7 +416,7 @@ pub type Scope = u32;
 pub type LintLevel = u32;
 pub type Symbol = String;
 pub type Span = crate::span::Span;
-pub type DefId = u32;
+pub type DefId = ty::DefId;
 pub type HirId = u32;
 pub type NodeId = u32;
 pub type FieldIdx = usize;
@@ -419,7 +428,6 @@ pub type TraitRef = (); // Placeholder
 pub type Path = (); // Placeholder
 pub type FieldDef = (); // Placeholder
 pub type SourceInfo = Span;
-pub type Ty = crate::types::Ty;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PatRangeBoundary {
