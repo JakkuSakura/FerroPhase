@@ -33,7 +33,7 @@ const RESULT: i32 = {
 
 **Key Properties:**
 - **Compile-time execution**: All computation happens during compilation
-- **Pure evaluation**: No side effects during evaluation (only metaprogramming side effects)
+- **Pure evaluation**: No runtime effects; const blocks may schedule structural transformations (type/AST edits) that are applied after evaluation.
 - **Type system access**: Can query types via intrinsics like `@sizeof`, `@hasfield`
 - **Scoped variables**: Local variables exist only within the const block
 - **Result value**: Final expression becomes the const value
@@ -72,7 +72,7 @@ const STRUCT_INFO: StructInfo = {
 };
 ```
 
-#### Metaprogramming with Side Effects
+#### Metaprogramming with Transformations
 ```rust
 const GENERATED_STRUCT: Type = {
     let mut builder = create_struct!("GeneratedPoint");
@@ -95,32 +95,32 @@ const GENERATED_STRUCT: Type = {
 3. **Circular Dependencies**: Detected and reported as compile errors
 4. **Pure Functions**: Only pure functions can be called (no I/O, no mutation of global state)
 5. **Type Queries**: Intrinsics like `sizeof!` query the current type system state
-6. **Side Effect Collection**: Metaprogramming operations collect side effects for later application
+6. **Transformation Capture**: Metaprogramming operations record structural transformations for later application
 
 ### Const Block vs Regular Code
 
 | Aspect | Const Block | Regular Code |
 |--------|-------------|-------------|
 | **Execution Time** | Compile time | Runtime |
-| **Side Effects** | Metaprogramming only | Full side effects |
+| **Transformations** | Metaprogramming-only structural edits | Full runtime effects |
 | **Function Calls** | Pure functions only | All functions |
 | **Variable Scope** | Block-scoped | Function/module scoped |
 | **Type Access** | Via intrinsics | Runtime reflection |
 | **Error Handling** | Compile errors | Runtime errors |
 
-### Metaprogramming Side Effects
+### Metaprogramming Transformations
 
-Const blocks can generate code through side effects:
+Const blocks can generate code through scheduled transformations:
 
 ```rust
 const CONTAINER_TYPE: Type = {
     let mut container = create_struct!("Container");
     
-    // Side effect: adds field to struct definition
+    // Transformation: adds field to struct definition
     addfield!(container, "data", Vec<T>);
     addfield!(container, "len", usize);
     
-    // Side effect: adds method to struct
+    // Transformation: adds method to struct
     addmethod!(container, "push", |&mut self, item: T| {
         self.data.push(item);
         self.len += 1;
@@ -130,7 +130,7 @@ const CONTAINER_TYPE: Type = {
 };
 ```
 
-**Side Effect Types:**
+**Transformation Actions:**
 - `addfield!`: Add field to struct
 - `addmethod!`: Add method to type
 - `addimpl!`: Add trait implementation
@@ -178,8 +178,8 @@ Phase 3: Final Type Checking
 - **Discover const blocks** and build dependency graph
 - **Evaluate const expressions** in topological order
 - **Execute intrinsics** like `sizeof!`, `create_struct!`, `addfield!`
-- **Collect side effects** (generated fields, methods, new types)
-- **Apply metaprogramming changes** to AST
+- **Record transformations** (generated fields, methods, new types)
+- **Apply recorded transformations** to the AST snapshot
 - **Query established types** from Phase 1 as needed
 
 #### Phase 3: Final Type Checking  
@@ -188,6 +188,29 @@ Phase 3: Final Type Checking
 - **Check const block results** against expected types
 - **Ensure type system consistency** after metaprogramming
 - **Generate final optimized AST**
+
+### Type Query Service
+
+Const evaluation relies on a dedicated type-query layer rather than ad-hoc lookups:
+
+- **Snapshot Inputs**: Phase 1 produces a read-only `TypeSnapshot` that the evaluator consults. It exposes canonical
+  handles into a shared `TypeArena` used by later lowering passes.
+- **Comptime `mut type` handles**: When transformations need new types (e.g., `create_struct!`), the query engine
+  allocates provisional handles that mirror the language-level `mut type` construct (`let mut T = struct Name { ... };`).
+  Each handle stores its syntactic shape as an `AstType` plus the data needed to emit a `ConcreteType` record later. They
+  live only during Phase 2, carry explicit provenance, and are immutable once committed.
+- **Memoised Queries**: Intrinsics such as `@sizeof`/`@hasfield` route through a `TypeQueryEngine` that caches results by
+  handle + parameters, avoiding redundant computation across const blocks. Cache entries are keyed by `(query, type_id,
+  mut_revision)` so they automatically stay valid until a new `mut type` handle commits.
+- **Deterministic Commits**: When a const block finishes, all `mut type` handles it introduced are atomically promoted to
+  full `ConcreteType` entries in the shared arena (or discarded on failure). No in-place mutation occurs on previously
+  materialised types.
+- **Diagnostics**: Failed queries emit structured diagnostics that Phase 3 can surface alongside traditional type errors.
+
+When Phase 2 completes for a compilation unit, all committed `mut type` handles are frozen into concrete definitions and
+the updated AST snapshot is tagged as **EAST** (Evaluated AST). This EAST becomes the hand-off point for downstream
+stages (surface transpile, HIR lowering, etc.), guaranteeing they all consume identical, evaluation-stable source
+structure.
 
 ### Benefits of 3-Phase Approach
 
@@ -210,6 +233,11 @@ Phase 3: Final Type Checking
 - Easy to inspect state between phases
 - Clear failure points if issues occur
 - Straightforward error attribution
+
+**Cross-Mode/Stage Consistency:**
+- EAST becomes the canonical source for every downstream stage and backend.
+- Compile, bytecode, transpile, and interpret pipelines observe identical evaluated structure, differing only in
+  execution cost or emission format.
 
 ### Example: 3-Phase Execution
 
@@ -249,8 +277,8 @@ fn process_point(p: Point) -> ExtendedPoint {
 - ⚡ Evaluate `EXTENDED_POINT` const block:
   - Execute `create_struct!("ExtendedPoint")`
   - Execute `addfield!(builder, "x", i64)`, `addfield!(builder, "y", i64)`, `addfield!(builder, "z", i64)`
-  - Collect side effects: create new struct type `ExtendedPoint`
-- 🔧 Apply side effects: add `ExtendedPoint` struct to AST
+- Collect transformations: create new struct type `ExtendedPoint`
+- 🔧 Apply transformations: add `ExtendedPoint` struct to AST
 
 **Phase 3: Final Type Checking**
 - ✅ Type check generated `ExtendedPoint` struct
@@ -331,14 +359,14 @@ const POINT_TYPE: Type = {
 
 1. **Current**: `t!` macro for examples and demonstrations
 2. **Phase 1**: Add @ symbol parsing and basic intrinsics
-3. **Phase 2**: Implement side effect collection and application
+3. **Phase 2**: Implement transformation tracking and application
 4. **Phase 3**: Replace `t!` usage with proper const evaluation blocks
 5. **Final**: Remove `t!` macro entirely, use pure const evaluation
 
 ## Implementation Status
 
 **Next Priority Tasks:**
-1. Add side effect tracking system
+1. Add transformation tracking system
 2. Implement 3-phase const evaluation system
 3. Replace t! macro usage with proper const evaluation
 4. Implement intrinsic macros (sizeof!, hasfield!, etc.)
@@ -352,4 +380,3 @@ const POINT_TYPE: Type = {
 - ❌ Intrinsic macro implementations
 - ❌ Side effect collection and application
 - ❌ 3-phase evaluation system
-

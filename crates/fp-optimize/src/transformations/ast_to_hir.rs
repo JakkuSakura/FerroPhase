@@ -15,8 +15,8 @@ pub struct HirGenerator {
     next_def_id: hir::DefId,
     current_file: FileId,
     current_position: u32,
-    type_symbols: HashMap<String, hir::DefId>,
-    value_symbols: HashMap<String, hir::DefId>,
+    type_scopes: Vec<HashMap<String, hir::Res>>,
+    value_scopes: Vec<HashMap<String, hir::Res>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -33,8 +33,8 @@ impl HirGenerator {
             next_def_id: 0,
             current_file: 0, // Default file ID
             current_position: 0,
-            type_symbols: HashMap::new(),
-            value_symbols: HashMap::new(),
+            type_scopes: vec![HashMap::new()],
+            value_scopes: vec![HashMap::new()],
         }
     }
 
@@ -53,8 +53,8 @@ impl HirGenerator {
             next_def_id: 0,
             current_file: file_id,
             current_position: 0,
-            type_symbols: HashMap::new(),
-            value_symbols: HashMap::new(),
+            type_scopes: vec![HashMap::new()],
+            value_scopes: vec![HashMap::new()],
         }
     }
 
@@ -66,22 +66,78 @@ impl HirGenerator {
         file_path.as_ref().hash(&mut hasher);
         self.current_file = hasher.finish();
         self.current_position = 0;
+        self.type_scopes.clear();
+        self.type_scopes.push(HashMap::new());
+        self.value_scopes.clear();
+        self.value_scopes.push(HashMap::new());
     }
 
-    fn register_type_symbol(&mut self, name: &str, def_id: hir::DefId) {
-        self.type_symbols.insert(name.to_string(), def_id);
+    fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
+        self.type_scopes
+            .last_mut()
+            .expect("at least one type scope must exist")
     }
 
-    fn register_value_symbol(&mut self, name: &str, def_id: hir::DefId) {
-        self.value_symbols.insert(name.to_string(), def_id);
+    fn current_value_scope(&mut self) -> &mut HashMap<String, hir::Res> {
+        self.value_scopes
+            .last_mut()
+            .expect("at least one value scope must exist")
     }
 
-    fn resolve_type_symbol(&self, name: &str) -> Option<hir::DefId> {
-        self.type_symbols.get(name).copied()
+    fn register_type_def(&mut self, name: &str, def_id: hir::DefId) {
+        self.current_type_scope()
+            .insert(name.to_string(), hir::Res::Def(def_id));
     }
 
-    fn resolve_value_symbol(&self, name: &str) -> Option<hir::DefId> {
-        self.value_symbols.get(name).copied()
+    fn register_type_generic(&mut self, name: &str, hir_id: hir::HirId) {
+        self.current_type_scope()
+            .insert(name.to_string(), hir::Res::Local(hir_id));
+    }
+
+    fn register_value_def(&mut self, name: &str, def_id: hir::DefId) {
+        self.current_value_scope()
+            .insert(name.to_string(), hir::Res::Def(def_id));
+    }
+
+    fn register_value_local(&mut self, name: &str, hir_id: hir::HirId) {
+        self.current_value_scope()
+            .insert(name.to_string(), hir::Res::Local(hir_id));
+    }
+
+    fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
+        self.type_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+    }
+
+    fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
+        self.value_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+    }
+
+    fn push_value_scope(&mut self) {
+        self.value_scopes.push(HashMap::new());
+    }
+
+    fn pop_value_scope(&mut self) {
+        self.value_scopes.pop();
+        if self.value_scopes.is_empty() {
+            self.value_scopes.push(HashMap::new());
+        }
+    }
+
+    fn push_type_scope(&mut self) {
+        self.type_scopes.push(HashMap::new());
+    }
+
+    fn pop_type_scope(&mut self) {
+        self.type_scopes.pop();
+        if self.type_scopes.is_empty() {
+            self.type_scopes.push(HashMap::new());
+        }
     }
 
     /// Create a span for the current position
@@ -119,8 +175,6 @@ impl HirGenerator {
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::AstFile) -> Result<hir::HirProgram> {
         self.reset_file_context(&file.path);
-        self.type_symbols.clear();
-        self.value_symbols.clear();
         let mut program = hir::HirProgram::new();
 
         for item in &file.items {
@@ -228,35 +282,45 @@ impl HirGenerator {
         func: &ast::ItemDefFunction,
         self_ty: Option<hir::HirTy>,
     ) -> Result<hir::HirFunction> {
-        let mut params = self.transform_params(&func.sig.params)?;
-        if let Some(receiver) = &func.sig.receiver {
-            let receiver_ty = self_ty.unwrap_or_else(|| self.create_unit_type());
-            let self_param = self.make_self_param(receiver, receiver_ty)?;
-            params.insert(0, self_param);
-        }
-        let output = if let Some(ret_ty) = &func.sig.ret_ty {
-            self.transform_type_to_hir(ret_ty)?
-        } else {
-            self.create_unit_type()
-        };
+        self.push_type_scope();
+        self.push_value_scope();
+        let result = (|| {
+            let generics = self.transform_generics(&func.sig.generics_params);
 
-        let generics = self.transform_generics(&func.sig.generics_params);
+            let mut params = self.transform_params(&func.sig.params)?;
+            if let Some(receiver) = &func.sig.receiver {
+                let receiver_ty = self_ty.clone().unwrap_or_else(|| self.create_unit_type());
+                let self_param = self.make_self_param(receiver, receiver_ty)?;
+                self.register_pattern_bindings(&self_param.pat);
+                params.insert(0, self_param);
+            }
+            let output = if let Some(ret_ty) = &func.sig.ret_ty {
+                self.transform_type_to_hir(ret_ty)?
+            } else {
+                self.create_unit_type()
+            };
 
-        let sig = hir::HirFunctionSig {
-            name: func.name.name.clone(),
-            inputs: params.clone(),
-            output: output.clone(),
-            generics,
-        };
+            let sig = hir::HirFunctionSig {
+                name: func.name.name.clone(),
+                inputs: params.clone(),
+                output: output.clone(),
+                generics,
+            };
 
-        let body_expr = self.transform_expr_to_hir(&func.body)?;
-        let body = hir::HirBody {
-            hir_id: self.next_id(),
-            params,
-            value: body_expr,
-        };
+            let body_expr = self.transform_expr_to_hir(&func.body)?;
+            let body = hir::HirBody {
+                hir_id: self.next_id(),
+                params,
+                value: body_expr,
+            };
 
-        Ok(hir::HirFunction::new(sig, Some(body), false))
+            Ok(hir::HirFunction::new(sig, Some(body), false))
+        })();
+
+        self.pop_value_scope();
+        self.pop_type_scope();
+
+        result
     }
 
     fn transform_params(&mut self, params: &[ast::FunctionParam]) -> Result<Vec<hir::HirParam>> {
@@ -269,11 +333,15 @@ impl HirGenerator {
                     kind: hir::HirPatKind::Binding(param.name.name.clone()),
                 };
 
-                Ok(hir::HirParam {
+                let hir_param = hir::HirParam {
                     hir_id: self.next_id(),
                     pat,
                     ty,
-                })
+                };
+
+                self.register_pattern_bindings(&hir_param.pat);
+
+                Ok(hir_param)
             })
             .collect()
     }
@@ -281,11 +349,13 @@ impl HirGenerator {
     fn transform_generics(&mut self, params: &[ast::GenericParam]) -> hir::HirGenerics {
         let mut hir_params = Vec::new();
         for param in params {
+            let hir_id = self.next_id();
             hir_params.push(hir::HirGenericParam {
-                hir_id: self.next_id(),
+                hir_id,
                 name: param.name.name.clone(),
                 kind: hir::HirGenericParamKind::Type { default: None },
             });
+            self.register_type_generic(&param.name.name, hir_id);
         }
 
         hir::HirGenerics {
@@ -326,51 +396,61 @@ impl HirGenerator {
     }
 
     fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::HirImpl> {
-        let self_ty_ast = ast::AstType::expr(impl_block.self_ty.clone());
-        let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
-        let trait_ty = if let Some(trait_locator) = &impl_block.trait_ty {
-            Some(hir::HirTy::new(
-                self.next_id(),
-                hir::HirTyKind::Path(
-                    self.locator_to_hir_path_with_scope(trait_locator, PathResolutionScope::Type)?,
-                ),
-                Span::new(self.current_file, 0, 0),
-            ))
-        } else {
-            None
-        };
+        self.push_type_scope();
+        self.current_type_scope()
+            .insert("Self".to_string(), hir::Res::SelfTy);
+        let result = (|| {
+            let self_ty_ast = ast::AstType::expr(impl_block.self_ty.clone());
+            let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
+            let trait_ty = if let Some(trait_locator) = &impl_block.trait_ty {
+                Some(hir::HirTy::new(
+                    self.next_id(),
+                    hir::HirTyKind::Path(self.locator_to_hir_path_with_scope(
+                        trait_locator,
+                        PathResolutionScope::Type,
+                    )?),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            } else {
+                None
+            };
 
-        let mut items = Vec::new();
-        for item in &impl_block.items {
-            match item {
-                ast::AstItem::DefFunction(func) => {
-                    let method = self.transform_function(func, Some(self_ty.clone()))?;
-                    items.push(hir::HirImplItem {
-                        hir_id: self.next_id(),
-                        name: method.sig.name.clone(),
-                        kind: hir::HirImplItemKind::Method(method),
-                    });
-                }
-                ast::AstItem::DefConst(const_item) => {
-                    let assoc_const = self.transform_const_def(const_item)?;
-                    items.push(hir::HirImplItem {
-                        hir_id: self.next_id(),
-                        name: const_item.name.name.clone(),
-                        kind: hir::HirImplItemKind::AssocConst(assoc_const),
-                    });
-                }
-                _ => {
-                    // Skip unsupported impl items for now
+            let mut items = Vec::new();
+            for item in &impl_block.items {
+                match item {
+                    ast::AstItem::DefFunction(func) => {
+                        let method = self.transform_function(func, Some(self_ty.clone()))?;
+                        items.push(hir::HirImplItem {
+                            hir_id: self.next_id(),
+                            name: method.sig.name.clone(),
+                            kind: hir::HirImplItemKind::Method(method),
+                        });
+                    }
+                    ast::AstItem::DefConst(const_item) => {
+                        let assoc_const = self.transform_const_def(const_item)?;
+                        items.push(hir::HirImplItem {
+                            hir_id: self.next_id(),
+                            name: const_item.name.name.clone(),
+                            kind: hir::HirImplItemKind::AssocConst(assoc_const),
+                        });
+                    }
+                    _ => {
+                        // Skip unsupported impl items for now
+                    }
                 }
             }
-        }
 
-        Ok(hir::HirImpl {
-            generics: hir::HirGenerics::default(),
-            trait_ty,
-            self_ty,
-            items,
-        })
+            Ok(hir::HirImpl {
+                generics: hir::HirGenerics::default(),
+                trait_ty,
+                self_ty,
+                items,
+            })
+        })();
+
+        self.pop_type_scope();
+
+        result
     }
 
     /// Transform AST value to HIR expression kind
@@ -476,6 +556,7 @@ impl HirGenerator {
                     self.transform_expr_to_hir(value)?
                 } else {
                     // Shorthand - reference local with same name
+                    let res = self.resolve_value_symbol(&field.name.name);
                     hir::HirExpr {
                         hir_id: self.next_id(),
                         kind: hir::HirExprKind::Path(hir::HirPath {
@@ -483,7 +564,7 @@ impl HirGenerator {
                                 name: field.name.name.clone(),
                                 args: None,
                             }],
-                            res: None,
+                            res,
                         }),
                         span: self.create_span(1),
                     }
@@ -502,24 +583,29 @@ impl HirGenerator {
 
     /// Transform block expression to HIR
     fn transform_block_to_hir(&mut self, block: &ast::ExprBlock) -> Result<hir::HirExprKind> {
-        let stmts = block
-            .stmts
-            .iter()
-            .map(|stmt| self.transform_block_stmt_to_hir(stmt))
-            .collect::<Result<Vec<_>>>()?;
+        self.push_value_scope();
+        let result = (|| {
+            let stmts = block
+                .stmts
+                .iter()
+                .map(|stmt| self.transform_block_stmt_to_hir(stmt))
+                .collect::<Result<Vec<_>>>()?;
 
-        // For the final expression, check if the last statement is an expression without semicolon
-        let expr = if let Some(last_expr) = block.last_expr() {
-            Some(Box::new(self.transform_expr_to_hir(last_expr)?))
-        } else {
-            None
-        };
+            // For the final expression, check if the last statement is an expression without semicolon
+            let expr = if let Some(last_expr) = block.last_expr() {
+                Some(Box::new(self.transform_expr_to_hir(last_expr)?))
+            } else {
+                None
+            };
 
-        Ok(hir::HirExprKind::Block(hir::HirBlock {
-            hir_id: self.next_id(),
-            stmts,
-            expr,
-        }))
+            Ok(hir::HirExprKind::Block(hir::HirBlock {
+                hir_id: self.next_id(),
+                stmts,
+                expr,
+            }))
+        })();
+        self.pop_value_scope();
+        result
     }
 
     /// Transform if expression to HIR
@@ -564,6 +650,8 @@ impl HirGenerator {
                     init,
                 };
 
+                self.register_pattern_bindings(&local.pat);
+
                 hir::HirStmtKind::Local(local)
             }
             ast::BlockStmt::Item(item) => {
@@ -598,12 +686,12 @@ impl HirGenerator {
 
         let kind = match item.as_ref() {
             ast::AstItem::DefConst(const_def) => {
-                self.register_value_symbol(&const_def.name.name, def_id);
+                self.register_value_def(&const_def.name.name, def_id);
                 let hir_const = self.transform_const_def(const_def)?;
                 hir::HirItemKind::Const(hir_const)
             }
             ast::AstItem::DefStruct(struct_def) => {
-                self.register_type_symbol(&struct_def.name.name, def_id);
+                self.register_type_def(&struct_def.name.name, def_id);
                 let name = struct_def.name.name.clone();
                 let fields = struct_def
                     .value
@@ -631,7 +719,7 @@ impl HirGenerator {
                 })
             }
             ast::AstItem::DefFunction(func_def) => {
-                self.register_value_symbol(&func_def.name.name, def_id);
+                self.register_value_def(&func_def.name.name, def_id);
                 let function = self.transform_function(func_def, None)?;
                 hir::HirItemKind::Function(function)
             }
@@ -904,7 +992,7 @@ impl HirGenerator {
 
         Ok(hir::HirPath {
             segments,
-            res: resolved.map(hir::Res::Def),
+            res: resolved,
         })
     }
 
@@ -961,9 +1049,29 @@ impl HirGenerator {
         }
     }
 
+    fn register_pattern_bindings(&mut self, pat: &hir::HirPat) {
+        match &pat.kind {
+            hir::HirPatKind::Binding(name) => {
+                self.register_value_local(name, pat.hir_id);
+            }
+            hir::HirPatKind::Struct(_, fields) => {
+                for field in fields {
+                    self.register_pattern_bindings(&field.pat);
+                }
+            }
+            hir::HirPatKind::Tuple(elements) => {
+                for element in elements {
+                    self.register_pattern_bindings(element);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Transform let expression to HIR
     fn transform_let_to_hir(&mut self, let_expr: &ast::ExprLet) -> Result<hir::HirExprKind> {
         let pat = self.transform_pattern(&let_expr.pat)?;
+        self.register_pattern_bindings(&pat);
         let init = self.transform_expr_to_hir(&let_expr.expr)?;
         let ty = self.create_unit_type();
 
@@ -1031,6 +1139,7 @@ mod tests {
     use fp_core::ast::register_threadlocal_serializer;
     use fp_rust::printer::RustPrinter;
     use fp_rust::shll_parse_items;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
@@ -1155,6 +1264,23 @@ mod tests {
             })
             .expect("identity function present");
         assert_eq!(identity.sig.generics.params.len(), 1);
+        if let hir::HirTyKind::Path(path) = &identity.sig.output.kind {
+            assert!(
+                matches!(path.res, Some(hir::Res::Local(_))),
+                "generic return type should resolve to local generic param"
+            );
+        } else {
+            panic!("expected path return type for identity function");
+        }
+        let param_ty = &identity.sig.inputs[0].ty;
+        if let hir::HirTyKind::Path(path) = &param_ty.kind {
+            assert!(
+                matches!(path.res, Some(hir::Res::Local(_))),
+                "generic parameter type should resolve to local generic param"
+            );
+        } else {
+            panic!("expected path param type for identity function parameter");
+        }
 
         let impl_item = program
             .items
@@ -1178,6 +1304,164 @@ mod tests {
         match &method.sig.inputs[0].pat.kind {
             hir::HirPatKind::Binding(name) => assert_eq!(name, "self"),
             other => panic!("expected self binding, got {other:?}"),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn transform_scoped_block_name_resolution() -> Result<()> {
+        let printer = Arc::new(RustPrinter::new());
+        register_threadlocal_serializer(printer.clone());
+
+        let items = shll_parse_items! {
+            fn outer(a: i64) -> i64 {
+                let b = a;
+                {
+                    let c = b;
+                    c + a
+                }
+            }
+        };
+
+        let ast_file = ast::AstFile {
+            path: "scopes.fp".into(),
+            items,
+        };
+
+        let mut generator = HirGenerator::new();
+        let program = generator.transform_file(&ast_file)?;
+
+        let outer = program
+            .items
+            .iter()
+            .find_map(|item| match &item.kind {
+                hir::HirItemKind::Function(func) if func.sig.name == "outer" => Some(func),
+                _ => None,
+            })
+            .expect("outer function present");
+
+        let body = outer.body.as_ref().expect("outer function has body");
+
+        let mut collected_paths: Vec<&hir::HirPath> = Vec::new();
+
+        fn collect_paths<'a>(expr: &'a hir::HirExpr, out: &mut Vec<&'a hir::HirPath>) {
+            match &expr.kind {
+                hir::HirExprKind::Path(path) => out.push(path),
+                hir::HirExprKind::Binary(_, lhs, rhs) => {
+                    collect_paths(lhs, out);
+                    collect_paths(rhs, out);
+                }
+                hir::HirExprKind::Unary(_, inner) => collect_paths(inner, out),
+                hir::HirExprKind::Call(func, args) => {
+                    collect_paths(func, out);
+                    for arg in args {
+                        collect_paths(arg, out);
+                    }
+                }
+                hir::HirExprKind::MethodCall(receiver, _, args) => {
+                    collect_paths(receiver, out);
+                    for arg in args {
+                        collect_paths(arg, out);
+                    }
+                }
+                hir::HirExprKind::FieldAccess(inner, _) => collect_paths(inner, out),
+                hir::HirExprKind::Struct(_, fields) => {
+                    for field in fields {
+                        collect_paths(&field.expr, out);
+                    }
+                }
+                hir::HirExprKind::If(cond, then_branch, else_branch) => {
+                    collect_paths(cond, out);
+                    collect_paths(then_branch, out);
+                    if let Some(else_expr) = else_branch {
+                        collect_paths(else_expr, out);
+                    }
+                }
+                hir::HirExprKind::Block(block) => collect_paths_from_block(block, out),
+                hir::HirExprKind::Let(_, _, Some(init)) => collect_paths(init, out),
+                hir::HirExprKind::Let(_, _, None) => {}
+                hir::HirExprKind::Assign(lhs, rhs) => {
+                    collect_paths(lhs, out);
+                    collect_paths(rhs, out);
+                }
+                hir::HirExprKind::Return(expr_opt) | hir::HirExprKind::Break(expr_opt) => {
+                    if let Some(expr) = expr_opt {
+                        collect_paths(expr, out);
+                    }
+                }
+                hir::HirExprKind::Loop(block) => collect_paths_from_block(block, out),
+                hir::HirExprKind::While(cond, block) => {
+                    collect_paths(cond, out);
+                    collect_paths_from_block(block, out);
+                }
+                hir::HirExprKind::Literal(_) | hir::HirExprKind::Continue => {}
+            }
+        }
+
+        fn collect_paths_from_block<'a>(block: &'a hir::HirBlock, out: &mut Vec<&'a hir::HirPath>) {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    hir::HirStmtKind::Local(local) => {
+                        if let Some(init) = &local.init {
+                            collect_paths(init, out);
+                        }
+                    }
+                    hir::HirStmtKind::Item(item) => collect_paths_from_item(item, out),
+                    hir::HirStmtKind::Expr(expr) | hir::HirStmtKind::Semi(expr) => {
+                        collect_paths(expr, out);
+                    }
+                }
+            }
+            if let Some(expr) = &block.expr {
+                collect_paths(expr, out);
+            }
+        }
+
+        fn collect_paths_from_item<'a>(item: &'a hir::HirItem, out: &mut Vec<&'a hir::HirPath>) {
+            match &item.kind {
+                hir::HirItemKind::Function(func) => {
+                    if let Some(body) = &func.body {
+                        collect_paths(&body.value, out);
+                    }
+                }
+                hir::HirItemKind::Const(const_item) => collect_paths(&const_item.body.value, out),
+                hir::HirItemKind::Impl(impl_block) => {
+                    for impl_item in &impl_block.items {
+                        if let hir::HirImplItemKind::Method(method) = &impl_item.kind {
+                            if let Some(body) = &method.body {
+                                collect_paths(&body.value, out);
+                            }
+                        }
+                    }
+                }
+                hir::HirItemKind::Struct(_) => {}
+            }
+        }
+
+        collect_paths(&body.value, &mut collected_paths);
+
+        let mut name_to_paths: HashMap<String, Vec<&hir::HirPath>> = HashMap::new();
+
+        for path in collected_paths {
+            if let Some(segment) = path.segments.last() {
+                name_to_paths
+                    .entry(segment.name.clone())
+                    .or_default()
+                    .push(path);
+            }
+        }
+
+        for name in ["a", "b", "c"] {
+            let paths = name_to_paths
+                .get(name)
+                .unwrap_or_else(|| panic!("expected paths for {name}"));
+            assert!(
+                paths
+                    .iter()
+                    .all(|path| matches!(path.res, Some(hir::Res::Local(_)))),
+                "expected {name} to resolve to a local"
+            );
         }
 
         Ok(())
