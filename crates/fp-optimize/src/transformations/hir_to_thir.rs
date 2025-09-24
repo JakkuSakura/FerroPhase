@@ -142,21 +142,10 @@ impl ThirGenerator {
                 let const_ty = thir_const.ty.clone();
                 (thir::ThirItemKind::Const(thir_const), const_ty)
             }
-            _ => {
-                return Ok(thir::ThirItem {
-                    thir_id,
-                    kind: thir::ThirItemKind::Function(thir::ThirFunction {
-                        sig: thir::ThirFunctionSig {
-                            inputs: vec![],
-                            output: self.create_unit_type(),
-                            c_variadic: false,
-                        },
-                        body_id: None,
-                        is_const: false,
-                    }),
-                    ty: self.create_unit_type(),
-                    span: hir_item.span,
-                });
+            hir::HirItemKind::Impl(impl_block) => {
+                let thir_impl = self.transform_impl(impl_block)?;
+                let self_ty = thir_impl.self_ty.clone();
+                (thir::ThirItemKind::Impl(thir_impl), self_ty)
             }
         };
 
@@ -198,6 +187,36 @@ impl ThirGenerator {
             sig,
             body_id,
             is_const: hir_func.is_const,
+        })
+    }
+
+    fn transform_impl(&mut self, hir_impl: hir::HirImpl) -> Result<thir::ThirImpl> {
+        let self_ty = self.hir_ty_to_ty(&hir_impl.self_ty)?;
+
+        let mut items = Vec::new();
+        for item in hir_impl.items {
+            match item.kind {
+                hir::HirImplItemKind::Method(method) => {
+                    let thir_method = self.transform_function(method)?;
+                    items.push(thir::ThirImplItem {
+                        thir_id: self.next_id(),
+                        kind: thir::ThirImplItemKind::Method(thir_method),
+                    });
+                }
+                hir::HirImplItemKind::AssocConst(const_item) => {
+                    let thir_const = self.transform_const(const_item)?;
+                    items.push(thir::ThirImplItem {
+                        thir_id: self.next_id(),
+                        kind: thir::ThirImplItemKind::AssocConst(thir_const),
+                    });
+                }
+            }
+        }
+
+        Ok(thir::ThirImpl {
+            self_ty,
+            items,
+            trait_ref: None,
         })
     }
 
