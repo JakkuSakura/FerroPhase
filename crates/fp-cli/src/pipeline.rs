@@ -6,7 +6,7 @@ use crate::config::{PipelineOptions, PipelineTarget, RuntimeConfig};
 use crate::CliError;
 pub use crate::config::PipelineConfig;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstNode, AstValue, BExpr, RuntimeValue};
+use fp_core::ast::{AstFile, AstNode, AstValue, BExpr, RuntimeValue};
 use fp_core::context::SharedScopedContext;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_llvm;
@@ -17,7 +17,7 @@ use fp_optimize::transformations::{
 };
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -88,21 +88,27 @@ impl Pipeline {
         // Set base path for intermediate files
         options.base_path = Some(base_path.clone());
 
-        let ast = self.parse_source(&source)?;
+        let (ast_expr, ast_file) = self.parse_source_variants(&source, input_path.as_deref())?;
+        let ast_node = if let Some(file) = ast_file {
+            AstNode::File(file)
+        } else {
+            AstNode::Expr((*ast_expr).clone())
+        };
 
         // Execute based on target
         match options.target {
             PipelineTarget::Rust => {
-                let rust_code = CodeGenerator::generate_rust_code(&ast)?;
+                let rust_code = CodeGenerator::generate_rust_code(&ast_node)?;
                 Ok(PipelineOutput::Code(rust_code))
             }
             PipelineTarget::Llvm => {
-                let llvm_ir = self.compile_to_llvm_ir(&ast, &options, input_path.as_deref())?;
+                let llvm_ir =
+                    self.compile_to_llvm_ir(&ast_node, &options, input_path.as_deref())?;
                 Ok(PipelineOutput::Code(llvm_ir.to_str().unwrap().to_string()))
             }
             PipelineTarget::Binary => {
                 let binary_result =
-                    self.compile_to_binary(&ast, &options, input_path.as_deref())?;
+                    self.compile_to_binary(&ast_node, &options, input_path.as_deref())?;
                 // For binary compilation, print the result and return success
                 // The binary files have already been created by compile_to_binary
                 println!("{}", binary_result);
@@ -112,12 +118,12 @@ impl Pipeline {
             }
             PipelineTarget::Interpret => match options.runtime.runtime_type.as_str() {
                 "literal" => {
-                    let result = self.interpret_ast(&ast).await?;
+                    let result = self.interpret_ast(&ast_node).await?;
                     Ok(PipelineOutput::Value(result))
                 }
                 "rust" | _ => {
                     let result = self
-                        .interpret_ast_runtime(&ast, &options.runtime.runtime_type)
+                        .interpret_ast_runtime(&ast_node, &options.runtime.runtime_type)
                         .await?;
                     Ok(PipelineOutput::RuntimeValue(result))
                 }
@@ -128,7 +134,7 @@ impl Pipeline {
     /// Unified compilation method that handles intermediate file saving
     fn compile_to_llvm_ir(
         &self,
-        ast: &BExpr,
+        ast: &AstNode,
         options: &PipelineOptions,
         file_path: Option<&std::path::Path>,
     ) -> Result<PathBuf, CliError> {
@@ -148,7 +154,7 @@ impl Pipeline {
 
         // Step 2: Const Evaluation
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
-        let mut evaluated_node = AstNode::Expr((**ast).clone());
+        let mut evaluated_node = ast.clone();
 
         const_evaluator
             .evaluate(&mut evaluated_node, &context)
@@ -162,25 +168,29 @@ impl Pipeline {
             .ok();
         }
 
-        let evaluated_ast = match evaluated_node {
-            AstNode::Expr(expr) => Box::new(expr),
-            AstNode::Item(_) | AstNode::File(_) => {
+        // Step 3: AST → HIR (High-level IR)
+        let hir_program = match &evaluated_node {
+            AstNode::Expr(expr) => {
+                let mut hir_generator = match file_path {
+                    Some(path) => HirGenerator::with_file(path),
+                    None => HirGenerator::new(),
+                };
+                hir_generator.transform(expr).map_err(|e| {
+                    CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
+                })?
+            }
+            AstNode::File(file) => {
+                let mut hir_generator = HirGenerator::with_file(&file.path);
+                hir_generator.transform(file).map_err(|e| {
+                    CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
+                })?
+            }
+            AstNode::Item(_) => {
                 return Err(CliError::Compilation(
-                    "Const evaluation produced unsupported node for compile pipeline".to_string(),
+                    "Top-level items are not supported for compilation".to_string(),
                 ));
             }
         };
-
-        // Step 3: AST → HIR (High-level IR)
-        let mut hir_generator = match file_path {
-            Some(path) => HirGenerator::with_file(path),
-            None => HirGenerator::new(),
-        };
-        let hir_program = hir_generator
-            .transform(evaluated_ast.as_ref())
-            .map_err(|e| {
-                CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
-            })?;
 
         if options.save_intermediates {
             std::fs::write(
@@ -247,7 +257,7 @@ impl Pipeline {
     /// Unified binary compilation method using llc + lld
     fn compile_to_binary(
         &self,
-        ast: &BExpr,
+        ast: &AstNode,
         options: &PipelineOptions,
         file_path: Option<&std::path::Path>,
     ) -> Result<String, CliError> {
@@ -315,12 +325,7 @@ impl Pipeline {
     }
 
     fn parse_source(&self, source: &str) -> Result<BExpr, CliError> {
-        // Strip shebang line if present
-        let cleaned_source = if source.starts_with("#!") {
-            source.lines().skip(1).collect::<Vec<_>>().join("\n")
-        } else {
-            source.to_string()
-        };
+        let cleaned_source = self.clean_source(source);
 
         // Try parsing as file first
         if let Ok(ast) = self
@@ -346,9 +351,43 @@ impl Pipeline {
             .map_err(|e| CliError::Compilation(e.to_string()))
     }
 
+    fn parse_source_variants(
+        &self,
+        source: &str,
+        file_path: Option<&Path>,
+    ) -> Result<(BExpr, Option<AstFile>), CliError> {
+        let expr = self.parse_source(source)?;
+        let file_ast = match file_path {
+            Some(path) => Some(self.parse_source_file(source, path)?),
+            None => None,
+        };
+        Ok((expr, file_ast))
+    }
+
+    fn parse_source_file(&self, source: &str, path: &Path) -> Result<AstFile, CliError> {
+        let cleaned_source = self.clean_source(source);
+        let syn_file: syn::File = syn::parse_file(&cleaned_source).map_err(|e| {
+            CliError::Compilation(format!("Failed to parse {} as file: {}", path.display(), e))
+        })?;
+
+        self.parser
+            .parse_file_content(path.to_path_buf(), syn_file)
+            .map_err(|e| {
+                CliError::Compilation(format!("Failed to lower file {}: {}", path.display(), e))
+            })
+    }
+
+    fn clean_source(&self, source: &str) -> String {
+        if source.starts_with("#!") {
+            source.lines().skip(1).collect::<Vec<_>>().join("\n")
+        } else {
+            source.to_string()
+        }
+    }
+
     async fn interpret_ast_runtime(
         &self,
-        ast: &BExpr,
+        ast: &AstNode,
         runtime_name: &str,
     ) -> Result<RuntimeValue, CliError> {
         // Create a serializer using RustPrinter
@@ -368,13 +407,22 @@ impl Pipeline {
         // Create a context for interpretation
         let context = SharedScopedContext::new();
 
-        // Interpret with runtime semantics
-        orchestrator
-            .interpret_expr_runtime(ast, &context)
-            .map_err(|e| CliError::Compilation(format!("Runtime interpretation failed: {}", e)))
+        // Interpret with runtime semantics (expressions only for now)
+        match ast {
+            AstNode::Expr(expr) => {
+                orchestrator
+                    .interpret_expr_runtime(expr, &context)
+                    .map_err(|e| {
+                        CliError::Compilation(format!("Runtime interpretation failed: {}", e))
+                    })
+            }
+            AstNode::File(_) | AstNode::Item(_) => Err(CliError::Compilation(
+                "Runtime interpretation currently supports expressions only".to_string(),
+            )),
+        }
     }
 
-    async fn interpret_ast(&self, ast: &BExpr) -> Result<AstValue, CliError> {
+    async fn interpret_ast(&self, ast: &AstNode) -> Result<AstValue, CliError> {
         // Create a serializer using RustPrinter
         let serializer = Arc::new(RustPrinter::new());
 
@@ -384,9 +432,17 @@ impl Pipeline {
         let orchestrator = InterpretationOrchestrator::new(serializer);
         let context = SharedScopedContext::new();
 
-        let result = orchestrator
-            .interpret_expr(ast, &context)
-            .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?;
+        let result = match ast {
+            AstNode::Expr(expr) => orchestrator
+                .interpret_expr(expr, &context)
+                .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
+            AstNode::File(file) => orchestrator
+                .interpret_items(&file.items, &context)
+                .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
+            AstNode::Item(item) => orchestrator
+                .interpret_item(item, &context)
+                .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
+        };
 
         // Retrieve and print any println! outputs
         let outputs = context.take_outputs();
@@ -395,5 +451,47 @@ impl Pipeline {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parse_source_variants_yields_file_when_path_provided() {
+        let pipeline = Pipeline::new();
+        let source = r#"
+            struct Point {
+                x: i64,
+                y: i64,
+            }
+
+            fn main() {
+                let p = Point { x: 1, y: 2 };
+                println!("{} {}", p.x, p.y);
+            }
+        "#;
+
+        let (_expr, file_opt) = pipeline
+            .parse_source_variants(source, Some(Path::new("example.fp")))
+            .expect("parsing succeeds");
+
+        let file = file_opt.expect("file AST returned");
+        assert_eq!(file.path, PathBuf::from("example.fp"));
+        assert!(file.items.len() >= 2);
+    }
+
+    #[test]
+    fn parse_source_variants_without_path_returns_expression_only() {
+        let pipeline = Pipeline::new();
+        let source = "1 + 2";
+
+        let (_expr, file_opt) = pipeline
+            .parse_source_variants(source, None)
+            .expect("parsing succeeds");
+
+        assert!(file_opt.is_none());
     }
 }

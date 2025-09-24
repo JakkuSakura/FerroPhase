@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+pub mod ty;
+pub use ty::Ty;
+
 pub type MirId = u32;
 pub type LocalId = u32;
 pub type BasicBlockId = u32;
@@ -372,12 +375,11 @@ pub struct BlockTailInfo {
 // Forward declarations and type aliases
 pub type Span = crate::span::Span;
 pub type Symbol = String;
-pub type DefId = u32;
+pub type DefId = ty::DefId;
 pub type FieldIdx = usize;
 pub type VariantIdx = usize;
 pub type UserTypeAnnotationIndex = u32;
 pub type SourceInfo = Span;
-pub type Ty = crate::types::Ty;
 pub type AdtDef = (); // Placeholder
 pub type SubstsRef = (); // Placeholder
 pub type ConstValue = (); // Placeholder
