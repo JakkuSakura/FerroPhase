@@ -17,6 +17,9 @@ pub struct HirGenerator {
     current_position: u32,
     type_scopes: Vec<HashMap<String, hir::Res>>,
     value_scopes: Vec<HashMap<String, hir::Res>>,
+    module_path: Vec<String>,
+    global_value_defs: HashMap<String, hir::Res>,
+    global_type_defs: HashMap<String, hir::Res>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -35,6 +38,9 @@ impl HirGenerator {
             current_position: 0,
             type_scopes: vec![HashMap::new()],
             value_scopes: vec![HashMap::new()],
+            module_path: Vec::new(),
+            global_value_defs: HashMap::new(),
+            global_type_defs: HashMap::new(),
         }
     }
 
@@ -55,6 +61,9 @@ impl HirGenerator {
             current_position: 0,
             type_scopes: vec![HashMap::new()],
             value_scopes: vec![HashMap::new()],
+            module_path: Vec::new(),
+            global_value_defs: HashMap::new(),
+            global_type_defs: HashMap::new(),
         }
     }
 
@@ -70,6 +79,9 @@ impl HirGenerator {
         self.type_scopes.push(HashMap::new());
         self.value_scopes.clear();
         self.value_scopes.push(HashMap::new());
+        self.module_path.clear();
+        self.global_value_defs.clear();
+        self.global_type_defs.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -84,11 +96,6 @@ impl HirGenerator {
             .expect("at least one value scope must exist")
     }
 
-    fn register_type_def(&mut self, name: &str, def_id: hir::DefId) {
-        self.current_type_scope()
-            .insert(name.to_string(), hir::Res::Def(def_id));
-    }
-
     fn register_type_generic(&mut self, name: &str, hir_id: hir::HirId) {
         self.current_type_scope()
             .insert(name.to_string(), hir::Res::Local(hir_id));
@@ -97,6 +104,9 @@ impl HirGenerator {
     fn register_value_def(&mut self, name: &str, def_id: hir::DefId) {
         self.current_value_scope()
             .insert(name.to_string(), hir::Res::Def(def_id));
+        let qualified = self.qualify_name(name);
+        self.global_value_defs
+            .insert(qualified, hir::Res::Def(def_id));
     }
 
     fn register_value_local(&mut self, name: &str, hir_id: hir::HirId) {
@@ -104,11 +114,43 @@ impl HirGenerator {
             .insert(name.to_string(), hir::Res::Local(hir_id));
     }
 
+    fn register_type_def(&mut self, name: &str, def_id: hir::DefId) {
+        self.current_type_scope()
+            .insert(name.to_string(), hir::Res::Def(def_id));
+        let qualified = self.qualify_name(name);
+        self.global_type_defs
+            .insert(qualified, hir::Res::Def(def_id));
+    }
+
+    fn push_module_scope(&mut self, name: &str) {
+        self.module_path.push(name.to_string());
+        self.push_type_scope();
+        self.push_value_scope();
+    }
+
+    fn pop_module_scope(&mut self) {
+        self.pop_value_scope();
+        self.pop_type_scope();
+        self.module_path.pop();
+    }
+
+    fn qualify_name(&self, name: &str) -> String {
+        if self.module_path.is_empty() {
+            name.to_string()
+        } else {
+            let mut qualified = self.module_path.join("::");
+            qualified.push_str("::");
+            qualified.push_str(name);
+            qualified
+        }
+    }
+
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
         self.type_scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| self.global_type_defs.get(name).cloned())
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -116,6 +158,7 @@ impl HirGenerator {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+            .or_else(|| self.global_value_defs.get(name).cloned())
     }
 
     fn push_value_scope(&mut self) {
@@ -187,9 +230,11 @@ impl HirGenerator {
     fn append_item(&mut self, program: &mut hir::HirProgram, item: &ast::AstItem) -> Result<()> {
         match item {
             ast::AstItem::Module(module) => {
+                self.push_module_scope(&module.name.name);
                 for child in &module.items {
                     self.append_item(program, child)?;
                 }
+                self.pop_module_scope();
             }
             _ => {
                 let boxed = Box::new(item.clone());
@@ -301,7 +346,7 @@ impl HirGenerator {
             };
 
             let sig = hir::HirFunctionSig {
-                name: func.name.name.clone(),
+                name: self.qualify_name(&func.name.name),
                 inputs: params.clone(),
                 output: output.clone(),
                 generics,
@@ -692,7 +737,7 @@ impl HirGenerator {
             }
             ast::AstItem::DefStruct(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id);
-                let name = struct_def.name.name.clone();
+                let name = self.qualify_name(&struct_def.name.name);
                 let fields = struct_def
                     .value
                     .fields
@@ -758,7 +803,7 @@ impl HirGenerator {
         };
 
         Ok(hir::HirConst {
-            name: const_def.name.name.clone(),
+            name: self.qualify_name(&const_def.name.name),
             ty,
             body,
         })
@@ -767,39 +812,7 @@ impl HirGenerator {
     /// Transform an AST type into a HIR type
     fn transform_type_to_hir(&mut self, ty: &ast::AstType) -> Result<hir::HirTy> {
         match ty {
-            ast::AstType::Primitive(prim) => {
-                let type_name = match prim {
-                    ast::TypePrimitive::Bool => "bool",
-                    ast::TypePrimitive::Char => "char",
-                    ast::TypePrimitive::String => "String",
-                    ast::TypePrimitive::Int(int_ty) => match int_ty {
-                        ast::TypeInt::I8 => "i8",
-                        ast::TypeInt::I16 => "i16",
-                        ast::TypeInt::I32 => "i32",
-                        ast::TypeInt::I64 => "i64",
-                        ast::TypeInt::U8 => "u8",
-                        ast::TypeInt::U16 => "u16",
-                        ast::TypeInt::U32 => "u32",
-                        ast::TypeInt::U64 => "u64",
-                        ast::TypeInt::BigInt => "i64", // Map BigInt to i64 for now
-                    },
-                    ast::TypePrimitive::Decimal(dec_ty) => match dec_ty {
-                        ast::DecimalType::F32 => "f32",
-                        ast::DecimalType::F64 => "f64",
-                        ast::DecimalType::BigDecimal => "f64", // Map to f64 for now
-                        ast::DecimalType::Decimal { .. } => "f64", // Map to f64 for now
-                    },
-                    _ => "unknown",
-                };
-                Ok(hir::HirTy::new(
-                    self.next_id(),
-                    hir::HirTyKind::Path(hir::HirPath {
-                        segments: vec![self.make_path_segment(type_name, None)],
-                        res: None,
-                    }),
-                    Span::new(self.current_file, 0, 0),
-                ))
-            }
+            ast::AstType::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::AstType::Struct(struct_ty) => Ok(hir::HirTy::new(
                 self.next_id(),
                 hir::HirTyKind::Path(hir::HirPath {
@@ -990,6 +1003,24 @@ impl HirGenerator {
             PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
         });
 
+        let resolved = if resolved.is_none() {
+            let qualified: String = segments
+                .iter()
+                .map(|seg| seg.name.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            match scope {
+                PathResolutionScope::Value => {
+                    self.global_value_defs.get(&qualified).cloned().or(resolved)
+                }
+                PathResolutionScope::Type => {
+                    self.global_type_defs.get(&qualified).cloned().or(resolved)
+                }
+            }
+        } else {
+            resolved
+        };
+
         Ok(hir::HirPath {
             segments,
             res: resolved,
@@ -1029,6 +1060,14 @@ impl HirGenerator {
             name: name.to_string(),
             args,
         }
+    }
+
+    fn primitive_type_to_hir(&mut self, prim: ast::TypePrimitive) -> hir::HirTy {
+        hir::HirTy::new(
+            self.next_id(),
+            hir::HirTyKind::Primitive(prim),
+            Span::new(self.current_file, 0, 0),
+        )
     }
 
     fn transform_pattern(&mut self, pat: &Pattern) -> Result<hir::HirPat> {

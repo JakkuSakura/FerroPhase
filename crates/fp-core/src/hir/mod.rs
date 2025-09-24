@@ -1,3 +1,4 @@
+use crate::ast::TypePrimitive;
 use std::collections::HashMap;
 
 pub type HirId = u32;
@@ -194,6 +195,7 @@ pub struct HirTy {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum HirTyKind {
+    Primitive(TypePrimitive),
     Path(HirPath),
     Tuple(Vec<Box<HirTy>>),
     Array(Box<HirTy>, Option<Box<HirExpr>>),
