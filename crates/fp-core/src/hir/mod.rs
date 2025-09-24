@@ -74,6 +74,7 @@ pub struct HirConst {
 #[derive(Debug, Clone, PartialEq)]
 pub struct HirImpl {
     pub generics: HirGenerics,
+    pub trait_ty: Option<HirTy>,
     pub self_ty: HirTy,
     pub items: Vec<HirImplItem>,
 }
