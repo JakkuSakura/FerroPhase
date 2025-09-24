@@ -98,10 +98,15 @@ impl MirGenerator {
             (mir::BodyId(0), Some(mir_body))
         };
         let mir_ty = self.transform_type(&func.sig.output);
+        let inputs = param_locals
+            .iter()
+            .map(|&local_id| self.local_decls[local_id as usize].ty.clone())
+            .collect();
+
         let func = mir::MirFunction {
             sig: mir::MirFunctionSig {
-                inputs: vec![], // Convert later properly
-                output: mir_ty, // Use unit type for MIR
+                inputs,
+                output: mir_ty,
             },
             body_id,
         };
