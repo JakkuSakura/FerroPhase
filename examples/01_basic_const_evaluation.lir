@@ -16,38 +16,12 @@ LirProgram {
                     instructions: [
                         LirInstruction {
                             id: 0,
-                            kind: Div(
-                                Global(
-                                    "DEFAULT_CONFIG",
-                                    Ty {
-                                        kind: Int(
-                                            I32,
-                                        ),
-                                        flags: TypeFlags(
-                                            0x0,
-                                        ),
-                                    },
-                                ),
-                                Constant(
-                                    Int(
-                                        1024,
-                                        I64,
-                                    ),
-                                ),
-                            ),
-                            type_hint: Some(
-                                I32,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 1,
                             kind: Call {
                                 function: Global(
-                                    "println",
+                                    "std::io::println",
                                     Ty {
-                                        kind: Int(
-                                            I32,
+                                        kind: Tuple(
+                                            [],
                                         ),
                                         flags: TypeFlags(
                                             0x0,
@@ -57,44 +31,8 @@ LirProgram {
                                 args: [
                                     Constant(
                                         String(
-                                            "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
+                                            "Config: buffer=4KB, connections=150, timeout=30000ms, debug=0",
                                         ),
-                                    ),
-                                    Register(
-                                        0,
-                                    ),
-                                    Global(
-                                        "DEFAULT_CONFIG",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "DEFAULT_CONFIG",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "DEFAULT_CONFIG",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
                                     ),
                                 ],
                                 calling_convention: C,
@@ -119,13 +57,13 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 2,
+                            id: 1,
                             kind: Call {
                                 function: Global(
-                                    "println",
+                                    "std::io::println",
                                     Ty {
-                                        kind: Int(
-                                            I32,
+                                        kind: Tuple(
+                                            [],
                                         ),
                                         flags: TypeFlags(
                                             0x0,
@@ -135,30 +73,8 @@ LirProgram {
                                 args: [
                                     Constant(
                                         String(
-                                            "Computed: factorial={}, is_pow2={}",
+                                            "Computed: factorial=120, is_pow2=true",
                                         ),
-                                    ),
-                                    Global(
-                                        "FACTORIAL_5",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "IS_POWER_OF_TWO",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
                                     ),
                                 ],
                                 calling_convention: C,
@@ -250,102 +166,30 @@ LirProgram {
                 },
                 LirLocal {
                     id: 9,
-                    ty: I32,
+                    ty: Void,
                     name: None,
                     is_argument: false,
                 },
                 LirLocal {
                     id: 10,
-                    ty: I32,
+                    ty: Void,
                     name: None,
                     is_argument: false,
                 },
                 LirLocal {
                     id: 11,
-                    ty: I32,
+                    ty: Void,
                     name: None,
                     is_argument: false,
                 },
                 LirLocal {
                     id: 12,
-                    ty: I32,
+                    ty: Void,
                     name: None,
                     is_argument: false,
                 },
                 LirLocal {
                     id: 13,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 14,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 15,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 16,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 17,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 18,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 19,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 20,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 21,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 22,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 23,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 24,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 25,
                     ty: Void,
                     name: None,
                     is_argument: false,

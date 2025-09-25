@@ -188,6 +188,7 @@ impl Pipeline {
         const_evaluator
             .evaluate(&mut evaluated_node, &context)
             .map_err(|e| CliError::Compilation(format!("Const evaluation failed: {}", e)))?;
+        let const_results = const_evaluator.get_results();
         drop(_enter_const);
 
         if options.save_intermediates {
@@ -274,10 +275,15 @@ impl Pipeline {
         // Step 6: MIR → LIR (Low-level IR)
         let lir_span = info_span!("pipeline.lower.lir");
         let _enter_lir = lir_span.enter();
-        let mut lir_generator = LirGenerator::new();
+        let mut lir_generator = LirGenerator::new(const_results.clone());
         let lir_program = lir_generator.transform(mir_program).map_err(|e| {
             CliError::Compilation(format!("MIR to LIR transformation failed: {}", e))
         })?;
+        tracing::debug!(
+            "LIR program has {} functions and {} globals",
+            lir_program.functions.len(),
+            lir_program.globals.len()
+        );
         drop(_enter_lir);
 
         if options.save_intermediates {
