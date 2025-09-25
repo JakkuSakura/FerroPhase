@@ -238,13 +238,19 @@ impl LirGenerator {
             }
             mir::Rvalue::Cast(cast_kind, operand, _ty) => {
                 let operand_value = self.transform_operand(operand)?;
+                let source_ty = self.type_of_operand(operand);
                 let target_ty = self
                     .lookup_place_type(place)
                     .map(|ty| self.lir_type_from_ty(ty))
                     .unwrap_or(lir::LirType::I64);
 
                 let instr_id = self.next_id();
-                let instr_kind = self.lower_cast(cast_kind.clone(), operand_value.clone(), target_ty.clone());
+                let instr_kind = self.lower_cast(
+                    cast_kind.clone(),
+                    operand_value.clone(),
+                    source_ty,
+                    target_ty.clone(),
+                );
 
                 self.register_map
                     .insert(place.local, lir::LirValue::Register(instr_id));
@@ -334,6 +340,34 @@ impl LirGenerator {
                     }
                 }
                 Ok(term)
+            }
+            mir::TerminatorKind::SwitchInt {
+                discr,
+                switch_ty: _,
+                targets,
+            } => {
+                let discr_value = self.transform_operand(discr)?;
+                if targets.values.len() == 1 {
+                    let true_target = targets.targets[0];
+                    let false_target = targets.otherwise;
+                    Ok(lir::LirTerminator::CondBr {
+                        condition: discr_value,
+                        if_true: true_target,
+                        if_false: false_target,
+                    })
+                } else {
+                    let cases = targets
+                        .values
+                        .iter()
+                        .zip(targets.targets.iter())
+                        .map(|(value, target)| (*value as u64, *target))
+                        .collect();
+                    Ok(lir::LirTerminator::Switch {
+                        value: discr_value,
+                        default: targets.otherwise,
+                        cases,
+                    })
+                }
             }
             _ => Ok(lir::LirTerminator::Return(None)),
         }
@@ -589,10 +623,43 @@ impl LirGenerator {
         &self,
         cast_kind: mir::CastKind,
         source: lir::LirValue,
+        source_ty: Option<lir::LirType>,
         target_ty: lir::LirType,
     ) -> lir::LirInstructionKind {
         match cast_kind {
-            mir::CastKind::Misc => lir::LirInstructionKind::Bitcast(source, target_ty),
+            mir::CastKind::Misc => {
+                if let Some(src_ty) = source_ty {
+                    if self.is_integral_type(&src_ty) && self.is_integral_type(&target_ty) {
+                        let src_w = self.type_bit_width(&src_ty);
+                        let dst_w = self.type_bit_width(&target_ty);
+                        if src_w == dst_w {
+                            lir::LirInstructionKind::Bitcast(source, target_ty)
+                        } else {
+                            lir::LirInstructionKind::SextOrTrunc(source, target_ty)
+                        }
+                    } else if self.is_float_type(&src_ty) && self.is_float_type(&target_ty) {
+                        let src_w = self.type_bit_width(&src_ty);
+                        let dst_w = self.type_bit_width(&target_ty);
+                        match (src_w, dst_w) {
+                            (Some(s), Some(d)) if d > s => {
+                                lir::LirInstructionKind::FPExt(source, target_ty)
+                            }
+                            (Some(s), Some(d)) if d < s => {
+                                lir::LirInstructionKind::FPTrunc(source, target_ty)
+                            }
+                            _ => lir::LirInstructionKind::Bitcast(source, target_ty),
+                        }
+                    } else if self.is_float_type(&src_ty) && self.is_integral_type(&target_ty) {
+                        lir::LirInstructionKind::FPToSI(source, target_ty)
+                    } else if self.is_integral_type(&src_ty) && self.is_float_type(&target_ty) {
+                        lir::LirInstructionKind::SIToFP(source, target_ty)
+                    } else {
+                        lir::LirInstructionKind::Bitcast(source, target_ty)
+                    }
+                } else {
+                    lir::LirInstructionKind::Bitcast(source, target_ty)
+                }
+            }
             mir::CastKind::Pointer(pointer_cast) => match pointer_cast {
                 mir::PointerCast::ReifyFnPointer
                 | mir::PointerCast::UnsafeFnPointer
@@ -611,6 +678,52 @@ impl LirGenerator {
                 tracing::warn!("MIR→LIR: array length {:?} not evaluated; defaulting to 0", other);
                 0
             }
+        }
+    }
+
+    fn type_of_operand(&self, operand: &mir::Operand) -> Option<lir::LirType> {
+        match operand {
+            mir::Operand::Move(place) | mir::Operand::Copy(place) => {
+                self.lookup_place_type(place)
+                    .map(|ty| self.lir_type_from_ty(ty))
+            }
+            mir::Operand::Constant(constant) => match &constant.literal {
+                mir::ConstantKind::Bool(_) => Some(lir::LirType::I1),
+                mir::ConstantKind::Int(_) | mir::ConstantKind::UInt(_) => Some(lir::LirType::I64),
+                mir::ConstantKind::Float(_) => Some(lir::LirType::F64),
+                mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
+                _ => None,
+            },
+        }
+    }
+
+    fn is_integral_type(&self, ty: &lir::LirType) -> bool {
+        matches!(
+            ty,
+            lir::LirType::I1
+                | lir::LirType::I8
+                | lir::LirType::I16
+                | lir::LirType::I32
+                | lir::LirType::I64
+                | lir::LirType::I128
+        )
+    }
+
+    fn is_float_type(&self, ty: &lir::LirType) -> bool {
+        matches!(ty, lir::LirType::F32 | lir::LirType::F64)
+    }
+
+    fn type_bit_width(&self, ty: &lir::LirType) -> Option<u32> {
+        match ty {
+            lir::LirType::I1 => Some(1),
+            lir::LirType::I8 => Some(8),
+            lir::LirType::I16 => Some(16),
+            lir::LirType::I32 => Some(32),
+            lir::LirType::I64 => Some(64),
+            lir::LirType::I128 => Some(128),
+            lir::LirType::F32 => Some(32),
+            lir::LirType::F64 => Some(64),
+            _ => None,
         }
     }
 }
