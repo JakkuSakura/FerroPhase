@@ -180,6 +180,43 @@ async fn compile_file(
 
 async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
     match target {
+        "binary" => {
+            for file in files {
+                // Check if file is executable (has .out extension or no extension on Unix, .exe on Windows)
+                let is_executable = file.extension().map_or(false, |ext| ext == "out" || ext == "exe") 
+                    || (cfg!(unix) && file.extension().is_none());
+
+                if is_executable {
+                    println!("{} Running compiled binary: {}", style("🚀").cyan(), file.display());
+
+                    // Run the executable directly
+                    let run_output = tokio::process::Command::new(file)
+                        .output()
+                        .await
+                        .map_err(|e| {
+                            CliError::Compilation(format!("Failed to run executable '{}': {}", file.display(), e))
+                        })?;
+
+                    // Print stdout
+                    let stdout = String::from_utf8_lossy(&run_output.stdout);
+                    if !stdout.is_empty() {
+                        println!("{}", stdout.trim_end());
+                    }
+
+                    // Print stderr if present
+                    if !run_output.stderr.is_empty() {
+                        let stderr = String::from_utf8_lossy(&run_output.stderr);
+                        eprintln!("{}", stderr.trim_end());
+                    }
+
+                    // Check exit status
+                    if !run_output.status.success() {
+                        let exit_code = run_output.status.code().unwrap_or(-1);
+                        println!("{} Process exited with code: {}", style("⚠").yellow(), exit_code);
+                    }
+                }
+            }
+        }
         "rust" => {
             for file in files {
                 if file.extension().map_or(false, |ext| ext == "rs") {
