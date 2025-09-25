@@ -399,16 +399,8 @@ impl MirGenerator {
                 let result_place = mir::Place::from_local(result_local);
 
                 let (switch_values, switch_targets, short_value) = match op {
-                    thir::LogicalOp::And => (
-                        vec![1],
-                        vec![rhs_entry],
-                        false,
-                    ),
-                    thir::LogicalOp::Or => (
-                        vec![0],
-                        vec![rhs_entry],
-                        true,
-                    ),
+                    thir::LogicalOp::And => (vec![1], vec![rhs_entry], false),
+                    thir::LogicalOp::Or => (vec![0], vec![rhs_entry], true),
                 };
 
                 self.add_statement_to_block(
@@ -831,8 +823,7 @@ impl MirGenerator {
                         }
                         thir::PatKind::Binding { var, .. } => {
                             // Bind scrutinee into the pattern local before evaluating the body.
-                            let bound_local =
-                                self.get_or_create_local(var, arm.pattern.ty.clone());
+                            let bound_local = self.get_or_create_local(var, arm.pattern.ty.clone());
                             self.add_statement_to_block(
                                 current_block,
                                 mir::Statement {
@@ -956,10 +947,7 @@ impl MirGenerator {
                 self.add_statement_to_block(
                     current_block,
                     mir::Statement {
-                        kind: mir::StatementKind::Assign(
-                            result_place.clone(),
-                            assign_rvalue,
-                        ),
+                        kind: mir::StatementKind::Assign(result_place.clone(), assign_rvalue),
                         source_info: expr.span,
                     },
                 );
@@ -1180,9 +1168,7 @@ impl MirGenerator {
     }
 
     fn constant_to_u128(&self, _value: &thir::ConstValue) -> u128 {
-        tracing::warn!(
-            "THIR→MIR: const pattern lowering uses placeholder value; treating as zero"
-        );
+        tracing::warn!("THIR→MIR: const pattern lowering uses placeholder value; treating as zero");
         0
     }
 
