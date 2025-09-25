@@ -2,7 +2,7 @@
 // Tests that basic intrinsic functions are properly registered and functional
 // Focus: Simple integration testing to prove intrinsics work
 
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::id::Ident;
@@ -16,7 +16,7 @@ fn create_evaluator() -> InterpretationOrchestrator {
     InterpretationOrchestrator::new(Arc::new(RustPrinter::new()))
 }
 
-fn eval_expr(expr: AstExpr) -> Result<AstValue> {
+fn eval_expr(expr: Expr) -> Result<Value> {
     let interpreter = create_evaluator();
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)
@@ -38,7 +38,7 @@ fn test_basic_intrinsic_registration() -> Result<()> {
     let result = eval_expr(code);
     // Should successfully evaluate basic arithmetic
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::int(30));
+    assert_eq!(result.unwrap(), Value::int(30));
 
     Ok(())
 }
@@ -57,7 +57,7 @@ fn test_create_struct_intrinsic_demo() -> Result<()> {
 
     let result = eval_expr(code);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::bool(true));
+    assert_eq!(result.unwrap(), Value::bool(true));
 
     Ok(())
 }
@@ -76,7 +76,7 @@ fn test_reflect_fields_intrinsic_demo() -> Result<()> {
 
     let result = eval_expr(code);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::bool(true));
+    assert_eq!(result.unwrap(), Value::bool(true));
 
     Ok(())
 }
@@ -95,7 +95,7 @@ fn test_hasfield_intrinsic_demo() -> Result<()> {
 
     let result = eval_expr(code);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::int(100));
+    assert_eq!(result.unwrap(), Value::int(100));
 
     Ok(())
 }
@@ -115,7 +115,7 @@ fn test_field_count_intrinsic_demo() -> Result<()> {
 
     let result = eval_expr(code);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::int(16));
+    assert_eq!(result.unwrap(), Value::int(16));
 
     Ok(())
 }
@@ -137,7 +137,7 @@ fn test_multiple_intrinsics_available() -> Result<()> {
     };
 
     let result = eval_expr(code)?;
-    assert_eq!(result, AstValue::bool(true));
+    assert_eq!(result, Value::bool(true));
 
     Ok(())
 }
@@ -156,7 +156,7 @@ fn test_compile_error_intrinsic_demo() -> Result<()> {
 
     let result = eval_expr(code);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::bool(true));
+    assert_eq!(result.unwrap(), Value::bool(true));
 
     Ok(())
 }
@@ -176,7 +176,7 @@ fn test_compile_warning_intrinsic_demo() -> Result<()> {
 
     let result = eval_expr(code);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), AstValue::bool(true));
+    assert_eq!(result.unwrap(), Value::bool(true));
 
     Ok(())
 }
@@ -204,7 +204,7 @@ fn test_intrinsic_registry_completeness() -> Result<()> {
     };
 
     let result = eval_expr(code)?;
-    assert_eq!(result, AstValue::bool(true));
+    assert_eq!(result, Value::bool(true));
 
     Ok(())
 }
@@ -223,7 +223,7 @@ fn test_basic_arithmetic_still_works() -> Result<()> {
     };
 
     let result = eval_expr(code)?;
-    assert_eq!(result, AstValue::bool(true));
+    assert_eq!(result, Value::bool(true));
 
     Ok(())
 }

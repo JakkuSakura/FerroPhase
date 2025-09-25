@@ -6,7 +6,7 @@ pub use runtime::*;
 pub use ty::*;
 pub use value::*;
 
-use crate::ast::{get_threadlocal_serializer, AstExpr, BExpr};
+use crate::ast::{get_threadlocal_serializer, BExpr, Expr};
 use crate::bail;
 use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
@@ -15,9 +15,9 @@ use crate::utils::to_json::ToJson;
 use std::fmt::{Display, Formatter};
 
 pub type ValueId = u64;
-pub type BValue = Box<AstValue>;
+pub type BValue = Box<Value>;
 common_enum! {
-    pub enum AstValue {
+    pub enum Value {
         Int(ValueInt),
         Bool(ValueBool),
         Decimal(ValueDecimal),
@@ -34,7 +34,7 @@ common_enum! {
         Option(ValueOption),
         Undefined(ValueUndefined),
         Escaped(ValueEscaped),
-        Type(AstType),
+        Type(Ty),
         Struct(ValueStruct),
         Structural(ValueStructural),
         Function(ValueFunction),
@@ -45,41 +45,41 @@ common_enum! {
         Any(AnyBox),
     }
 }
-impl AstValue {
+impl Value {
     pub fn get(&self) -> Self {
         self.clone()
     }
 
-    pub fn bool(b: bool) -> AstValue {
-        AstValue::Bool(ValueBool::new(b))
+    pub fn bool(b: bool) -> Value {
+        Value::Bool(ValueBool::new(b))
     }
-    pub fn decimal(d: f64) -> AstValue {
-        AstValue::Decimal(ValueDecimal::new(d))
+    pub fn decimal(d: f64) -> Value {
+        Value::Decimal(ValueDecimal::new(d))
     }
-    pub fn int(i: i64) -> AstValue {
-        AstValue::Int(ValueInt::new(i))
+    pub fn int(i: i64) -> Value {
+        Value::Int(ValueInt::new(i))
     }
-    pub fn unit() -> AstValue {
-        AstValue::Unit(ValueUnit)
+    pub fn unit() -> Value {
+        Value::Unit(ValueUnit)
     }
-    pub fn string(s: String) -> AstValue {
-        AstValue::String(ValueString::new_owned(s))
+    pub fn string(s: String) -> Value {
+        Value::String(ValueString::new_owned(s))
     }
     pub fn is_unit(&self) -> bool {
         match self {
-            AstValue::Unit(_) => true,
+            Value::Unit(_) => true,
             _ => false,
         }
     }
-    pub fn null() -> AstValue {
-        AstValue::Null(ValueNull)
+    pub fn null() -> Value {
+        Value::Null(ValueNull)
     }
-    pub const NULL: AstValue = AstValue::Null(ValueNull);
+    pub const NULL: Value = Value::Null(ValueNull);
 
-    pub fn expr(e: impl Into<AstExpr>) -> Self {
+    pub fn expr(e: impl Into<Expr>) -> Self {
         match e.into() {
-            AstExpr::Value(v) => *v,
-            e => AstValue::Expr(e.into()),
+            Expr::Value(v) => *v,
+            e => Value::Expr(e.into()),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
@@ -91,40 +91,40 @@ impl AstValue {
     pub const UNDEFINED: Self = Self::Undefined(ValueUndefined);
     pub fn as_structural(&self) -> Option<&ValueStructural> {
         match self {
-            AstValue::Struct(s) => Some(&s.structural),
-            AstValue::Structural(s) => Some(s),
+            Value::Struct(s) => Some(&s.structural),
+            Value::Structural(s) => Some(s),
             _ => None,
         }
     }
 }
-impl ToJson for AstValue {
+impl ToJson for Value {
     fn to_json(&self) -> crate::Result<serde_json::Value> {
         match self {
-            AstValue::Int(i) => i.to_json(),
-            AstValue::Bool(b) => b.to_json(),
-            AstValue::Decimal(d) => d.to_json(),
-            AstValue::Char(c) => c.to_json(),
-            AstValue::String(s) => s.to_json(),
-            AstValue::List(l) => l.to_json(),
-            AstValue::Unit(u) => u.to_json(),
-            AstValue::Null(n) => n.to_json(),
-            AstValue::Undefined(u) => u.to_json(),
-            AstValue::Struct(s) => s.to_json(),
-            AstValue::Tuple(t) => t.to_json(),
-            AstValue::None(n) => n.to_json(),
-            AstValue::Some(s) => s.to_json(),
-            AstValue::Option(o) => o.to_json(),
+            Value::Int(i) => i.to_json(),
+            Value::Bool(b) => b.to_json(),
+            Value::Decimal(d) => d.to_json(),
+            Value::Char(c) => c.to_json(),
+            Value::String(s) => s.to_json(),
+            Value::List(l) => l.to_json(),
+            Value::Unit(u) => u.to_json(),
+            Value::Null(n) => n.to_json(),
+            Value::Undefined(u) => u.to_json(),
+            Value::Struct(s) => s.to_json(),
+            Value::Tuple(t) => t.to_json(),
+            Value::None(n) => n.to_json(),
+            Value::Some(s) => s.to_json(),
+            Value::Option(o) => o.to_json(),
             _ => bail!("cannot convert value to json: {:?}", self),
         }
     }
 }
-impl Display for AstValue {
+impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_value(self).unwrap();
         f.write_str(&s)
     }
 }
-impl From<BValue> for AstValue {
+impl From<BValue> for Value {
     fn from(e: BValue) -> Self {
         *e
     }

@@ -7,7 +7,7 @@ impl LirGenerator {
     /// Transform single argument println calls
     pub(crate) fn transform_println_single_arg(
         &mut self,
-        arg: &mir::MirOperand,
+        arg: &mir::Operand,
         fmt: &mut String,
         call_args: &mut Vec<lir::LirValue>,
     ) -> Result<()> {
@@ -25,7 +25,7 @@ impl LirGenerator {
 
         match arg {
             // Direct string literal: print it as data, not a format string
-            mir::MirOperand::Constant(mir::Constant {
+            mir::Operand::Constant(mir::Constant {
                 literal: mir::ConstantKind::Str(s),
                 ..
             }) => {
@@ -33,7 +33,7 @@ impl LirGenerator {
                 call_args.push(lir::LirValue::Constant(lir::LirConstant::String(s.clone())));
             }
             // Any other direct constant
-            mir::MirOperand::Constant(constant) => {
+            mir::Operand::Constant(constant) => {
                 let lir_const = match &constant.literal {
                     mir::ConstantKind::Int(v) => lir::LirConstant::Int(*v, lir::LirType::I32),
                     mir::ConstantKind::UInt(v) => lir::LirConstant::UInt(*v, lir::LirType::I32),
@@ -50,7 +50,7 @@ impl LirGenerator {
                 call_args.push(lir::LirValue::Constant(lir_const));
             }
             // Value moved or copied from a place: try const-prop map first
-            mir::MirOperand::Move(place) | mir::MirOperand::Copy(place) => {
+            mir::Operand::Move(place) | mir::Operand::Copy(place) => {
                 if let Some(const_value) = self.const_values.get(&place.local) {
                     *fmt = select_format_for_const(const_value).to_string();
                     call_args.push(lir::LirValue::Constant(const_value.clone()));
@@ -81,11 +81,11 @@ impl LirGenerator {
     /// Transform multi-argument println calls
     pub(crate) fn transform_println_multi_arg(
         &mut self,
-        args: &[mir::MirOperand],
+        args: &[mir::Operand],
         fmt: &mut String,
         call_args: &mut Vec<lir::LirValue>,
     ) -> Result<()> {
-        if let mir::MirOperand::Constant(mir::Constant {
+        if let mir::Operand::Constant(mir::Constant {
             literal: mir::ConstantKind::Str(s),
             ..
         }) = &args[0]
@@ -98,7 +98,7 @@ impl LirGenerator {
             *fmt = replaced + "\n";
             for arg in &args[1..] {
                 match arg {
-                    mir::MirOperand::Constant(c) => {
+                    mir::Operand::Constant(c) => {
                         let lv = match &c.literal {
                             mir::ConstantKind::Int(v) => lir::LirValue::Constant(
                                 lir::LirConstant::Int(*v, lir::LirType::I32),
@@ -120,7 +120,7 @@ impl LirGenerator {
                         };
                         call_args.push(lv);
                     }
-                    mir::MirOperand::Move(place) | mir::MirOperand::Copy(place) => {
+                    mir::Operand::Move(place) | mir::Operand::Copy(place) => {
                         if let Some(cv) = self.const_values.get(&place.local) {
                             call_args.push(lir::LirValue::Constant(cv.clone()));
                         } else if let Some(val) = self.register_map.get(&place.local) {

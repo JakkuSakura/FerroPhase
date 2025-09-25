@@ -7,94 +7,94 @@ pub type ThirId = u32;
 pub type LocalId = u32;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirProgram {
-    pub items: Vec<ThirItem>,
-    pub bodies: HashMap<BodyId, ThirBody>,
+pub struct Program {
+    pub items: Vec<Item>,
+    pub bodies: HashMap<BodyId, Body>,
     pub next_thir_id: ThirId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirItem {
+pub struct Item {
     pub thir_id: ThirId,
-    pub kind: ThirItemKind,
+    pub kind: ItemKind,
     pub ty: Ty,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ThirItemKind {
-    Function(ThirFunction),
-    Struct(ThirStruct),
-    Const(ThirConst),
-    Impl(ThirImpl),
+pub enum ItemKind {
+    Function(Function),
+    Struct(Struct),
+    Const(Const),
+    Impl(Impl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirFunction {
-    pub sig: ThirFunctionSig,
+pub struct Function {
+    pub sig: FunctionSig,
     pub body_id: Option<BodyId>,
     pub is_const: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirFunctionSig {
+pub struct FunctionSig {
     pub inputs: Vec<Ty>,
     pub output: Ty,
     pub c_variadic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirStruct {
-    pub fields: Vec<ThirStructField>,
+pub struct Struct {
+    pub fields: Vec<StructField>,
     pub variant_data: VariantData,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirStructField {
+pub struct StructField {
     pub thir_id: ThirId,
     pub ty: Ty,
     pub vis: Visibility,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirConst {
+pub struct Const {
     pub ty: Ty,
     pub body_id: BodyId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirImpl {
+pub struct Impl {
     pub self_ty: Ty,
-    pub items: Vec<ThirImplItem>,
+    pub items: Vec<ImplItem>,
     pub trait_ref: Option<TraitRef>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirImplItem {
+pub struct ImplItem {
     pub thir_id: ThirId,
-    pub kind: ThirImplItemKind,
+    pub kind: ImplItemKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ThirImplItemKind {
-    Method(ThirFunction),
-    AssocConst(ThirConst),
+pub enum ImplItemKind {
+    Method(Function),
+    AssocConst(Const),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BodyId(pub u32);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirBody {
+pub struct Body {
     pub params: Vec<Param>,
-    pub value: ThirExpr,
+    pub value: Expr,
     pub locals: Vec<LocalDecl>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub ty: Ty,
-    pub pat: Option<ThirPat>,
+    pub pat: Option<Pat>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,31 +105,31 @@ pub struct LocalDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirExpr {
+pub struct Expr {
     pub thir_id: ThirId,
-    pub kind: ThirExprKind,
+    pub kind: ExprKind,
     pub ty: Ty,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ThirExprKind {
-    Literal(ThirLit),
+pub enum ExprKind {
+    Literal(Lit),
     Local(LocalId),
     /// Reference to a function, constant, or global item.
     Path(ItemRef),
-    Binary(BinOp, Box<ThirExpr>, Box<ThirExpr>),
-    Unary(UnOp, Box<ThirExpr>),
-    Cast(Box<ThirExpr>, Ty),
+    Binary(BinOp, Box<Expr>, Box<Expr>),
+    Unary(UnOp, Box<Expr>),
+    Cast(Box<Expr>, Ty),
     Call {
-        fun: Box<ThirExpr>,
-        args: Vec<ThirExpr>,
+        fun: Box<Expr>,
+        args: Vec<Expr>,
         from_hir_call: bool,
     },
-    Deref(Box<ThirExpr>),
-    Index(Box<ThirExpr>, Box<ThirExpr>),
+    Deref(Box<Expr>),
+    Index(Box<Expr>, Box<Expr>),
     Field {
-        base: Box<ThirExpr>,
+        base: Box<Expr>,
         field_idx: usize,
     },
     VarRef {
@@ -141,64 +141,64 @@ pub enum ThirExprKind {
     },
     Borrow {
         borrow_kind: BorrowKind,
-        arg: Box<ThirExpr>,
+        arg: Box<Expr>,
     },
     AddressOf {
         mutability: Mutability,
-        arg: Box<ThirExpr>,
+        arg: Box<Expr>,
     },
     Break {
-        value: Option<Box<ThirExpr>>,
+        value: Option<Box<Expr>>,
     },
     Continue,
     Return {
-        value: Option<Box<ThirExpr>>,
+        value: Option<Box<Expr>>,
     },
-    Block(ThirBlock),
+    Block(Block),
     Assign {
-        lhs: Box<ThirExpr>,
-        rhs: Box<ThirExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     AssignOp {
         op: BinOp,
-        lhs: Box<ThirExpr>,
-        rhs: Box<ThirExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
     Scope {
         region_scope: Scope,
-        value: Box<ThirExpr>,
+        value: Box<Expr>,
     },
     If {
-        cond: Box<ThirExpr>,
-        then: Box<ThirExpr>,
-        else_opt: Option<Box<ThirExpr>>,
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        else_opt: Option<Box<Expr>>,
     },
     Match {
-        scrutinee: Box<ThirExpr>,
+        scrutinee: Box<Expr>,
         arms: Vec<Arm>,
     },
     Loop {
-        body: Box<ThirExpr>,
+        body: Box<Expr>,
     },
     Let {
-        expr: Box<ThirExpr>,
-        pat: ThirPat,
+        expr: Box<Expr>,
+        pat: Pat,
     },
     LogicalOp {
         op: LogicalOp,
-        lhs: Box<ThirExpr>,
-        rhs: Box<ThirExpr>,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
     },
-    Use(Box<ThirExpr>),
+    Use(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirBlock {
+pub struct Block {
     pub targeted_by_break: bool,
     pub region: Scope,
     pub span: Span,
-    pub stmts: Vec<ThirStmt>,
-    pub expr: Option<Box<ThirExpr>>,
+    pub stmts: Vec<Stmt>,
+    pub expr: Option<Box<Expr>>,
     pub safety_mode: BlockSafetyMode,
 }
 
@@ -209,27 +209,27 @@ pub struct ItemRef {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirStmt {
-    pub kind: ThirStmtKind,
+pub struct Stmt {
+    pub kind: StmtKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ThirStmtKind {
-    Expr(ThirExpr),
+pub enum StmtKind {
+    Expr(Expr),
     Let {
         remainder_scope: Scope,
         init_scope: Scope,
-        pattern: ThirPat,
-        initializer: Option<ThirExpr>,
+        pattern: Pat,
+        initializer: Option<Expr>,
         lint_level: LintLevel,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Arm {
-    pub pattern: ThirPat,
+    pub pattern: Pat,
     pub guard: Option<Guard>,
-    pub body: ThirExpr,
+    pub body: Expr,
     pub lint_level: LintLevel,
     pub scope: Scope,
     pub span: Span,
@@ -237,19 +237,19 @@ pub struct Arm {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Guard {
-    pub cond: ThirExpr,
+    pub cond: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThirPat {
+pub struct Pat {
     pub thir_id: ThirId,
-    pub kind: ThirPatKind,
+    pub kind: PatKind,
     pub ty: Ty,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ThirPatKind {
+pub enum PatKind {
     Wild,
     Binding {
         mutability: Mutability,
@@ -268,7 +268,7 @@ pub enum ThirPatKind {
         subpatterns: Vec<FieldPat>,
     },
     Deref {
-        subpattern: Box<ThirPat>,
+        subpattern: Box<Pat>,
     },
     Constant {
         value: ConstValue,
@@ -279,29 +279,29 @@ pub enum ThirPatKind {
         end: RangeEnd,
     },
     Slice {
-        prefix: Vec<ThirPat>,
-        slice: Option<Box<ThirPat>>,
-        suffix: Vec<ThirPat>,
+        prefix: Vec<Pat>,
+        slice: Option<Box<Pat>>,
+        suffix: Vec<Pat>,
     },
     Array {
-        prefix: Vec<ThirPat>,
-        slice: Option<Box<ThirPat>>,
-        suffix: Vec<ThirPat>,
+        prefix: Vec<Pat>,
+        slice: Option<Box<Pat>>,
+        suffix: Vec<Pat>,
     },
     Or {
-        pats: Vec<ThirPat>,
+        pats: Vec<Pat>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldPat {
     pub field: FieldIdx,
-    pub pattern: ThirPat,
+    pub pattern: Pat,
 }
 
 // Literal types
 #[derive(Debug, Clone, PartialEq)]
-pub enum ThirLit {
+pub enum Lit {
     Bool(bool),
     Int(i128, IntTy),
     Uint(u128, UintTy),
@@ -443,7 +443,7 @@ pub enum RangeEnd {
 }
 
 // Implementation helpers
-impl ThirProgram {
+impl Program {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
@@ -458,17 +458,17 @@ impl ThirProgram {
         id
     }
 
-    pub fn body(&self, id: BodyId) -> &ThirBody {
+    pub fn body(&self, id: BodyId) -> &Body {
         &self.bodies[&id]
     }
 
-    pub fn body_mut(&mut self, id: BodyId) -> &mut ThirBody {
+    pub fn body_mut(&mut self, id: BodyId) -> &mut Body {
         self.bodies.get_mut(&id).unwrap()
     }
 }
 
-impl ThirExpr {
-    pub fn new(thir_id: ThirId, kind: ThirExprKind, ty: Ty, span: Span) -> Self {
+impl Expr {
+    pub fn new(thir_id: ThirId, kind: ExprKind, ty: Ty, span: Span) -> Self {
         Self {
             thir_id,
             kind,
@@ -478,8 +478,8 @@ impl ThirExpr {
     }
 }
 
-impl ThirPat {
-    pub fn new(thir_id: ThirId, kind: ThirPatKind, ty: Ty, span: Span) -> Self {
+impl Pat {
+    pub fn new(thir_id: ThirId, kind: PatKind, ty: Ty, span: Span) -> Self {
         Self {
             thir_id,
             kind,

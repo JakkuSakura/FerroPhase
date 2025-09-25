@@ -1,11 +1,11 @@
 use fp_core::error::Result;
 use itertools::Itertools;
 
-use fp_core::ast::{AstExpr, Visibility};
 use fp_core::ast::{
-    AstType, AstValue, DecimalType, ExprInvokeTarget, ImplTraits, StructuralField, TypeBounds,
-    TypeFunction, TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeType, ValueFunction,
+    DecimalType, ExprInvokeTarget, ImplTraits, StructuralField, Ty, TypeBounds, TypeFunction,
+    TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeType, Value, ValueFunction,
 };
+use fp_core::ast::{Expr, Visibility};
 use fp_core::context::SharedScopedContext;
 use fp_core::ctx::{Context, TypeSystem};
 use fp_core::id::{Ident, Locator};
@@ -18,53 +18,53 @@ use crate::orchestrators::InterpretationOrchestrator;
 use crate::utils::FoldOptimizer;
 
 impl InterpretationOrchestrator {
-    pub fn type_check_value(&self, lit: &AstValue, ty: &AstType) -> Result<()> {
+    pub fn type_check_value(&self, lit: &Value, ty: &Ty) -> Result<()> {
         match lit {
-            AstValue::Int(_) => {
+            Value::Int(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Primitive(TypePrimitive::Int(_))),
+                    matches!(ty, Ty::Primitive(TypePrimitive::Int(_))),
                     format!("Expected i64, got {:?}", lit)
                 )
             }
-            AstValue::Bool(_) => {
+            Value::Bool(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Primitive(TypePrimitive::Bool)),
+                    matches!(ty, Ty::Primitive(TypePrimitive::Bool)),
                     format!("Expected bool, got {:?}", lit)
                 )
             }
-            AstValue::Decimal(_) => {
+            Value::Decimal(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Primitive(TypePrimitive::Decimal(_))),
+                    matches!(ty, Ty::Primitive(TypePrimitive::Decimal(_))),
                     format!("Expected f64, got {:?}", lit)
                 )
             }
-            AstValue::Char(_) => {
+            Value::Char(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Primitive(TypePrimitive::Char)),
+                    matches!(ty, Ty::Primitive(TypePrimitive::Char)),
                     format!("Expected char, got {:?}", lit)
                 )
             }
-            AstValue::String(_) => {
+            Value::String(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Primitive(TypePrimitive::String)),
+                    matches!(ty, Ty::Primitive(TypePrimitive::String)),
                     format!("Expected string, got {:?}", lit)
                 )
             }
-            AstValue::List(_) => {
+            Value::List(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Primitive(TypePrimitive::List)),
+                    matches!(ty, Ty::Primitive(TypePrimitive::List)),
                     format!("Expected list, got {:?}", lit)
                 )
             }
-            AstValue::Unit(_) => {
+            Value::Unit(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Unit(_)),
+                    matches!(ty, Ty::Unit(_)),
                     format!("Expected unit, got {:?}", lit)
                 )
             }
-            AstValue::Type(_) => {
+            Value::Type(_) => {
                 opt_ensure!(
-                    matches!(ty, AstType::Type(_)),
+                    matches!(ty, Ty::Type(_)),
                     format!("Expected type, got {:?}", lit)
                 )
             }
@@ -74,31 +74,31 @@ impl InterpretationOrchestrator {
     }
     pub fn type_check_expr_against_value(
         &self,
-        expr: &AstExpr,
-        type_value: &AstType,
+        expr: &Expr,
+        type_value: &Ty,
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         match expr {
-            AstExpr::Locator(n) => {
+            Expr::Locator(n) => {
                 let expr = ctx.get_expr(n.to_path()).ok_or_else(|| {
                     optimization_error(format!("Could not find {:?} in context", n))
                 })?;
                 return self.type_check_expr_against_value(&expr, type_value, ctx);
             }
 
-            AstExpr::Value(v) => return self.type_check_value(v, type_value),
+            Expr::Value(v) => return self.type_check_value(v, type_value),
             _ => {}
         }
         Ok(())
     }
 
-    pub fn evaluate_type_value(&self, ty: &AstType, ctx: &SharedScopedContext) -> Result<AstType> {
+    pub fn evaluate_type_value(&self, ty: &Ty, ctx: &SharedScopedContext) -> Result<Ty> {
         match ty {
-            AstType::Expr(expr) => {
+            Ty::Expr(expr) => {
                 let value = self.interpret_expr(expr, ctx)?;
                 return Ok(value.try_conv()?);
             }
-            AstType::Struct(n) => {
+            Ty::Struct(n) => {
                 let fields = n
                     .fields
                     .iter()
@@ -110,12 +110,12 @@ impl InterpretationOrchestrator {
                         })
                     })
                     .try_collect()?;
-                return Ok(AstType::Struct(TypeStruct {
+                return Ok(Ty::Struct(TypeStruct {
                     name: n.name.clone(),
                     fields,
                 }));
             }
-            AstType::Structural(n) => {
+            Ty::Structural(n) => {
                 let fields = n
                     .fields
                     .iter()
@@ -127,9 +127,9 @@ impl InterpretationOrchestrator {
                         })
                     })
                     .try_collect()?;
-                return Ok(AstType::Structural(TypeStructural { fields }));
+                return Ok(Ty::Structural(TypeStructural { fields }));
             }
-            AstType::Function(f) => {
+            Ty::Function(f) => {
                 let sub = ctx.child(Ident::new("__func__"), Visibility::Private, false);
                 for g in &f.generics_params {
                     let constrain = self.evaluate_type_bounds(&g.bounds, &sub)?;
@@ -145,7 +145,7 @@ impl InterpretationOrchestrator {
                     Some(t) => Some(self.evaluate_type_value(t, &sub)?.into()),
                     None => None,
                 };
-                return Ok(AstType::Function(
+                return Ok(Ty::Function(
                     TypeFunction {
                         params,
                         generics_params: f.generics_params.clone(),
@@ -154,8 +154,8 @@ impl InterpretationOrchestrator {
                     .into(),
                 ));
             }
-            AstType::TypeBounds(b) => return self.evaluate_type_bounds(b, ctx),
-            AstType::ImplTraits(t) => return self.evaluate_impl_traits(t, ctx),
+            Ty::TypeBounds(b) => return self.evaluate_type_bounds(b, ctx),
+            Ty::ImplTraits(t) => return self.evaluate_impl_traits(t, ctx),
             _ => Ok(ty.clone()),
         }
     }
@@ -163,10 +163,10 @@ impl InterpretationOrchestrator {
         &self,
         traits: &ImplTraits,
         ctx: &SharedScopedContext,
-    ) -> Result<AstType> {
+    ) -> Result<Ty> {
         let traits = self.evaluate_type_bounds(&traits.bounds, ctx)?;
         match traits {
-            AstType::TypeBounds(bounds) => Ok(AstType::ImplTraits(ImplTraits { bounds })),
+            Ty::TypeBounds(bounds) => Ok(Ty::ImplTraits(ImplTraits { bounds })),
             _ => Ok(traits),
         }
     }
@@ -175,14 +175,14 @@ impl InterpretationOrchestrator {
         &self,
         bounds: &TypeBounds,
         ctx: &SharedScopedContext,
-    ) -> Result<AstType> {
+    ) -> Result<Ty> {
         let bounds: Vec<_> = bounds
             .bounds
             .iter()
             .map(|x| self.interpret_expr(x, ctx))
             .try_collect()?;
         if bounds.is_empty() {
-            return Ok(AstType::any());
+            return Ok(Ty::any());
         }
         if bounds.len() == 1 {
             return Ok(bounds.first().unwrap().clone().try_conv()?);
@@ -191,12 +191,7 @@ impl InterpretationOrchestrator {
         opt_bail!(format!("failed to evaluate type bounds: {:?}", bounds))
     }
 
-    pub fn type_check_expr(
-        &self,
-        expr: &AstExpr,
-        ty: &AstExpr,
-        ctx: &SharedScopedContext,
-    ) -> Result<()> {
+    pub fn type_check_expr(&self, expr: &Expr, ty: &Expr, ctx: &SharedScopedContext) -> Result<()> {
         let tv = self.interpret_expr(ty, ctx)?.try_conv()?;
 
         self.type_check_expr_against_value(expr, &tv, ctx)
@@ -204,12 +199,12 @@ impl InterpretationOrchestrator {
 
     pub fn infer_type_call(
         &self,
-        callee: &AstExpr,
-        params: &[AstExpr],
+        callee: &Expr,
+        params: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<AstType> {
+    ) -> Result<Ty> {
         match callee {
-            AstExpr::Locator(Locator::Ident(ident)) => match ident.as_str() {
+            Expr::Locator(Locator::Ident(ident)) => match ident.as_str() {
                 "+" | "-" | "*" => {
                     return self.infer_expr(
                         params
@@ -218,8 +213,8 @@ impl InterpretationOrchestrator {
                         ctx,
                     )
                 }
-                "print" => return Ok(AstType::unit()),
-                "println!" => return Ok(AstType::unit()),
+                "print" => return Ok(Ty::unit()),
+                "println!" => return Ok(Ty::unit()),
                 _ => {}
             },
             _ => {}
@@ -227,10 +222,10 @@ impl InterpretationOrchestrator {
 
         let callee = self.infer_expr(callee, ctx)?;
         match callee {
-            AstType::Function(f) => {
+            Ty::Function(f) => {
                 return match f.ret_ty {
                     Some(t) => Ok(*t),
-                    None => Ok(AstType::unit()),
+                    None => Ok(Ty::unit()),
                 }
             }
             _ => {}
@@ -238,10 +233,10 @@ impl InterpretationOrchestrator {
 
         opt_bail!(format!("Could not infer type call {:?}", callee))
     }
-    pub fn infer_ident(&self, ident: &Ident, ctx: &SharedScopedContext) -> Result<AstType> {
+    pub fn infer_ident(&self, ident: &Ident, ctx: &SharedScopedContext) -> Result<Ty> {
         match ident.as_str() {
             "print" | "println!" => {
-                return Ok(AstType::Function(
+                return Ok(Ty::Function(
                     TypeFunction {
                         params: vec![],
                         generics_params: vec![],
@@ -257,7 +252,7 @@ impl InterpretationOrchestrator {
             .ok_or_else(|| optimization_error(format!("Could not find {:?} in context", ident)))?;
         self.infer_expr(&expr, ctx)
     }
-    pub fn infer_locator(&self, locator: &Locator, ctx: &SharedScopedContext) -> Result<AstType> {
+    pub fn infer_locator(&self, locator: &Locator, ctx: &SharedScopedContext) -> Result<Ty> {
         if let Some(ty) = ctx.get_type(locator.to_path()) {
             return Ok(ty);
         }
@@ -270,43 +265,41 @@ impl InterpretationOrchestrator {
         &self,
         target: &ExprInvokeTarget,
         ctx: &SharedScopedContext,
-    ) -> Result<AstType> {
+    ) -> Result<Ty> {
         match target {
             ExprInvokeTarget::Function(ident) => self.infer_locator(ident, ctx),
 
             _ => opt_bail!(format!("Could not infer invoke target {:?}", target)),
         }
     }
-    pub fn infer_expr(&self, expr: &AstExpr, ctx: &SharedScopedContext) -> Result<AstType> {
+    pub fn infer_expr(&self, expr: &Expr, ctx: &SharedScopedContext) -> Result<Ty> {
         let ret = match expr {
-            AstExpr::Locator(n) => self.infer_locator(n, ctx)?,
-            AstExpr::Value(l) => match l.as_ref() {
-                AstValue::Int(_) => AstType::Primitive(TypePrimitive::Int(TypeInt::I64)),
-                AstValue::Decimal(_) => {
-                    AstType::Primitive(TypePrimitive::Decimal(DecimalType::F64))
-                }
-                AstValue::Unit(_) => AstType::unit(),
-                AstValue::Bool(_) => AstType::Primitive(TypePrimitive::Bool),
-                AstValue::String(_) => AstType::Primitive(TypePrimitive::String),
-                AstValue::Type(_) => AstType::Type(TypeType {}),
-                AstValue::Char(_) => AstType::Primitive(TypePrimitive::Char),
-                AstValue::List(_) => AstType::Primitive(TypePrimitive::List),
+            Expr::Locator(n) => self.infer_locator(n, ctx)?,
+            Expr::Value(l) => match l.as_ref() {
+                Value::Int(_) => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                Value::Decimal(_) => Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
+                Value::Unit(_) => Ty::unit(),
+                Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
+                Value::String(_) => Ty::Primitive(TypePrimitive::String),
+                Value::Type(_) => Ty::Type(TypeType {}),
+                Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
+                Value::List(_) => Ty::Primitive(TypePrimitive::List),
                 _ => opt_bail!(format!("Could not infer type of {:?}", l)),
             },
-            AstExpr::Invoke(invoke) => {
+            Expr::Invoke(invoke) => {
                 let function = self.infer_expr_invoke_target(&invoke.target, ctx)?;
                 match function {
-                    AstType::Function(TypeFunction { ret_ty: None, .. }) => AstType::unit(),
-                    AstType::Function(TypeFunction {
+                    Ty::Function(TypeFunction { ret_ty: None, .. }) => Ty::unit(),
+                    Ty::Function(TypeFunction {
                         ret_ty: Some(t), ..
                     }) => *t,
 
                     _ => opt_bail!(format!("Expected function, got {:?}", function)),
                 }
             }
-            AstExpr::BinOp(op) => {
+            Expr::BinOp(op) => {
                 if op.kind.is_ret_bool() {
-                    return Ok(AstType::Primitive(TypePrimitive::Bool));
+                    return Ok(Ty::Primitive(TypePrimitive::Bool));
                 }
                 let lhs = self.infer_expr(&op.lhs, ctx)?;
                 let rhs = self.infer_expr(&op.rhs, ctx)?;
@@ -339,26 +332,26 @@ impl InterpretationOrchestrator {
     }
 }
 impl TypeSystem for InterpretationOrchestrator {
-    fn get_ty_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstType> {
+    fn get_ty_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Ty> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
 
         let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;
         match expr {
-            AstExpr::Value(v) => match v.into() {
-                AstValue::Type(t) => return Ok(t),
+            Expr::Value(v) => match v.into() {
+                Value::Type(t) => return Ok(t),
                 v => opt_bail!(format!("Expected type, got {:?}", v)),
             },
             _ => opt_bail!(format!("Expected type, got {:?}", expr)),
         }
     }
-    fn get_ty_from_value(&self, ctx: &Context, value: &AstValue) -> Result<AstType> {
+    fn get_ty_from_value(&self, ctx: &Context, value: &Value) -> Result<Ty> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
 
-        let value = fold.optimize_expr(AstExpr::Value(value.clone().into()), &ctx.values)?;
+        let value = fold.optimize_expr(Expr::Value(value.clone().into()), &ctx.values)?;
 
         match value {
-            AstExpr::Value(v) => match v.into() {
-                AstValue::Type(t) => return Ok(t),
+            Expr::Value(v) => match v.into() {
+                Value::Type(t) => return Ok(t),
                 v => opt_bail!(format!("Expected type, got {:?}", v)),
             },
             _ => opt_bail!(format!("Expected type, got {:?}", value)),

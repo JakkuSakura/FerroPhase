@@ -2,7 +2,7 @@
 // Tests how basic language constructs interact with const evaluation optimization
 // Focus: Language features enhanced by const evaluation and optimization
 
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
@@ -14,7 +14,7 @@ use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
-fn interpret_with_const_eval(expr: AstExpr) -> Result<AstExpr> {
+fn interpret_with_const_eval(expr: Expr) -> Result<Expr> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let serializer = Arc::new(RustPrinter::new());
@@ -29,7 +29,7 @@ fn interpret_with_const_eval(expr: AstExpr) -> Result<AstExpr> {
     Ok(optimized)
 }
 
-fn interpret_without_const_eval(expr: AstExpr) -> Result<AstValue> {
+fn interpret_without_const_eval(expr: Expr) -> Result<Value> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let interpreter = InterpretationOrchestrator::new(Arc::new(RustPrinter::new()));
@@ -76,7 +76,7 @@ fn test_complex_arithmetic_optimization() -> Result<()> {
         let _const_result = interpret_with_const_eval(expr)?;
 
         // Both approaches should work (runtime vs const evaluation)
-        assert!(matches!(runtime_result, AstValue::Int(_)));
+        assert!(matches!(runtime_result, Value::Int(_)));
     }
 
     Ok(())
@@ -99,7 +99,7 @@ fn test_comparisons_with_const_evaluation() -> Result<()> {
     for expr in comparison_exprs {
         // Test runtime evaluation
         let runtime_result = interpret_without_const_eval(expr.clone())?;
-        assert!(matches!(runtime_result, AstValue::Bool(_)));
+        assert!(matches!(runtime_result, Value::Bool(_)));
 
         // Test with const evaluation
         let _const_result = interpret_with_const_eval(expr)?;
@@ -272,7 +272,7 @@ fn test_edge_cases_with_const_eval() -> Result<()> {
 
         // Both should handle edge cases correctly
         assert!(
-            matches!(runtime_result, AstValue::Int(_)),
+            matches!(runtime_result, Value::Int(_)),
             "Edge case '{}' should work",
             case_name
         );
@@ -304,7 +304,7 @@ fn test_const_evaluation_benefits() -> Result<()> {
 
         // Runtime works, const evaluation should optimize
         match &runtime_result {
-            AstValue::Int(_) | AstValue::Bool(_) => {
+            Value::Int(_) | Value::Bool(_) => {
                 // Good - these are computable results
             }
             _ => panic!(

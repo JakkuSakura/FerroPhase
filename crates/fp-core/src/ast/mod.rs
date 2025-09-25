@@ -19,12 +19,12 @@ pub use expr::*;
 pub use item::*;
 pub use value::*;
 common_struct! {
-    pub struct AstFile {
+    pub struct File {
         pub path: PathBuf,
         pub items: ItemChunk,
     }
 }
-impl std::fmt::Display for AstFile {
+impl std::fmt::Display for File {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "File: {}", self.path.display())?;
         for item in &self.items {
@@ -35,22 +35,22 @@ impl std::fmt::Display for AstFile {
 }
 common_enum! {
     /// Tree is any syntax tree element
-    pub enum AstNode {
-        Item(AstItem),
-        Expr(AstExpr),
-        File(AstFile),
+    pub enum Node {
+        Item(Item),
+        Expr(Expr),
+        File(File),
     }
 }
 
 pub trait AstProvider {
-    fn get_ast_from_code(&self, cst: &str) -> Result<AstNode>;
-    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstNode>;
+    fn get_ast_from_code(&self, cst: &str) -> Result<Node>;
+    fn get_ast_from_file_path(&self, path: &Path) -> Result<Node>;
 }
 impl<D: AstDeserializer> AstProvider for D {
-    fn get_ast_from_code(&self, cst: &str) -> Result<AstNode> {
+    fn get_ast_from_code(&self, cst: &str) -> Result<Node> {
         Ok(self.deserialize_node(cst)?)
     }
-    fn get_ast_from_file_path(&self, path: &Path) -> Result<AstNode> {
-        Ok(self.deserialize_file_load(path).map(AstNode::File)?)
+    fn get_ast_from_file_path(&self, path: &Path) -> Result<Node> {
+        Ok(self.deserialize_file_load(path).map(Node::File)?)
     }
 }

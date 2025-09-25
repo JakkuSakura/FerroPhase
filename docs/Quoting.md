@@ -25,27 +25,27 @@ const BLOCK = quote {
 const DOUBLE_HELPER = splice(BLOCK);
 ```
 
-- `BLOCK` becomes an AST value (represented internally as an `AstNodeId` + hygienic context).
+- `BLOCK` becomes an AST value (represented internally as an `NodeId` + hygienic context).
 - `splice(BLOCK)` materialises the AST inside the surrounding context, contributing to EAST during const evaluation.
 
 ## Comptime Integration
 
 During Phase 2 const evaluation:
 
-1. `quote` serialises the target code into an AST value stored in a `comptime::QuoteHandle`. The handle contains:
-   - `AstType` annotations inferred for the quoted fragment
+1. `quote` serialises the target code into an AST value stored in a `comptime::QuoteToken`. The token contains:
+   - `Ty` annotations inferred for the quoted fragment
    - Hygiene metadata (scope ids, span provenance)
-   - References to any `mut type` handles produced inside the quote
+   - References to any `mut type` tokens produced inside the quote
 2. `splice` registers a structural transformation identical to `addfield!`/`addmethod!`. The TypeQueryEngine treats the
    quoted fragment as an atomic transformation:
-   - New declarations are introduced via provisional `mut type` handles (if types are declared within the splice)
+   - New declarations are introduced via provisional `mut type` tokens (if types are declared within the splice)
    - The EAST snapshot records the splice source span for diagnostics
 
 All transformations remain deterministic: repeated quoting/splicing with identical inputs yields identical EAST.
 
 ## Type Handling
 
-- Quoted fragments retain their `AstType` annotations. When spliced, the existing `mut type` promotion rules apply and
+- Quoted fragments retain their `Ty` annotations. When spliced, the existing `mut type` promotion rules apply and
   ConcreteType entries are generated during commit.
 - The Hindley–Milner solver sees spliced code the same way it sees handwritten AST—they are indistinguishable after
   promotion to EAST and subsequent HIR lowering.
@@ -74,4 +74,3 @@ All transformations remain deterministic: repeated quoting/splicing with identic
 - Support parameterised quoting (`quote<T>`), enabling type-specialised AST generation.
 - Provide `splice!` macro sugar for concise embedding.
 - Explore incremental caching so identical quotes across modules share storage.
-

@@ -6,10 +6,10 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 pub type TypeId = u64;
-pub type BType = Box<AstType>;
+pub type BType = Box<Ty>;
 common_enum! {
     /// TypeValue is a solid type value
-    pub enum AstType {
+    pub enum Ty {
         Primitive(TypePrimitive),
         Struct(TypeStruct),
         Structural(TypeStructural),
@@ -32,47 +32,47 @@ common_enum! {
     }
 
 }
-impl AstType {
-    pub const fn unit() -> AstType {
-        AstType::Unit(TypeUnit)
+impl Ty {
+    pub const fn unit() -> Ty {
+        Ty::Unit(TypeUnit)
     }
-    pub const UNIT: AstType = AstType::Unit(TypeUnit);
-    pub const fn any() -> AstType {
-        AstType::Any(TypeAny)
+    pub const UNIT: Ty = Ty::Unit(TypeUnit);
+    pub const fn any() -> Ty {
+        Ty::Any(TypeAny)
     }
-    pub const ANY: AstType = AstType::Any(TypeAny);
-    pub const fn unknown() -> AstType {
-        AstType::Unknown(TypeUnknown)
+    pub const ANY: Ty = Ty::Any(TypeAny);
+    pub const fn unknown() -> Ty {
+        Ty::Unknown(TypeUnknown)
     }
-    pub const UNKNOWN: AstType = AstType::Unknown(TypeUnknown);
+    pub const UNKNOWN: Ty = Ty::Unknown(TypeUnknown);
     pub fn is_any(&self) -> bool {
-        matches!(self, AstType::Any(_))
+        matches!(self, Ty::Any(_))
     }
-    pub fn bool() -> AstType {
-        AstType::Primitive(TypePrimitive::Bool)
+    pub fn bool() -> Ty {
+        Ty::Primitive(TypePrimitive::Bool)
     }
-    pub fn expr(e: AstExpr) -> Self {
+    pub fn expr(e: Expr) -> Self {
         match e {
-            AstExpr::Value(ty) => Self::value(ty),
-            _ => AstType::Expr(Box::new(e)),
+            Expr::Value(ty) => Self::value(ty),
+            _ => Ty::Expr(Box::new(e)),
         }
     }
-    pub fn value(v: impl Into<AstValue>) -> Self {
+    pub fn value(v: impl Into<Value>) -> Self {
         let v = v.into();
         match v {
-            AstValue::Expr(expr) => Self::expr(*expr),
-            AstValue::Type(ty) => ty,
-            _ => AstType::Value(TypeValue::new(v).into()),
+            Value::Expr(expr) => Self::expr(*expr),
+            Value::Type(ty) => ty,
+            _ => Ty::Value(TypeValue::new(v).into()),
         }
     }
-    pub fn path(path: crate::id::Path) -> AstType {
-        AstType::expr(AstExpr::path(path))
+    pub fn path(path: crate::id::Path) -> Ty {
+        Ty::expr(Expr::path(path))
     }
-    pub fn ident(ident: Ident) -> AstType {
-        AstType::expr(AstExpr::ident(ident))
+    pub fn ident(ident: Ident) -> Ty {
+        Ty::expr(Expr::ident(ident))
     }
-    pub fn reference(ty: AstType) -> Self {
-        AstType::Reference(
+    pub fn reference(ty: Ty) -> Self {
+        Ty::Reference(
             TypeReference {
                 ty: Box::new(ty),
                 mutability: None,
@@ -87,29 +87,29 @@ impl AstType {
 
     pub fn impl_trait(name: Ident) -> Self {
         Self::ImplTraits(ImplTraits {
-            bounds: TypeBounds::new(AstExpr::ident(name)),
+            bounds: TypeBounds::new(Expr::ident(name)),
         })
     }
     pub fn locator(locator: crate::id::Locator) -> Self {
-        Self::expr(AstExpr::Locator(locator))
+        Self::expr(Expr::Locator(locator))
     }
-    pub fn type_bound(expr: AstExpr) -> Self {
+    pub fn type_bound(expr: Expr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))
     }
     pub fn as_struct(&self) -> Option<&TypeStruct> {
         match self {
-            AstType::Struct(s) => Some(s),
+            Ty::Struct(s) => Some(s),
             _ => None,
         }
     }
-    pub fn unwrap_reference(&self) -> &AstType {
+    pub fn unwrap_reference(&self) -> &Ty {
         match self {
-            AstType::Reference(r) => &r.ty,
+            Ty::Reference(r) => &r.ty,
             _ => self,
         }
     }
 }
-impl Display for AstType {
+impl Display for Ty {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_type(self).unwrap();
         f.write_str(&s)
@@ -192,7 +192,7 @@ impl TypePrimitive {
 impl Display for TypePrimitive {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&AstType::Primitive(*self))
+            .serialize_type(&Ty::Primitive(*self))
             .unwrap();
         f.write_str(&s)
     }
@@ -206,18 +206,18 @@ common_struct! {
 
 common_struct! {
     pub struct TypeTuple {
-        pub types: Vec<AstType>,
+        pub types: Vec<Ty>,
     }
 }
 
 common_struct! {
     pub struct StructuralField {
         pub name: Ident,
-        pub value: AstType,
+        pub value: Ty,
     }
 }
 impl StructuralField {
-    pub fn new(name: Ident, value: AstType) -> Self {
+    pub fn new(name: Ident, value: Ty) -> Self {
         Self { name, value }
     }
 }
@@ -237,7 +237,7 @@ common_struct! {
 common_struct! {
     pub struct EnumTypeVariant {
         pub name: Ident,
-        pub value: AstType,
+        pub value: Ty,
     }
 }
 
@@ -248,7 +248,7 @@ common_struct! {
 }
 common_struct! {
     pub struct TypeFunction {
-        pub params: Vec<AstType>,
+        pub params: Vec<Ty>,
         pub generics_params: Vec<GenericParam>,
         pub ret_ty: Option<BType>,
     }
@@ -261,14 +261,14 @@ common_struct! {
 
 common_struct! {
     pub struct TypeBounds {
-        pub bounds: Vec<AstExpr>,
+        pub bounds: Vec<Expr>,
     }
 }
 impl TypeBounds {
     pub fn any() -> Self {
         Self { bounds: vec![] }
     }
-    pub fn new(expr: AstExpr) -> Self {
+    pub fn new(expr: Expr) -> Self {
         TypeBounds { bounds: vec![expr] }
     }
 }
@@ -295,7 +295,7 @@ common_struct! {
 impl Display for TypeReference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer()
-            .serialize_type(&AstType::Reference(self.clone().into()))
+            .serialize_type(&Ty::Reference(self.clone().into()))
             .unwrap();
 
         f.write_str(&s)
@@ -308,7 +308,7 @@ common_struct! {
     }
 }
 impl TypeValue {
-    pub fn new(value: AstValue) -> Self {
+    pub fn new(value: Value) -> Self {
         Self {
             value: value.into(),
         }

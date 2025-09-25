@@ -1,9 +1,9 @@
 //! Runtime value system with ownership semantics
 //!
-//! This module provides RuntimeValue which wraps AstValue with ownership tracking
+//! This module provides RuntimeValue which wraps Value with ownership tracking
 //! to support different language runtime semantics (Rust, JavaScript, Python, etc.)
 
-use crate::ast::AstValue;
+use crate::ast::Value;
 use crate::{bail, Result};
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
@@ -14,22 +14,22 @@ use std::sync::{Arc, RwLock};
 #[derive(Debug, Clone)]
 pub enum RuntimeValue {
     /// Pure literal value (no ownership semantics)
-    Literal(AstValue),
+    Literal(Value),
 
     /// Owned value (Rust-style ownership)
-    Owned(AstValue),
+    Owned(Value),
 
     /// Borrowed immutable reference
-    Borrowed { value: AstValue, source: String },
+    Borrowed { value: Value, source: String },
 
     /// Borrowed mutable reference
-    BorrowedMut { value: AstValue, source: String },
+    BorrowedMut { value: Value, source: String },
 
     /// Shared ownership (single-threaded)
-    Shared(Rc<RefCell<AstValue>>),
+    Shared(Rc<RefCell<Value>>),
 
     /// Shared ownership (multi-threaded)
-    SharedAtomic(Arc<RwLock<AstValue>>),
+    SharedAtomic(Arc<RwLock<Value>>),
 
     /// Language-specific extensions
     Extension(Box<dyn RuntimeExtension>),
@@ -41,10 +41,10 @@ pub trait RuntimeExtension: Debug + Send + Sync {
     fn name(&self) -> &str;
 
     /// Get the underlying value
-    fn get_value(&self) -> AstValue;
+    fn get_value(&self) -> Value;
 
     /// Try to mutate the value
-    fn try_mutate(&mut self, f: Box<dyn FnOnce(&mut AstValue) -> Result<()>>) -> Result<()>;
+    fn try_mutate(&mut self, f: Box<dyn FnOnce(&mut Value) -> Result<()>>) -> Result<()>;
 
     /// Clone this extension
     fn clone_box(&self) -> Box<dyn RuntimeExtension>;
@@ -86,32 +86,32 @@ impl RuntimeValue {
     // Constructors
 
     /// Create a literal runtime value (no ownership semantics)
-    pub fn literal(value: AstValue) -> Self {
+    pub fn literal(value: Value) -> Self {
         RuntimeValue::Literal(value)
     }
 
     /// Create an owned runtime value
-    pub fn owned(value: AstValue) -> Self {
+    pub fn owned(value: Value) -> Self {
         RuntimeValue::Owned(value)
     }
 
     /// Create a borrowed runtime value
-    pub fn borrowed(value: AstValue, source: String) -> Self {
+    pub fn borrowed(value: Value, source: String) -> Self {
         RuntimeValue::Borrowed { value, source }
     }
 
     /// Create a mutable borrowed runtime value
-    pub fn borrowed_mut(value: AstValue, source: String) -> Self {
+    pub fn borrowed_mut(value: Value, source: String) -> Self {
         RuntimeValue::BorrowedMut { value, source }
     }
 
     /// Create a shared runtime value (single-threaded)
-    pub fn shared(value: AstValue) -> Self {
+    pub fn shared(value: Value) -> Self {
         RuntimeValue::Shared(Rc::new(RefCell::new(value)))
     }
 
     /// Create a shared runtime value (multi-threaded)
-    pub fn shared_atomic(value: AstValue) -> Self {
+    pub fn shared_atomic(value: Value) -> Self {
         RuntimeValue::SharedAtomic(Arc::new(RwLock::new(value)))
     }
 
@@ -123,7 +123,7 @@ impl RuntimeValue {
     // Access methods
 
     /// Get the underlying value (always works, may clone)
-    pub fn get_value(&self) -> AstValue {
+    pub fn get_value(&self) -> Value {
         match self {
             RuntimeValue::Literal(v) => v.clone(),
             RuntimeValue::Owned(v) => v.clone(),
@@ -136,7 +136,7 @@ impl RuntimeValue {
     }
 
     /// Try to get a reference to the value (zero-copy when possible)
-    pub fn try_borrow(&self) -> Result<&AstValue> {
+    pub fn try_borrow(&self) -> Result<&Value> {
         match self {
             RuntimeValue::Literal(v) => Ok(v),
             RuntimeValue::Owned(v) => Ok(v),
@@ -162,7 +162,7 @@ impl RuntimeValue {
     /// Try to mutate the value
     pub fn try_mutate<F>(&mut self, f: F) -> Result<()>
     where
-        F: FnOnce(&mut AstValue) -> Result<()>,
+        F: FnOnce(&mut Value) -> Result<()>,
     {
         match self {
             RuntimeValue::Literal(_) => {
@@ -195,7 +195,7 @@ impl RuntimeValue {
     // Ownership operations
 
     /// Move this value (consumes self)
-    pub fn take_ownership(self) -> Result<AstValue> {
+    pub fn take_ownership(self) -> Result<Value> {
         match self {
             RuntimeValue::Literal(v) => Ok(v),
             RuntimeValue::Owned(v) => Ok(v),
@@ -276,31 +276,31 @@ impl Display for RuntimeValue {
     }
 }
 
-impl From<AstValue> for RuntimeValue {
-    fn from(value: AstValue) -> Self {
+impl From<Value> for RuntimeValue {
+    fn from(value: Value) -> Self {
         RuntimeValue::literal(value)
     }
 }
 
-impl From<RuntimeValue> for Result<AstValue> {
+impl From<RuntimeValue> for Result<Value> {
     fn from(runtime_value: RuntimeValue) -> Self {
         Ok(runtime_value.get_value())
     }
 }
 
 // Convenience constructors
-impl AstValue {
-    /// Convert this AstValue to a literal RuntimeValue
+impl Value {
+    /// Convert this Value to a literal RuntimeValue
     pub fn to_runtime_literal(self) -> RuntimeValue {
         RuntimeValue::literal(self)
     }
 
-    /// Convert this AstValue to an owned RuntimeValue
+    /// Convert this Value to an owned RuntimeValue
     pub fn to_runtime_owned(self) -> RuntimeValue {
         RuntimeValue::owned(self)
     }
 
-    /// Convert this AstValue to a shared RuntimeValue
+    /// Convert this Value to a shared RuntimeValue
     pub fn to_runtime_shared(self) -> RuntimeValue {
         RuntimeValue::shared(self)
     }

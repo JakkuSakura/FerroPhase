@@ -17,10 +17,10 @@ fn test_ast_value_creation() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     // Test creation of basic AST values
-    let int_val = AstValue::int(42);
-    let bool_val = AstValue::bool(true);
-    let string_val = AstValue::string("hello".to_string());
-    let unit_val = AstValue::unit();
+    let int_val = Value::int(42);
+    let bool_val = Value::bool(true);
+    let string_val = Value::string("hello".to_string());
+    let unit_val = Value::unit();
 
     // Test value properties
     assert!(unit_val.is_unit());
@@ -55,8 +55,8 @@ fn test_ast_expr_parsing() -> Result<()> {
     // Test that expressions parse into correct AST structures
     let expr = shll_parse_expr!(42);
     match expr {
-        AstExpr::Value(val) => match val.as_ref() {
-            AstValue::Int(int_val) => assert_eq!(int_val.value, 42),
+        Expr::Value(val) => match val.as_ref() {
+            Value::Int(int_val) => assert_eq!(int_val.value, 42),
             _ => panic!("Expected integer value"),
         },
         _ => panic!("Expected value expression"),
@@ -99,10 +99,10 @@ fn test_complex_ast_structures() -> Result<()> {
 
     // Verify the AST structure is correct
     match expr {
-        AstExpr::BinOp(binop) => {
+        Expr::BinOp(binop) => {
             // Has left and right operands
             match (binop.lhs.as_ref(), binop.rhs.as_ref()) {
-                (AstExpr::Value(_), AstExpr::Value(_)) => {
+                (Expr::Value(_), Expr::Value(_)) => {
                     // Good - both sides are values
                 }
                 _ => panic!("Expected value operands"),
@@ -123,10 +123,10 @@ fn test_nested_ast_expressions() -> Result<()> {
 
     // Should parse as 2 + (3 * 4) due to precedence
     match expr {
-        AstExpr::BinOp(add_op) => {
+        Expr::BinOp(add_op) => {
             // Right side should be a multiplication
             match add_op.rhs.as_ref() {
-                AstExpr::BinOp(_mul_op) => {
+                Expr::BinOp(_mul_op) => {
                     // Good - nested structure preserved
                 }
                 _ => panic!("Expected nested binary operation"),

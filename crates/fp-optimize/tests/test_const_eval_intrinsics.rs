@@ -2,7 +2,7 @@
 // Tests metaprogramming capabilities and compile-time computation features
 // Focus: Intrinsic functions (sizeof, reflect_fields, create_struct, etc.)
 
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
@@ -15,7 +15,7 @@ fn create_const_evaluator() -> Interpreter {
     Interpreter::new(Arc::new(RustPrinter::new()))
 }
 
-fn evaluate_const_expr(expr: AstExpr) -> Result<AstValue> {
+fn evaluate_const_expr(expr: Expr) -> Result<Value> {
     let interpreter = create_const_evaluator();
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)

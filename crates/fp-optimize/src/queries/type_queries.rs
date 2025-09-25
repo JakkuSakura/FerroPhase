@@ -21,7 +21,7 @@ impl TypeQueries {
     }
 
     /// Register basic types from AST
-    pub fn register_basic_types(&self, ast: &AstNode) -> Result<()> {
+    pub fn register_basic_types(&self, ast: &Node) -> Result<()> {
         let (structs, aliases) = collect_type_items(ast);
 
         // Create stubs first so references across structs resolve by name
@@ -41,11 +41,7 @@ impl TypeQueries {
     }
 
     /// Validate basic type references (non-const)
-    pub fn validate_basic_references(
-        &self,
-        ast: &AstNode,
-        _ctx: &SharedScopedContext,
-    ) -> Result<()> {
+    pub fn validate_basic_references(&self, ast: &Node, _ctx: &SharedScopedContext) -> Result<()> {
         let (structs, aliases) = collect_type_items(ast);
         let mut missing = Vec::new();
 
@@ -83,14 +79,14 @@ impl TypeQueries {
     }
 
     /// Register generated types from metaprogramming
-    pub fn register_generated_types(&self, ast: &AstNode) -> Result<()> {
+    pub fn register_generated_types(&self, ast: &Node) -> Result<()> {
         // Generated types appear in the AST after const-eval mutations are applied. The
         // basic registration path is idempotent, so we can reuse it safely.
         self.register_basic_types(ast)
     }
 
     /// Validate all type references including generated ones
-    pub fn validate_all_references(&self, ast: &AstNode, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn validate_all_references(&self, ast: &Node, ctx: &SharedScopedContext) -> Result<()> {
         self.validate_basic_references(ast, ctx)
     }
 
@@ -143,7 +139,7 @@ impl TypeQueries {
         let type_info = TypeInfo {
             id: TypeId::new(),
             name: name.clone(),
-            ast_type: AstType::Struct(struct_def.value.clone()),
+            ast_type: Ty::Struct(struct_def.value.clone()),
             size_bytes: None,
             fields: Vec::new(),
             methods: Vec::new(),
@@ -212,10 +208,10 @@ impl TypeQueries {
         Ok(())
     }
 
-    fn resolve_or_register_type(&self, ty: &AstType) -> Result<TypeId> {
+    fn resolve_or_register_type(&self, ty: &Ty) -> Result<TypeId> {
         match ty {
-            AstType::Reference(reference) => self.resolve_or_register_type(&reference.ty),
-            AstType::Vec(vec_ty) => {
+            Ty::Reference(reference) => self.resolve_or_register_type(&reference.ty),
+            Ty::Vec(vec_ty) => {
                 let element_id = self.resolve_or_register_type(&vec_ty.ty)?;
                 let element_name = self
                     .type_registry
@@ -225,9 +221,9 @@ impl TypeQueries {
                 let mut name = String::from("Vec<");
                 let _ = write!(&mut name, "{}", element_name);
                 name.push('>');
-                Ok(self.ensure_named_type(&name, AstType::ident(Ident::new(name.clone()))))
+                Ok(self.ensure_named_type(&name, Ty::ident(Ident::new(name.clone()))))
             }
-            AstType::Tuple(tuple) => {
+            Ty::Tuple(tuple) => {
                 let mut name = String::from("(");
                 for (idx, ty) in tuple.types.iter().enumerate() {
                     if idx > 0 {
@@ -237,9 +233,9 @@ impl TypeQueries {
                     let _ = self.resolve_or_register_type(ty)?;
                 }
                 name.push(')');
-                Ok(self.ensure_named_type(&name, AstType::ident(Ident::new(name.clone()))))
+                Ok(self.ensure_named_type(&name, Ty::ident(Ident::new(name.clone()))))
             }
-            AstType::Struct(struct_ty) => {
+            Ty::Struct(struct_ty) => {
                 let name = struct_ty.name.name.clone();
                 if let Some(info) = self.type_registry.get_type_by_name(&name) {
                     Ok(info.id)
@@ -248,7 +244,7 @@ impl TypeQueries {
                     let info = TypeInfo {
                         id: TypeId::new(),
                         name: name.clone(),
-                        ast_type: AstType::Struct(struct_ty.clone()),
+                        ast_type: Ty::Struct(struct_ty.clone()),
                         size_bytes: None,
                         fields: Vec::new(),
                         methods: Vec::new(),
@@ -269,32 +265,33 @@ impl TypeQueries {
                     Ok(type_id)
                 }
             }
-            AstType::Expr(expr) => match expr.as_ref() {
-                AstExpr::Locator(locator) => {
+            Ty::Expr(expr) => match expr.as_ref() {
+                Expr::Locator(locator) => {
                     if let Some(ident) = locator.as_ident() {
-                        Ok(self.ensure_named_type(ident.as_str(), AstType::ident(ident.clone())))
+                        Ok(self.ensure_named_type(ident.as_str(), Ty::ident(ident.clone())))
                     } else {
                         let display = type_display(ty);
-                        Ok(self.ensure_named_type(
-                            &display,
-                            AstType::ident(Ident::new(display.clone())),
-                        ))
+                        Ok(
+                            self.ensure_named_type(
+                                &display,
+                                Ty::ident(Ident::new(display.clone())),
+                            ),
+                        )
                     }
                 }
                 _ => {
                     let display = type_display(ty);
-                    Ok(self
-                        .ensure_named_type(&display, AstType::ident(Ident::new(display.clone()))))
+                    Ok(self.ensure_named_type(&display, Ty::ident(Ident::new(display.clone()))))
                 }
             },
             _ => {
                 let display = type_display(ty);
-                Ok(self.ensure_named_type(&display, AstType::ident(Ident::new(display.clone()))))
+                Ok(self.ensure_named_type(&display, Ty::ident(Ident::new(display.clone()))))
             }
         }
     }
 
-    fn ensure_named_type(&self, name: &str, ast_type: AstType) -> TypeId {
+    fn ensure_named_type(&self, name: &str, ast_type: Ty) -> TypeId {
         if let Some(info) = self.type_registry.get_type_by_name(name) {
             info.id
         } else {
@@ -313,10 +310,10 @@ impl TypeQueries {
         }
     }
 
-    fn type_exists(&self, ty: &AstType) -> bool {
+    fn type_exists(&self, ty: &Ty) -> bool {
         match ty {
-            AstType::Expr(expr) => match expr.as_ref() {
-                AstExpr::Locator(locator) => locator
+            Ty::Expr(expr) => match expr.as_ref() {
+                Expr::Locator(locator) => locator
                     .as_ident()
                     .and_then(|ident| self.type_registry.get_type_by_name(ident.as_str()))
                     .is_some(),
@@ -335,27 +332,27 @@ impl TypeQueries {
     }
 }
 
-fn collect_type_items(ast: &AstNode) -> (Vec<ItemDefStruct>, Vec<ItemDefType>) {
+fn collect_type_items(ast: &Node) -> (Vec<ItemDefStruct>, Vec<ItemDefType>) {
     let mut structs = Vec::new();
     let mut aliases = Vec::new();
 
     walk_items(ast, &mut |item| match item {
-        AstItem::DefStruct(def) => structs.push(def.clone()),
-        AstItem::DefType(def) => aliases.push(def.clone()),
+        Item::DefStruct(def) => structs.push(def.clone()),
+        Item::DefType(def) => aliases.push(def.clone()),
         _ => {}
     });
 
     (structs, aliases)
 }
 
-fn walk_items<F>(node: &AstNode, f: &mut F)
+fn walk_items<F>(node: &Node, f: &mut F)
 where
-    F: FnMut(&AstItem),
+    F: FnMut(&Item),
 {
     match node {
-        AstNode::Item(item) => walk_item(item, f),
-        AstNode::Expr(expr) => walk_expr(expr, f),
-        AstNode::File(file) => {
+        Node::Item(item) => walk_item(item, f),
+        Node::Expr(expr) => walk_expr(expr, f),
+        Node::File(file) => {
             for item in &file.items {
                 walk_item(item, f);
             }
@@ -363,12 +360,12 @@ where
     }
 }
 
-fn walk_expr<F>(expr: &AstExpr, f: &mut F)
+fn walk_expr<F>(expr: &Expr, f: &mut F)
 where
-    F: FnMut(&AstItem),
+    F: FnMut(&Item),
 {
     match expr {
-        AstExpr::Block(block) => {
+        Expr::Block(block) => {
             for stmt in &block.stmts {
                 match stmt {
                     BlockStmt::Item(item) => walk_item(item.as_ref(), f),
@@ -385,14 +382,14 @@ where
                 }
             }
         }
-        AstExpr::If(if_expr) => {
+        Expr::If(if_expr) => {
             walk_expr(&if_expr.cond, f);
             walk_expr(&if_expr.then, f);
             if let Some(elze) = if_expr.elze.as_ref() {
                 walk_expr(elze, f);
             }
         }
-        AstExpr::Invoke(invoke) => {
+        Expr::Invoke(invoke) => {
             for arg in &invoke.args {
                 walk_expr(arg, f);
             }
@@ -400,47 +397,47 @@ where
                 walk_expr(inner.as_ref(), f);
             }
         }
-        AstExpr::Let(let_expr) => {
+        Expr::Let(let_expr) => {
             walk_expr(let_expr.expr.as_ref(), f);
         }
-        AstExpr::Assign(assign) => {
+        Expr::Assign(assign) => {
             walk_expr(assign.target.as_ref(), f);
             walk_expr(assign.value.as_ref(), f);
         }
-        AstExpr::Struct(struct_expr) => {
+        Expr::Struct(struct_expr) => {
             for field in &struct_expr.fields {
                 if let Some(value) = field.value.as_ref() {
                     walk_expr(value, f);
                 }
             }
         }
-        AstExpr::Item(item) => walk_item(item, f),
+        Expr::Item(item) => walk_item(item, f),
         _ => {}
     }
 }
 
-fn walk_item<F>(item: &AstItem, f: &mut F)
+fn walk_item<F>(item: &Item, f: &mut F)
 where
-    F: FnMut(&AstItem),
+    F: FnMut(&Item),
 {
     f(item);
     match item {
-        AstItem::Module(module) => {
+        Item::Module(module) => {
             for child in &module.items {
                 walk_item(child, f);
             }
         }
-        AstItem::Impl(item_impl) => {
+        Item::Impl(item_impl) => {
             for child in &item_impl.items {
                 walk_item(child, f);
             }
         }
-        AstItem::Expr(expr) => walk_expr(expr, f),
+        Item::Expr(expr) => walk_expr(expr, f),
         _ => {}
     }
 }
 
-fn type_display(ty: &AstType) -> String {
+fn type_display(ty: &Ty) -> String {
     ty.to_string()
 }
 

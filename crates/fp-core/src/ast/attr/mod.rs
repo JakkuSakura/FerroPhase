@@ -3,56 +3,56 @@ use crate::id::Path;
 use crate::{common_enum, common_struct};
 
 common_enum! {
-    pub enum AstAttrStyle {
+    pub enum AttrStyle {
         Outer,
         Inner,
     }
 }
 
 common_enum! {
-    pub enum AstAttrMeta {
+    pub enum AttrMeta {
         Path(Path),
-        List(AstAttrMetaList),
-        NameValue(AstAttrMetaNameValue),
+        List(AttrMetaList),
+        NameValue(AttrMetaNameValue),
     }
 }
 common_struct! {
-    pub struct AstAttrMetaList {
+    pub struct AttrMetaList {
         pub name: Path,
-        pub items: Vec<AstAttrMeta>,
+        pub items: Vec<AttrMeta>,
     }
 }
 common_struct! {
-    pub struct AstAttrMetaNameValue {
+    pub struct AttrMetaNameValue {
         pub name: Path,
         pub value: BExpr,
     }
 }
 common_struct! {
-    pub struct AstAttribute {
-        pub style: AstAttrStyle,
-        pub meta: AstAttrMeta,
+    pub struct Attribute {
+        pub style: AttrStyle,
+        pub meta: AttrMeta,
     }
 }
 
-pub trait AstAttributesExt {
-    fn find_by_path(&self, path: &Path) -> Option<&AstAttrMeta>;
-    fn find_by_name(&self, name: &str) -> Option<&AstAttrMeta>;
+pub trait AttributesExt {
+    fn find_by_path(&self, path: &Path) -> Option<&AttrMeta>;
+    fn find_by_name(&self, name: &str) -> Option<&AttrMeta>;
 }
-impl AstAttributesExt for Vec<AstAttribute> {
-    fn find_by_path(&self, path: &Path) -> Option<&AstAttrMeta> {
+impl AttributesExt for Vec<Attribute> {
+    fn find_by_path(&self, path: &Path) -> Option<&AttrMeta> {
         self.iter()
             .find(|x| match &x.meta {
-                AstAttrMeta::Path(p) => p == path,
+                AttrMeta::Path(p) => p == path,
                 _ => false,
             })
             .map(|x| &x.meta)
     }
-    fn find_by_name(&self, name: &str) -> Option<&AstAttrMeta> {
+    fn find_by_name(&self, name: &str) -> Option<&AttrMeta> {
         self.iter()
             .find(|x| match &x.meta {
-                AstAttrMeta::NameValue(nv) => nv.name.last().as_str() == name,
-                AstAttrMeta::Path(p) => p.last().as_str() == name,
+                AttrMeta::NameValue(nv) => nv.name.last().as_str() == name,
+                AttrMeta::Path(p) => p.last().as_str() == name,
                 _ => false,
             })
             .map(|x| &x.meta)

@@ -1,7 +1,7 @@
 use eyre::ContextCompat;
 use fp_core::ast::{
-    AstItem, ItemDefConst, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
-    ItemDefType, ItemImpl,
+    Item, ItemDefConst, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType,
+    ItemImpl,
 };
 use fp_core::{bail, Result};
 use itertools::Itertools;
@@ -11,7 +11,7 @@ use quote::quote;
 use crate::printer::RustPrinter;
 
 impl RustPrinter {
-    pub fn print_items_chunk(&self, items: &[AstItem]) -> Result<TokenStream> {
+    pub fn print_items_chunk(&self, items: &[Item]) -> Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
             let item = self.print_item(item)?;
@@ -90,19 +90,19 @@ impl RustPrinter {
             #func
         ))
     }
-    pub fn print_item(&self, item: &AstItem) -> Result<TokenStream> {
+    pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
         match item {
-            AstItem::DefFunction(n) => self.print_def_function(n),
-            AstItem::DefType(n) => self.print_def_type(n),
-            AstItem::DefStruct(n) => self.print_def_struct(n),
-            AstItem::DefTrait(n) => self.print_def_trait(n),
-            AstItem::DefConst(n) => self.print_def_const(n),
-            AstItem::DefStatic(n) => self.print_def_static(n),
-            // AstItem::DefEnum(n) => self.print_def_enum(n),
-            AstItem::Impl(n) => self.print_impl(n),
-            AstItem::Module(n) => self.print_module(n),
-            AstItem::Import(n) => self.print_import(n),
-            AstItem::Expr(n) => self.print_expr(n),
+            Item::DefFunction(n) => self.print_def_function(n),
+            Item::DefType(n) => self.print_def_type(n),
+            Item::DefStruct(n) => self.print_def_struct(n),
+            Item::DefTrait(n) => self.print_def_trait(n),
+            Item::DefConst(n) => self.print_def_const(n),
+            Item::DefStatic(n) => self.print_def_static(n),
+            // Item::DefEnum(n) => self.print_def_enum(n),
+            Item::Impl(n) => self.print_impl(n),
+            Item::Module(n) => self.print_module(n),
+            Item::Import(n) => self.print_import(n),
+            Item::Expr(n) => self.print_expr(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }

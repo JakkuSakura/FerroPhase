@@ -1,6 +1,6 @@
 use fp_core::mir::{
-    self, BasicBlockData, BodyId, MirBody, MirFunction, MirFunctionSig, MirItem, MirItemKind,
-    MirProgram, Statement, StatementKind, Terminator, TerminatorKind,
+    self, BasicBlockData, Body, BodyId, Function, FunctionSig, Item, ItemKind, Program, Statement,
+    StatementKind, Terminator, TerminatorKind,
 };
 use fp_core::span::Span;
 use fp_core::types::{IntTy, Ty, TyKind, TypeFlags};
@@ -12,8 +12,8 @@ fn int_ty() -> Ty {
     }
 }
 
-pub fn empty_program() -> MirProgram {
-    MirProgram::new()
+pub fn empty_program() -> Program {
+    Program::new()
 }
 
 pub fn return_block() -> BasicBlockData {
@@ -30,21 +30,21 @@ pub fn return_block() -> BasicBlockData {
     block
 }
 
-pub fn body_with_blocks(blocks: Vec<BasicBlockData>) -> (BodyId, MirBody) {
-    let body = MirBody::new(blocks, Vec::new(), 0, Span::new(0, 0, 0));
+pub fn body_with_blocks(blocks: Vec<BasicBlockData>) -> (BodyId, Body) {
+    let body = Body::new(blocks, Vec::new(), 0, Span::new(0, 0, 0));
     (BodyId(0), body)
 }
 
-pub fn function_item(body_id: BodyId) -> MirItem {
-    let sig = MirFunctionSig {
+pub fn function_item(body_id: BodyId) -> Item {
+    let sig = FunctionSig {
         inputs: Vec::new(),
         output: int_ty(),
     };
 
-    let function = MirFunction { sig, body_id };
+    let function = Function { sig, body_id };
 
-    MirItem {
+    Item {
         mir_id: 0,
-        kind: MirItemKind::Function(function),
+        kind: ItemKind::Function(function),
     }
 }

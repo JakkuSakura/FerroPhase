@@ -59,7 +59,7 @@ fn main() {
 
 Highlights:
 - `API_NAME` is computed at compile time.
-- `quote`/`splice` demonstrate structured metaprogramming (see `docs/Quoting.md`). `quote` yields an AST handle whose
+- `quote`/`splice` demonstrate structured metaprogramming (see `docs/Quoting.md`). `quote` yields an AST token whose
   type is inferred by the compiler.
 - `main` is a standard entry point.
 

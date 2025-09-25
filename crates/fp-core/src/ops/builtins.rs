@@ -32,14 +32,12 @@ impl Debug for BuiltinFnName {
 #[derive(Clone)]
 pub struct BuiltinFn {
     pub name: BuiltinFnName,
-    func: Arc<
-        dyn Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue, crate::Error> + Send + Sync,
-    >,
+    func: Arc<dyn Fn(&[Value], &SharedScopedContext) -> Result<Value, crate::Error> + Send + Sync>,
 }
 impl BuiltinFn {
     pub fn new(
         name: BinOpKind,
-        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue, crate::Error>
+        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value, crate::Error>
             + Send
             + Sync
             + 'static,
@@ -51,7 +49,7 @@ impl BuiltinFn {
     }
     pub fn new_with_ident(
         name: Ident,
-        f: impl Fn(&[AstValue], &SharedScopedContext) -> Result<AstValue, crate::Error>
+        f: impl Fn(&[Value], &SharedScopedContext) -> Result<Value, crate::Error>
             + Send
             + Sync
             + 'static,
@@ -61,11 +59,7 @@ impl BuiltinFn {
             func: Arc::new(f),
         }
     }
-    pub fn invoke(
-        &self,
-        args: &[AstValue],
-        ctx: &SharedScopedContext,
-    ) -> Result<AstValue, crate::Error> {
+    pub fn invoke(&self, args: &[Value], ctx: &SharedScopedContext) -> Result<Value, crate::Error> {
         (self.func)(args, ctx)
     }
 }
@@ -108,8 +102,8 @@ pub fn operate_on_literals(
         let mut args_f64 = vec![];
         for arg in args {
             match arg {
-                AstValue::Int(x) => args_i64.push(x.value),
-                AstValue::Decimal(x) => args_f64.push(x.value),
+                Value::Int(x) => args_i64.push(x.value),
+                Value::Decimal(x) => args_f64.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
@@ -117,10 +111,10 @@ pub fn operate_on_literals(
             bail!("Does not support argument type {:?}", args)
         }
         if !args_i64.is_empty() {
-            return Ok(AstValue::int(op_i64(&args_i64)));
+            return Ok(Value::int(op_i64(&args_i64)));
         }
         if !args_f64.is_empty() {
-            return Ok(AstValue::decimal(op_f64(&args_f64)));
+            return Ok(Value::decimal(op_f64(&args_f64)));
         }
         bail!("Does not support argument type {:?}", args)
     })
@@ -141,10 +135,10 @@ pub fn binary_comparison_on_literals(
 
         for arg in args {
             match arg {
-                AstValue::Int(x) => args_i64.push(x.value),
-                AstValue::Decimal(x) => args_f64.push(x.value),
-                AstValue::String(x) => args_string.push(x.value.clone()),
-                AstValue::Bool(x) => args_bool.push(x.value),
+                Value::Int(x) => args_i64.push(x.value),
+                Value::Decimal(x) => args_f64.push(x.value),
+                Value::String(x) => args_string.push(x.value.clone()),
+                Value::Bool(x) => args_bool.push(x.value),
                 _ => bail!("Does not support argument type {:?}", args),
             }
         }
@@ -165,18 +159,18 @@ pub fn binary_comparison_on_literals(
         }
 
         if !args_i64.is_empty() {
-            return Ok(AstValue::bool(op_i64(args_i64[0], args_i64[1])));
+            return Ok(Value::bool(op_i64(args_i64[0], args_i64[1])));
         }
         if !args_f64.is_empty() {
-            return Ok(AstValue::bool(op_f64(args_f64[0], args_f64[1])));
+            return Ok(Value::bool(op_f64(args_f64[0], args_f64[1])));
         }
         if !args_string.is_empty() {
             // For string comparison, use string equality
-            return Ok(AstValue::bool(args_string[0] == args_string[1]));
+            return Ok(Value::bool(args_string[0] == args_string[1]));
         }
         if !args_bool.is_empty() {
             // For boolean comparison
-            return Ok(AstValue::bool(args_bool[0] == args_bool[1]));
+            return Ok(Value::bool(args_bool[0] == args_bool[1]));
         }
 
         bail!("Does not support argument type {:?}", args)
@@ -190,22 +184,16 @@ pub fn builtin_add() -> BuiltinFn {
 
         match (&args[0], &args[1]) {
             // String concatenation
-            (AstValue::String(a), AstValue::String(b)) => {
+            (Value::String(a), Value::String(b)) => {
                 let mut result = a.value.clone();
                 result.push_str(&b.value);
-                Ok(AstValue::string(result))
+                Ok(Value::string(result))
             }
             // Numeric addition
-            (AstValue::Int(a), AstValue::Int(b)) => Ok(AstValue::int(a.value + b.value)),
-            (AstValue::Decimal(a), AstValue::Decimal(b)) => {
-                Ok(AstValue::decimal(a.value + b.value))
-            }
-            (AstValue::Int(a), AstValue::Decimal(b)) => {
-                Ok(AstValue::decimal(a.value as f64 + b.value))
-            }
-            (AstValue::Decimal(a), AstValue::Int(b)) => {
-                Ok(AstValue::decimal(a.value + b.value as f64))
-            }
+            (Value::Int(a), Value::Int(b)) => Ok(Value::int(a.value + b.value)),
+            (Value::Decimal(a), Value::Decimal(b)) => Ok(Value::decimal(a.value + b.value)),
+            (Value::Int(a), Value::Decimal(b)) => Ok(Value::decimal(a.value as f64 + b.value)),
+            (Value::Decimal(a), Value::Int(b)) => Ok(Value::decimal(a.value + b.value as f64)),
             _ => bail!(
                 "Add operation not supported for types: {:?} + {:?}",
                 args[0],
@@ -267,7 +255,7 @@ pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
             .map(|x| se.serialize_value(x))
             .try_collect()?;
         ctx.root().print_str(formatted.join(" "));
-        Ok(AstValue::unit())
+        Ok(Value::unit())
     })
 }
 
@@ -318,17 +306,17 @@ pub fn builtin_println(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
             }
         }
 
-        Ok(AstValue::unit())
+        Ok(Value::unit())
     })
 }
 
-fn format_value(value: &AstValue) -> String {
+fn format_value(value: &Value) -> String {
     match value {
-        AstValue::String(s) => s.value.clone(),
-        AstValue::Int(i) => i.value.to_string(),
-        AstValue::Bool(b) => b.value.to_string(),
-        AstValue::Decimal(d) => d.value.to_string(),
-        AstValue::Unit(_) => "()".to_string(),
+        Value::String(s) => s.value.clone(),
+        Value::Int(i) => i.value.to_string(),
+        Value::Bool(b) => b.value.to_string(),
+        Value::Decimal(d) => d.value.to_string(),
+        Value::Unit(_) => "()".to_string(),
         _ => format!("{:?}", value), // Fallback for complex types
     }
 }
@@ -337,7 +325,7 @@ pub fn builtin_some() -> BuiltinFn {
         if args.len() != 1 {
             bail!("Some expects 1 argument, got: {:?}", args)
         }
-        Ok(AstValue::Some(ValueSome::new(args[0].clone().into())))
+        Ok(Value::Some(ValueSome::new(args[0].clone().into())))
     })
 }
 
@@ -351,11 +339,11 @@ pub fn builtin_sizeof() -> BuiltinFn {
         }
 
         match &args[0] {
-            AstValue::Type(ast_type) => {
+            Value::Type(ast_type) => {
                 // For now, return estimated sizes for common types
                 let size = match ast_type {
-                    AstType::Expr(expr) => {
-                        if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
+                    Ty::Expr(expr) => {
+                        if let crate::ast::Expr::Locator(locator) = expr.as_ref() {
                             if let Some(ident) = locator.as_ident() {
                                 match ident.name.as_str() {
                                     "i8" | "u8" => 1,
@@ -373,13 +361,13 @@ pub fn builtin_sizeof() -> BuiltinFn {
                             8 // Default size for complex expressions
                         }
                     }
-                    AstType::Struct(type_struct) => {
+                    Ty::Struct(type_struct) => {
                         // Calculate struct size as sum of field sizes
                         type_struct.fields.len() * 8 // Simplified: assume each field is 8 bytes
                     }
                     _ => 8, // Default size for other types
                 };
-                Ok(AstValue::int(size as i64))
+                Ok(Value::int(size as i64))
             }
             _ => bail!("sizeof! expects a type argument, got: {:?}", args[0]),
         }
@@ -394,8 +382,8 @@ pub fn builtin_reflect_fields() -> BuiltinFn {
         }
 
         match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => {
-                let field_descriptors: Vec<AstValue> = type_struct
+            Value::Type(Ty::Struct(type_struct)) => {
+                let field_descriptors: Vec<Value> = type_struct
                     .fields
                     .iter()
                     .map(|field| {
@@ -403,19 +391,19 @@ pub fn builtin_reflect_fields() -> BuiltinFn {
                         let fields = vec![
                             ValueField {
                                 name: "name".into(),
-                                value: AstValue::string(field.name.name.clone()),
+                                value: Value::string(field.name.name.clone()),
                             },
                             ValueField {
                                 name: "type_name".into(),
-                                value: AstValue::string(format!("{}", field.value)),
+                                value: Value::string(format!("{}", field.value)),
                             },
                         ];
 
-                        AstValue::Structural(ValueStructural { fields })
+                        Value::Structural(ValueStructural { fields })
                     })
                     .collect();
 
-                Ok(AstValue::List(ValueList::new(field_descriptors)))
+                Ok(Value::List(ValueList::new(field_descriptors)))
             }
             _ => bail!(
                 "reflect_fields! expects a struct type argument, got: {:?}",
@@ -436,7 +424,7 @@ pub fn builtin_hasmethod() -> BuiltinFn {
         }
 
         let method_name = match &args[1] {
-            AstValue::String(s) => s.value.as_str(),
+            Value::String(s) => s.value.as_str(),
             _ => bail!(
                 "hasmethod! expects a string for method name, got: {:?}",
                 args[1]
@@ -446,13 +434,13 @@ pub fn builtin_hasmethod() -> BuiltinFn {
         // For now, return false for all methods since we don't have a complete method registry
         // This would be enhanced when the full type system is implemented
         match &args[0] {
-            AstValue::Type(_) => {
+            Value::Type(_) => {
                 // Basic hardcoded method checks for common types
                 let has_method = match method_name {
                     "to_string" => true, // Most types can be converted to string
                     _ => false,
                 };
-                Ok(AstValue::bool(has_method))
+                Ok(Value::bool(has_method))
             }
             _ => bail!("hasmethod! expects a type argument, got: {:?}", args[0]),
         }
@@ -470,7 +458,7 @@ pub fn builtin_addfield() -> BuiltinFn {
         }
 
         let field_name = match &args[1] {
-            AstValue::String(s) => s.value.clone(),
+            Value::String(s) => s.value.clone(),
             _ => bail!(
                 "addfield! expects a string for field name, got: {:?}",
                 args[1]
@@ -478,7 +466,7 @@ pub fn builtin_addfield() -> BuiltinFn {
         };
 
         let field_type = match &args[2] {
-            AstValue::Type(ty) => ty.clone(),
+            Value::Type(ty) => ty.clone(),
             _ => bail!(
                 "addfield! expects a type for field type, got: {:?}",
                 args[2]
@@ -486,7 +474,7 @@ pub fn builtin_addfield() -> BuiltinFn {
         };
 
         match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => {
+            Value::Type(Ty::Struct(type_struct)) => {
                 // Create a new struct with the additional field
                 let mut new_fields = type_struct.fields.clone();
 
@@ -506,7 +494,7 @@ pub fn builtin_addfield() -> BuiltinFn {
                     fields: new_fields,
                 };
 
-                Ok(AstValue::Type(AstType::Struct(modified_struct)))
+                Ok(Value::Type(Ty::Struct(modified_struct)))
             }
             _ => bail!(
                 "addfield! expects a struct type as first argument, got: {:?}",
@@ -527,7 +515,7 @@ pub fn builtin_generate_method() -> BuiltinFn {
         }
 
         let method_name = match &args[0] {
-            AstValue::String(s) => s.value.clone(),
+            Value::String(s) => s.value.clone(),
             _ => bail!(
                 "generate_method! expects a string for method name, got: {:?}",
                 args[0]
@@ -542,7 +530,7 @@ pub fn builtin_generate_method() -> BuiltinFn {
             method_name
         ));
 
-        Ok(AstValue::unit())
+        Ok(Value::unit())
     })
 }
 
@@ -554,23 +542,23 @@ pub fn builtin_type_name() -> BuiltinFn {
         }
 
         let type_name = match &args[0] {
-            AstValue::Type(ast_type) => {
+            Value::Type(ast_type) => {
                 format!("{}", ast_type)
             }
             other => {
                 // Return the type of the value
                 match other {
-                    AstValue::Int(_) => "i64".to_string(),
-                    AstValue::Bool(_) => "bool".to_string(),
-                    AstValue::Decimal(_) => "f64".to_string(),
-                    AstValue::String(_) => "String".to_string(),
-                    AstValue::Unit(_) => "()".to_string(),
+                    Value::Int(_) => "i64".to_string(),
+                    Value::Bool(_) => "bool".to_string(),
+                    Value::Decimal(_) => "f64".to_string(),
+                    Value::String(_) => "String".to_string(),
+                    Value::Unit(_) => "()".to_string(),
                     _ => "unknown".to_string(),
                 }
             }
         };
 
-        Ok(AstValue::string(type_name))
+        Ok(Value::string(type_name))
     })
 }
 
@@ -587,7 +575,7 @@ pub fn builtin_create_struct() -> BuiltinFn {
         }
 
         let struct_name = match &args[0] {
-            AstValue::String(s) => s.value.clone(),
+            Value::String(s) => s.value.clone(),
             _ => bail!(
                 "create_struct! expects a string for struct name, got: {:?}",
                 args[0]
@@ -600,7 +588,7 @@ pub fn builtin_create_struct() -> BuiltinFn {
             fields: Vec::new(),
         };
 
-        Ok(AstValue::Type(AstType::Struct(struct_type)))
+        Ok(Value::Type(Ty::Struct(struct_type)))
     })
 }
 
@@ -615,14 +603,14 @@ pub fn builtin_clone_struct() -> BuiltinFn {
         }
 
         match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => {
+            Value::Type(Ty::Struct(type_struct)) => {
                 // Clone the struct definition
                 let cloned_struct = TypeStruct {
                     name: format!("Clone_{}", type_struct.name.name).into(),
                     fields: type_struct.fields.clone(),
                 };
 
-                Ok(AstValue::Type(AstType::Struct(cloned_struct)))
+                Ok(Value::Type(Ty::Struct(cloned_struct)))
             }
             _ => bail!(
                 "clone_struct! expects a struct type argument, got: {:?}",
@@ -643,7 +631,7 @@ pub fn builtin_hasfield() -> BuiltinFn {
         }
 
         let field_name = match &args[1] {
-            AstValue::String(s) => &s.value,
+            Value::String(s) => &s.value,
             _ => bail!(
                 "hasfield! expects a string for field name, got: {:?}",
                 args[1]
@@ -651,11 +639,11 @@ pub fn builtin_hasfield() -> BuiltinFn {
         };
 
         let has_field = match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => type_struct
+            Value::Type(Ty::Struct(type_struct)) => type_struct
                 .fields
                 .iter()
                 .any(|field| field.name.name == *field_name),
-            AstValue::Struct(value_struct) => value_struct
+            Value::Struct(value_struct) => value_struct
                 .ty
                 .fields
                 .iter()
@@ -666,7 +654,7 @@ pub fn builtin_hasfield() -> BuiltinFn {
             ),
         };
 
-        Ok(AstValue::bool(has_field))
+        Ok(Value::bool(has_field))
     })
 }
 
@@ -681,15 +669,15 @@ pub fn builtin_field_count() -> BuiltinFn {
         }
 
         let field_count = match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => type_struct.fields.len(),
-            AstValue::Struct(value_struct) => value_struct.ty.fields.len(),
+            Value::Type(Ty::Struct(type_struct)) => type_struct.fields.len(),
+            Value::Struct(value_struct) => value_struct.ty.fields.len(),
             _ => bail!(
                 "field_count! expects a struct type or instance, got: {:?}",
                 args[0]
             ),
         };
 
-        Ok(AstValue::int(field_count as i64))
+        Ok(Value::int(field_count as i64))
     })
 }
 
@@ -706,12 +694,12 @@ pub fn builtin_method_count() -> BuiltinFn {
         // For now, return 0 as methods are not yet tracked in the AST
         // This will be enhanced when the full method registry is implemented
         let method_count = match &args[0] {
-            AstValue::Type(AstType::Struct(_type_struct)) => {
+            Value::Type(Ty::Struct(_type_struct)) => {
                 // Methods are not yet tracked in TypeStruct
                 // This is a placeholder for future implementation
                 0
             }
-            AstValue::Struct(_value_struct) => {
+            Value::Struct(_value_struct) => {
                 // Methods are not yet tracked in ValueStruct
                 // This is a placeholder for future implementation
                 0
@@ -722,7 +710,7 @@ pub fn builtin_method_count() -> BuiltinFn {
             ),
         };
 
-        Ok(AstValue::int(method_count as i64))
+        Ok(Value::int(method_count as i64))
     })
 }
 
@@ -737,7 +725,7 @@ pub fn builtin_field_type() -> BuiltinFn {
         }
 
         let field_name = match &args[1] {
-            AstValue::String(s) => &s.value,
+            Value::String(s) => &s.value,
             _ => bail!(
                 "field_type! expects a string for field name, got: {:?}",
                 args[1]
@@ -745,25 +733,25 @@ pub fn builtin_field_type() -> BuiltinFn {
         };
 
         match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => {
+            Value::Type(Ty::Struct(type_struct)) => {
                 if let Some(field) = type_struct
                     .fields
                     .iter()
                     .find(|f| f.name.name == *field_name)
                 {
-                    Ok(AstValue::Type(field.value.clone()))
+                    Ok(Value::Type(field.value.clone()))
                 } else {
                     bail!("Field '{}' not found in struct", field_name)
                 }
             }
-            AstValue::Struct(value_struct) => {
+            Value::Struct(value_struct) => {
                 if let Some(field) = value_struct
                     .ty
                     .fields
                     .iter()
                     .find(|f| f.name.name == *field_name)
                 {
-                    Ok(AstValue::Type(field.value.clone()))
+                    Ok(Value::Type(field.value.clone()))
                 } else {
                     bail!("Field '{}' not found in struct", field_name)
                 }
@@ -787,7 +775,7 @@ pub fn builtin_struct_size() -> BuiltinFn {
         }
 
         let size = match &args[0] {
-            AstValue::Type(AstType::Struct(type_struct)) => {
+            Value::Type(Ty::Struct(type_struct)) => {
                 // Simple size calculation: sum of field sizes
                 type_struct
                     .fields
@@ -795,8 +783,8 @@ pub fn builtin_struct_size() -> BuiltinFn {
                     .map(|field| {
                         // Estimate field size based on type
                         match &field.value {
-                            AstType::Expr(expr) => {
-                                if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
+                            Ty::Expr(expr) => {
+                                if let crate::ast::Expr::Locator(locator) = expr.as_ref() {
                                     if let Some(ident) = locator.as_ident() {
                                         match ident.name.as_str() {
                                             "i8" | "u8" => 1,
@@ -815,21 +803,21 @@ pub fn builtin_struct_size() -> BuiltinFn {
                                     8 // Default for complex expressions
                                 }
                             }
-                            AstType::Struct(nested) => nested.fields.len() * 8, // Recursive estimation
-                            _ => 8,                                             // Default size
+                            Ty::Struct(nested) => nested.fields.len() * 8, // Recursive estimation
+                            _ => 8,                                        // Default size
                         }
                     })
                     .sum::<usize>()
             }
-            AstValue::Struct(value_struct) => {
+            Value::Struct(value_struct) => {
                 // Same calculation for struct instances
                 value_struct
                     .ty
                     .fields
                     .iter()
                     .map(|field| match &field.value {
-                        AstType::Expr(expr) => {
-                            if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
+                        Ty::Expr(expr) => {
+                            if let crate::ast::Expr::Locator(locator) = expr.as_ref() {
                                 if let Some(ident) = locator.as_ident() {
                                     match ident.name.as_str() {
                                         "i8" | "u8" => 1,
@@ -848,7 +836,7 @@ pub fn builtin_struct_size() -> BuiltinFn {
                                 8
                             }
                         }
-                        AstType::Struct(nested) => nested.fields.len() * 8,
+                        Ty::Struct(nested) => nested.fields.len() * 8,
                         _ => 8,
                     })
                     .sum::<usize>()
@@ -859,7 +847,7 @@ pub fn builtin_struct_size() -> BuiltinFn {
             ),
         };
 
-        Ok(AstValue::int(size as i64))
+        Ok(Value::int(size as i64))
     })
 }
 
@@ -874,7 +862,7 @@ pub fn builtin_compile_error() -> BuiltinFn {
         }
 
         let error_message = match &args[0] {
-            AstValue::String(s) => &s.value,
+            Value::String(s) => &s.value,
             _ => bail!(
                 "compile_error! expects a string message, got: {:?}",
                 args[0]
@@ -897,7 +885,7 @@ pub fn builtin_compile_warning() -> BuiltinFn {
         }
 
         let warning_message = match &args[0] {
-            AstValue::String(s) => &s.value,
+            Value::String(s) => &s.value,
             _ => bail!(
                 "compile_warning! expects a string message, got: {:?}",
                 args[0]
@@ -908,6 +896,6 @@ pub fn builtin_compile_warning() -> BuiltinFn {
         ctx.root()
             .print_str(format!("Warning: {}", warning_message));
 
-        Ok(AstValue::unit())
+        Ok(Value::unit())
     })
 }

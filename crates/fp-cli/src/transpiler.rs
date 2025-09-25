@@ -38,7 +38,7 @@ impl Transpiler {
     fn visit_ast(&self, ast: &BExpr, context: &mut TranspileContext) {
         // Single AST visitor instead of separate extract_types_from_ast functions
         match ast.as_ref() {
-            fp_core::ast::AstExpr::Block(block) => {
+            fp_core::ast::Expr::Block(block) => {
                 for stmt in &block.stmts {
                     self.visit_stmt(stmt, context);
                 }
@@ -70,12 +70,12 @@ pub enum TranspileTarget {
     Rust,
 }
 
-/// Single context structure instead of scattered HashMap<String, AstValue> everywhere
+/// Single context structure instead of scattered HashMap<String, Value> everywhere
 #[derive(Debug)]
 pub struct TranspileContext {
     pub structs: Vec<fp_core::ast::TypeStruct>,
     pub enums: Vec<fp_core::ast::TypeEnum>,
-    pub constants: HashMap<String, fp_core::ast::AstValue>,
+    pub constants: HashMap<String, fp_core::ast::Value>,
 }
 
 impl TranspileContext {

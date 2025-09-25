@@ -6,7 +6,7 @@ use crate::{
     pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput},
 };
 use console::style;
-use fp_core::ast::{AstValue, RuntimeValue};
+use fp_core::ast::{RuntimeValue, Value};
 use tracing::info;
 
 /// Arguments for the eval command
@@ -103,13 +103,13 @@ fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
     Ok(())
 }
 
-fn print_result(result: &AstValue) -> Result<()> {
+fn print_result(result: &Value) -> Result<()> {
     // Pretty-print the result based on its type
     match result {
-        AstValue::Unit(_) => {
+        Value::Unit(_) => {
             println!("{} {}", style("Result:").green().bold(), style("()").dim());
         }
-        AstValue::Bool(b) => {
+        Value::Bool(b) => {
             let value_str = if b.value { "true" } else { "false" };
             println!(
                 "{} {}",
@@ -117,28 +117,28 @@ fn print_result(result: &AstValue) -> Result<()> {
                 style(value_str).cyan()
             );
         }
-        AstValue::Int(i) => {
+        Value::Int(i) => {
             println!(
                 "{} {}",
                 style("Result:").green().bold(),
                 style(&i.value.to_string()).cyan()
             );
         }
-        AstValue::Decimal(f) => {
+        Value::Decimal(f) => {
             println!(
                 "{} {}",
                 style("Result:").green().bold(),
                 style(&f.value.to_string()).cyan()
             );
         }
-        AstValue::String(s) => {
+        Value::String(s) => {
             println!(
                 "{} {}",
                 style("Result:").green().bold(),
                 style(&format!("\"{}\"", s.value)).cyan()
             );
         }
-        AstValue::List(list) => {
+        Value::List(list) => {
             println!(
                 "{} {} elements)",
                 style("Result:").green().bold(),
@@ -148,7 +148,7 @@ fn print_result(result: &AstValue) -> Result<()> {
                 println!("  [{}]: {:?}", i, item);
             }
         }
-        AstValue::Struct(s) => {
+        Value::Struct(s) => {
             println!(
                 "{} {}",
                 style("Result:").green().bold(),

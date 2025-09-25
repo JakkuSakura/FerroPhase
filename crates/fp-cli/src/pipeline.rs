@@ -6,7 +6,7 @@ use crate::config::{PipelineOptions, PipelineTarget, RuntimeConfig};
 use crate::CliError;
 pub use crate::config::PipelineConfig;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstFile, AstNode, AstValue, BExpr, RuntimeValue};
+use fp_core::ast::{BExpr, File, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_llvm;
@@ -29,7 +29,7 @@ pub enum PipelineInput {
 
 #[derive(Debug)]
 pub enum PipelineOutput {
-    Value(AstValue),
+    Value(Value),
     RuntimeValue(RuntimeValue),
     Code(String),
 }
@@ -99,9 +99,9 @@ impl Pipeline {
         drop(_enter_parse);
         debug!(has_file = ast_file.is_some(), "parsed source");
         let ast_node = if let Some(file) = ast_file {
-            AstNode::File(file)
+            Node::File(file)
         } else {
-            AstNode::Expr((*ast_expr).clone())
+            Node::Expr((*ast_expr).clone())
         };
 
         // Execute based on target
@@ -130,7 +130,7 @@ impl Pipeline {
                 // For binary compilation, print the result and return success
                 // The binary files have already been created by compile_to_binary
                 println!("{}", binary_result);
-                Ok(PipelineOutput::Value(AstValue::string(
+                Ok(PipelineOutput::Value(Value::string(
                     "Binary compilation completed".to_string(),
                 )))
             }
@@ -161,7 +161,7 @@ impl Pipeline {
     /// Unified compilation method that handles intermediate file saving
     fn compile_to_llvm_ir(
         &self,
-        ast: &AstNode,
+        ast: &Node,
         options: &PipelineOptions,
         file_path: Option<&std::path::Path>,
     ) -> Result<PathBuf, CliError> {
@@ -203,7 +203,7 @@ impl Pipeline {
         let hir_span = info_span!("pipeline.lower.hir");
         let _enter_hir = hir_span.enter();
         let hir_program = match &evaluated_node {
-            AstNode::Expr(expr) => {
+            Node::Expr(expr) => {
                 let mut hir_generator = match file_path {
                     Some(path) => HirGenerator::with_file(path),
                     None => HirGenerator::new(),
@@ -212,13 +212,13 @@ impl Pipeline {
                     CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
                 })?
             }
-            AstNode::File(file) => {
+            Node::File(file) => {
                 let mut hir_generator = HirGenerator::with_file(&file.path);
                 hir_generator.transform(file).map_err(|e| {
                     CliError::Compilation(format!("AST to HIR transformation failed: {}", e))
                 })?
             }
-            AstNode::Item(_) => {
+            Node::Item(_) => {
                 return Err(CliError::Compilation(
                     "Top-level items are not supported for compilation".to_string(),
                 ));
@@ -253,7 +253,7 @@ impl Pipeline {
             .ok();
         }
 
-        // Step 5: THIR → MIR (Mid-level IR)
+        // Step 5: THIR → MIR (Mid-level Intermediate Representation; SSA CFG)
         let mir_span = info_span!("pipeline.lower.mir");
         let _enter_mir = mir_span.enter();
         let mut mir_generator = MirGenerator::new();
@@ -307,7 +307,7 @@ impl Pipeline {
     /// Unified binary compilation method using llc + lld
     fn compile_to_binary(
         &self,
-        ast: &AstNode,
+        ast: &Node,
         options: &PipelineOptions,
         file_path: Option<&std::path::Path>,
     ) -> Result<String, CliError> {
@@ -410,7 +410,7 @@ impl Pipeline {
         &self,
         source: &str,
         file_path: Option<&Path>,
-    ) -> Result<(BExpr, Option<AstFile>), CliError> {
+    ) -> Result<(BExpr, Option<File>), CliError> {
         let expr = self.parse_source(source)?;
         let file_ast = match file_path {
             Some(path) => Some(self.parse_source_file(source, path)?),
@@ -419,7 +419,7 @@ impl Pipeline {
         Ok((expr, file_ast))
     }
 
-    fn parse_source_file(&self, source: &str, path: &Path) -> Result<AstFile, CliError> {
+    fn parse_source_file(&self, source: &str, path: &Path) -> Result<File, CliError> {
         let cleaned_source = self.clean_source(source);
         let syn_file: syn::File = syn::parse_file(&cleaned_source).map_err(|e| {
             CliError::Compilation(format!("Failed to parse {} as file: {}", path.display(), e))
@@ -442,7 +442,7 @@ impl Pipeline {
 
     async fn interpret_ast_runtime(
         &self,
-        ast: &AstNode,
+        ast: &Node,
         runtime_name: &str,
     ) -> Result<RuntimeValue, CliError> {
         // Create a serializer using RustPrinter
@@ -464,20 +464,18 @@ impl Pipeline {
 
         // Interpret with runtime semantics (expressions only for now)
         match ast {
-            AstNode::Expr(expr) => {
-                orchestrator
-                    .interpret_expr_runtime(expr, &context)
-                    .map_err(|e| {
-                        CliError::Compilation(format!("Runtime interpretation failed: {}", e))
-                    })
-            }
-            AstNode::File(_) | AstNode::Item(_) => Err(CliError::Compilation(
+            Node::Expr(expr) => orchestrator
+                .interpret_expr_runtime(expr, &context)
+                .map_err(|e| {
+                    CliError::Compilation(format!("Runtime interpretation failed: {}", e))
+                }),
+            Node::File(_) | Node::Item(_) => Err(CliError::Compilation(
                 "Runtime interpretation currently supports expressions only".to_string(),
             )),
         }
     }
 
-    async fn interpret_ast(&self, ast: &AstNode) -> Result<AstValue, CliError> {
+    async fn interpret_ast(&self, ast: &Node) -> Result<Value, CliError> {
         // Create a serializer using RustPrinter
         let serializer = Arc::new(RustPrinter::new());
 
@@ -488,13 +486,13 @@ impl Pipeline {
         let context = SharedScopedContext::new();
 
         let result = match ast {
-            AstNode::Expr(expr) => orchestrator
+            Node::Expr(expr) => orchestrator
                 .interpret_expr(expr, &context)
                 .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
-            AstNode::File(file) => orchestrator
+            Node::File(file) => orchestrator
                 .interpret_items(&file.items, &context)
                 .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
-            AstNode::Item(item) => orchestrator
+            Node::Item(item) => orchestrator
                 .interpret_item(item, &context)
                 .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
         };

@@ -6,7 +6,7 @@
 //! - Move semantics prevent use-after-move
 //! - Borrow checker prevents data races
 
-use crate::ast::{AstExpr, AstValue, RuntimeValue};
+use crate::ast::{Expr, RuntimeValue, Value};
 use crate::context::SharedScopedContext;
 use crate::id::{Ident, Locator};
 use crate::passes::{RuntimePass, RuntimePassHelper};
@@ -59,19 +59,14 @@ impl RuntimePass for RustRuntimePass {
         "rust"
     }
 
-    fn create_runtime_value(&self, literal: AstValue) -> RuntimeValue {
+    fn create_runtime_value(&self, literal: Value) -> RuntimeValue {
         // Rust defaults to owned values
         RuntimeValue::owned(literal)
     }
 
-    fn assign(
-        &self,
-        target: &AstExpr,
-        value: RuntimeValue,
-        ctx: &SharedScopedContext,
-    ) -> Result<()> {
+    fn assign(&self, target: &Expr, value: RuntimeValue, ctx: &SharedScopedContext) -> Result<()> {
         match target {
-            AstExpr::Locator(Locator::Ident(ident)) => {
+            Expr::Locator(Locator::Ident(ident)) => {
                 let var_name = &ident.name;
 
                 // Check if target is already borrowed
@@ -84,7 +79,7 @@ impl RuntimePass for RustRuntimePass {
                 ctx.insert_runtime_value(ident.clone(), value);
                 Ok(())
             }
-            AstExpr::Select(select) => {
+            Expr::Select(select) => {
                 // Field assignment requires mutable access to the object
                 let obj_name = self.get_variable_name(&select.obj)?;
 
@@ -120,7 +115,7 @@ impl RuntimePass for RustRuntimePass {
             }
             "to_string" => {
                 // Convert to string representation
-                Ok(RuntimeValue::owned(AstValue::string(format!(
+                Ok(RuntimeValue::owned(Value::string(format!(
                     "{}",
                     obj.get_value()
                 ))))
@@ -128,12 +123,8 @@ impl RuntimePass for RustRuntimePass {
             "len" => {
                 // Get length for collections
                 match obj.get_value() {
-                    AstValue::String(s) => {
-                        Ok(RuntimeValue::owned(AstValue::int(s.value.len() as i64)))
-                    }
-                    AstValue::List(l) => {
-                        Ok(RuntimeValue::owned(AstValue::int(l.values.len() as i64)))
-                    }
+                    Value::String(s) => Ok(RuntimeValue::owned(Value::int(s.value.len() as i64))),
+                    Value::List(l) => Ok(RuntimeValue::owned(Value::int(l.values.len() as i64))),
                     _ => bail!("Method 'len' not available for this type"),
                 }
             }
@@ -150,7 +141,7 @@ impl RuntimePass for RustRuntimePass {
                 let mut obj = obj;
                 let arg_value = args[0].get_value();
                 obj.try_mutate(move |ast_value| match ast_value {
-                    AstValue::List(ref mut list) => {
+                    Value::List(ref mut list) => {
                         list.values.push(arg_value);
                         Ok(())
                     }
@@ -166,7 +157,7 @@ impl RuntimePass for RustRuntimePass {
     fn access_field(&self, obj: RuntimeValue, field: &str) -> Result<RuntimeValue> {
         let value = obj.get_value();
         match value {
-            AstValue::Struct(s) => {
+            Value::Struct(s) => {
                 if let Some(field_value) = s.structural.get_field(&Ident::new(field)) {
                     // In Rust, field access creates a borrowed reference
                     Ok(RuntimeValue::borrowed(
@@ -190,7 +181,7 @@ impl RuntimePass for RustRuntimePass {
         let field_name = field.to_string();
         let field_value = value.get_value();
         obj.try_mutate(move |ast_value| match ast_value {
-            AstValue::Struct(ref mut s) => {
+            Value::Struct(ref mut s) => {
                 if let Some(struct_field) = s
                     .structural
                     .fields
@@ -318,25 +309,25 @@ impl RustRuntimePass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::AstValue;
+    use crate::ast::Value;
 
     #[test]
     fn test_rust_runtime_owned_values() {
         let runtime = RustRuntimePass::new();
-        let literal = AstValue::int(42);
+        let literal = Value::int(42);
         let runtime_value = runtime.create_runtime_value(literal);
 
         assert!(runtime_value.is_owned());
-        assert_eq!(runtime_value.get_value(), AstValue::int(42));
+        assert_eq!(runtime_value.get_value(), Value::int(42));
     }
 
     #[test]
     fn test_rust_runtime_clone_method() {
         let runtime = RustRuntimePass::new();
-        let value = RuntimeValue::owned(AstValue::string("hello".to_string()));
+        let value = RuntimeValue::owned(Value::string("hello".to_string()));
 
         let cloned = runtime.call_method(value, "clone", vec![]).unwrap();
         assert!(cloned.is_owned());
-        assert_eq!(cloned.get_value(), AstValue::string("hello".to_string()));
+        assert_eq!(cloned.get_value(), Value::string("hello".to_string()));
     }
 }

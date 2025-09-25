@@ -4,8 +4,8 @@ use std::sync::Arc;
 use crate::error::optimization_error;
 use fp_core::error::Result;
 
-use fp_core::ast::{AstExpr, AstItem, AstModule, AstNode, AstSerializer};
-use fp_core::ast::{AstFile, AstValue};
+use fp_core::ast::{AstSerializer, Expr, Item, Module, Node};
+use fp_core::ast::{File, Value};
 use fp_core::context::SharedScopedContext;
 
 use crate::orchestrators::InterpretationOrchestrator;
@@ -24,14 +24,14 @@ impl ExpressionEvaluator {
             opt: FoldOptimizer::new(serializer, Box::new(orchestrator)),
         }
     }
-    fn extract_expr(&self, node: AstExpr) -> Result<AstValue> {
+    fn extract_expr(&self, node: Expr) -> Result<Value> {
         match node {
-            AstExpr::Value(value) => Ok(value.get()),
-            AstExpr::Block(block) => {
+            Expr::Value(value) => Ok(value.get()),
+            Expr::Block(block) => {
                 // Handle block expressions
                 if block.stmts.is_empty() {
                     // Empty block evaluates to unit
-                    Ok(AstValue::unit())
+                    Ok(Value::unit())
                 } else {
                     // Try to extract value from the last statement in block
                     if let Some(last_stmt) = block.stmts.last() {
@@ -42,11 +42,11 @@ impl ExpressionEvaluator {
                             }
                             _ => {
                                 // Non-expression statement, block evaluates to unit
-                                Ok(AstValue::unit())
+                                Ok(Value::unit())
                             }
                         }
                     } else {
-                        Ok(AstValue::unit())
+                        Ok(Value::unit())
                     }
                 }
             }
@@ -56,35 +56,35 @@ impl ExpressionEvaluator {
             ))),
         }
     }
-    fn extract_module(&self, _node: AstModule) -> Result<AstValue> {
-        Ok(AstValue::unit())
+    fn extract_module(&self, _node: Module) -> Result<Value> {
+        Ok(Value::unit())
     }
-    fn extract_file(&self, _node: AstFile) -> Result<AstValue> {
-        Ok(AstValue::unit())
+    fn extract_file(&self, _node: File) -> Result<Value> {
+        Ok(Value::unit())
     }
-    fn extract_item(&self, node: AstItem) -> Result<AstValue> {
+    fn extract_item(&self, node: Item) -> Result<Value> {
         match node {
-            AstItem::Expr(expr) => self.extract_expr(expr),
-            AstItem::Module(module) => self.extract_module(module),
+            Item::Expr(expr) => self.extract_expr(expr),
+            Item::Module(module) => self.extract_module(module),
             _ => Err(optimization_error(format!(
                 "Failed to extract Value from {:?}",
                 node
             ))),
         }
     }
-    fn extract_tree(&self, node: AstNode) -> Result<AstValue> {
+    fn extract_tree(&self, node: Node) -> Result<Value> {
         match node {
-            AstNode::Expr(expr) => self.extract_expr(expr),
-            AstNode::Item(item) => self.extract_item(item),
-            AstNode::File(file) => self.extract_file(file),
+            Node::Expr(expr) => self.extract_expr(expr),
+            Node::Item(item) => self.extract_item(item),
+            Node::File(file) => self.extract_file(file),
         }
     }
-    pub fn interpret_tree(&self, node: AstNode, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_tree(&self, node: Node, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_tree(node, ctx)?;
 
         self.extract_tree(value)
     }
-    pub fn interpret_expr(&self, node: AstExpr, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_expr(&self, node: Expr, ctx: &SharedScopedContext) -> Result<Value> {
         let value = self.opt.optimize_expr(node, ctx)?;
         self.extract_expr(value)
     }

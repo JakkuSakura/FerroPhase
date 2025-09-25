@@ -11,35 +11,35 @@ use fp_core::utils::anybox::AnyBox;
 use itertools::Itertools;
 use quote::ToTokens;
 
-pub fn parse_expr(expr: syn::Expr) -> Result<AstExpr> {
+pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
     let expr = match expr {
         syn::Expr::Binary(b) => parse_expr_binary(b)?,
         syn::Expr::Unary(u) => parse_unary(u)?.into(),
-        syn::Expr::Block(b) if b.label.is_none() => AstExpr::block(parse_block(b.block)?),
-        syn::Expr::Call(c) => AstExpr::Invoke(parse_expr_call(c)?.into()),
-        syn::Expr::If(i) => AstExpr::If(parse_expr_if(i)?),
-        syn::Expr::Loop(l) => AstExpr::Loop(parse_expr_loop(l)?),
-        syn::Expr::Lit(l) => AstExpr::value(parse_literal(l.lit)?),
+        syn::Expr::Block(b) if b.label.is_none() => Expr::block(parse_block(b.block)?),
+        syn::Expr::Call(c) => Expr::Invoke(parse_expr_call(c)?.into()),
+        syn::Expr::If(i) => Expr::If(parse_expr_if(i)?),
+        syn::Expr::Loop(l) => Expr::Loop(parse_expr_loop(l)?),
+        syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => parse_expr_macro(m)?,
-        syn::Expr::MethodCall(c) => AstExpr::Invoke(parse_expr_method_call(c)?.into()),
-        syn::Expr::Index(i) => AstExpr::Index(parse_expr_index(i)?),
-        syn::Expr::Path(p) => AstExpr::path(parser::parse_path(p.path)?),
-        syn::Expr::Reference(r) => AstExpr::Reference(parse_expr_reference(r)?.into()),
-        syn::Expr::Tuple(t) if t.elems.is_empty() => AstExpr::unit(),
-        syn::Expr::Tuple(t) => AstExpr::Tuple(parse_expr_tuple(t)?),
-        syn::Expr::Struct(s) => AstExpr::Struct(parse_expr_struct(s)?.into()),
-        syn::Expr::Paren(p) => AstExpr::Paren(parse_expr_paren(p)?),
-        syn::Expr::Range(r) => AstExpr::Range(parse_expr_range(r)?),
-        syn::Expr::Field(f) => AstExpr::Select(parse_expr_field(f)?.into()),
-        syn::Expr::Try(t) => AstExpr::Try(parse_expr_try(t)?),
-        syn::Expr::While(w) => AstExpr::While(parse_expr_while(w)?),
-        syn::Expr::Let(l) => AstExpr::Let(parse_expr_let(l)?),
-        syn::Expr::Closure(c) => AstExpr::Closure(parse_expr_closure(c)?),
-        syn::Expr::Array(a) => AstExpr::Array(parse_expr_array(a)?),
-        syn::Expr::Assign(a) => AstExpr::Assign(parse_expr_assign(a)?.into()),
+        syn::Expr::MethodCall(c) => Expr::Invoke(parse_expr_method_call(c)?.into()),
+        syn::Expr::Index(i) => Expr::Index(parse_expr_index(i)?),
+        syn::Expr::Path(p) => Expr::path(parser::parse_path(p.path)?),
+        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
+        syn::Expr::Tuple(t) if t.elems.is_empty() => Expr::unit(),
+        syn::Expr::Tuple(t) => Expr::Tuple(parse_expr_tuple(t)?),
+        syn::Expr::Struct(s) => Expr::Struct(parse_expr_struct(s)?.into()),
+        syn::Expr::Paren(p) => Expr::Paren(parse_expr_paren(p)?),
+        syn::Expr::Range(r) => Expr::Range(parse_expr_range(r)?),
+        syn::Expr::Field(f) => Expr::Select(parse_expr_field(f)?.into()),
+        syn::Expr::Try(t) => Expr::Try(parse_expr_try(t)?),
+        syn::Expr::While(w) => Expr::While(parse_expr_while(w)?),
+        syn::Expr::Let(l) => Expr::Let(parse_expr_let(l)?),
+        syn::Expr::Closure(c) => Expr::Closure(parse_expr_closure(c)?),
+        syn::Expr::Array(a) => Expr::Array(parse_expr_array(a)?),
+        syn::Expr::Assign(a) => Expr::Assign(parse_expr_assign(a)?.into()),
         raw => {
             tracing::debug!("RawExpr {:?}", raw);
-            AstExpr::Any(AnyBox::new(RawExpr { raw }))
+            Expr::Any(AnyBox::new(RawExpr { raw }))
         } // x => bail!("Expr not supported: {:?}", x),
     };
     Ok(expr)
@@ -73,7 +73,7 @@ fn parse_expr_let(l: syn::ExprLet) -> Result<ExprLet> {
 fn parse_expr_while(w: syn::ExprWhile) -> Result<ExprWhile> {
     Ok(ExprWhile {
         cond: parse_expr(*w.cond)?.into(),
-        body: AstExpr::Block(parse_block(w.body)?).into(),
+        body: Expr::Block(parse_block(w.body)?).into(),
     })
 }
 fn parse_expr_try(t: syn::ExprTry) -> Result<ExprTry> {
@@ -96,16 +96,16 @@ pub fn parse_field_member(f: syn::Member) -> Ident {
         syn::Member::Unnamed(n) => Ident::new(n.index.to_string()),
     }
 }
-pub fn parse_literal(lit: syn::Lit) -> Result<AstValue> {
+pub fn parse_literal(lit: syn::Lit) -> Result<Value> {
     Ok(match lit {
-        syn::Lit::Int(i) => AstValue::Int(ValueInt::new(
+        syn::Lit::Int(i) => Value::Int(ValueInt::new(
             i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?,
         )),
-        syn::Lit::Float(i) => AstValue::Decimal(ValueDecimal::new(
+        syn::Lit::Float(i) => Value::Decimal(ValueDecimal::new(
             i.base10_parse().map_err(|e| eyre::eyre!(e.to_string()))?,
         )),
-        syn::Lit::Str(s) => AstValue::String(ValueString::new_ref(s.value())),
-        syn::Lit::Bool(b) => AstValue::Bool(ValueBool::new(b.value)),
+        syn::Lit::Str(s) => Value::String(ValueString::new_ref(s.value())),
+        syn::Lit::Bool(b) => Value::Bool(ValueBool::new(b.value)),
         _ => bail!("Lit not supported: {:?}", lit.to_token_stream()),
     })
 }
@@ -219,7 +219,7 @@ pub fn parse_expr_if(i: syn::ExprIf) -> Result<ExprIf> {
     }
     Ok(ExprIf {
         cond,
-        then: AstExpr::block(then).into(),
+        then: Expr::block(then).into(),
         elze,
     })
 }
@@ -227,11 +227,11 @@ pub fn parse_expr_if(i: syn::ExprIf) -> Result<ExprIf> {
 pub fn parse_expr_loop(l: syn::ExprLoop) -> Result<ExprLoop> {
     Ok(ExprLoop {
         label: l.label.map(|x| parser::parse_ident(x.name.ident)),
-        body: AstExpr::block(parse_block(l.body)?).into(),
+        body: Expr::block(parse_block(l.body)?).into(),
     })
 }
 
-pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<AstExpr> {
+pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = parse_expr(*b.left)?.into();
     let rhs = parse_expr(*b.right)?.into();
     let (kind, _flatten) = match b.op {
@@ -275,7 +275,7 @@ pub fn parse_expr_field_value(fv: syn::FieldValue) -> Result<ExprField> {
 
 pub fn parse_expr_struct(s: syn::ExprStruct) -> Result<ExprStruct> {
     Ok(ExprStruct {
-        name: AstExpr::path(parser::parse_path(s.path)?).into(),
+        name: Expr::path(parser::parse_path(s.path)?).into(),
         fields: s
             .fields
             .into_iter()
@@ -307,14 +307,14 @@ pub fn parse_expr_range(r: syn::ExprRange) -> Result<ExprRange> {
     })
 }
 
-pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<AstExpr> {
+pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<Expr> {
     // Check if this is a println! macro
     if is_println_macro(&m.mac) {
         return parse_println_macro_to_function_call(&m.mac);
     }
 
     // For other macros, preserve the original behavior
-    Ok(AstExpr::any(RawExprMacro { raw: m }))
+    Ok(Expr::any(RawExprMacro { raw: m }))
 }
 
 pub fn parse_stmt_macro(raw: syn::StmtMacro) -> Result<BlockStmt> {
@@ -335,14 +335,14 @@ fn is_println_macro(mac: &syn::Macro) -> bool {
     mac.path.segments.len() == 1 && mac.path.segments[0].ident == "println"
 }
 
-fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
+fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
     // Parse the macro tokens as function arguments
     let tokens_str = mac.tokens.to_string();
 
     // Handle empty println!()
     if tokens_str.trim().is_empty() {
-        return Ok(AstExpr::Invoke(ExprInvoke {
-            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new(
+        return Ok(Expr::Invoke(ExprInvoke {
+            target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(Ident::new(
                 "println",
             )))),
             args: vec![],
@@ -362,19 +362,19 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
 
             // Check if the first argument is a string literal (format string)
             if !args.is_empty() {
-                if let AstExpr::Value(value) = &args[0] {
-                    if let AstValue::String(format_str) = &**value {
+                if let Expr::Value(value) = &args[0] {
+                    if let Value::String(format_str) = &**value {
                         // Parse format string into template parts
                         let format_args = args[1..].to_vec();
                         let parts = parse_format_template(&format_str.value)?;
-                        let format_expr = AstExpr::FormatString(ExprFormatString {
+                        let format_expr = Expr::FormatString(ExprFormatString {
                             parts,
                             args: format_args,
                             kwargs: Vec::new(), // No named args for now
                         });
 
-                        return Ok(AstExpr::Invoke(ExprInvoke {
-                            target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(
+                        return Ok(Expr::Invoke(ExprInvoke {
+                            target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(
                                 Ident::new("println"),
                             ))),
                             args: vec![format_expr],
@@ -384,8 +384,8 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
             }
 
             // Fallback to regular function call
-            Ok(AstExpr::Invoke(ExprInvoke {
-                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new(
+            Ok(Expr::Invoke(ExprInvoke {
+                target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(Ident::new(
                     "println",
                 )))),
                 args,
@@ -393,13 +393,11 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<AstExpr> {
         }
         Err(_) => {
             // If parsing fails, fall back to treating it as a string literal
-            Ok(AstExpr::Invoke(ExprInvoke {
-                target: ExprInvokeTarget::expr(AstExpr::path(fp_core::id::Path::from(Ident::new(
+            Ok(Expr::Invoke(ExprInvoke {
+                target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(Ident::new(
                     "println",
                 )))),
-                args: vec![AstExpr::value(AstValue::String(ValueString::new_ref(
-                    tokens_str,
-                )))],
+                args: vec![Expr::value(Value::String(ValueString::new_ref(tokens_str)))],
             }))
         }
     }

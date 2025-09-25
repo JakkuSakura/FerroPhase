@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
-use crate::ast::{get_threadlocal_serializer, AstExpr, AstType, AstValue, BExpr};
+use crate::ast::{get_threadlocal_serializer, BExpr, Expr, Ty, Value};
 use crate::ast::{BType, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::ops::{BinOpKind, UnOpKind};
@@ -11,7 +11,7 @@ use crate::{common_enum, common_struct};
 common_enum! {
     pub enum ExprInvokeTarget {
         Function(Locator),
-        Type(AstType),
+        Type(Ty),
         Method(ExprSelect),
         Closure(ValueFunction),
         BinOp(BinOpKind),
@@ -19,20 +19,20 @@ common_enum! {
     }
 }
 impl ExprInvokeTarget {
-    pub fn expr(expr: AstExpr) -> Self {
+    pub fn expr(expr: Expr) -> Self {
         match expr {
-            AstExpr::Locator(locator) => Self::Function(locator.clone()),
-            AstExpr::Select(select) => Self::Method(select.clone()),
-            AstExpr::Value(value) => Self::value(*value),
+            Expr::Locator(locator) => Self::Function(locator.clone()),
+            Expr::Select(select) => Self::Method(select.clone()),
+            Expr::Value(value) => Self::value(*value),
             _ => Self::Expr(expr.into()),
         }
     }
-    pub fn value(value: AstValue) -> Self {
+    pub fn value(value: Value) -> Self {
         match value {
-            AstValue::Function(func) => Self::Closure(func.clone()),
-            AstValue::BinOpKind(kind) => Self::BinOp(kind.clone()),
-            AstValue::Type(ty) => Self::Type(ty.clone()),
-            AstValue::Expr(expr) => Self::expr(*expr),
+            Value::Function(func) => Self::Closure(func.clone()),
+            Value::BinOpKind(kind) => Self::BinOp(kind.clone()),
+            Value::Type(ty) => Self::Type(ty.clone()),
+            Value::Expr(expr) => Self::expr(*expr),
             _ => panic!("Invalid value for ExprInvokeTarget::value: {}", value),
         }
     }
@@ -41,7 +41,7 @@ impl ExprInvokeTarget {
 common_struct! {
     pub struct ExprInvoke {
         pub target: ExprInvokeTarget,
-        pub args: Vec<AstExpr>,
+        pub args: Vec<Expr>,
     }
 }
 impl Display for ExprInvoke {
@@ -57,7 +57,7 @@ common_struct! {
         /// Template parts - alternating literals and placeholders
         pub parts: Vec<FormatTemplatePart>,
         /// Positional arguments to substitute into placeholders
-        pub args: Vec<AstExpr>,
+        pub args: Vec<Expr>,
         /// Named keyword arguments for named placeholders
         pub kwargs: Vec<FormatKwArg>,
     }
@@ -97,7 +97,7 @@ common_struct! {
         /// The keyword name
         pub name: String,
         /// The expression value
-        pub value: AstExpr,
+        pub value: Expr,
     }
 }
 
@@ -228,12 +228,12 @@ common_enum! {
     pub enum ControlFlow {
         Continue,
         #[from(ignore)]
-        Break(Option<AstExpr>),
+        Break(Option<Expr>),
         #[from(ignore)]
-        Return(Option<AstExpr>),
+        Return(Option<Expr>),
         Into,
         #[from(ignore)]
-        IntoAndBreak(Option<AstExpr>),
+        IntoAndBreak(Option<Expr>),
     }
 }
 common_struct! {
@@ -245,7 +245,7 @@ common_struct! {
 impl ExprStruct {
     pub fn new_ident(name: Ident, fields: Vec<ExprField>) -> Self {
         Self {
-            name: AstExpr::ident(name).into(),
+            name: Expr::ident(name).into(),
             fields,
         }
     }
@@ -261,11 +261,11 @@ common_struct! {
 common_struct! {
     pub struct ExprField {
         pub name: Ident,
-        pub value: Option<AstExpr>,
+        pub value: Option<Expr>,
     }
 }
 impl ExprField {
-    pub fn new(name: Ident, value: AstExpr) -> Self {
+    pub fn new(name: Ident, value: Expr) -> Self {
         Self {
             name,
             value: Some(value),
@@ -318,7 +318,7 @@ common_struct! {
 
 common_struct! {
     pub struct ExprTuple {
-        pub values: Vec<AstExpr>,
+        pub values: Vec<Expr>,
     }
 }
 
@@ -344,20 +344,20 @@ common_struct! {
 }
 common_struct! {
     pub struct ExprArray {
-        pub values: Vec<AstExpr>,
+        pub values: Vec<Expr>,
     }
 }
 common_struct! {
     /// To "splat" or expand an iterable.
     /// For example, in Python, `*a` will expand `a` into the arguments of a function
     pub struct ExprSplat {
-        pub iter: Box<AstExpr>,
+        pub iter: Box<Expr>,
     }
 }
 common_struct! {
     /// To "splat" or expand a dict.
     /// For example, in Python, `**d` will expand `d` into the keyword arguments of a function
     pub struct ExprSplatDict {
-        pub dict: Box<AstExpr>,
+        pub dict: Box<Expr>,
     }
 }
