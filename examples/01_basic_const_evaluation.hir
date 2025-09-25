@@ -1,14 +1,14 @@
-HirProgram {
+Program {
     items: [
-        HirItem {
+        Item {
             hir_id: 205,
             def_id: 16,
             kind: Function(
-                HirFunction {
-                    sig: HirFunctionSig {
+                Function {
+                    sig: FunctionSig {
                         name: "main",
                         inputs: [],
-                        output: HirTy {
+                        output: Ty {
                             hir_id: 204,
                             kind: Tuple(
                                 [],
@@ -19,45 +19,45 @@ HirProgram {
                                 hi: 1,
                             },
                         },
-                        generics: HirGenerics {
+                        generics: Generics {
                             params: [],
                             where_clause: None,
                         },
                     },
                     body: Some(
-                        HirBody {
+                        Body {
                             hir_id: 203,
                             params: [],
-                            value: HirExpr {
+                            value: Expr {
                                 hir_id: 0,
                                 kind: Block(
-                                    HirBlock {
+                                    Block {
                                         hir_id: 202,
                                         stmts: [
-                                            HirStmt {
+                                            Stmt {
                                                 hir_id: 101,
                                                 kind: Expr(
-                                                    HirExpr {
+                                                    Expr {
                                                         hir_id: 1,
                                                         kind: Block(
-                                                            HirBlock {
+                                                            Block {
                                                                 hir_id: 100,
                                                                 stmts: [
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 8,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 7,
                                                                                 def_id: 0,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "BUFFER_SIZE",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 2,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "usize",
                                                                                                             args: None,
                                                                                                         },
@@ -71,14 +71,14 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 3,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 4,
                                                                                                 kind: Binary(
                                                                                                     Mul,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 5,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -91,7 +91,7 @@ HirProgram {
                                                                                                             hi: 4,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 6,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -122,21 +122,21 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 15,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 14,
                                                                                 def_id: 1,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "MAX_CONNECTIONS",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 9,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "i32",
                                                                                                             args: None,
                                                                                                         },
@@ -150,14 +150,14 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 10,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 11,
                                                                                                 kind: Binary(
                                                                                                     Add,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 12,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -170,7 +170,7 @@ HirProgram {
                                                                                                             hi: 8,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 13,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -201,21 +201,21 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 22,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 21,
                                                                                 def_id: 2,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "TIMEOUT_MS",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 16,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "u64",
                                                                                                             args: None,
                                                                                                         },
@@ -229,14 +229,14 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 17,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 18,
                                                                                                 kind: Binary(
                                                                                                     Mul,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 19,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -249,7 +249,7 @@ HirProgram {
                                                                                                             hi: 12,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 20,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -280,21 +280,21 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 35,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 34,
                                                                                 def_id: 3,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "FACTORIAL_5",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 23,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "i64",
                                                                                                             args: None,
                                                                                                         },
@@ -308,26 +308,26 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 24,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 25,
                                                                                                 kind: Binary(
                                                                                                     Mul,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 26,
                                                                                                         kind: Binary(
                                                                                                             Mul,
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 27,
                                                                                                                 kind: Binary(
                                                                                                                     Mul,
-                                                                                                                    HirExpr {
+                                                                                                                    Expr {
                                                                                                                         hir_id: 28,
                                                                                                                         kind: Binary(
                                                                                                                             Mul,
-                                                                                                                            HirExpr {
+                                                                                                                            Expr {
                                                                                                                                 hir_id: 29,
                                                                                                                                 kind: Literal(
                                                                                                                                     Integer(
@@ -340,7 +340,7 @@ HirProgram {
                                                                                                                                     hi: 19,
                                                                                                                                 },
                                                                                                                             },
-                                                                                                                            HirExpr {
+                                                                                                                            Expr {
                                                                                                                                 hir_id: 30,
                                                                                                                                 kind: Literal(
                                                                                                                                     Integer(
@@ -360,7 +360,7 @@ HirProgram {
                                                                                                                             hi: 18,
                                                                                                                         },
                                                                                                                     },
-                                                                                                                    HirExpr {
+                                                                                                                    Expr {
                                                                                                                         hir_id: 31,
                                                                                                                         kind: Literal(
                                                                                                                             Integer(
@@ -380,7 +380,7 @@ HirProgram {
                                                                                                                     hi: 17,
                                                                                                                 },
                                                                                                             },
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 32,
                                                                                                                 kind: Literal(
                                                                                                                     Integer(
@@ -400,7 +400,7 @@ HirProgram {
                                                                                                             hi: 16,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 33,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -431,21 +431,21 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 48,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 47,
                                                                                 def_id: 4,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "IS_POWER_OF_TWO",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 36,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "bool",
                                                                                                             args: None,
                                                                                                         },
@@ -459,23 +459,23 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 37,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 38,
                                                                                                 kind: Binary(
                                                                                                     Eq,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 39,
                                                                                                         kind: Binary(
                                                                                                             BitAnd,
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 41,
                                                                                                                 kind: Path(
-                                                                                                                    HirPath {
+                                                                                                                    Path {
                                                                                                                         segments: [
-                                                                                                                            HirPathSegment {
+                                                                                                                            PathSegment {
                                                                                                                                 name: "BUFFER_SIZE",
                                                                                                                                 args: None,
                                                                                                                             },
@@ -489,16 +489,16 @@ HirProgram {
                                                                                                                     hi: 28,
                                                                                                                 },
                                                                                                             },
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 42,
                                                                                                                 kind: Binary(
                                                                                                                     Sub,
-                                                                                                                    HirExpr {
+                                                                                                                    Expr {
                                                                                                                         hir_id: 44,
                                                                                                                         kind: Path(
-                                                                                                                            HirPath {
+                                                                                                                            Path {
                                                                                                                                 segments: [
-                                                                                                                                    HirPathSegment {
+                                                                                                                                    PathSegment {
                                                                                                                                         name: "BUFFER_SIZE",
                                                                                                                                         args: None,
                                                                                                                                     },
@@ -512,7 +512,7 @@ HirProgram {
                                                                                                                             hi: 31,
                                                                                                                         },
                                                                                                                     },
-                                                                                                                    HirExpr {
+                                                                                                                    Expr {
                                                                                                                         hir_id: 45,
                                                                                                                         kind: Literal(
                                                                                                                             Integer(
@@ -539,7 +539,7 @@ HirProgram {
                                                                                                             hi: 26,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 46,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -570,21 +570,21 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 56,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 55,
                                                                                 def_id: 5,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "DEBUG_LEVEL",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 49,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "i32",
                                                                                                             args: None,
                                                                                                         },
@@ -598,13 +598,13 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 50,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 51,
                                                                                                 kind: If(
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 52,
                                                                                                         kind: Literal(
                                                                                                             Bool(
@@ -617,7 +617,7 @@ HirProgram {
                                                                                                             hi: 36,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 53,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -631,7 +631,7 @@ HirProgram {
                                                                                                         },
                                                                                                     },
                                                                                                     Some(
-                                                                                                        HirExpr {
+                                                                                                        Expr {
                                                                                                             hir_id: 54,
                                                                                                             kind: Literal(
                                                                                                                 Integer(
@@ -663,25 +663,25 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 66,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 65,
                                                                                 def_id: 6,
                                                                                 kind: Struct(
-                                                                                    HirStruct {
+                                                                                    Struct {
                                                                                         name: "Config",
                                                                                         fields: [
-                                                                                            HirStructField {
+                                                                                            StructField {
                                                                                                 hir_id: 57,
                                                                                                 name: "buffer_size",
-                                                                                                ty: HirTy {
+                                                                                                ty: Ty {
                                                                                                     hir_id: 58,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "usize",
                                                                                                                     args: None,
                                                                                                                 },
@@ -697,15 +697,15 @@ HirProgram {
                                                                                                 },
                                                                                                 vis: Public,
                                                                                             },
-                                                                                            HirStructField {
+                                                                                            StructField {
                                                                                                 hir_id: 59,
                                                                                                 name: "max_connections",
-                                                                                                ty: HirTy {
+                                                                                                ty: Ty {
                                                                                                     hir_id: 60,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "i32",
                                                                                                                     args: None,
                                                                                                                 },
@@ -721,15 +721,15 @@ HirProgram {
                                                                                                 },
                                                                                                 vis: Public,
                                                                                             },
-                                                                                            HirStructField {
+                                                                                            StructField {
                                                                                                 hir_id: 61,
                                                                                                 name: "timeout_ms",
-                                                                                                ty: HirTy {
+                                                                                                ty: Ty {
                                                                                                     hir_id: 62,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "u64",
                                                                                                                     args: None,
                                                                                                                 },
@@ -745,15 +745,15 @@ HirProgram {
                                                                                                 },
                                                                                                 vis: Public,
                                                                                             },
-                                                                                            HirStructField {
+                                                                                            StructField {
                                                                                                 hir_id: 63,
                                                                                                 name: "debug_level",
-                                                                                                ty: HirTy {
+                                                                                                ty: Ty {
                                                                                                     hir_id: 64,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "i32",
                                                                                                                     args: None,
                                                                                                                 },
@@ -770,7 +770,7 @@ HirProgram {
                                                                                                 vis: Public,
                                                                                             },
                                                                                         ],
-                                                                                        generics: HirGenerics {
+                                                                                        generics: Generics {
                                                                                             params: [],
                                                                                             where_clause: None,
                                                                                         },
@@ -784,21 +784,21 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 79,
                                                                         kind: Item(
-                                                                            HirItem {
+                                                                            Item {
                                                                                 hir_id: 78,
                                                                                 def_id: 7,
                                                                                 kind: Const(
-                                                                                    HirConst {
+                                                                                    Const {
                                                                                         name: "DEFAULT_CONFIG",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 67,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "Config",
                                                                                                             args: None,
                                                                                                         },
@@ -812,15 +812,15 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        body: HirBody {
+                                                                                        body: Body {
                                                                                             hir_id: 68,
                                                                                             params: [],
-                                                                                            value: HirExpr {
+                                                                                            value: Expr {
                                                                                                 hir_id: 69,
                                                                                                 kind: Struct(
-                                                                                                    HirPath {
+                                                                                                    Path {
                                                                                                         segments: [
-                                                                                                            HirPathSegment {
+                                                                                                            PathSegment {
                                                                                                                 name: "StructName",
                                                                                                                 args: None,
                                                                                                             },
@@ -828,15 +828,15 @@ HirProgram {
                                                                                                         res: None,
                                                                                                     },
                                                                                                     [
-                                                                                                        HirStructExprField {
+                                                                                                        StructExprField {
                                                                                                             hir_id: 70,
                                                                                                             name: "buffer_size",
-                                                                                                            expr: HirExpr {
+                                                                                                            expr: Expr {
                                                                                                                 hir_id: 71,
                                                                                                                 kind: Path(
-                                                                                                                    HirPath {
+                                                                                                                    Path {
                                                                                                                         segments: [
-                                                                                                                            HirPathSegment {
+                                                                                                                            PathSegment {
                                                                                                                                 name: "BUFFER_SIZE",
                                                                                                                                 args: None,
                                                                                                                             },
@@ -851,15 +851,15 @@ HirProgram {
                                                                                                                 },
                                                                                                             },
                                                                                                         },
-                                                                                                        HirStructExprField {
+                                                                                                        StructExprField {
                                                                                                             hir_id: 72,
                                                                                                             name: "max_connections",
-                                                                                                            expr: HirExpr {
+                                                                                                            expr: Expr {
                                                                                                                 hir_id: 73,
                                                                                                                 kind: Path(
-                                                                                                                    HirPath {
+                                                                                                                    Path {
                                                                                                                         segments: [
-                                                                                                                            HirPathSegment {
+                                                                                                                            PathSegment {
                                                                                                                                 name: "MAX_CONNECTIONS",
                                                                                                                                 args: None,
                                                                                                                             },
@@ -874,15 +874,15 @@ HirProgram {
                                                                                                                 },
                                                                                                             },
                                                                                                         },
-                                                                                                        HirStructExprField {
+                                                                                                        StructExprField {
                                                                                                             hir_id: 74,
                                                                                                             name: "timeout_ms",
-                                                                                                            expr: HirExpr {
+                                                                                                            expr: Expr {
                                                                                                                 hir_id: 75,
                                                                                                                 kind: Path(
-                                                                                                                    HirPath {
+                                                                                                                    Path {
                                                                                                                         segments: [
-                                                                                                                            HirPathSegment {
+                                                                                                                            PathSegment {
                                                                                                                                 name: "TIMEOUT_MS",
                                                                                                                                 args: None,
                                                                                                                             },
@@ -897,15 +897,15 @@ HirProgram {
                                                                                                                 },
                                                                                                             },
                                                                                                         },
-                                                                                                        HirStructExprField {
+                                                                                                        StructExprField {
                                                                                                             hir_id: 76,
                                                                                                             name: "debug_level",
-                                                                                                            expr: HirExpr {
+                                                                                                            expr: Expr {
                                                                                                                 hir_id: 77,
                                                                                                                 kind: Path(
-                                                                                                                    HirPath {
+                                                                                                                    Path {
                                                                                                                         segments: [
-                                                                                                                            HirPathSegment {
+                                                                                                                            PathSegment {
                                                                                                                                 name: "DEBUG_LEVEL",
                                                                                                                                 args: None,
                                                                                                                             },
@@ -939,18 +939,18 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 93,
                                                                         kind: Expr(
-                                                                            HirExpr {
+                                                                            Expr {
                                                                                 hir_id: 80,
                                                                                 kind: Call(
-                                                                                    HirExpr {
+                                                                                    Expr {
                                                                                         hir_id: 92,
                                                                                         kind: Path(
-                                                                                            HirPath {
+                                                                                            Path {
                                                                                                 segments: [
-                                                                                                    HirPathSegment {
+                                                                                                    PathSegment {
                                                                                                         name: "println",
                                                                                                         args: None,
                                                                                                     },
@@ -965,7 +965,7 @@ HirProgram {
                                                                                         },
                                                                                     },
                                                                                     [
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 91,
                                                                                             kind: Literal(
                                                                                                 Str(
@@ -978,19 +978,19 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 81,
                                                                                             kind: Binary(
                                                                                                 Div,
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 82,
                                                                                                     kind: FieldAccess(
-                                                                                                        HirExpr {
+                                                                                                        Expr {
                                                                                                             hir_id: 83,
                                                                                                             kind: Path(
-                                                                                                                HirPath {
+                                                                                                                Path {
                                                                                                                     segments: [
-                                                                                                                        HirPathSegment {
+                                                                                                                        PathSegment {
                                                                                                                             name: "DEFAULT_CONFIG",
                                                                                                                             args: None,
                                                                                                                         },
@@ -1012,7 +1012,7 @@ HirProgram {
                                                                                                         hi: 49,
                                                                                                     },
                                                                                                 },
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 84,
                                                                                                     kind: Literal(
                                                                                                         Integer(
@@ -1032,15 +1032,15 @@ HirProgram {
                                                                                                 hi: 48,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 85,
                                                                                             kind: FieldAccess(
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 86,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "DEFAULT_CONFIG",
                                                                                                                     args: None,
                                                                                                                 },
@@ -1062,15 +1062,15 @@ HirProgram {
                                                                                                 hi: 52,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 87,
                                                                                             kind: FieldAccess(
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 88,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "DEFAULT_CONFIG",
                                                                                                                     args: None,
                                                                                                                 },
@@ -1092,15 +1092,15 @@ HirProgram {
                                                                                                 hi: 54,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 89,
                                                                                             kind: FieldAccess(
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 90,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "DEFAULT_CONFIG",
                                                                                                                     args: None,
                                                                                                                 },
@@ -1132,18 +1132,18 @@ HirProgram {
                                                                             },
                                                                         ),
                                                                     },
-                                                                    HirStmt {
+                                                                    Stmt {
                                                                         hir_id: 99,
                                                                         kind: Expr(
-                                                                            HirExpr {
+                                                                            Expr {
                                                                                 hir_id: 94,
                                                                                 kind: Call(
-                                                                                    HirExpr {
+                                                                                    Expr {
                                                                                         hir_id: 98,
                                                                                         kind: Path(
-                                                                                            HirPath {
+                                                                                            Path {
                                                                                                 segments: [
-                                                                                                    HirPathSegment {
+                                                                                                    PathSegment {
                                                                                                         name: "println",
                                                                                                         args: None,
                                                                                                     },
@@ -1158,7 +1158,7 @@ HirProgram {
                                                                                         },
                                                                                     },
                                                                                     [
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 97,
                                                                                             kind: Literal(
                                                                                                 Str(
@@ -1171,12 +1171,12 @@ HirProgram {
                                                                                                 hi: 0,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 95,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "FACTORIAL_5",
                                                                                                             args: None,
                                                                                                         },
@@ -1190,12 +1190,12 @@ HirProgram {
                                                                                                 hi: 59,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 96,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "IS_POWER_OF_TWO",
                                                                                                             args: None,
                                                                                                         },
@@ -1233,27 +1233,27 @@ HirProgram {
                                             },
                                         ],
                                         expr: Some(
-                                            HirExpr {
+                                            Expr {
                                                 hir_id: 102,
                                                 kind: Block(
-                                                    HirBlock {
+                                                    Block {
                                                         hir_id: 201,
                                                         stmts: [
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 109,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 108,
                                                                         def_id: 8,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "BUFFER_SIZE",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 103,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "usize",
                                                                                                     args: None,
                                                                                                 },
@@ -1267,14 +1267,14 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 104,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 105,
                                                                                         kind: Binary(
                                                                                             Mul,
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 106,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1287,7 +1287,7 @@ HirProgram {
                                                                                                     hi: 63,
                                                                                                 },
                                                                                             },
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 107,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1318,21 +1318,21 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 116,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 115,
                                                                         def_id: 9,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "MAX_CONNECTIONS",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 110,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "i32",
                                                                                                     args: None,
                                                                                                 },
@@ -1346,14 +1346,14 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 111,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 112,
                                                                                         kind: Binary(
                                                                                             Add,
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 113,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1366,7 +1366,7 @@ HirProgram {
                                                                                                     hi: 67,
                                                                                                 },
                                                                                             },
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 114,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1397,21 +1397,21 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 123,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 122,
                                                                         def_id: 10,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "TIMEOUT_MS",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 117,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "u64",
                                                                                                     args: None,
                                                                                                 },
@@ -1425,14 +1425,14 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 118,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 119,
                                                                                         kind: Binary(
                                                                                             Mul,
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 120,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1445,7 +1445,7 @@ HirProgram {
                                                                                                     hi: 71,
                                                                                                 },
                                                                                             },
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 121,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1476,21 +1476,21 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 136,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 135,
                                                                         def_id: 11,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "FACTORIAL_5",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 124,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "i64",
                                                                                                     args: None,
                                                                                                 },
@@ -1504,26 +1504,26 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 125,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 126,
                                                                                         kind: Binary(
                                                                                             Mul,
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 127,
                                                                                                 kind: Binary(
                                                                                                     Mul,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 128,
                                                                                                         kind: Binary(
                                                                                                             Mul,
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 129,
                                                                                                                 kind: Binary(
                                                                                                                     Mul,
-                                                                                                                    HirExpr {
+                                                                                                                    Expr {
                                                                                                                         hir_id: 130,
                                                                                                                         kind: Literal(
                                                                                                                             Integer(
@@ -1536,7 +1536,7 @@ HirProgram {
                                                                                                                             hi: 78,
                                                                                                                         },
                                                                                                                     },
-                                                                                                                    HirExpr {
+                                                                                                                    Expr {
                                                                                                                         hir_id: 131,
                                                                                                                         kind: Literal(
                                                                                                                             Integer(
@@ -1556,7 +1556,7 @@ HirProgram {
                                                                                                                     hi: 77,
                                                                                                                 },
                                                                                                             },
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 132,
                                                                                                                 kind: Literal(
                                                                                                                     Integer(
@@ -1576,7 +1576,7 @@ HirProgram {
                                                                                                             hi: 76,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 133,
                                                                                                         kind: Literal(
                                                                                                             Integer(
@@ -1596,7 +1596,7 @@ HirProgram {
                                                                                                     hi: 75,
                                                                                                 },
                                                                                             },
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 134,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1627,21 +1627,21 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 149,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 148,
                                                                         def_id: 12,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "IS_POWER_OF_TWO",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 137,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "bool",
                                                                                                     args: None,
                                                                                                 },
@@ -1655,23 +1655,23 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 138,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 139,
                                                                                         kind: Binary(
                                                                                             Eq,
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 140,
                                                                                                 kind: Binary(
                                                                                                     BitAnd,
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 142,
                                                                                                         kind: Path(
-                                                                                                            HirPath {
+                                                                                                            Path {
                                                                                                                 segments: [
-                                                                                                                    HirPathSegment {
+                                                                                                                    PathSegment {
                                                                                                                         name: "BUFFER_SIZE",
                                                                                                                         args: None,
                                                                                                                     },
@@ -1685,16 +1685,16 @@ HirProgram {
                                                                                                             hi: 87,
                                                                                                         },
                                                                                                     },
-                                                                                                    HirExpr {
+                                                                                                    Expr {
                                                                                                         hir_id: 143,
                                                                                                         kind: Binary(
                                                                                                             Sub,
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 145,
                                                                                                                 kind: Path(
-                                                                                                                    HirPath {
+                                                                                                                    Path {
                                                                                                                         segments: [
-                                                                                                                            HirPathSegment {
+                                                                                                                            PathSegment {
                                                                                                                                 name: "BUFFER_SIZE",
                                                                                                                                 args: None,
                                                                                                                             },
@@ -1708,7 +1708,7 @@ HirProgram {
                                                                                                                     hi: 90,
                                                                                                                 },
                                                                                                             },
-                                                                                                            HirExpr {
+                                                                                                            Expr {
                                                                                                                 hir_id: 146,
                                                                                                                 kind: Literal(
                                                                                                                     Integer(
@@ -1735,7 +1735,7 @@ HirProgram {
                                                                                                     hi: 85,
                                                                                                 },
                                                                                             },
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 147,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1766,21 +1766,21 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 157,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 156,
                                                                         def_id: 13,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "DEBUG_LEVEL",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 150,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "i32",
                                                                                                     args: None,
                                                                                                 },
@@ -1794,13 +1794,13 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 151,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 152,
                                                                                         kind: If(
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 153,
                                                                                                 kind: Literal(
                                                                                                     Bool(
@@ -1813,7 +1813,7 @@ HirProgram {
                                                                                                     hi: 95,
                                                                                                 },
                                                                                             },
-                                                                                            HirExpr {
+                                                                                            Expr {
                                                                                                 hir_id: 154,
                                                                                                 kind: Literal(
                                                                                                     Integer(
@@ -1827,7 +1827,7 @@ HirProgram {
                                                                                                 },
                                                                                             },
                                                                                             Some(
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 155,
                                                                                                     kind: Literal(
                                                                                                         Integer(
@@ -1859,25 +1859,25 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 167,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 166,
                                                                         def_id: 14,
                                                                         kind: Struct(
-                                                                            HirStruct {
+                                                                            Struct {
                                                                                 name: "Config",
                                                                                 fields: [
-                                                                                    HirStructField {
+                                                                                    StructField {
                                                                                         hir_id: 158,
                                                                                         name: "buffer_size",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 159,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "usize",
                                                                                                             args: None,
                                                                                                         },
@@ -1893,15 +1893,15 @@ HirProgram {
                                                                                         },
                                                                                         vis: Public,
                                                                                     },
-                                                                                    HirStructField {
+                                                                                    StructField {
                                                                                         hir_id: 160,
                                                                                         name: "max_connections",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 161,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "i32",
                                                                                                             args: None,
                                                                                                         },
@@ -1917,15 +1917,15 @@ HirProgram {
                                                                                         },
                                                                                         vis: Public,
                                                                                     },
-                                                                                    HirStructField {
+                                                                                    StructField {
                                                                                         hir_id: 162,
                                                                                         name: "timeout_ms",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 163,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "u64",
                                                                                                             args: None,
                                                                                                         },
@@ -1941,15 +1941,15 @@ HirProgram {
                                                                                         },
                                                                                         vis: Public,
                                                                                     },
-                                                                                    HirStructField {
+                                                                                    StructField {
                                                                                         hir_id: 164,
                                                                                         name: "debug_level",
-                                                                                        ty: HirTy {
+                                                                                        ty: Ty {
                                                                                             hir_id: 165,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "i32",
                                                                                                             args: None,
                                                                                                         },
@@ -1966,7 +1966,7 @@ HirProgram {
                                                                                         vis: Public,
                                                                                     },
                                                                                 ],
-                                                                                generics: HirGenerics {
+                                                                                generics: Generics {
                                                                                     params: [],
                                                                                     where_clause: None,
                                                                                 },
@@ -1980,21 +1980,21 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 180,
                                                                 kind: Item(
-                                                                    HirItem {
+                                                                    Item {
                                                                         hir_id: 179,
                                                                         def_id: 15,
                                                                         kind: Const(
-                                                                            HirConst {
+                                                                            Const {
                                                                                 name: "DEFAULT_CONFIG",
-                                                                                ty: HirTy {
+                                                                                ty: Ty {
                                                                                     hir_id: 168,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "Config",
                                                                                                     args: None,
                                                                                                 },
@@ -2008,15 +2008,15 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                body: HirBody {
+                                                                                body: Body {
                                                                                     hir_id: 169,
                                                                                     params: [],
-                                                                                    value: HirExpr {
+                                                                                    value: Expr {
                                                                                         hir_id: 170,
                                                                                         kind: Struct(
-                                                                                            HirPath {
+                                                                                            Path {
                                                                                                 segments: [
-                                                                                                    HirPathSegment {
+                                                                                                    PathSegment {
                                                                                                         name: "StructName",
                                                                                                         args: None,
                                                                                                     },
@@ -2024,15 +2024,15 @@ HirProgram {
                                                                                                 res: None,
                                                                                             },
                                                                                             [
-                                                                                                HirStructExprField {
+                                                                                                StructExprField {
                                                                                                     hir_id: 171,
                                                                                                     name: "buffer_size",
-                                                                                                    expr: HirExpr {
+                                                                                                    expr: Expr {
                                                                                                         hir_id: 172,
                                                                                                         kind: Path(
-                                                                                                            HirPath {
+                                                                                                            Path {
                                                                                                                 segments: [
-                                                                                                                    HirPathSegment {
+                                                                                                                    PathSegment {
                                                                                                                         name: "BUFFER_SIZE",
                                                                                                                         args: None,
                                                                                                                     },
@@ -2047,15 +2047,15 @@ HirProgram {
                                                                                                         },
                                                                                                     },
                                                                                                 },
-                                                                                                HirStructExprField {
+                                                                                                StructExprField {
                                                                                                     hir_id: 173,
                                                                                                     name: "max_connections",
-                                                                                                    expr: HirExpr {
+                                                                                                    expr: Expr {
                                                                                                         hir_id: 174,
                                                                                                         kind: Path(
-                                                                                                            HirPath {
+                                                                                                            Path {
                                                                                                                 segments: [
-                                                                                                                    HirPathSegment {
+                                                                                                                    PathSegment {
                                                                                                                         name: "MAX_CONNECTIONS",
                                                                                                                         args: None,
                                                                                                                     },
@@ -2070,15 +2070,15 @@ HirProgram {
                                                                                                         },
                                                                                                     },
                                                                                                 },
-                                                                                                HirStructExprField {
+                                                                                                StructExprField {
                                                                                                     hir_id: 175,
                                                                                                     name: "timeout_ms",
-                                                                                                    expr: HirExpr {
+                                                                                                    expr: Expr {
                                                                                                         hir_id: 176,
                                                                                                         kind: Path(
-                                                                                                            HirPath {
+                                                                                                            Path {
                                                                                                                 segments: [
-                                                                                                                    HirPathSegment {
+                                                                                                                    PathSegment {
                                                                                                                         name: "TIMEOUT_MS",
                                                                                                                         args: None,
                                                                                                                     },
@@ -2093,15 +2093,15 @@ HirProgram {
                                                                                                         },
                                                                                                     },
                                                                                                 },
-                                                                                                HirStructExprField {
+                                                                                                StructExprField {
                                                                                                     hir_id: 177,
                                                                                                     name: "debug_level",
-                                                                                                    expr: HirExpr {
+                                                                                                    expr: Expr {
                                                                                                         hir_id: 178,
                                                                                                         kind: Path(
-                                                                                                            HirPath {
+                                                                                                            Path {
                                                                                                                 segments: [
-                                                                                                                    HirPathSegment {
+                                                                                                                    PathSegment {
                                                                                                                         name: "DEBUG_LEVEL",
                                                                                                                         args: None,
                                                                                                                     },
@@ -2135,18 +2135,18 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 194,
                                                                 kind: Expr(
-                                                                    HirExpr {
+                                                                    Expr {
                                                                         hir_id: 181,
                                                                         kind: Call(
-                                                                            HirExpr {
+                                                                            Expr {
                                                                                 hir_id: 193,
                                                                                 kind: Path(
-                                                                                    HirPath {
+                                                                                    Path {
                                                                                         segments: [
-                                                                                            HirPathSegment {
+                                                                                            PathSegment {
                                                                                                 name: "println",
                                                                                                 args: None,
                                                                                             },
@@ -2161,7 +2161,7 @@ HirProgram {
                                                                                 },
                                                                             },
                                                                             [
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 192,
                                                                                     kind: Literal(
                                                                                         Str(
@@ -2174,19 +2174,19 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 182,
                                                                                     kind: Binary(
                                                                                         Div,
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 183,
                                                                                             kind: FieldAccess(
-                                                                                                HirExpr {
+                                                                                                Expr {
                                                                                                     hir_id: 184,
                                                                                                     kind: Path(
-                                                                                                        HirPath {
+                                                                                                        Path {
                                                                                                             segments: [
-                                                                                                                HirPathSegment {
+                                                                                                                PathSegment {
                                                                                                                     name: "DEFAULT_CONFIG",
                                                                                                                     args: None,
                                                                                                                 },
@@ -2208,7 +2208,7 @@ HirProgram {
                                                                                                 hi: 108,
                                                                                             },
                                                                                         },
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 185,
                                                                                             kind: Literal(
                                                                                                 Integer(
@@ -2228,15 +2228,15 @@ HirProgram {
                                                                                         hi: 107,
                                                                                     },
                                                                                 },
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 186,
                                                                                     kind: FieldAccess(
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 187,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "DEFAULT_CONFIG",
                                                                                                             args: None,
                                                                                                         },
@@ -2258,15 +2258,15 @@ HirProgram {
                                                                                         hi: 111,
                                                                                     },
                                                                                 },
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 188,
                                                                                     kind: FieldAccess(
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 189,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "DEFAULT_CONFIG",
                                                                                                             args: None,
                                                                                                         },
@@ -2288,15 +2288,15 @@ HirProgram {
                                                                                         hi: 113,
                                                                                     },
                                                                                 },
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 190,
                                                                                     kind: FieldAccess(
-                                                                                        HirExpr {
+                                                                                        Expr {
                                                                                             hir_id: 191,
                                                                                             kind: Path(
-                                                                                                HirPath {
+                                                                                                Path {
                                                                                                     segments: [
-                                                                                                        HirPathSegment {
+                                                                                                        PathSegment {
                                                                                                             name: "DEFAULT_CONFIG",
                                                                                                             args: None,
                                                                                                         },
@@ -2328,18 +2328,18 @@ HirProgram {
                                                                     },
                                                                 ),
                                                             },
-                                                            HirStmt {
+                                                            Stmt {
                                                                 hir_id: 200,
                                                                 kind: Expr(
-                                                                    HirExpr {
+                                                                    Expr {
                                                                         hir_id: 195,
                                                                         kind: Call(
-                                                                            HirExpr {
+                                                                            Expr {
                                                                                 hir_id: 199,
                                                                                 kind: Path(
-                                                                                    HirPath {
+                                                                                    Path {
                                                                                         segments: [
-                                                                                            HirPathSegment {
+                                                                                            PathSegment {
                                                                                                 name: "println",
                                                                                                 args: None,
                                                                                             },
@@ -2354,7 +2354,7 @@ HirProgram {
                                                                                 },
                                                                             },
                                                                             [
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 198,
                                                                                     kind: Literal(
                                                                                         Str(
@@ -2367,12 +2367,12 @@ HirProgram {
                                                                                         hi: 0,
                                                                                     },
                                                                                 },
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 196,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "FACTORIAL_5",
                                                                                                     args: None,
                                                                                                 },
@@ -2386,12 +2386,12 @@ HirProgram {
                                                                                         hi: 118,
                                                                                     },
                                                                                 },
-                                                                                HirExpr {
+                                                                                Expr {
                                                                                     hir_id: 197,
                                                                                     kind: Path(
-                                                                                        HirPath {
+                                                                                        Path {
                                                                                             segments: [
-                                                                                                HirPathSegment {
+                                                                                                PathSegment {
                                                                                                     name: "IS_POWER_OF_TWO",
                                                                                                     args: None,
                                                                                                 },

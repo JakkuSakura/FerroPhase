@@ -3,7 +3,7 @@
 //! This module defines the RuntimePass trait that allows different language
 //! runtimes to provide their own value semantics on top of the core AST.
 
-use crate::ast::{AstExpr, AstValue, RuntimeValue};
+use crate::ast::{Expr, RuntimeValue, Value};
 use crate::context::SharedScopedContext;
 use crate::id::Ident;
 use crate::{bail, Result};
@@ -13,16 +13,11 @@ pub trait RuntimePass: Send + Sync {
     /// Name of this runtime pass (e.g., "rust", "javascript", "python")
     fn name(&self) -> &str;
 
-    /// Convert AstValue to RuntimeValue with language-specific semantics
-    fn create_runtime_value(&self, literal: AstValue) -> RuntimeValue;
+    /// Convert Value to RuntimeValue with language-specific semantics
+    fn create_runtime_value(&self, literal: Value) -> RuntimeValue;
 
     /// Handle assignment with language-specific ownership rules
-    fn assign(
-        &self,
-        target: &AstExpr,
-        value: RuntimeValue,
-        ctx: &SharedScopedContext,
-    ) -> Result<()>;
+    fn assign(&self, target: &Expr, value: RuntimeValue, ctx: &SharedScopedContext) -> Result<()>;
 
     /// Handle method calls with language-specific dispatch
     fn call_method(
@@ -41,7 +36,7 @@ pub trait RuntimePass: Send + Sync {
         let field_name = field.to_string();
         let field_value = value.get_value();
         obj.try_mutate(move |ast_value| match ast_value {
-            AstValue::Struct(ref mut s) => {
+            Value::Struct(ref mut s) => {
                 if let Some(struct_field) = s
                     .structural
                     .fields
@@ -85,15 +80,15 @@ pub trait RuntimePass: Send + Sync {
 /// Helper trait for extracting information from expressions
 pub trait RuntimePassHelper {
     /// Extract variable name from an expression (for borrowing)
-    fn get_variable_name(&self, expr: &AstExpr) -> Result<String> {
+    fn get_variable_name(&self, expr: &Expr) -> Result<String> {
         match expr {
-            AstExpr::Locator(locator) => Ok(locator.to_string()),
+            Expr::Locator(locator) => Ok(locator.to_string()),
             _ => bail!("Cannot extract variable name from expression"),
         }
     }
 
     /// Check if expression represents a mutable reference
-    fn is_mutable_reference(&self, _expr: &AstExpr) -> bool {
+    fn is_mutable_reference(&self, _expr: &Expr) -> bool {
         // Default: assume non-mutable
         false
     }
@@ -135,13 +130,13 @@ impl RuntimePass for LiteralRuntimePass {
         "literal"
     }
 
-    fn create_runtime_value(&self, literal: AstValue) -> RuntimeValue {
+    fn create_runtime_value(&self, literal: Value) -> RuntimeValue {
         RuntimeValue::literal(literal)
     }
 
     fn assign(
         &self,
-        _target: &AstExpr,
+        _target: &Expr,
         _value: RuntimeValue,
         _ctx: &SharedScopedContext,
     ) -> Result<()> {
@@ -158,7 +153,7 @@ impl RuntimePass for LiteralRuntimePass {
         // Basic method support for literals
         match method {
             "clone" => Ok(RuntimeValue::literal(obj.get_value())),
-            "to_string" => Ok(RuntimeValue::literal(AstValue::string(format!(
+            "to_string" => Ok(RuntimeValue::literal(Value::string(format!(
                 "{}",
                 obj.get_value()
             )))),
@@ -169,7 +164,7 @@ impl RuntimePass for LiteralRuntimePass {
     fn access_field(&self, obj: RuntimeValue, field: &str) -> Result<RuntimeValue> {
         let value = obj.get_value();
         match value {
-            AstValue::Struct(s) => {
+            Value::Struct(s) => {
                 if let Some(field_value) = s.structural.get_field(&Ident::new(field)) {
                     Ok(RuntimeValue::literal(field_value.value.clone()))
                 } else {

@@ -8,39 +8,39 @@ pub type LocalId = u32;
 pub type BasicBlockId = u32;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MirProgram {
-    pub items: Vec<MirItem>,
-    pub bodies: HashMap<BodyId, MirBody>,
+pub struct Program {
+    pub items: Vec<Item>,
+    pub bodies: HashMap<BodyId, Body>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MirItem {
+pub struct Item {
     pub mir_id: MirId,
-    pub kind: MirItemKind,
+    pub kind: ItemKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum MirItemKind {
-    Function(MirFunction),
-    Static(MirStatic),
+pub enum ItemKind {
+    Function(Function),
+    Static(Static),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MirFunction {
-    pub sig: MirFunctionSig,
+pub struct Function {
+    pub sig: FunctionSig,
     pub body_id: BodyId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MirFunctionSig {
+pub struct FunctionSig {
     pub inputs: Vec<Ty>,
     pub output: Ty,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MirStatic {
+pub struct Static {
     pub ty: Ty,
-    pub init: MirOperand,
+    pub init: Operand,
     pub mutability: Mutability,
 }
 
@@ -48,7 +48,7 @@ pub struct MirStatic {
 pub struct BodyId(pub u32);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MirBody {
+pub struct Body {
     pub basic_blocks: Vec<BasicBlockData>,
     pub locals: Vec<LocalDecl>,
     pub arg_count: usize,
@@ -96,7 +96,7 @@ pub enum TerminatorKind {
         target: BasicBlockId,
     },
     SwitchInt {
-        discr: MirOperand,
+        discr: Operand,
         switch_ty: Ty,
         targets: SwitchTargets,
     },
@@ -111,27 +111,27 @@ pub enum TerminatorKind {
     },
     DropAndReplace {
         place: Place,
-        value: MirOperand,
+        value: Operand,
         target: BasicBlockId,
         unwind: Option<BasicBlockId>,
     },
     Call {
-        func: MirOperand,
-        args: Vec<MirOperand>,
+        func: Operand,
+        args: Vec<Operand>,
         destination: Option<(Place, BasicBlockId)>,
         cleanup: Option<BasicBlockId>,
         from_hir_call: bool,
         fn_span: Span,
     },
     Assert {
-        cond: MirOperand,
+        cond: Operand,
         expected: bool,
         msg: AssertMessage,
         target: BasicBlockId,
         cleanup: Option<BasicBlockId>,
     },
     Yield {
-        value: MirOperand,
+        value: Operand,
         resume: BasicBlockId,
         resume_arg: Place,
         drop: Option<BasicBlockId>,
@@ -164,24 +164,24 @@ pub struct SwitchTargets {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rvalue {
-    Use(MirOperand),
-    Repeat(MirOperand, u64),
+    Use(Operand),
+    Repeat(Operand, u64),
     Ref(Region, BorrowKind, Place),
     ThreadLocalRef(DefId),
     AddressOf(Mutability, Place),
     Len(Place),
-    Cast(CastKind, MirOperand, Ty),
-    BinaryOp(BinOp, MirOperand, MirOperand),
-    CheckedBinaryOp(BinOp, MirOperand, MirOperand),
+    Cast(CastKind, Operand, Ty),
+    BinaryOp(BinOp, Operand, Operand),
+    CheckedBinaryOp(BinOp, Operand, Operand),
     NullaryOp(NullOp, Ty),
-    UnaryOp(UnOp, MirOperand),
+    UnaryOp(UnOp, Operand),
     Discriminant(Place),
-    Aggregate(AggregateKind, Vec<MirOperand>),
-    ShallowInitBox(MirOperand, Ty),
+    Aggregate(AggregateKind, Vec<Operand>),
+    ShallowInitBox(Operand, Ty),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum MirOperand {
+pub enum Operand {
     Copy(Place),
     Move(Place),
     Constant(Constant),
@@ -355,11 +355,11 @@ pub enum RetagKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AssertMessage {
-    BoundsCheck { len: MirOperand, index: MirOperand },
-    Overflow(BinOp, MirOperand, MirOperand),
-    OverflowNeg(MirOperand),
-    DivisionByZero(MirOperand),
-    RemainderByZero(MirOperand),
+    BoundsCheck { len: Operand, index: Operand },
+    Overflow(BinOp, Operand, Operand),
+    OverflowNeg(Operand),
+    DivisionByZero(Operand),
+    RemainderByZero(Operand),
     ResumedAfterReturn,
     ResumedAfterPanic,
     GeneratorResumedAfterReturn,
@@ -396,7 +396,7 @@ pub type InlineAsmOperand = (); // Placeholder
 pub type InlineAsmOptions = u32; // Placeholder
 
 // Implementation helpers
-impl MirProgram {
+impl Program {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
@@ -405,7 +405,7 @@ impl MirProgram {
     }
 }
 
-impl MirBody {
+impl Body {
     pub fn new(
         basic_blocks: Vec<BasicBlockData>,
         locals: Vec<LocalDecl>,
@@ -466,7 +466,7 @@ impl Place {
     }
 }
 
-impl MirOperand {
+impl Operand {
     pub fn copy(place: Place) -> Self {
         Self::Copy(place)
     }

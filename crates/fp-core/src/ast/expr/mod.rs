@@ -1,4 +1,4 @@
-use crate::ast::{get_threadlocal_serializer, AstType, AstValue, BItem, BValue, ValueUnit};
+use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ty, Value, ValueUnit};
 use crate::common_enum;
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
@@ -13,11 +13,11 @@ pub use stmt::*;
 pub use value::*;
 
 pub type ExprId = u64;
-pub type BExpr = Box<AstExpr>;
+pub type BExpr = Box<Expr>;
 
 common_enum! {
     /// Expr is an expression that returns a value, note that a Type is also a Value
-    pub enum AstExpr {
+    pub enum Expr {
         /// An id for the expression node
         Id(ExprId),
         Locator(Locator),
@@ -58,39 +58,39 @@ common_enum! {
 
 }
 
-impl AstExpr {
+impl Expr {
     pub fn get(&self) -> Self {
         self.clone()
     }
-    pub fn unit() -> AstExpr {
-        AstExpr::Value(AstValue::Unit(ValueUnit).into())
+    pub fn unit() -> Expr {
+        Expr::Value(Value::Unit(ValueUnit).into())
     }
     pub fn is_unit(&self) -> bool {
         match self {
-            AstExpr::Value(value) => value.is_unit(),
+            Expr::Value(value) => value.is_unit(),
             _ => false,
         }
     }
-    pub fn value(v: AstValue) -> AstExpr {
+    pub fn value(v: Value) -> Expr {
         match v {
-            AstValue::Expr(expr) => *expr,
-            AstValue::Any(any) => AstExpr::Any(any),
-            AstValue::Type(AstType::Expr(expr)) => *expr,
-            _ => AstExpr::Value(v.into()),
+            Value::Expr(expr) => *expr,
+            Value::Any(any) => Expr::Any(any),
+            Value::Type(Ty::Expr(expr)) => *expr,
+            _ => Expr::Value(v.into()),
         }
     }
-    pub fn ident(name: Ident) -> AstExpr {
-        AstExpr::Locator(Locator::ident(name))
+    pub fn ident(name: Ident) -> Expr {
+        Expr::Locator(Locator::ident(name))
     }
-    pub fn path(path: Path) -> AstExpr {
-        AstExpr::Locator(Locator::path(path))
+    pub fn path(path: Path) -> Expr {
+        Expr::Locator(Locator::path(path))
     }
-    pub fn block(block: ExprBlock) -> AstExpr {
+    pub fn block(block: ExprBlock) -> Expr {
         block.into_expr()
     }
     pub fn into_block(self) -> ExprBlock {
         match self {
-            AstExpr::Block(block) => block,
+            Expr::Block(block) => block,
             _ => ExprBlock::new_expr(self),
         }
     }
@@ -98,13 +98,13 @@ impl AstExpr {
         Self::Any(AnyBox::new(any))
     }
 }
-impl Display for AstExpr {
+impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_expr(self).unwrap();
         f.write_str(&s)
     }
 }
-impl From<BExpr> for AstExpr {
+impl From<BExpr> for Expr {
     fn from(expr: BExpr) -> Self {
         *expr
     }

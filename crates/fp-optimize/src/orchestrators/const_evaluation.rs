@@ -59,7 +59,7 @@ impl ConstEvaluationOrchestrator {
     }
 
     /// Execute the complete 3-phase const evaluation
-    pub fn evaluate(&mut self, ast: &mut AstNode, ctx: &SharedScopedContext) -> Result<()> {
+    pub fn evaluate(&mut self, ast: &mut Node, ctx: &SharedScopedContext) -> Result<()> {
         info!("Starting 3-phase const evaluation");
 
         // Phase 1: Basic Type Checking
@@ -81,11 +81,7 @@ impl ConstEvaluationOrchestrator {
     /// Validate basic type references and struct definitions
     /// Establish baseline type system that const evaluation can query
     /// Skip const blocks - treat them as opaque for now
-    fn phase1_basic_type_checking(
-        &mut self,
-        ast: &AstNode,
-        ctx: &SharedScopedContext,
-    ) -> Result<()> {
+    fn phase1_basic_type_checking(&mut self, ast: &Node, ctx: &SharedScopedContext) -> Result<()> {
         debug!("Phase 1: Basic Type Checking");
 
         // Register basic types from the AST
@@ -107,7 +103,7 @@ impl ConstEvaluationOrchestrator {
     /// Query established types from Phase 1 as needed
     fn phase2_const_evaluation_metaprogramming(
         &mut self,
-        ast: &mut AstNode,
+        ast: &mut Node,
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         debug!("Phase 2: Const Evaluation & Metaprogramming");
@@ -149,11 +145,7 @@ impl ConstEvaluationOrchestrator {
     /// Check const block results against expected types
     /// Ensure type system consistency after metaprogramming
     /// Generate final optimized AST
-    fn phase3_final_type_checking(
-        &mut self,
-        ast: &AstNode,
-        ctx: &SharedScopedContext,
-    ) -> Result<()> {
+    fn phase3_final_type_checking(&mut self, ast: &Node, ctx: &SharedScopedContext) -> Result<()> {
         debug!("Phase 3: Final Type Checking");
 
         // Register generated types
@@ -191,7 +183,7 @@ impl ConstEvaluationOrchestrator {
     }
 
     /// Get the results of const evaluation
-    pub fn get_results(&self) -> std::collections::HashMap<String, AstValue> {
+    pub fn get_results(&self) -> std::collections::HashMap<String, Value> {
         self.evaluation_context.get_all_results()
     }
 
@@ -211,12 +203,12 @@ impl ConstEvaluationOrchestrator {
     }
 
     /// Apply queued const-eval operations to a module in-place
-    pub fn apply_const_eval_ops_to_module(&mut self, module: &mut AstModule) -> Result<bool> {
-        let mut node = AstNode::Item(AstItem::Module(module.clone()));
+    pub fn apply_const_eval_ops_to_module(&mut self, module: &mut Module) -> Result<bool> {
+        let mut node = Node::Item(Item::Module(module.clone()));
         let changed = self.const_eval_tracker.apply(&mut node)?;
         if changed {
             match node {
-                AstNode::Item(AstItem::Module(updated)) => {
+                Node::Item(Item::Module(updated)) => {
                     *module = updated;
                 }
                 _ => unreachable!("const-eval tracker should yield a module node"),
@@ -229,24 +221,24 @@ impl ConstEvaluationOrchestrator {
     /// leaving function call expressions for runtime execution
     pub fn evaluate_const_items_only(
         &mut self,
-        ast: &mut AstExpr,
+        ast: &mut Expr,
         context: &SharedScopedContext,
     ) -> Result<()> {
-        use fp_core::ast::{AstExpr, BlockStmt};
+        use fp_core::ast::{BlockStmt, Expr};
 
         // Process items and format string expressions
         match ast {
-            AstExpr::Block(block) => {
+            Expr::Block(block) => {
                 // Process Item statements for const evaluation
                 for stmt in block.stmts.iter_mut() {
                     match stmt {
                         BlockStmt::Item(item_box) => {
-                            // Evaluate const items - dereference the Box to get the AstItem
-                            let mut item_node = AstNode::Item((**item_box).clone());
+                            // Evaluate const items - dereference the Box to get the Item
+                            let mut item_node = Node::Item((**item_box).clone());
                             self.evaluate(&mut item_node, context)?;
 
                             // Update the item in the AST with the evaluated result
-                            if let AstNode::Item(evaluated_item) = item_node {
+                            if let Node::Item(evaluated_item) = item_node {
                                 **item_box = evaluated_item;
                             }
                         }
@@ -275,15 +267,15 @@ impl ConstEvaluationOrchestrator {
         expr: &mut BExpr,
         context: &SharedScopedContext,
     ) -> Result<()> {
-        use fp_core::ast::AstExpr;
+        use fp_core::ast::Expr;
 
         match &mut **expr {
-            AstExpr::FormatString(_) => {
+            Expr::FormatString(_) => {
                 // Format strings are now resolved during AST→HIR transformation
                 // No const evaluation needed here
                 debug!("Format string found - will be resolved during HIR transformation");
             }
-            AstExpr::Invoke(invoke) => {
+            Expr::Invoke(invoke) => {
                 // Recursively process arguments that might contain format strings
                 for arg in invoke.args.iter_mut() {
                     let mut boxed_arg = Box::new(arg.clone());
@@ -291,7 +283,7 @@ impl ConstEvaluationOrchestrator {
                     *arg = *boxed_arg;
                 }
             }
-            AstExpr::Block(block) => {
+            Expr::Block(block) => {
                 // Recursively process nested blocks
                 for stmt in block.stmts.iter_mut() {
                     if let BlockStmt::Expr(expr_stmt) = stmt {

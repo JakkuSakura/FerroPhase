@@ -12,14 +12,14 @@ use super::IrTransform;
 pub struct ThirGenerator {
     next_thir_id: thir::ThirId,
     type_context: TypeContext,
-    body_map: HashMap<thir::BodyId, thir::ThirBody>,
+    body_map: HashMap<thir::BodyId, thir::Body>,
     next_body_id: u32,
     /// Map constant names to their THIR body IDs for resolution
     const_symbols: HashMap<types::DefId, thir::BodyId>,
     /// Map constant names to their original HIR initializer expression for inlining
-    const_init_map: HashMap<types::DefId, hir::HirExpr>,
+    const_init_map: HashMap<types::DefId, hir::Expr>,
     /// Track simple local bindings we can inline by name.
-    binding_inits: HashMap<String, hir::HirExpr>,
+    binding_inits: HashMap<String, hir::Expr>,
 }
 
 /// Type checking context
@@ -54,24 +54,24 @@ impl ThirGenerator {
     }
 
     /// Transform HIR program to THIR
-    pub fn transform(&mut self, hir_program: hir::HirProgram) -> Result<thir::ThirProgram> {
-        let mut thir_program = thir::ThirProgram::new();
+    pub fn transform(&mut self, hir_program: hir::Program) -> Result<thir::Program> {
+        let mut thir_program = thir::Program::new();
 
         // Pass 0: collect type information
         self.collect_type_info(&hir_program)?;
 
         // Pass 1: transform and register consts first so paths can resolve to them
         for hir_item in &hir_program.items {
-            if let hir::HirItemKind::Const(const_def) = &hir_item.kind {
+            if let hir::ItemKind::Const(const_def) = &hir_item.kind {
                 let def_id = hir_item.def_id as types::DefId;
                 self.const_init_map
                     .insert(def_id, const_def.body.value.clone());
                 let thir_const = self.transform_const(Some(def_id), const_def.clone())?;
                 let thir_id = self.next_id();
                 let const_ty = self.hir_ty_to_ty(&const_def.ty)?;
-                thir_program.items.push(thir::ThirItem {
+                thir_program.items.push(thir::Item {
                     thir_id,
-                    kind: thir::ThirItemKind::Const(thir_const),
+                    kind: thir::ItemKind::Const(thir_const),
                     ty: const_ty,
                     span: hir_item.span,
                 });
@@ -80,7 +80,7 @@ impl ThirGenerator {
 
         // Pass 2: transform remaining items with consts available
         for hir_item in hir_program.items {
-            if matches!(hir_item.kind, hir::HirItemKind::Const(_)) {
+            if matches!(hir_item.kind, hir::ItemKind::Const(_)) {
                 continue; // already handled
             }
             let thir_item = self.transform_item(hir_item)?;
@@ -108,9 +108,9 @@ impl ThirGenerator {
     }
 
     /// Collect type information from HIR program
-    fn collect_type_info(&mut self, hir_program: &hir::HirProgram) -> Result<()> {
+    fn collect_type_info(&mut self, hir_program: &hir::Program) -> Result<()> {
         for item in &hir_program.items {
-            if let hir::HirItemKind::Struct(struct_def) = &item.kind {
+            if let hir::ItemKind::Struct(struct_def) = &item.kind {
                 self.type_context
                     .declare_struct(item.def_id as types::DefId, &struct_def.name);
             }
@@ -118,7 +118,7 @@ impl ThirGenerator {
 
         for item in &hir_program.items {
             match &item.kind {
-                hir::HirItemKind::Function(func) => {
+                hir::ItemKind::Function(func) => {
                     let fn_sig = self.build_fn_sig(&func.sig)?;
                     self.type_context.register_function(
                         item.def_id as types::DefId,
@@ -126,7 +126,7 @@ impl ThirGenerator {
                         fn_sig,
                     );
                 }
-                hir::HirItemKind::Struct(struct_def) => {
+                hir::ItemKind::Struct(struct_def) => {
                     let fields = struct_def
                         .fields
                         .iter()
@@ -138,7 +138,7 @@ impl ThirGenerator {
                     self.type_context
                         .init_struct_fields(item.def_id as types::DefId, fields);
                 }
-                hir::HirItemKind::Const(const_def) => {
+                hir::ItemKind::Const(const_def) => {
                     let ty = self.hir_ty_to_ty(&const_def.ty)?;
                     self.type_context.register_const(
                         item.def_id as types::DefId,
@@ -146,10 +146,10 @@ impl ThirGenerator {
                         ty,
                     );
                 }
-                hir::HirItemKind::Impl(impl_block) => {
+                hir::ItemKind::Impl(impl_block) => {
                     if let Some(owner_def_id) = self.resolve_ty_def_id(&impl_block.self_ty)? {
                         for impl_item in &impl_block.items {
-                            if let hir::HirImplItemKind::Method(method) = &impl_item.kind {
+                            if let hir::ImplItemKind::Method(method) = &impl_item.kind {
                                 let fn_sig = self.build_fn_sig(&method.sig)?;
                                 self.type_context.register_method(
                                     owner_def_id,
@@ -165,7 +165,7 @@ impl ThirGenerator {
         Ok(())
     }
 
-    fn build_fn_sig(&mut self, sig: &hir::HirFunctionSig) -> Result<types::FnSig> {
+    fn build_fn_sig(&mut self, sig: &hir::FunctionSig) -> Result<types::FnSig> {
         let input_types = sig
             .inputs
             .iter()
@@ -183,7 +183,7 @@ impl ThirGenerator {
         })
     }
 
-    fn resolve_ty_def_id(&mut self, hir_ty: &hir::HirTy) -> Result<Option<types::DefId>> {
+    fn resolve_ty_def_id(&mut self, hir_ty: &hir::Ty) -> Result<Option<types::DefId>> {
         let ty = self.hir_ty_to_ty(hir_ty)?;
         Ok(Self::type_def_id(&ty))
     }
@@ -238,7 +238,7 @@ impl ThirGenerator {
 
     fn path_to_type_info(
         &mut self,
-        path: &hir::HirPath,
+        path: &hir::Path,
     ) -> Result<(Option<types::DefId>, String, String, types::SubstsRef)> {
         if let Some(segment) = path.segments.last() {
             let base_name = segment.name.clone();
@@ -265,14 +265,14 @@ impl ThirGenerator {
         }
     }
 
-    fn convert_hir_generic_args(&mut self, args: &hir::HirGenericArgs) -> Result<types::SubstsRef> {
+    fn convert_hir_generic_args(&mut self, args: &hir::GenericArgs) -> Result<types::SubstsRef> {
         let mut substs = Vec::new();
         for arg in &args.args {
             match arg {
-                hir::HirGenericArg::Type(ty) => {
+                hir::GenericArg::Type(ty) => {
                     substs.push(types::GenericArg::Type(self.hir_ty_to_ty(ty)?));
                 }
-                hir::HirGenericArg::Const(_) => {
+                hir::GenericArg::Const(_) => {
                     substs.push(types::GenericArg::Const(types::ConstKind::Value(
                         types::ConstValue::ZeroSized,
                     )));
@@ -283,41 +283,41 @@ impl ThirGenerator {
     }
 
     /// Transform HIR item to THIR
-    fn transform_item(&mut self, hir_item: hir::HirItem) -> Result<thir::ThirItem> {
+    fn transform_item(&mut self, hir_item: hir::Item) -> Result<thir::Item> {
         let thir_id = self.next_id();
         let def_id = hir_item.def_id as types::DefId;
         let span = hir_item.span;
 
         let (kind, ty) = match hir_item.kind {
-            hir::HirItemKind::Function(func) => {
+            hir::ItemKind::Function(func) => {
                 let thir_func = self.transform_function(func)?;
                 let func_ty = self.get_function_type(def_id, &thir_func)?;
-                (thir::ThirItemKind::Function(thir_func), func_ty)
+                (thir::ItemKind::Function(thir_func), func_ty)
             }
-            hir::HirItemKind::Struct(struct_def) => {
+            hir::ItemKind::Struct(struct_def) => {
                 let struct_ty = self
                     .type_context
                     .make_struct_ty_by_id(def_id, Vec::new())
                     .unwrap_or_else(|| self.create_unit_type());
                 let thir_struct = self.transform_struct(struct_def)?;
-                (thir::ThirItemKind::Struct(thir_struct), struct_ty)
+                (thir::ItemKind::Struct(thir_struct), struct_ty)
             }
-            hir::HirItemKind::Const(const_def) => {
+            hir::ItemKind::Const(const_def) => {
                 // Record initializer for inlining and transform const
                 self.const_init_map
                     .insert(def_id, const_def.body.value.clone());
                 let thir_const = self.transform_const(Some(def_id), const_def)?;
                 let const_ty = thir_const.ty.clone();
-                (thir::ThirItemKind::Const(thir_const), const_ty)
+                (thir::ItemKind::Const(thir_const), const_ty)
             }
-            hir::HirItemKind::Impl(impl_block) => {
+            hir::ItemKind::Impl(impl_block) => {
                 let thir_impl = self.transform_impl(impl_block)?;
                 let self_ty = thir_impl.self_ty.clone();
-                (thir::ThirItemKind::Impl(thir_impl), self_ty)
+                (thir::ItemKind::Impl(thir_impl), self_ty)
             }
         };
 
-        Ok(thir::ThirItem {
+        Ok(thir::Item {
             thir_id,
             kind,
             ty,
@@ -326,7 +326,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR function to THIR
-    fn transform_function(&mut self, hir_func: hir::HirFunction) -> Result<thir::ThirFunction> {
+    fn transform_function(&mut self, hir_func: hir::Function) -> Result<thir::Function> {
         let inputs = hir_func
             .sig
             .inputs
@@ -336,7 +336,7 @@ impl ThirGenerator {
 
         let output = self.hir_ty_to_ty(&hir_func.sig.output)?;
 
-        let sig = thir::ThirFunctionSig {
+        let sig = thir::FunctionSig {
             inputs,
             output,
             c_variadic: false,
@@ -351,37 +351,37 @@ impl ThirGenerator {
             None
         };
 
-        Ok(thir::ThirFunction {
+        Ok(thir::Function {
             sig,
             body_id,
             is_const: hir_func.is_const,
         })
     }
 
-    fn transform_impl(&mut self, hir_impl: hir::HirImpl) -> Result<thir::ThirImpl> {
+    fn transform_impl(&mut self, hir_impl: hir::Impl) -> Result<thir::Impl> {
         let self_ty = self.hir_ty_to_ty(&hir_impl.self_ty)?;
 
         let mut items = Vec::new();
         for item in hir_impl.items {
             match item.kind {
-                hir::HirImplItemKind::Method(method) => {
+                hir::ImplItemKind::Method(method) => {
                     let thir_method = self.transform_function(method)?;
-                    items.push(thir::ThirImplItem {
+                    items.push(thir::ImplItem {
                         thir_id: self.next_id(),
-                        kind: thir::ThirImplItemKind::Method(thir_method),
+                        kind: thir::ImplItemKind::Method(thir_method),
                     });
                 }
-                hir::HirImplItemKind::AssocConst(const_item) => {
+                hir::ImplItemKind::AssocConst(const_item) => {
                     let thir_const = self.transform_const(None, const_item)?;
-                    items.push(thir::ThirImplItem {
+                    items.push(thir::ImplItem {
                         thir_id: self.next_id(),
-                        kind: thir::ThirImplItemKind::AssocConst(thir_const),
+                        kind: thir::ImplItemKind::AssocConst(thir_const),
                     });
                 }
             }
         }
 
-        Ok(thir::ThirImpl {
+        Ok(thir::Impl {
             self_ty,
             items,
             trait_ref: hir_impl.trait_ty.map(|_| ()),
@@ -389,37 +389,34 @@ impl ThirGenerator {
     }
 
     /// Transform HIR struct to THIR
-    fn transform_struct(&mut self, hir_struct: hir::HirStruct) -> Result<thir::ThirStruct> {
+    fn transform_struct(&mut self, hir_struct: hir::Struct) -> Result<thir::Struct> {
         let fields = hir_struct
             .fields
             .into_iter()
             .map(|field| self.transform_struct_field(field))
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(thir::ThirStruct {
+        Ok(thir::Struct {
             fields,
             variant_data: thir::VariantData::Struct(Vec::new(), false),
         })
     }
 
     /// Transform HIR struct field to THIR
-    fn transform_struct_field(
-        &mut self,
-        hir_field: hir::HirStructField,
-    ) -> Result<thir::ThirStructField> {
+    fn transform_struct_field(&mut self, hir_field: hir::StructField) -> Result<thir::StructField> {
         let thir_id = self.next_id();
         let ty = self.hir_ty_to_ty(&hir_field.ty)?;
         let vis = self.transform_visibility(hir_field.vis);
 
-        Ok(thir::ThirStructField { thir_id, ty, vis })
+        Ok(thir::StructField { thir_id, ty, vis })
     }
 
     /// Transform HIR const to THIR
     fn transform_const(
         &mut self,
         def_id: Option<types::DefId>,
-        hir_const: hir::HirConst,
-    ) -> Result<thir::ThirConst> {
+        hir_const: hir::Const,
+    ) -> Result<thir::Const> {
         let ty = self.hir_ty_to_ty(&hir_const.ty)?;
         let body_id = self.next_body_id();
         let thir_body = self.transform_body(hir_const.body)?;
@@ -428,11 +425,11 @@ impl ThirGenerator {
             self.const_symbols.insert(id, body_id);
         }
 
-        Ok(thir::ThirConst { ty, body_id })
+        Ok(thir::Const { ty, body_id })
     }
 
     /// Transform HIR body to THIR
-    fn transform_body(&mut self, hir_body: hir::HirBody) -> Result<thir::ThirBody> {
+    fn transform_body(&mut self, hir_body: hir::Body) -> Result<thir::Body> {
         let saved_bindings = mem::take(&mut self.binding_inits);
         let value = self.transform_expr(hir_body.value)?;
 
@@ -448,7 +445,7 @@ impl ThirGenerator {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let body = thir::ThirBody {
+        let body = thir::Body {
             params,
             value,
             locals: Vec::new(), // Will be populated during MIR generation
@@ -460,15 +457,15 @@ impl ThirGenerator {
     }
 
     /// Transform HIR expression to THIR with type checking
-    fn transform_expr(&mut self, hir_expr: hir::HirExpr) -> Result<thir::ThirExpr> {
+    fn transform_expr(&mut self, hir_expr: hir::Expr) -> Result<thir::Expr> {
         let thir_id = self.next_id();
 
         let (kind, ty) = match hir_expr.kind {
-            hir::HirExprKind::Literal(lit) => {
+            hir::ExprKind::Literal(lit) => {
                 let (thir_lit, ty) = self.transform_literal(lit)?;
-                (thir::ThirExprKind::Literal(thir_lit), ty)
+                (thir::ExprKind::Literal(thir_lit), ty)
             }
-            hir::HirExprKind::Path(path) => {
+            hir::ExprKind::Path(path) => {
                 let ty = self.infer_path_type(&path)?;
                 let (def_id_opt, qualified_name, base_name, _substs) =
                     self.path_to_type_info(&path)?;
@@ -483,7 +480,7 @@ impl ThirGenerator {
                         (inlined.kind, inlined.ty)
                     } else {
                         (
-                            thir::ThirExprKind::Path(thir::ItemRef {
+                            thir::ExprKind::Path(thir::ItemRef {
                                 name: display_name,
                                 def_id: Some(def_id),
                             }),
@@ -495,7 +492,7 @@ impl ThirGenerator {
                     (inlined.kind, inlined.ty)
                 } else {
                     (
-                        thir::ThirExprKind::Path(thir::ItemRef {
+                        thir::ExprKind::Path(thir::ItemRef {
                             name: display_name,
                             def_id: None,
                         }),
@@ -503,7 +500,7 @@ impl ThirGenerator {
                     )
                 }
             }
-            hir::HirExprKind::Binary(op, left, right) => {
+            hir::ExprKind::Binary(op, left, right) => {
                 let left_thir = self.transform_expr(*left)?;
                 let right_thir = self.transform_expr(*right)?;
                 let op_thir = self.transform_binary_op(op);
@@ -511,8 +508,8 @@ impl ThirGenerator {
                 // Constant folding for simple integer ops when both sides are literals
                 match (&left_thir.kind, &right_thir.kind, &op_thir) {
                     (
-                        thir::ThirExprKind::Literal(thir::ThirLit::Int(a, _)),
-                        thir::ThirExprKind::Literal(thir::ThirLit::Int(b, _)),
+                        thir::ExprKind::Literal(thir::Lit::Int(a, _)),
+                        thir::ExprKind::Literal(thir::Lit::Int(b, _)),
                         thir::BinOp::Add | thir::BinOp::Sub | thir::BinOp::Mul | thir::BinOp::Div,
                     ) => {
                         let val = match op_thir {
@@ -529,7 +526,7 @@ impl ThirGenerator {
                             _ => unreachable!(),
                         };
                         (
-                            thir::ThirExprKind::Literal(thir::ThirLit::Int(val, thir::IntTy::I32)),
+                            thir::ExprKind::Literal(thir::Lit::Int(val, thir::IntTy::I32)),
                             self.create_i32_type(),
                         )
                     }
@@ -538,7 +535,7 @@ impl ThirGenerator {
                         let result_ty =
                             self.check_binary_op_types(&left_thir.ty, &right_thir.ty, &op_thir)?;
                         (
-                            thir::ThirExprKind::Binary(
+                            thir::ExprKind::Binary(
                                 op_thir,
                                 Box::new(left_thir),
                                 Box::new(right_thir),
@@ -548,7 +545,7 @@ impl ThirGenerator {
                     }
                 }
             }
-            hir::HirExprKind::Call(func, args) => {
+            hir::ExprKind::Call(func, args) => {
                 let func_thir = self.transform_expr(*func)?;
                 let args_thir: Vec<_> = args
                     .into_iter()
@@ -558,7 +555,7 @@ impl ThirGenerator {
                 let return_ty = self.infer_call_return_type(&func_thir, &args_thir)?;
 
                 (
-                    thir::ThirExprKind::Call {
+                    thir::ExprKind::Call {
                         fun: Box::new(func_thir),
                         args: args_thir,
                         from_hir_call: true,
@@ -566,31 +563,31 @@ impl ThirGenerator {
                     return_ty,
                 )
             }
-            hir::HirExprKind::Return(expr) => {
+            hir::ExprKind::Return(expr) => {
                 let return_ty = self.create_never_type();
                 let expr_thir = expr.map(|e| self.transform_expr(*e)).transpose()?;
                 (
-                    thir::ThirExprKind::Return {
+                    thir::ExprKind::Return {
                         value: expr_thir.map(Box::new),
                     },
                     return_ty,
                 )
             }
-            hir::HirExprKind::Block(block) => {
+            hir::ExprKind::Block(block) => {
                 let block_thir = self.transform_block(block)?;
                 let block_ty = self.infer_block_type(&block_thir)?;
-                (thir::ThirExprKind::Block(block_thir), block_ty)
+                (thir::ExprKind::Block(block_thir), block_ty)
             }
-            hir::HirExprKind::Unary(op, expr) => {
+            hir::ExprKind::Unary(op, expr) => {
                 let expr_thir = self.transform_expr(*expr)?;
                 let op_thir = self.transform_unary_op(op);
                 let result_ty = self.check_unary_op_type(&expr_thir.ty, &op_thir)?;
                 (
-                    thir::ThirExprKind::Unary(op_thir, Box::new(expr_thir)),
+                    thir::ExprKind::Unary(op_thir, Box::new(expr_thir)),
                     result_ty,
                 )
             }
-            hir::HirExprKind::MethodCall(receiver, method_name, args) => {
+            hir::ExprKind::MethodCall(receiver, method_name, args) => {
                 // Convert method call to function call for simplicity
                 let receiver_thir = self.transform_expr(*receiver)?;
                 let args_thir: Vec<_> = args
@@ -601,9 +598,9 @@ impl ThirGenerator {
                     self.infer_method_call_return_type(&receiver_thir, &method_name, &args_thir)?;
 
                 // Create a function call with method name
-                let func_expr = thir::ThirExpr {
+                let func_expr = thir::Expr {
                     thir_id: self.next_id(),
-                    kind: thir::ThirExprKind::Path(thir::ItemRef {
+                    kind: thir::ExprKind::Path(thir::ItemRef {
                         name: method_name.clone(),
                         def_id: self.type_context.lookup_value_def_id(&method_name),
                     }),
@@ -615,7 +612,7 @@ impl ThirGenerator {
                 all_args.extend(args_thir);
 
                 (
-                    thir::ThirExprKind::Call {
+                    thir::ExprKind::Call {
                         fun: Box::new(func_expr),
                         args: all_args,
                         from_hir_call: true,
@@ -623,9 +620,9 @@ impl ThirGenerator {
                     return_ty,
                 )
             }
-            hir::HirExprKind::FieldAccess(expr, field_name) => {
+            hir::ExprKind::FieldAccess(expr, field_name) => {
                 // If base is a const struct, inline the specific field initializer
-                if let hir::HirExprKind::Path(ref p) = expr.kind {
+                if let hir::ExprKind::Path(ref p) = expr.kind {
                     let (base_def_id_opt, qualified_name, base_name, _) =
                         self.path_to_type_info(p)?;
                     let init_expr = base_def_id_opt
@@ -635,7 +632,7 @@ impl ThirGenerator {
                         .or_else(|| self.binding_inits.get(&base_name));
 
                     if let Some(init) = init_expr {
-                        if let hir::HirExprKind::Struct(_path, fields) = &init.kind {
+                        if let hir::ExprKind::Struct(_path, fields) = &init.kind {
                             if let Some(field) =
                                 fields.iter().find(|f| f.name.to_string() == field_name)
                             {
@@ -653,7 +650,7 @@ impl ThirGenerator {
                     .lookup_field_info(&expr_thir.ty, &field_name)
                 {
                     (
-                        thir::ThirExprKind::Field {
+                        thir::ExprKind::Field {
                             base: Box::new(expr_thir),
                             field_idx: idx,
                         },
@@ -661,7 +658,7 @@ impl ThirGenerator {
                     )
                 } else {
                     (
-                        thir::ThirExprKind::Field {
+                        thir::ExprKind::Field {
                             base: Box::new(expr_thir),
                             field_idx: 0,
                         },
@@ -669,7 +666,7 @@ impl ThirGenerator {
                     )
                 }
             }
-            hir::HirExprKind::Struct(path, _fields) => {
+            hir::ExprKind::Struct(path, _fields) => {
                 let (def_id_opt, qualified_name, base_name, substs) =
                     self.path_to_type_info(&path)?;
                 let struct_ty = def_id_opt
@@ -678,11 +675,11 @@ impl ThirGenerator {
                     .and_then(|id| self.type_context.make_struct_ty_by_id(id, substs))
                     .unwrap_or_else(|| self.create_unit_type());
                 (
-                    thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)),
+                    thir::ExprKind::Literal(thir::Lit::Int(0, thir::IntTy::I32)),
                     struct_ty,
                 )
             }
-            hir::HirExprKind::If(cond, then_expr, else_expr) => {
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
                 let cond_thir = self.transform_expr(*cond)?;
                 let then_thir = self.transform_expr(*then_expr)?;
                 let else_thir = else_expr.map(|e| self.transform_expr(*e)).transpose()?;
@@ -692,7 +689,7 @@ impl ThirGenerator {
                     self.create_unit_type()
                 };
                 (
-                    thir::ThirExprKind::If {
+                    thir::ExprKind::If {
                         cond: Box::new(cond_thir),
                         then: Box::new(then_thir),
                         else_opt: else_thir.map(Box::new),
@@ -700,12 +697,12 @@ impl ThirGenerator {
                     result_ty,
                 )
             }
-            hir::HirExprKind::Let(pat, _ty, init) => {
+            hir::ExprKind::Let(pat, _ty, init) => {
                 let init_thir = init.map(|e| self.transform_expr(*e)).transpose()?;
                 let unit_ty = self.create_unit_type();
                 if let Some(init_expr) = init_thir {
                     (
-                        thir::ThirExprKind::Let {
+                        thir::ExprKind::Let {
                             expr: Box::new(init_expr),
                             pat: self.transform_pattern(pat)?,
                         },
@@ -714,78 +711,78 @@ impl ThirGenerator {
                 } else {
                     // No initializer, return unit literal
                     (
-                        thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)),
+                        thir::ExprKind::Literal(thir::Lit::Int(0, thir::IntTy::I32)),
                         unit_ty,
                     )
                 }
             }
-            hir::HirExprKind::Assign(lhs, rhs) => {
+            hir::ExprKind::Assign(lhs, rhs) => {
                 let lhs_thir = self.transform_expr(*lhs)?;
                 let rhs_thir = self.transform_expr(*rhs)?;
                 let unit_ty = self.create_unit_type();
                 (
-                    thir::ThirExprKind::Assign {
+                    thir::ExprKind::Assign {
                         lhs: Box::new(lhs_thir),
                         rhs: Box::new(rhs_thir),
                     },
                     unit_ty,
                 )
             }
-            hir::HirExprKind::Break(expr) => {
+            hir::ExprKind::Break(expr) => {
                 let expr_thir = expr.map(|e| self.transform_expr(*e)).transpose()?;
                 let never_ty = self.create_never_type();
                 (
-                    thir::ThirExprKind::Break {
+                    thir::ExprKind::Break {
                         value: expr_thir.map(Box::new),
                     },
                     never_ty,
                 )
             }
-            hir::HirExprKind::Continue => {
+            hir::ExprKind::Continue => {
                 let never_ty = self.create_never_type();
-                (thir::ThirExprKind::Continue, never_ty)
+                (thir::ExprKind::Continue, never_ty)
             }
-            hir::HirExprKind::Loop(block) => {
+            hir::ExprKind::Loop(block) => {
                 let block_thir = self.transform_block(block)?;
                 let never_ty = self.create_never_type();
                 // Convert block to expression
-                let block_expr = thir::ThirExpr {
+                let block_expr = thir::Expr {
                     thir_id: self.next_id(),
-                    kind: thir::ThirExprKind::Block(block_thir),
+                    kind: thir::ExprKind::Block(block_thir),
                     ty: never_ty.clone(),
                     span: Span::new(0, 0, 0),
                 };
                 (
-                    thir::ThirExprKind::Loop {
+                    thir::ExprKind::Loop {
                         body: Box::new(block_expr),
                     },
                     never_ty,
                 )
             }
-            hir::HirExprKind::While(cond, block) => {
+            hir::ExprKind::While(cond, block) => {
                 // Convert while loop to infinite loop with conditional break
                 let cond_thir = self.transform_expr(*cond)?;
                 let block_thir = self.transform_block(block)?;
                 let unit_ty = self.create_unit_type();
                 let cond_span = cond_thir.span;
 
-                let block_expr = thir::ThirExpr {
+                let block_expr = thir::Expr {
                     thir_id: self.next_id(),
-                    kind: thir::ThirExprKind::Block(block_thir),
+                    kind: thir::ExprKind::Block(block_thir),
                     ty: unit_ty.clone(),
                     span: Span::new(0, 0, 0),
                 };
 
-                let break_expr = thir::ThirExpr {
+                let break_expr = thir::Expr {
                     thir_id: self.next_id(),
-                    kind: thir::ThirExprKind::Break { value: None },
+                    kind: thir::ExprKind::Break { value: None },
                     ty: self.create_never_type(),
                     span: cond_span,
                 };
 
-                let if_expr = thir::ThirExpr {
+                let if_expr = thir::Expr {
                     thir_id: self.next_id(),
-                    kind: thir::ThirExprKind::If {
+                    kind: thir::ExprKind::If {
                         cond: Box::new(cond_thir),
                         then: Box::new(block_expr.clone()),
                         else_opt: Some(Box::new(break_expr)),
@@ -794,26 +791,26 @@ impl ThirGenerator {
                     span: Span::new(0, 0, 0),
                 };
 
-                let loop_body_block = thir::ThirBlock {
+                let loop_body_block = thir::Block {
                     targeted_by_break: true,
                     region: 0,
                     span: Span::new(0, 0, 0),
-                    stmts: vec![thir::ThirStmt {
-                        kind: thir::ThirStmtKind::Expr(if_expr),
+                    stmts: vec![thir::Stmt {
+                        kind: thir::StmtKind::Expr(if_expr),
                     }],
                     expr: None,
                     safety_mode: thir::BlockSafetyMode::Safe,
                 };
 
-                let loop_body_expr = thir::ThirExpr {
+                let loop_body_expr = thir::Expr {
                     thir_id: self.next_id(),
-                    kind: thir::ThirExprKind::Block(loop_body_block),
+                    kind: thir::ExprKind::Block(loop_body_block),
                     ty: unit_ty.clone(),
                     span: Span::new(0, 0, 0),
                 };
 
                 (
-                    thir::ThirExprKind::Loop {
+                    thir::ExprKind::Loop {
                         body: Box::new(loop_body_expr),
                     },
                     unit_ty,
@@ -821,7 +818,7 @@ impl ThirGenerator {
             }
         };
 
-        Ok(thir::ThirExpr {
+        Ok(thir::Expr {
             thir_id,
             kind,
             ty,
@@ -830,7 +827,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR block to THIR
-    fn transform_block(&mut self, hir_block: hir::HirBlock) -> Result<thir::ThirBlock> {
+    fn transform_block(&mut self, hir_block: hir::Block) -> Result<thir::Block> {
         let stmts = hir_block
             .stmts
             .into_iter()
@@ -842,7 +839,7 @@ impl ThirGenerator {
             .map(|e| self.transform_expr(*e))
             .transpose()?;
 
-        Ok(thir::ThirBlock {
+        Ok(thir::Block {
             targeted_by_break: false,
             region: 0,                // Simplified scope handling
             span: Span::new(0, 0, 0), // Will be updated with proper span
@@ -853,19 +850,19 @@ impl ThirGenerator {
     }
 
     /// Transform HIR statement to THIR
-    fn transform_stmt(&mut self, hir_stmt: hir::HirStmt) -> Result<thir::ThirStmt> {
+    fn transform_stmt(&mut self, hir_stmt: hir::Stmt) -> Result<thir::Stmt> {
         let kind = match hir_stmt.kind {
-            hir::HirStmtKind::Expr(expr) => {
+            hir::StmtKind::Expr(expr) => {
                 let thir_expr = self.transform_expr(expr)?;
-                thir::ThirStmtKind::Expr(thir_expr)
+                thir::StmtKind::Expr(thir_expr)
             }
-            hir::HirStmtKind::Semi(expr) => {
+            hir::StmtKind::Semi(expr) => {
                 let thir_expr = self.transform_expr(expr)?;
-                thir::ThirStmtKind::Expr(thir_expr)
+                thir::StmtKind::Expr(thir_expr)
             }
-            hir::HirStmtKind::Local(local) => {
+            hir::StmtKind::Local(local) => {
                 // Record initializer for inlining when encountering Path(name)
-                if let hir::HirPatKind::Binding(name) = &local.pat.kind {
+                if let hir::PatKind::Binding(name) = &local.pat.kind {
                     if let Some(init) = &local.init {
                         self.binding_inits.insert(name.to_string(), init.clone());
                     }
@@ -875,7 +872,7 @@ impl ThirGenerator {
                     Some(init) => Some(self.transform_expr(init.clone())?),
                     None => None,
                 };
-                thir::ThirStmtKind::Let {
+                thir::StmtKind::Let {
                     remainder_scope: 0,
                     init_scope: 0,
                     pattern: self.create_wildcard_pattern(),
@@ -883,63 +880,63 @@ impl ThirGenerator {
                     lint_level: 0,
                 }
             }
-            _ => thir::ThirStmtKind::Expr(thir::ThirExpr {
+            _ => thir::StmtKind::Expr(thir::Expr {
                 thir_id: self.next_id(),
-                kind: thir::ThirExprKind::Literal(thir::ThirLit::Int(0, thir::IntTy::I32)),
+                kind: thir::ExprKind::Literal(thir::Lit::Int(0, thir::IntTy::I32)),
                 ty: self.create_i32_type(),
                 span: Span::new(0, 0, 0),
             }),
         };
 
-        Ok(thir::ThirStmt { kind })
+        Ok(thir::Stmt { kind })
     }
 
     /// Transform HIR literal to THIR with type inference
-    fn transform_literal(&mut self, hir_lit: hir::HirLit) -> Result<(thir::ThirLit, types::Ty)> {
+    fn transform_literal(&mut self, hir_lit: hir::Lit) -> Result<(thir::Lit, types::Ty)> {
         let (thir_lit, ty) = match hir_lit {
-            hir::HirLit::Bool(b) => (thir::ThirLit::Bool(b), types::Ty::bool()),
-            hir::HirLit::Integer(i) => (
-                thir::ThirLit::Int(i as i128, thir::IntTy::I32),
+            hir::Lit::Bool(b) => (thir::Lit::Bool(b), types::Ty::bool()),
+            hir::Lit::Integer(i) => (
+                thir::Lit::Int(i as i128, thir::IntTy::I32),
                 types::Ty::int(types::IntTy::I32),
             ),
-            hir::HirLit::Float(f) => (
-                thir::ThirLit::Float(f, thir::FloatTy::F64),
+            hir::Lit::Float(f) => (
+                thir::Lit::Float(f, thir::FloatTy::F64),
                 types::Ty::float(types::FloatTy::F64),
             ),
-            hir::HirLit::Str(s) => (thir::ThirLit::Str(s), self.create_string_type()),
-            hir::HirLit::Char(c) => (thir::ThirLit::Char(c), types::Ty::char()),
+            hir::Lit::Str(s) => (thir::Lit::Str(s), self.create_string_type()),
+            hir::Lit::Char(c) => (thir::Lit::Char(c), types::Ty::char()),
         };
         Ok((thir_lit, ty))
     }
 
     /// Transform HIR binary operator to THIR
-    fn transform_binary_op(&self, hir_op: hir::HirBinOp) -> thir::BinOp {
+    fn transform_binary_op(&self, hir_op: hir::BinOp) -> thir::BinOp {
         match hir_op {
-            hir::HirBinOp::Add => thir::BinOp::Add,
-            hir::HirBinOp::Sub => thir::BinOp::Sub,
-            hir::HirBinOp::Mul => thir::BinOp::Mul,
-            hir::HirBinOp::Div => thir::BinOp::Div,
-            hir::HirBinOp::Rem => thir::BinOp::Rem,
-            hir::HirBinOp::BitXor => thir::BinOp::BitXor,
-            hir::HirBinOp::BitAnd => thir::BinOp::BitAnd,
-            hir::HirBinOp::BitOr => thir::BinOp::BitOr,
-            hir::HirBinOp::Shl => thir::BinOp::Shl,
-            hir::HirBinOp::Shr => thir::BinOp::Shr,
-            hir::HirBinOp::Eq => thir::BinOp::Eq,
-            hir::HirBinOp::Ne => thir::BinOp::Ne,
-            hir::HirBinOp::Lt => thir::BinOp::Lt,
-            hir::HirBinOp::Le => thir::BinOp::Le,
-            hir::HirBinOp::Gt => thir::BinOp::Gt,
-            hir::HirBinOp::Ge => thir::BinOp::Ge,
+            hir::BinOp::Add => thir::BinOp::Add,
+            hir::BinOp::Sub => thir::BinOp::Sub,
+            hir::BinOp::Mul => thir::BinOp::Mul,
+            hir::BinOp::Div => thir::BinOp::Div,
+            hir::BinOp::Rem => thir::BinOp::Rem,
+            hir::BinOp::BitXor => thir::BinOp::BitXor,
+            hir::BinOp::BitAnd => thir::BinOp::BitAnd,
+            hir::BinOp::BitOr => thir::BinOp::BitOr,
+            hir::BinOp::Shl => thir::BinOp::Shl,
+            hir::BinOp::Shr => thir::BinOp::Shr,
+            hir::BinOp::Eq => thir::BinOp::Eq,
+            hir::BinOp::Ne => thir::BinOp::Ne,
+            hir::BinOp::Lt => thir::BinOp::Lt,
+            hir::BinOp::Le => thir::BinOp::Le,
+            hir::BinOp::Gt => thir::BinOp::Gt,
+            hir::BinOp::Ge => thir::BinOp::Ge,
             _ => thir::BinOp::Add, // Fallback
         }
     }
 
     /// Convert HIR type to types::Ty
-    fn hir_ty_to_ty(&mut self, hir_ty: &hir::HirTy) -> Result<types::Ty> {
+    fn hir_ty_to_ty(&mut self, hir_ty: &hir::Ty) -> Result<types::Ty> {
         match &hir_ty.kind {
-            hir::HirTyKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
-            hir::HirTyKind::Path(path) => {
+            hir::TyKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
+            hir::TyKind::Path(path) => {
                 let (def_id_opt, qualified_name, base_name, substs) =
                     self.path_to_type_info(path)?;
 
@@ -988,14 +985,14 @@ impl ThirGenerator {
                     .make_struct_ty_by_id(stub_id, substs)
                     .unwrap_or_else(|| self.create_unit_type()))
             }
-            hir::HirTyKind::Tuple(elements) => {
+            hir::TyKind::Tuple(elements) => {
                 let tys = elements
                     .iter()
                     .map(|ty| Ok(Box::new(self.hir_ty_to_ty(ty)?)))
                     .collect::<Result<Vec<_>>>()?;
                 Ok(types::Ty::new(types::TyKind::Tuple(tys)))
             }
-            hir::HirTyKind::Ref(inner) => {
+            hir::TyKind::Ref(inner) => {
                 let inner_ty = self.hir_ty_to_ty(inner)?;
                 Ok(types::Ty::new(types::TyKind::Ref(
                     types::Region::ReStatic,
@@ -1003,22 +1000,22 @@ impl ThirGenerator {
                     types::Mutability::Not,
                 )))
             }
-            hir::HirTyKind::Array(inner, _) => {
+            hir::TyKind::Array(inner, _) => {
                 let elem_ty = self.hir_ty_to_ty(inner)?;
                 Ok(types::Ty::new(types::TyKind::Array(
                     Box::new(elem_ty),
                     types::ConstKind::Value(types::ConstValue::ZeroSized),
                 )))
             }
-            hir::HirTyKind::Ptr(inner) => {
+            hir::TyKind::Ptr(inner) => {
                 let pointee = self.hir_ty_to_ty(inner)?;
                 Ok(types::Ty::new(types::TyKind::RawPtr(types::TypeAndMut {
                     ty: Box::new(pointee),
                     mutbl: types::Mutability::Not,
                 })))
             }
-            hir::HirTyKind::Never => Ok(types::Ty::never()),
-            hir::HirTyKind::Infer => Ok(types::Ty::new(types::TyKind::Infer(
+            hir::TyKind::Never => Ok(types::Ty::never()),
+            hir::TyKind::Infer => Ok(types::Ty::new(types::TyKind::Infer(
                 types::InferTy::FreshTy(0),
             ))),
         }
@@ -1078,7 +1075,7 @@ impl ThirGenerator {
     }
 
     /// Infer type from HIR path
-    fn infer_path_type(&mut self, path: &hir::HirPath) -> Result<types::Ty> {
+    fn infer_path_type(&mut self, path: &hir::Path) -> Result<types::Ty> {
         let (def_id_opt, qualified_name, base_name, substs) = self.path_to_type_info(path)?;
 
         if let Some(def_id) = def_id_opt {
@@ -1121,12 +1118,8 @@ impl ThirGenerator {
     }
 
     /// Infer return type of function call
-    fn infer_call_return_type(
-        &self,
-        func: &thir::ThirExpr,
-        _args: &[thir::ThirExpr],
-    ) -> Result<types::Ty> {
-        if let thir::ThirExprKind::Path(item_ref) = &func.kind {
+    fn infer_call_return_type(&self, func: &thir::Expr, _args: &[thir::Expr]) -> Result<types::Ty> {
+        if let thir::ExprKind::Path(item_ref) = &func.kind {
             if let Some(def_id) = item_ref.def_id {
                 if let Some(sig) = self.type_context.lookup_function_signature(def_id) {
                     return Ok((*sig.output).clone());
@@ -1141,7 +1134,7 @@ impl ThirGenerator {
     }
 
     /// Infer type of block expression
-    fn infer_block_type(&self, block: &thir::ThirBlock) -> Result<types::Ty> {
+    fn infer_block_type(&self, block: &thir::Block) -> Result<types::Ty> {
         if let Some(expr) = &block.expr {
             Ok(expr.ty.clone())
         } else {
@@ -1150,19 +1143,15 @@ impl ThirGenerator {
     }
 
     /// Get function type
-    fn get_function_type(
-        &self,
-        def_id: types::DefId,
-        _func: &thir::ThirFunction,
-    ) -> Result<types::Ty> {
+    fn get_function_type(&self, def_id: types::DefId, _func: &thir::Function) -> Result<types::Ty> {
         Ok(types::Ty::new(types::TyKind::FnDef(def_id, Vec::new())))
     }
 
     /// Transform visibility
-    fn transform_visibility(&self, hir_vis: hir::HirVisibility) -> thir::Visibility {
+    fn transform_visibility(&self, hir_vis: hir::Visibility) -> thir::Visibility {
         match hir_vis {
-            hir::HirVisibility::Public => thir::Visibility::Public,
-            hir::HirVisibility::Private => thir::Visibility::Inherited,
+            hir::Visibility::Public => thir::Visibility::Public,
+            hir::Visibility::Private => thir::Visibility::Inherited,
         }
     }
 
@@ -1187,21 +1176,21 @@ impl ThirGenerator {
         }))
     }
 
-    fn create_wildcard_pattern(&mut self) -> thir::ThirPat {
-        thir::ThirPat {
+    fn create_wildcard_pattern(&mut self) -> thir::Pat {
+        thir::Pat {
             thir_id: self.next_id(),
-            kind: thir::ThirPatKind::Wild,
+            kind: thir::PatKind::Wild,
             ty: self.create_unit_type(),
             span: Span::new(0, 0, 0),
         }
     }
 
     /// Transform unary operator
-    fn transform_unary_op(&self, op: hir::HirUnOp) -> thir::UnOp {
+    fn transform_unary_op(&self, op: hir::UnOp) -> thir::UnOp {
         match op {
-            hir::HirUnOp::Not => thir::UnOp::Not,
-            hir::HirUnOp::Neg => thir::UnOp::Neg,
-            hir::HirUnOp::Deref => thir::UnOp::Not, // Deref not available, use Not as fallback
+            hir::UnOp::Not => thir::UnOp::Not,
+            hir::UnOp::Neg => thir::UnOp::Neg,
+            hir::UnOp::Deref => thir::UnOp::Not, // Deref not available, use Not as fallback
         }
     }
 
@@ -1214,9 +1203,9 @@ impl ThirGenerator {
     /// Infer method call return type
     fn infer_method_call_return_type(
         &self,
-        receiver: &thir::ThirExpr,
+        receiver: &thir::Expr,
         method_name: &str,
-        _args: &[thir::ThirExpr],
+        _args: &[thir::Expr],
     ) -> Result<types::Ty> {
         if let Some(sig) = self
             .type_context
@@ -1238,18 +1227,18 @@ impl ThirGenerator {
     }
 
     /// Transform pattern
-    fn transform_pattern(&mut self, _pat: hir::HirPat) -> Result<thir::ThirPat> {
-        Ok(thir::ThirPat {
+    fn transform_pattern(&mut self, _pat: hir::Pat) -> Result<thir::Pat> {
+        Ok(thir::Pat {
             thir_id: self.next_id(),
-            kind: thir::ThirPatKind::Wild, // Simplified
+            kind: thir::PatKind::Wild, // Simplified
             ty: self.create_unit_type(),
             span: Span::new(0, 0, 0),
         })
     }
 }
 
-impl IrTransform<hir::HirProgram, thir::ThirProgram> for ThirGenerator {
-    fn transform(&mut self, source: hir::HirProgram) -> Result<thir::ThirProgram> {
+impl IrTransform<hir::Program, thir::Program> for ThirGenerator {
+    fn transform(&mut self, source: hir::Program) -> Result<thir::Program> {
         ThirGenerator::transform(self, source)
     }
 }
@@ -1481,7 +1470,7 @@ impl Default for ThirGenerator {
 mod tests {
     use super::*;
     use crate::transformations::ast_to_hir::HirGenerator;
-    use fp_core::ast::{register_threadlocal_serializer, AstFile};
+    use fp_core::ast::{register_threadlocal_serializer, File};
     use fp_core::Result;
     use fp_rust::{printer::RustPrinter, shll_parse_items};
     use std::sync::Arc;
@@ -1495,12 +1484,10 @@ mod tests {
     #[test]
     fn test_literal_transformation() -> Result<()> {
         let mut generator = ThirGenerator::new();
-        let (thir_lit, ty) = generator
-            .transform_literal(hir::HirLit::Integer(42))
-            .unwrap();
+        let (thir_lit, ty) = generator.transform_literal(hir::Lit::Integer(42)).unwrap();
 
         match thir_lit {
-            thir::ThirLit::Int(value, thir::IntTy::I32) => {
+            thir::Lit::Int(value, thir::IntTy::I32) => {
                 assert_eq!(value, 42);
             }
             _ => {
@@ -1517,7 +1504,7 @@ mod tests {
     #[test]
     fn test_binary_op_transformation() {
         let generator = ThirGenerator::new();
-        let op = generator.transform_binary_op(hir::HirBinOp::Add);
+        let op = generator.transform_binary_op(hir::BinOp::Add);
         assert_eq!(op, thir::BinOp::Add);
     }
 
@@ -1538,7 +1525,7 @@ mod tests {
             }
         };
 
-        let ast_file = AstFile {
+        let ast_file = File {
             path: "thir_test.fp".into(),
             items,
         };
@@ -1552,11 +1539,11 @@ mod tests {
         assert!(thir_program
             .items
             .iter()
-            .any(|item| matches!(item.kind, thir::ThirItemKind::Struct(_))));
+            .any(|item| matches!(item.kind, thir::ItemKind::Struct(_))));
         assert!(thir_program
             .items
             .iter()
-            .any(|item| matches!(item.kind, thir::ThirItemKind::Impl(_))));
+            .any(|item| matches!(item.kind, thir::ItemKind::Impl(_))));
 
         let point_id = thir_gen
             .type_context

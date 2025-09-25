@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::ast::{AstExpr, AstItem, AstType, BExpr, BItem};
+use crate::ast::{BExpr, BItem, Expr, Item, Ty};
 use crate::common_enum;
 use crate::common_struct;
 use crate::id::Ident;
@@ -25,7 +25,7 @@ impl BlockStmt {
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         Self::Any(AnyBox::new(any))
     }
-    pub fn item(item: AstItem) -> Self {
+    pub fn item(item: Item) -> Self {
         Self::Item(Box::new(item))
     }
 
@@ -64,16 +64,16 @@ impl BlockStmtExpr {
 common_struct! {
     pub struct StmtLet {
         pub pat: Pattern,
-        pub init: Option<AstExpr>,
-        pub diverge: Option<AstExpr>,
+        pub init: Option<Expr>,
+        pub diverge: Option<Expr>,
     }
 }
 impl StmtLet {
-    pub fn new(pat: Pattern, init: Option<AstExpr>, diverge: Option<AstExpr>) -> Self {
+    pub fn new(pat: Pattern, init: Option<Expr>, diverge: Option<Expr>) -> Self {
         assert!(diverge.is_none() || init.is_some(), "diverge without init");
         Self { pat, init, diverge }
     }
-    pub fn new_typed(name: Ident, ty: AstType, value: AstExpr) -> Self {
+    pub fn new_typed(name: Ident, ty: Ty, value: Expr) -> Self {
         Self {
             pat: Pattern::Type(PatternType::new(
                 Pattern::Ident(PatternIdent::new(name)),
@@ -83,7 +83,7 @@ impl StmtLet {
             diverge: None,
         }
     }
-    pub fn new_simple(name: Ident, value: AstExpr) -> Self {
+    pub fn new_simple(name: Ident, value: Expr) -> Self {
         Self {
             pat: Pattern::Ident(PatternIdent::new(name)),
             init: Some(value),
@@ -114,7 +114,7 @@ impl ExprBlock {
         this.push_expr(expr);
         this
     }
-    pub fn new_expr(expr: AstExpr) -> Self {
+    pub fn new_expr(expr: Expr) -> Self {
         Self {
             stmts: vec![BlockStmt::Expr(BlockStmtExpr::new(expr))],
         }
@@ -146,7 +146,7 @@ impl ExprBlock {
             BlockStmtExpr::new(stmt).with_semicolon(false),
         ));
     }
-    pub fn last_expr(&self) -> Option<&AstExpr> {
+    pub fn last_expr(&self) -> Option<&Expr> {
         let stmt = self.stmts.last()?;
         let BlockStmt::Expr(expr) = stmt else {
             return None;
@@ -156,7 +156,7 @@ impl ExprBlock {
         }
         Some(&*expr.expr)
     }
-    pub fn last_expr_mut(&mut self) -> Option<&mut AstExpr> {
+    pub fn last_expr_mut(&mut self) -> Option<&mut Expr> {
         let stmt = self.stmts.last_mut()?;
         let BlockStmt::Expr(expr) = stmt else {
             return None;
@@ -166,14 +166,14 @@ impl ExprBlock {
         }
         Some(&mut expr.expr)
     }
-    pub fn into_expr(mut self) -> AstExpr {
+    pub fn into_expr(mut self) -> Expr {
         if self.stmts.len() == 1 {
             if let Some(expr) = self.last_expr_mut() {
-                return std::mem::replace(expr, AstExpr::unit());
+                return std::mem::replace(expr, Expr::unit());
             }
         }
 
-        AstExpr::Block(self)
+        Expr::Block(self)
     }
     /// returns the first few stmts, leaving behind the last expr
     pub fn first_stmts(&self) -> &[BlockStmt] {

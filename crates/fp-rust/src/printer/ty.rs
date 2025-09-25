@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use fp_core::ast::{
-    AstType, DecimalType, ExprInvoke, StructuralField, TypeInt, TypePrimitive, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural,
+    DecimalType, ExprInvoke, StructuralField, Ty, TypeInt, TypePrimitive, TypeReference, TypeSlice,
+    TypeStruct, TypeStructural,
 };
 use fp_core::bail;
 use fp_core::error::Result;
@@ -10,22 +10,22 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 impl RustPrinter {
-    pub fn print_type(&self, v: &AstType) -> Result<TokenStream> {
+    pub fn print_type(&self, v: &Ty) -> Result<TokenStream> {
         let ty = match v {
-            AstType::Function(f) => self.print_func_type(f)?,
-            AstType::Primitive(p) => self.print_primitive_type(*p)?,
-            AstType::Struct(s) => self.print_struct_type(s)?,
-            AstType::Structural(s) => self.print_structural_type(s)?,
-            AstType::Expr(e) => self.print_expr(e)?,
-            AstType::Slice(t) => self.print_type_slice(t)?,
-            AstType::ImplTraits(t) => self.print_impl_traits(t)?,
-            AstType::TypeBounds(t) => self.print_type_bounds(t)?,
-            AstType::Unit(_) => quote!(()),
-            AstType::Any(_) => quote!(dyn Any),
-            AstType::Nothing(_) => quote!(!),
-            AstType::Unknown(_) => quote!(_),
-            AstType::Reference(r) => self.print_type_ref(r)?,
-            AstType::Value(v) => self.print_value(&v.value)?,
+            Ty::Function(f) => self.print_func_type(f)?,
+            Ty::Primitive(p) => self.print_primitive_type(*p)?,
+            Ty::Struct(s) => self.print_struct_type(s)?,
+            Ty::Structural(s) => self.print_structural_type(s)?,
+            Ty::Expr(e) => self.print_expr(e)?,
+            Ty::Slice(t) => self.print_type_slice(t)?,
+            Ty::ImplTraits(t) => self.print_impl_traits(t)?,
+            Ty::TypeBounds(t) => self.print_type_bounds(t)?,
+            Ty::Unit(_) => quote!(()),
+            Ty::Any(_) => quote!(dyn Any),
+            Ty::Nothing(_) => quote!(!),
+            Ty::Unknown(_) => quote!(_),
+            Ty::Reference(r) => self.print_type_ref(r)?,
+            Ty::Value(v) => self.print_value(&v.value)?,
             _ => bail!("Not supported {:?}", v),
         };
         Ok(ty)

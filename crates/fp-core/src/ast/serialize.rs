@@ -1,25 +1,24 @@
 use crate::ast::{
-    AstExpr, AstFile, AstItem, AstModule, AstNode, BExpr, BlockStmt, ExprBlock, ExprInvoke,
-    ItemDefFunction,
+    BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, File, Item, ItemDefFunction, Module, Node,
 };
-use crate::ast::{AstType, AstValue, ValueFunction};
+use crate::ast::{Ty, Value, ValueFunction};
 use crate::bail;
 use std::cell::RefCell;
 use std::sync::Arc;
 
 #[allow(unused_variables)]
 pub trait AstSerializer: Send + Sync {
-    fn serialize_node(&self, node: &AstNode) -> Result<String, crate::Error> {
+    fn serialize_node(&self, node: &Node) -> Result<String, crate::Error> {
         match node {
-            AstNode::Item(item) => self.serialize_item(item),
-            AstNode::Expr(expr) => self.serialize_expr(expr),
-            AstNode::File(file) => self.serialize_file(file),
+            Node::Item(item) => self.serialize_item(item),
+            Node::Expr(expr) => self.serialize_expr(expr),
+            Node::File(file) => self.serialize_file(file),
         }
     }
-    fn serialize_expr(&self, node: &AstExpr) -> Result<String, crate::Error> {
+    fn serialize_expr(&self, node: &Expr) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_expr")
     }
-    fn serialize_args(&self, nodes: &[AstExpr]) -> Result<String, crate::Error> {
+    fn serialize_args(&self, nodes: &[Expr]) -> Result<String, crate::Error> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
             if i > 0 {
@@ -39,22 +38,22 @@ pub trait AstSerializer: Send + Sync {
     fn serialize_invoke(&self, node: &ExprInvoke) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_invoke")
     }
-    fn serialize_item(&self, node: &AstItem) -> Result<String, crate::Error> {
+    fn serialize_item(&self, node: &Item) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_item")
     }
     fn serialize_block(&self, node: &ExprBlock) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_block")
     }
-    fn serialize_file(&self, node: &AstFile) -> Result<String, crate::Error> {
+    fn serialize_file(&self, node: &File) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_file")
     }
-    fn serialize_module(&self, node: &AstModule) -> Result<String, crate::Error> {
+    fn serialize_module(&self, node: &Module) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_module")
     }
-    fn serialize_value(&self, node: &AstValue) -> Result<String, crate::Error> {
+    fn serialize_value(&self, node: &Value) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_value")
     }
-    fn serialize_values(&self, nodes: &[AstValue]) -> Result<String, crate::Error> {
+    fn serialize_values(&self, nodes: &[Value]) -> Result<String, crate::Error> {
         let mut s = String::new();
         for (i, node) in nodes.iter().enumerate() {
             if i > 0 {
@@ -64,7 +63,7 @@ pub trait AstSerializer: Send + Sync {
         }
         Ok(s)
     }
-    fn serialize_type(&self, node: &AstType) -> Result<String, crate::Error> {
+    fn serialize_type(&self, node: &Ty) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_type")
     }
     fn serialize_stmt(&self, node: &BlockStmt) -> Result<String, crate::Error> {

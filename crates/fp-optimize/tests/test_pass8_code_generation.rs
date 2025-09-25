@@ -14,7 +14,7 @@ fn make_orchestrator() -> ConstEvaluationOrchestrator {
 #[test]
 fn applying_without_operations_is_noop() -> Result<()> {
     let mut orchestrator = make_orchestrator();
-    let mut module = AstModule {
+    let mut module = Module {
         visibility: Visibility::Public,
         name: "test_module".into(),
         items: Vec::new(),
@@ -30,12 +30,12 @@ fn applying_without_operations_is_noop() -> Result<()> {
 }
 
 #[test]
-fn generates_trait_impl_with_methods() -> Result<()> {
+fn generates_inherent_methods() -> Result<()> {
     let mut orchestrator = make_orchestrator();
-    let mut module = AstModule {
+    let mut module = Module {
         visibility: Visibility::Public,
         name: "traits".into(),
-        items: vec![AstItem::DefStruct(ItemDefStruct {
+        items: vec![Item::DefStruct(ItemDefStruct {
             visibility: Visibility::Public,
             name: "Device".into(),
             value: TypeStruct {
@@ -45,38 +45,34 @@ fn generates_trait_impl_with_methods() -> Result<()> {
         })],
     };
 
-    orchestrator.record_const_eval(ConstEval::GenerateImpl {
+    orchestrator.record_const_eval(ConstEval::GenerateMethod {
         target_type: "Device".to_string(),
-        trait_name: "Operate".to_string(),
-        methods: vec![
-            ("start".into(), AstExpr::Value(AstValue::unit().into())),
-            ("stop".into(), AstExpr::Value(AstValue::unit().into())),
-        ],
+        method_name: "start".into(),
+        method_body: Expr::Value(Value::unit().into()),
+    });
+    orchestrator.record_const_eval(ConstEval::GenerateMethod {
+        target_type: "Device".to_string(),
+        method_name: "stop".into(),
+        method_body: Expr::Value(Value::unit().into()),
     });
 
     let changed = orchestrator.apply_const_eval_ops_to_module(&mut module)?;
     assert!(changed);
 
     assert_eq!(module.items.len(), 2);
-    let impl_block = match &module.items[1] {
-        AstItem::Impl(block) => block,
+    let inherent_impl = match &module.items[1] {
+        Item::Impl(block) => block,
         other => panic!("expected impl block, got {other:?}"),
     };
 
-    let trait_name = impl_block
-        .trait_ty
-        .as_ref()
-        .and_then(|locator| locator.as_ident())
-        .map(|ident| ident.name.to_string())
-        .expect("trait name");
-    assert_eq!(trait_name, "Operate");
-    assert_eq!(impl_block.items.len(), 2);
+    assert!(inherent_impl.trait_ty.is_none());
+    assert_eq!(inherent_impl.items.len(), 2);
 
-    let method_names: Vec<_> = impl_block
+    let method_names: Vec<_> = inherent_impl
         .items
         .iter()
         .map(|item| match item {
-            AstItem::DefFunction(func) => func.name.name.clone(),
+            Item::DefFunction(func) => func.name.name.clone(),
             other => panic!("expected function, got {other:?}"),
         })
         .collect();

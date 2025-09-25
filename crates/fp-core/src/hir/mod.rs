@@ -6,267 +6,267 @@ pub type DefId = u32;
 pub type NodeId = u32;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirProgram {
-    pub items: Vec<HirItem>,
-    pub def_map: HashMap<DefId, HirItem>,
+pub struct Program {
+    pub items: Vec<Item>,
+    pub def_map: HashMap<DefId, Item>,
     pub next_hir_id: HirId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirItem {
+pub struct Item {
     pub hir_id: HirId,
     pub def_id: DefId,
-    pub kind: HirItemKind,
+    pub kind: ItemKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirItemKind {
-    Function(HirFunction),
-    Struct(HirStruct),
-    Const(HirConst),
-    Impl(HirImpl),
+pub enum ItemKind {
+    Function(Function),
+    Struct(Struct),
+    Const(Const),
+    Impl(Impl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirFunction {
-    pub sig: HirFunctionSig,
-    pub body: Option<HirBody>,
+pub struct Function {
+    pub sig: FunctionSig,
+    pub body: Option<Body>,
     pub is_const: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirFunctionSig {
+pub struct FunctionSig {
     pub name: Symbol,
-    pub inputs: Vec<HirParam>,
-    pub output: HirTy,
-    pub generics: HirGenerics,
+    pub inputs: Vec<Param>,
+    pub output: Ty,
+    pub generics: Generics,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirParam {
+pub struct Param {
     pub hir_id: HirId,
-    pub pat: HirPat,
-    pub ty: HirTy,
+    pub pat: Pat,
+    pub ty: Ty,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirStruct {
+pub struct Struct {
     pub name: Symbol,
-    pub fields: Vec<HirStructField>,
-    pub generics: HirGenerics,
+    pub fields: Vec<StructField>,
+    pub generics: Generics,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirStructField {
-    pub hir_id: HirId,
-    pub name: Symbol,
-    pub ty: HirTy,
-    pub vis: HirVisibility,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct HirConst {
-    pub name: Symbol,
-    pub ty: HirTy,
-    pub body: HirBody,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct HirImpl {
-    pub generics: HirGenerics,
-    pub trait_ty: Option<HirTy>,
-    pub self_ty: HirTy,
-    pub items: Vec<HirImplItem>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct HirImplItem {
+pub struct StructField {
     pub hir_id: HirId,
     pub name: Symbol,
-    pub kind: HirImplItemKind,
+    pub ty: Ty,
+    pub vis: Visibility,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirImplItemKind {
-    Method(HirFunction),
-    AssocConst(HirConst),
+pub struct Const {
+    pub name: Symbol,
+    pub ty: Ty,
+    pub body: Body,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirBody {
+pub struct Impl {
+    pub generics: Generics,
+    pub trait_ty: Option<Ty>,
+    pub self_ty: Ty,
+    pub items: Vec<ImplItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplItem {
     pub hir_id: HirId,
-    pub params: Vec<HirParam>,
-    pub value: HirExpr,
+    pub name: Symbol,
+    pub kind: ImplItemKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirExpr {
+pub enum ImplItemKind {
+    Method(Function),
+    AssocConst(Const),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Body {
     pub hir_id: HirId,
-    pub kind: HirExprKind,
+    pub params: Vec<Param>,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expr {
+    pub hir_id: HirId,
+    pub kind: ExprKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirExprKind {
-    Literal(HirLit),
-    Path(HirPath),
-    Binary(HirBinOp, Box<HirExpr>, Box<HirExpr>),
-    Unary(HirUnOp, Box<HirExpr>),
-    Call(Box<HirExpr>, Vec<HirExpr>),
-    MethodCall(Box<HirExpr>, Symbol, Vec<HirExpr>),
-    FieldAccess(Box<HirExpr>, Symbol),
-    Struct(HirPath, Vec<HirStructExprField>),
-    If(Box<HirExpr>, Box<HirExpr>, Option<Box<HirExpr>>),
-    Block(HirBlock),
-    Let(HirPat, Box<HirTy>, Option<Box<HirExpr>>),
-    Assign(Box<HirExpr>, Box<HirExpr>),
-    Return(Option<Box<HirExpr>>),
-    Break(Option<Box<HirExpr>>),
+pub enum ExprKind {
+    Literal(Lit),
+    Path(Path),
+    Binary(BinOp, Box<Expr>, Box<Expr>),
+    Unary(UnOp, Box<Expr>),
+    Call(Box<Expr>, Vec<Expr>),
+    MethodCall(Box<Expr>, Symbol, Vec<Expr>),
+    FieldAccess(Box<Expr>, Symbol),
+    Struct(Path, Vec<StructExprField>),
+    If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
+    Block(Block),
+    Let(Pat, Box<Ty>, Option<Box<Expr>>),
+    Assign(Box<Expr>, Box<Expr>),
+    Return(Option<Box<Expr>>),
+    Break(Option<Box<Expr>>),
     Continue,
-    Loop(HirBlock),
-    While(Box<HirExpr>, HirBlock),
+    Loop(Block),
+    While(Box<Expr>, Block),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirStructExprField {
+pub struct StructExprField {
     pub hir_id: HirId,
     pub name: Symbol,
-    pub expr: HirExpr,
+    pub expr: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirBlock {
+pub struct Block {
     pub hir_id: HirId,
-    pub stmts: Vec<HirStmt>,
-    pub expr: Option<Box<HirExpr>>,
+    pub stmts: Vec<Stmt>,
+    pub expr: Option<Box<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirStmt {
+pub struct Stmt {
     pub hir_id: HirId,
-    pub kind: HirStmtKind,
+    pub kind: StmtKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirStmtKind {
-    Local(HirLocal),
-    Item(HirItem),
-    Expr(HirExpr),
-    Semi(HirExpr),
+pub enum StmtKind {
+    Local(Local),
+    Item(Item),
+    Expr(Expr),
+    Semi(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirLocal {
+pub struct Local {
     pub hir_id: HirId,
-    pub pat: HirPat,
-    pub ty: Option<HirTy>,
-    pub init: Option<HirExpr>,
+    pub pat: Pat,
+    pub ty: Option<Ty>,
+    pub init: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirPat {
+pub struct Pat {
     pub hir_id: HirId,
-    pub kind: HirPatKind,
+    pub kind: PatKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirPatKind {
+pub enum PatKind {
     Wild,
     Binding(Symbol),
-    Struct(HirPath, Vec<HirPatField>),
-    Tuple(Vec<HirPat>),
-    Lit(HirLit),
+    Struct(Path, Vec<PatField>),
+    Tuple(Vec<Pat>),
+    Lit(Lit),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirPatField {
+pub struct PatField {
     pub hir_id: HirId,
     pub name: Symbol,
-    pub pat: HirPat,
+    pub pat: Pat,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirTy {
+pub struct Ty {
     pub hir_id: HirId,
-    pub kind: HirTyKind,
+    pub kind: TyKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirTyKind {
+pub enum TyKind {
     Primitive(TypePrimitive),
-    Path(HirPath),
-    Tuple(Vec<Box<HirTy>>),
-    Array(Box<HirTy>, Option<Box<HirExpr>>),
-    Ptr(Box<HirTy>),
-    Ref(Box<HirTy>),
+    Path(Path),
+    Tuple(Vec<Box<Ty>>),
+    Array(Box<Ty>, Option<Box<Expr>>),
+    Ptr(Box<Ty>),
+    Ref(Box<Ty>),
     Never,
     Infer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirPath {
-    pub segments: Vec<HirPathSegment>,
+pub struct Path {
+    pub segments: Vec<PathSegment>,
     pub res: Option<Res>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirPathSegment {
+pub struct PathSegment {
     pub name: Symbol,
-    pub args: Option<HirGenericArgs>,
+    pub args: Option<GenericArgs>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirGenericArgs {
-    pub args: Vec<HirGenericArg>,
+pub struct GenericArgs {
+    pub args: Vec<GenericArg>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirGenericArg {
-    Type(Box<HirTy>),
-    Const(Box<HirExpr>),
+pub enum GenericArg {
+    Type(Box<Ty>),
+    Const(Box<Expr>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirGenerics {
-    pub params: Vec<HirGenericParam>,
-    pub where_clause: Option<HirWhereClause>,
+pub struct Generics {
+    pub params: Vec<GenericParam>,
+    pub where_clause: Option<WhereClause>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirGenericParam {
+pub struct GenericParam {
     pub hir_id: HirId,
     pub name: Symbol,
-    pub kind: HirGenericParamKind,
+    pub kind: GenericParamKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirGenericParamKind {
-    Type { default: Option<Box<HirTy>> },
-    Const { ty: Box<HirTy> },
+pub enum GenericParamKind {
+    Type { default: Option<Box<Ty>> },
+    Const { ty: Box<Ty> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct HirWhereClause {
-    pub predicates: Vec<HirWherePredicate>,
+pub struct WhereClause {
+    pub predicates: Vec<WherePredicate>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirWherePredicate {
+pub enum WherePredicate {
     BoundPredicate {
-        bounded_ty: Box<HirTy>,
-        bounds: Vec<HirTypeBound>,
+        bounded_ty: Box<Ty>,
+        bounds: Vec<TypeBound>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirTypeBound {
-    Trait(HirPath),
+pub enum TypeBound {
+    Trait(Path),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirLit {
+pub enum Lit {
     Bool(bool),
     Integer(i64),
     Float(f64),
@@ -275,7 +275,7 @@ pub enum HirLit {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirBinOp {
+pub enum BinOp {
     Add,
     Sub,
     Mul,
@@ -297,14 +297,14 @@ pub enum HirBinOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirUnOp {
+pub enum UnOp {
     Not,
     Neg,
     Deref,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum HirVisibility {
+pub enum Visibility {
     Public,
     Private,
 }
@@ -321,7 +321,7 @@ pub type Symbol = String;
 pub type Span = crate::span::Span;
 
 // Default implementations
-impl Default for HirGenerics {
+impl Default for Generics {
     fn default() -> Self {
         Self {
             params: Vec::new(),
@@ -330,7 +330,7 @@ impl Default for HirGenerics {
     }
 }
 
-impl HirProgram {
+impl Program {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
@@ -346,8 +346,8 @@ impl HirProgram {
     }
 }
 
-impl HirFunction {
-    pub fn new(sig: HirFunctionSig, body: Option<HirBody>, is_const: bool) -> Self {
+impl Function {
+    pub fn new(sig: FunctionSig, body: Option<Body>, is_const: bool) -> Self {
         Self {
             sig,
             body,
@@ -356,14 +356,14 @@ impl HirFunction {
     }
 }
 
-impl HirExpr {
-    pub fn new(hir_id: HirId, kind: HirExprKind, span: Span) -> Self {
+impl Expr {
+    pub fn new(hir_id: HirId, kind: ExprKind, span: Span) -> Self {
         Self { hir_id, kind, span }
     }
 }
 
-impl HirTy {
-    pub fn new(hir_id: HirId, kind: HirTyKind, span: Span) -> Self {
+impl Ty {
+    pub fn new(hir_id: HirId, kind: TyKind, span: Span) -> Self {
         Self { hir_id, kind, span }
     }
 }

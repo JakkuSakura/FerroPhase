@@ -11,10 +11,10 @@ use std::collections::{HashMap, HashSet};
 pub struct ConstBlock {
     pub id: u64,
     pub name: Option<String>,
-    pub expr: AstExpr,
+    pub expr: Expr,
     pub dependencies: HashSet<u64>,
     pub state: ConstEvalState,
-    pub result: Option<AstValue>,
+    pub result: Option<Value>,
 }
 
 /// State of const evaluation for a block
@@ -43,13 +43,13 @@ impl EvaluationContext {
     }
 
     /// Discover const blocks in the AST
-    pub fn discover_const_blocks(&mut self, ast: &AstNode) -> Result<()> {
+    pub fn discover_const_blocks(&mut self, ast: &Node) -> Result<()> {
         self.const_blocks.clear();
         self.dependencies.clear();
         self.next_block_id = 0;
 
         let mut name_to_id: HashMap<String, u64> = HashMap::new();
-        let mut pending_exprs: Vec<(u64, AstExpr)> = Vec::new();
+        let mut pending_exprs: Vec<(u64, Expr)> = Vec::new();
 
         walk_const_items(ast, &mut |item_const| {
             let expr = item_const.value.as_ref().clone();
@@ -111,7 +111,7 @@ impl EvaluationContext {
     }
 
     /// Set the result of a const block evaluation
-    pub fn set_block_result(&mut self, block_id: u64, result: AstValue) -> Result<()> {
+    pub fn set_block_result(&mut self, block_id: u64, result: Value) -> Result<()> {
         if let Some(block) = self.const_blocks.get_mut(&block_id) {
             block.result = Some(result);
             block.state = ConstEvalState::Evaluated;
@@ -125,7 +125,7 @@ impl EvaluationContext {
     }
 
     /// Get all evaluation results
-    pub fn get_all_results(&self) -> HashMap<String, AstValue> {
+    pub fn get_all_results(&self) -> HashMap<String, Value> {
         let mut results = HashMap::new();
         for (_, block) in &self.const_blocks {
             if let (Some(name), Some(result)) = (&block.name, &block.result) {
@@ -182,7 +182,7 @@ impl EvaluationContext {
 }
 
 impl ConstBlock {
-    pub fn new(id: u64, name: Option<String>, expr: AstExpr) -> Self {
+    pub fn new(id: u64, name: Option<String>, expr: Expr) -> Self {
         Self {
             id,
             name,
@@ -206,14 +206,14 @@ impl ConstBlock {
     }
 }
 
-fn walk_const_items<F>(node: &AstNode, f: &mut F)
+fn walk_const_items<F>(node: &Node, f: &mut F)
 where
     F: FnMut(&ItemDefConst),
 {
     match node {
-        AstNode::Item(item) => walk_const_in_item(item, f),
-        AstNode::Expr(expr) => walk_const_in_expr(expr, f),
-        AstNode::File(file) => {
+        Node::Item(item) => walk_const_in_item(item, f),
+        Node::Expr(expr) => walk_const_in_expr(expr, f),
+        Node::File(file) => {
             for item in &file.items {
                 walk_const_in_item(item, f);
             }
@@ -221,33 +221,33 @@ where
     }
 }
 
-fn walk_const_in_item<F>(item: &AstItem, f: &mut F)
+fn walk_const_in_item<F>(item: &Item, f: &mut F)
 where
     F: FnMut(&ItemDefConst),
 {
     match item {
-        AstItem::DefConst(def_const) => f(def_const),
-        AstItem::Module(module) => {
+        Item::DefConst(def_const) => f(def_const),
+        Item::Module(module) => {
             for child in &module.items {
                 walk_const_in_item(child, f);
             }
         }
-        AstItem::Impl(item_impl) => {
+        Item::Impl(item_impl) => {
             for child in &item_impl.items {
                 walk_const_in_item(child, f);
             }
         }
-        AstItem::Expr(expr) => walk_const_in_expr(expr, f),
+        Item::Expr(expr) => walk_const_in_expr(expr, f),
         _ => {}
     }
 }
 
-fn walk_const_in_expr<F>(expr: &AstExpr, f: &mut F)
+fn walk_const_in_expr<F>(expr: &Expr, f: &mut F)
 where
     F: FnMut(&ItemDefConst),
 {
     match expr {
-        AstExpr::Block(block) => {
+        Expr::Block(block) => {
             for stmt in &block.stmts {
                 match stmt {
                     BlockStmt::Item(item) => walk_const_in_item(item.as_ref(), f),
@@ -264,14 +264,14 @@ where
                 }
             }
         }
-        AstExpr::If(if_expr) => {
+        Expr::If(if_expr) => {
             walk_const_in_expr(&if_expr.cond, f);
             walk_const_in_expr(&if_expr.then, f);
             if let Some(elze) = if_expr.elze.as_ref() {
                 walk_const_in_expr(elze, f);
             }
         }
-        AstExpr::Invoke(invoke) => {
+        Expr::Invoke(invoke) => {
             for arg in &invoke.args {
                 walk_const_in_expr(arg, f);
             }
@@ -279,12 +279,12 @@ where
                 walk_const_in_expr(inner.as_ref(), f);
             }
         }
-        AstExpr::Let(let_expr) => walk_const_in_expr(let_expr.expr.as_ref(), f),
-        AstExpr::Assign(assign) => {
+        Expr::Let(let_expr) => walk_const_in_expr(let_expr.expr.as_ref(), f),
+        Expr::Assign(assign) => {
             walk_const_in_expr(assign.target.as_ref(), f);
             walk_const_in_expr(assign.value.as_ref(), f);
         }
-        AstExpr::Struct(struct_expr) => {
+        Expr::Struct(struct_expr) => {
             walk_const_in_expr(struct_expr.name.as_ref(), f);
             for field in &struct_expr.fields {
                 if let Some(value) = field.value.as_ref() {
@@ -292,74 +292,74 @@ where
                 }
             }
         }
-        AstExpr::Tuple(tuple) => {
+        Expr::Tuple(tuple) => {
             for value in &tuple.values {
                 walk_const_in_expr(value, f);
             }
         }
-        AstExpr::Array(array) => {
+        Expr::Array(array) => {
             for value in &array.values {
                 walk_const_in_expr(value, f);
             }
         }
-        AstExpr::Item(item) => walk_const_in_item(item, f),
-        AstExpr::Value(value) => collect_value_expr(value.as_ref(), f),
+        Expr::Item(item) => walk_const_in_item(item, f),
+        Expr::Value(value) => collect_value_expr(value.as_ref(), f),
         _ => {}
     }
 }
 
-fn collect_value_expr<F>(value: &AstValue, f: &mut F)
+fn collect_value_expr<F>(value: &Value, f: &mut F)
 where
     F: FnMut(&ItemDefConst),
 {
     match value {
-        AstValue::Expr(expr) => walk_const_in_expr(expr, f),
-        AstValue::Struct(value_struct) => {
+        Value::Expr(expr) => walk_const_in_expr(expr, f),
+        Value::Struct(value_struct) => {
             for field in &value_struct.structural.fields {
                 collect_value_expr(&field.value, f);
             }
         }
-        AstValue::Tuple(tuple) => {
+        Value::Tuple(tuple) => {
             for value in &tuple.values {
                 collect_value_expr(value, f);
             }
         }
-        AstValue::Type(ty) => collect_type_expr(ty, f),
+        Value::Type(ty) => collect_type_expr(ty, f),
         _ => {}
     }
 }
 
-fn collect_type_expr<F>(ty: &AstType, f: &mut F)
+fn collect_type_expr<F>(ty: &Ty, f: &mut F)
 where
     F: FnMut(&ItemDefConst),
 {
     match ty {
-        AstType::Struct(struct_ty) => {
+        Ty::Struct(struct_ty) => {
             for field in &struct_ty.fields {
                 collect_type_expr(&field.value, f);
             }
         }
-        AstType::Tuple(tuple) => {
+        Ty::Tuple(tuple) => {
             for ty in &tuple.types {
                 collect_type_expr(ty, f);
             }
         }
-        AstType::Vec(vec_ty) => collect_type_expr(&vec_ty.ty, f),
-        AstType::Reference(reference) => collect_type_expr(&reference.ty, f),
-        AstType::Expr(expr) => walk_const_in_expr(expr, f),
+        Ty::Vec(vec_ty) => collect_type_expr(&vec_ty.ty, f),
+        Ty::Reference(reference) => collect_type_expr(&reference.ty, f),
+        Ty::Expr(expr) => walk_const_in_expr(expr, f),
         _ => {}
     }
 }
 
-fn collect_expr_references(expr: &AstExpr, references: &mut HashSet<String>) {
+fn collect_expr_references(expr: &Expr, references: &mut HashSet<String>) {
     match expr {
-        AstExpr::Locator(locator) => {
+        Expr::Locator(locator) => {
             if let Some(ident) = locator.as_ident() {
                 references.insert(ident.name.clone());
             }
         }
-        AstExpr::Value(value) => collect_value_references(value.as_ref(), references),
-        AstExpr::Block(block) => {
+        Expr::Value(value) => collect_value_references(value.as_ref(), references),
+        Expr::Block(block) => {
             for stmt in &block.stmts {
                 match stmt {
                     BlockStmt::Item(item) => collect_item_references(item.as_ref(), references),
@@ -378,14 +378,14 @@ fn collect_expr_references(expr: &AstExpr, references: &mut HashSet<String>) {
                 }
             }
         }
-        AstExpr::If(if_expr) => {
+        Expr::If(if_expr) => {
             collect_expr_references(&if_expr.cond, references);
             collect_expr_references(&if_expr.then, references);
             if let Some(elze) = if_expr.elze.as_ref() {
                 collect_expr_references(elze, references);
             }
         }
-        AstExpr::Invoke(invoke) => {
+        Expr::Invoke(invoke) => {
             for arg in &invoke.args {
                 collect_expr_references(arg, references);
             }
@@ -393,11 +393,11 @@ fn collect_expr_references(expr: &AstExpr, references: &mut HashSet<String>) {
                 collect_expr_references(inner.as_ref(), references);
             }
         }
-        AstExpr::Assign(assign) => {
+        Expr::Assign(assign) => {
             collect_expr_references(assign.target.as_ref(), references);
             collect_expr_references(assign.value.as_ref(), references);
         }
-        AstExpr::Struct(struct_expr) => {
+        Expr::Struct(struct_expr) => {
             collect_expr_references(struct_expr.name.as_ref(), references);
             for field in &struct_expr.fields {
                 if let Some(value) = field.value.as_ref() {
@@ -405,84 +405,82 @@ fn collect_expr_references(expr: &AstExpr, references: &mut HashSet<String>) {
                 }
             }
         }
-        AstExpr::Select(select) => {
+        Expr::Select(select) => {
             collect_expr_references(select.obj.as_ref(), references);
         }
-        AstExpr::BinOp(binop) => {
+        Expr::BinOp(binop) => {
             collect_expr_references(binop.lhs.as_ref(), references);
             collect_expr_references(binop.rhs.as_ref(), references);
         }
-        AstExpr::UnOp(unop) => collect_expr_references(unop.val.as_ref(), references),
-        AstExpr::Let(let_expr) => collect_expr_references(let_expr.expr.as_ref(), references),
-        AstExpr::Paren(paren) => collect_expr_references(paren.expr.as_ref(), references),
-        AstExpr::Tuple(tuple) => {
+        Expr::UnOp(unop) => collect_expr_references(unop.val.as_ref(), references),
+        Expr::Let(let_expr) => collect_expr_references(let_expr.expr.as_ref(), references),
+        Expr::Paren(paren) => collect_expr_references(paren.expr.as_ref(), references),
+        Expr::Tuple(tuple) => {
             for value in &tuple.values {
                 collect_expr_references(value, references);
             }
         }
-        AstExpr::Array(array) => {
+        Expr::Array(array) => {
             for value in &array.values {
                 collect_expr_references(value, references);
             }
         }
-        AstExpr::Item(item) => collect_item_references(item, references),
+        Expr::Item(item) => collect_item_references(item, references),
         _ => {}
     }
 }
 
-fn collect_item_references(item: &AstItem, references: &mut HashSet<String>) {
+fn collect_item_references(item: &Item, references: &mut HashSet<String>) {
     match item {
-        AstItem::DefConst(def_const) => {
-            collect_expr_references(def_const.value.as_ref(), references)
-        }
-        AstItem::Module(module) => {
+        Item::DefConst(def_const) => collect_expr_references(def_const.value.as_ref(), references),
+        Item::Module(module) => {
             for child in &module.items {
                 collect_item_references(child, references);
             }
         }
-        AstItem::Impl(item_impl) => {
+        Item::Impl(item_impl) => {
             for child in &item_impl.items {
                 collect_item_references(child, references);
             }
         }
-        AstItem::Expr(expr) => collect_expr_references(expr, references),
+        Item::Expr(expr) => collect_expr_references(expr, references),
         _ => {}
     }
 }
 
-fn collect_value_references(value: &AstValue, references: &mut HashSet<String>) {
+fn collect_value_references(value: &Value, references: &mut HashSet<String>) {
     match value {
-        AstValue::Expr(expr) => collect_expr_references(expr, references),
-        AstValue::Struct(value_struct) => {
+        Value::Expr(expr) => collect_expr_references(expr, references),
+        Value::Struct(value_struct) => {
             for field in &value_struct.structural.fields {
                 collect_value_references(&field.value, references);
             }
         }
-        AstValue::Tuple(tuple) => {
+        Value::Tuple(tuple) => {
             for value in &tuple.values {
                 collect_value_references(value, references);
             }
         }
-        AstValue::Type(ty) => collect_type_references(ty, references),
+        Value::Type(ty) => collect_type_references(ty, references),
         _ => {}
     }
 }
 
-fn collect_type_references(ty: &AstType, references: &mut HashSet<String>) {
+fn collect_type_references(ty: &Ty, references: &mut HashSet<String>) {
     match ty {
-        AstType::Struct(struct_ty) => {
+        Ty::Struct(struct_ty) => {
             for field in &struct_ty.fields {
                 collect_type_references(&field.value, references);
             }
         }
-        AstType::Tuple(tuple) => {
+        Ty::Tuple(tuple) => {
             for ty in &tuple.types {
                 collect_type_references(ty, references);
             }
         }
-        AstType::Vec(vec_ty) => collect_type_references(&vec_ty.ty, references),
-        AstType::Reference(reference) => collect_type_references(&reference.ty, references),
-        AstType::Expr(expr) => collect_expr_references(expr, references),
+        Ty::Vec(vec_ty) => collect_type_references(&vec_ty.ty, references),
+        Ty::Reference(reference) => collect_type_references(&reference.ty, references),
+        Ty::Expr(expr) => collect_expr_references(expr, references),
         _ => {}
     }
 }

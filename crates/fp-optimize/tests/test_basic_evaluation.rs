@@ -2,7 +2,7 @@
 // Tests interpreter functionality as part of the optimization system
 // Focus: Basic language features evaluated through fp-optimize interpreter
 
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
@@ -17,7 +17,7 @@ fn create_interpreter() -> InterpretationOrchestrator {
     todo!("Update to use InterpretationOrchestrator API")
 }
 
-fn interpret_expr(_expr: AstExpr) -> Result<AstValue> {
+fn interpret_expr(_expr: Expr) -> Result<Value> {
     // TODO: Fix interpreter API calls
     todo!("Update interpreter.interpret_expr call to use new API")
 }
@@ -248,7 +248,7 @@ fn test_edge_case_values() -> Result<()> {
     let expr = shll_parse_expr!(5 - 10); // Results in negative
     let result = interpreter.interpret_expr(expr, &ctx)?;
     match result {
-        AstValue::Int(val) => assert_eq!(val.value, -5),
+        Value::Int(val) => assert_eq!(val.value, -5),
         _ => panic!("Expected integer result"),
     }
 

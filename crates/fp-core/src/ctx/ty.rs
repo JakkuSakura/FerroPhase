@@ -1,5 +1,5 @@
-use crate::ast::{AstExpr, ExprId};
-use crate::ast::{AstType, AstValue, FunctionParam};
+use crate::ast::{Expr, ExprId};
+use crate::ast::{FunctionParam, Ty, Value};
 use crate::ctx::Context;
 use crate::error::Result;
 use eyre::eyre;
@@ -23,7 +23,7 @@ impl TypeId {
 pub struct FieldInfo {
     pub name: String,
     pub type_id: TypeId,
-    pub ast_type: AstType,
+    pub ast_type: Ty,
     pub attributes: Vec<String>,
 }
 
@@ -32,7 +32,7 @@ pub struct FieldInfo {
 pub struct MethodInfo {
     pub name: String,
     pub params: Vec<FunctionParam>,
-    pub return_type: Option<AstType>,
+    pub return_type: Option<Ty>,
     pub attributes: Vec<String>,
 }
 
@@ -41,7 +41,7 @@ pub struct MethodInfo {
 pub struct TypeInfo {
     pub id: TypeId,
     pub name: String,
-    pub ast_type: AstType,
+    pub ast_type: Ty,
     pub size_bytes: Option<usize>,
     pub fields: Vec<FieldInfo>,
     pub methods: Vec<MethodInfo>,
@@ -111,8 +111,8 @@ impl TypeRegistry {
 
             // Calculate size based on type
             match &type_info.ast_type {
-                AstType::Expr(expr) => {
-                    if let crate::ast::AstExpr::Locator(locator) = expr.as_ref() {
+                Ty::Expr(expr) => {
+                    if let crate::ast::Expr::Locator(locator) = expr.as_ref() {
                         if let Some(ident) = locator.as_ident() {
                             let sizes = self.primitive_sizes.read().unwrap();
                             return sizes.get(&ident.name).copied().ok_or_else(|| {
@@ -125,7 +125,7 @@ impl TypeRegistry {
                     }
                     Ok(8) // Default size for complex expressions
                 }
-                AstType::Struct(_) => {
+                Ty::Struct(_) => {
                     // Calculate struct size as sum of field sizes
                     let mut total_size = 0;
                     for field in &type_info.fields {
@@ -220,22 +220,22 @@ impl TypeRegistry {
 }
 
 pub trait TypeSystem {
-    fn get_ty_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstType> {
+    fn get_ty_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Ty> {
         let _ = ctx;
         let _ = expr;
         unimplemented!()
     }
-    fn get_ty_from_expr_id(&self, ctx: &Context, id: ExprId) -> Result<AstType> {
+    fn get_ty_from_expr_id(&self, ctx: &Context, id: ExprId) -> Result<Ty> {
         let _ = ctx;
         let _ = id;
         unimplemented!()
     }
-    fn get_ty_from_value(&self, ctx: &Context, value: &AstValue) -> Result<AstType> {
+    fn get_ty_from_value(&self, ctx: &Context, value: &Value) -> Result<Ty> {
         let _ = ctx;
         let _ = value;
         unimplemented!()
     }
-    fn get_ty_from_value_id(&self, ctx: &Context, id: u32) -> Result<AstType> {
+    fn get_ty_from_value_id(&self, ctx: &Context, id: u32) -> Result<Ty> {
         let _ = ctx;
         let _ = id;
         unimplemented!()

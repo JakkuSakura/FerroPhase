@@ -1,7 +1,7 @@
 // Interpreter tests in the context of optimization passes
 // Tests how the interpreter integrates with optimization and const evaluation systems
 
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
@@ -11,7 +11,7 @@ use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
-fn interpret_expr(expr: AstExpr) -> Result<AstValue> {
+fn interpret_expr(expr: Expr) -> Result<Value> {
     // TODO: Fix interpreter creation API
     let _interpreter = todo!("Update to use InterpretationOrchestrator");
     let ctx = SharedScopedContext::new();

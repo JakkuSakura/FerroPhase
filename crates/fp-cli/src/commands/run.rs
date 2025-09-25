@@ -3,7 +3,7 @@
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstValue, BExpr, RuntimeValue};
+use fp_core::ast::{BExpr, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_optimize::orchestrators::InterpretationOrchestrator;
@@ -46,7 +46,7 @@ pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
         "literal" => {
             let result = interpret_ast_literal(&ast).await?;
             // For run command, we don't print the result value unless it's needed for output
-            if let AstValue::Unit(_) = result {
+            if let Value::Unit(_) = result {
                 // Don't print unit results
             } else {
                 println!(
@@ -146,7 +146,7 @@ fn try_parse_simple_expression(parser: &RustParser, source: &str) -> Result<BExp
 }
 
 /// Interpret AST using literal semantics (basic const evaluation)
-async fn interpret_ast_literal(ast: &BExpr) -> Result<AstValue> {
+async fn interpret_ast_literal(ast: &BExpr) -> Result<Value> {
     // Create a serializer using RustPrinter
     let serializer = Arc::new(RustPrinter::new());
     register_threadlocal_serializer(serializer.clone());
@@ -227,15 +227,15 @@ fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
     Ok(())
 }
 
-fn format_result(result: &AstValue) -> String {
+fn format_result(result: &Value) -> String {
     match result {
-        AstValue::Unit(_) => "()".to_string(),
-        AstValue::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
-        AstValue::Int(i) => i.value.to_string(),
-        AstValue::Decimal(f) => f.value.to_string(),
-        AstValue::String(s) => format!("\"{}\"", s.value),
-        AstValue::List(list) => format!("[list with {} elements]", list.values.len()),
-        AstValue::Struct(s) => format!("struct {}", s.ty.name),
+        Value::Unit(_) => "()".to_string(),
+        Value::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
+        Value::Int(i) => i.value.to_string(),
+        Value::Decimal(f) => f.value.to_string(),
+        Value::String(s) => format!("\"{}\"", s.value),
+        Value::List(list) => format!("[list with {} elements]", list.values.len()),
+        Value::Struct(s) => format!("struct {}", s.ty.name),
         _ => format!("{:?}", result),
     }
 }
