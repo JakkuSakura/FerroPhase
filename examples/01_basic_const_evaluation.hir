@@ -27,13 +27,13 @@ Program {
                     },
                     body: Some(
                         Body {
-                            hir_id: 102,
+                            hir_id: 86,
                             params: [],
                             value: Expr {
                                 hir_id: 2,
                                 kind: Block(
                                     Block {
-                                        hir_id: 101,
+                                        hir_id: 85,
                                         stmts: [
                                             Stmt {
                                                 hir_id: 9,
@@ -930,205 +930,16 @@ Program {
                                                 ),
                                             },
                                             Stmt {
-                                                hir_id: 94,
+                                                hir_id: 82,
                                                 kind: Expr(
                                                     Expr {
                                                         hir_id: 81,
-                                                        kind: Call(
-                                                            Expr {
-                                                                hir_id: 93,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "println",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: None,
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 8223692258976248347,
-                                                                    lo: 58,
-                                                                    hi: 59,
-                                                                },
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                template: "Config: buffer=4KB, connections=150, timeout=30000ms, debug=0",
+                                                                args: [],
+                                                                newline: true,
                                                             },
-                                                            [
-                                                                Expr {
-                                                                    hir_id: 82,
-                                                                    kind: Literal(
-                                                                        Str(
-                                                                            "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
-                                                                        ),
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 47,
-                                                                        hi: 48,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 83,
-                                                                    kind: Binary(
-                                                                        Div,
-                                                                        Expr {
-                                                                            hir_id: 84,
-                                                                            kind: FieldAccess(
-                                                                                Expr {
-                                                                                    hir_id: 85,
-                                                                                    kind: Path(
-                                                                                        Path {
-                                                                                            segments: [
-                                                                                                PathSegment {
-                                                                                                    name: "DEFAULT_CONFIG",
-                                                                                                    args: None,
-                                                                                                },
-                                                                                            ],
-                                                                                            res: Some(
-                                                                                                Def(
-                                                                                                    8,
-                                                                                                ),
-                                                                                            ),
-                                                                                        },
-                                                                                    ),
-                                                                                    span: Span {
-                                                                                        file: 8223692258976248347,
-                                                                                        lo: 50,
-                                                                                        hi: 51,
-                                                                                    },
-                                                                                },
-                                                                                "buffer_size",
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 49,
-                                                                                hi: 50,
-                                                                            },
-                                                                        },
-                                                                        Expr {
-                                                                            hir_id: 86,
-                                                                            kind: Literal(
-                                                                                Integer(
-                                                                                    1024,
-                                                                                ),
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 51,
-                                                                                hi: 52,
-                                                                            },
-                                                                        },
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 48,
-                                                                        hi: 49,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 87,
-                                                                    kind: FieldAccess(
-                                                                        Expr {
-                                                                            hir_id: 88,
-                                                                            kind: Path(
-                                                                                Path {
-                                                                                    segments: [
-                                                                                        PathSegment {
-                                                                                            name: "DEFAULT_CONFIG",
-                                                                                            args: None,
-                                                                                        },
-                                                                                    ],
-                                                                                    res: Some(
-                                                                                        Def(
-                                                                                            8,
-                                                                                        ),
-                                                                                    ),
-                                                                                },
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 53,
-                                                                                hi: 54,
-                                                                            },
-                                                                        },
-                                                                        "max_connections",
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 52,
-                                                                        hi: 53,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 89,
-                                                                    kind: FieldAccess(
-                                                                        Expr {
-                                                                            hir_id: 90,
-                                                                            kind: Path(
-                                                                                Path {
-                                                                                    segments: [
-                                                                                        PathSegment {
-                                                                                            name: "DEFAULT_CONFIG",
-                                                                                            args: None,
-                                                                                        },
-                                                                                    ],
-                                                                                    res: Some(
-                                                                                        Def(
-                                                                                            8,
-                                                                                        ),
-                                                                                    ),
-                                                                                },
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 55,
-                                                                                hi: 56,
-                                                                            },
-                                                                        },
-                                                                        "timeout_ms",
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 54,
-                                                                        hi: 55,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 91,
-                                                                    kind: FieldAccess(
-                                                                        Expr {
-                                                                            hir_id: 92,
-                                                                            kind: Path(
-                                                                                Path {
-                                                                                    segments: [
-                                                                                        PathSegment {
-                                                                                            name: "DEFAULT_CONFIG",
-                                                                                            args: None,
-                                                                                        },
-                                                                                    ],
-                                                                                    res: Some(
-                                                                                        Def(
-                                                                                            8,
-                                                                                        ),
-                                                                                    ),
-                                                                                },
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 57,
-                                                                                hi: 58,
-                                                                            },
-                                                                        },
-                                                                        "debug_level",
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 56,
-                                                                        hi: 57,
-                                                                    },
-                                                                },
-                                                            ],
                                                         ),
                                                         span: Span {
                                                             file: 8223692258976248347,
@@ -1139,96 +950,21 @@ Program {
                                                 ),
                                             },
                                             Stmt {
-                                                hir_id: 100,
+                                                hir_id: 84,
                                                 kind: Expr(
                                                     Expr {
-                                                        hir_id: 95,
-                                                        kind: Call(
-                                                            Expr {
-                                                                hir_id: 99,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "println",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: None,
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 8223692258976248347,
-                                                                    lo: 63,
-                                                                    hi: 64,
-                                                                },
+                                                        hir_id: 83,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                template: "Computed: factorial=120, is_pow2=true",
+                                                                args: [],
+                                                                newline: true,
                                                             },
-                                                            [
-                                                                Expr {
-                                                                    hir_id: 96,
-                                                                    kind: Literal(
-                                                                        Str(
-                                                                            "Computed: factorial={}, is_pow2={}",
-                                                                        ),
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 60,
-                                                                        hi: 61,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 97,
-                                                                    kind: Path(
-                                                                        Path {
-                                                                            segments: [
-                                                                                PathSegment {
-                                                                                    name: "FACTORIAL_5",
-                                                                                    args: None,
-                                                                                },
-                                                                            ],
-                                                                            res: Some(
-                                                                                Def(
-                                                                                    4,
-                                                                                ),
-                                                                            ),
-                                                                        },
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 61,
-                                                                        hi: 62,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 98,
-                                                                    kind: Path(
-                                                                        Path {
-                                                                            segments: [
-                                                                                PathSegment {
-                                                                                    name: "IS_POWER_OF_TWO",
-                                                                                    args: None,
-                                                                                },
-                                                                            ],
-                                                                            res: Some(
-                                                                                Def(
-                                                                                    5,
-                                                                                ),
-                                                                            ),
-                                                                        },
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 62,
-                                                                        hi: 63,
-                                                                    },
-                                                                },
-                                                            ],
                                                         ),
                                                         span: Span {
                                                             file: 8223692258976248347,
-                                                            lo: 59,
-                                                            hi: 60,
+                                                            lo: 47,
+                                                            hi: 48,
                                                         },
                                                     },
                                                 ),
@@ -1283,13 +1019,13 @@ Program {
                     },
                     body: Some(
                         Body {
-                            hir_id: 102,
+                            hir_id: 86,
                             params: [],
                             value: Expr {
                                 hir_id: 2,
                                 kind: Block(
                                     Block {
-                                        hir_id: 101,
+                                        hir_id: 85,
                                         stmts: [
                                             Stmt {
                                                 hir_id: 9,
@@ -2186,205 +1922,16 @@ Program {
                                                 ),
                                             },
                                             Stmt {
-                                                hir_id: 94,
+                                                hir_id: 82,
                                                 kind: Expr(
                                                     Expr {
                                                         hir_id: 81,
-                                                        kind: Call(
-                                                            Expr {
-                                                                hir_id: 93,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "println",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: None,
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 8223692258976248347,
-                                                                    lo: 58,
-                                                                    hi: 59,
-                                                                },
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                template: "Config: buffer=4KB, connections=150, timeout=30000ms, debug=0",
+                                                                args: [],
+                                                                newline: true,
                                                             },
-                                                            [
-                                                                Expr {
-                                                                    hir_id: 82,
-                                                                    kind: Literal(
-                                                                        Str(
-                                                                            "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
-                                                                        ),
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 47,
-                                                                        hi: 48,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 83,
-                                                                    kind: Binary(
-                                                                        Div,
-                                                                        Expr {
-                                                                            hir_id: 84,
-                                                                            kind: FieldAccess(
-                                                                                Expr {
-                                                                                    hir_id: 85,
-                                                                                    kind: Path(
-                                                                                        Path {
-                                                                                            segments: [
-                                                                                                PathSegment {
-                                                                                                    name: "DEFAULT_CONFIG",
-                                                                                                    args: None,
-                                                                                                },
-                                                                                            ],
-                                                                                            res: Some(
-                                                                                                Def(
-                                                                                                    8,
-                                                                                                ),
-                                                                                            ),
-                                                                                        },
-                                                                                    ),
-                                                                                    span: Span {
-                                                                                        file: 8223692258976248347,
-                                                                                        lo: 50,
-                                                                                        hi: 51,
-                                                                                    },
-                                                                                },
-                                                                                "buffer_size",
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 49,
-                                                                                hi: 50,
-                                                                            },
-                                                                        },
-                                                                        Expr {
-                                                                            hir_id: 86,
-                                                                            kind: Literal(
-                                                                                Integer(
-                                                                                    1024,
-                                                                                ),
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 51,
-                                                                                hi: 52,
-                                                                            },
-                                                                        },
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 48,
-                                                                        hi: 49,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 87,
-                                                                    kind: FieldAccess(
-                                                                        Expr {
-                                                                            hir_id: 88,
-                                                                            kind: Path(
-                                                                                Path {
-                                                                                    segments: [
-                                                                                        PathSegment {
-                                                                                            name: "DEFAULT_CONFIG",
-                                                                                            args: None,
-                                                                                        },
-                                                                                    ],
-                                                                                    res: Some(
-                                                                                        Def(
-                                                                                            8,
-                                                                                        ),
-                                                                                    ),
-                                                                                },
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 53,
-                                                                                hi: 54,
-                                                                            },
-                                                                        },
-                                                                        "max_connections",
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 52,
-                                                                        hi: 53,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 89,
-                                                                    kind: FieldAccess(
-                                                                        Expr {
-                                                                            hir_id: 90,
-                                                                            kind: Path(
-                                                                                Path {
-                                                                                    segments: [
-                                                                                        PathSegment {
-                                                                                            name: "DEFAULT_CONFIG",
-                                                                                            args: None,
-                                                                                        },
-                                                                                    ],
-                                                                                    res: Some(
-                                                                                        Def(
-                                                                                            8,
-                                                                                        ),
-                                                                                    ),
-                                                                                },
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 55,
-                                                                                hi: 56,
-                                                                            },
-                                                                        },
-                                                                        "timeout_ms",
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 54,
-                                                                        hi: 55,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 91,
-                                                                    kind: FieldAccess(
-                                                                        Expr {
-                                                                            hir_id: 92,
-                                                                            kind: Path(
-                                                                                Path {
-                                                                                    segments: [
-                                                                                        PathSegment {
-                                                                                            name: "DEFAULT_CONFIG",
-                                                                                            args: None,
-                                                                                        },
-                                                                                    ],
-                                                                                    res: Some(
-                                                                                        Def(
-                                                                                            8,
-                                                                                        ),
-                                                                                    ),
-                                                                                },
-                                                                            ),
-                                                                            span: Span {
-                                                                                file: 8223692258976248347,
-                                                                                lo: 57,
-                                                                                hi: 58,
-                                                                            },
-                                                                        },
-                                                                        "debug_level",
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 56,
-                                                                        hi: 57,
-                                                                    },
-                                                                },
-                                                            ],
                                                         ),
                                                         span: Span {
                                                             file: 8223692258976248347,
@@ -2395,96 +1942,21 @@ Program {
                                                 ),
                                             },
                                             Stmt {
-                                                hir_id: 100,
+                                                hir_id: 84,
                                                 kind: Expr(
                                                     Expr {
-                                                        hir_id: 95,
-                                                        kind: Call(
-                                                            Expr {
-                                                                hir_id: 99,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "println",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: None,
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 8223692258976248347,
-                                                                    lo: 63,
-                                                                    hi: 64,
-                                                                },
+                                                        hir_id: 83,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                template: "Computed: factorial=120, is_pow2=true",
+                                                                args: [],
+                                                                newline: true,
                                                             },
-                                                            [
-                                                                Expr {
-                                                                    hir_id: 96,
-                                                                    kind: Literal(
-                                                                        Str(
-                                                                            "Computed: factorial={}, is_pow2={}",
-                                                                        ),
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 60,
-                                                                        hi: 61,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 97,
-                                                                    kind: Path(
-                                                                        Path {
-                                                                            segments: [
-                                                                                PathSegment {
-                                                                                    name: "FACTORIAL_5",
-                                                                                    args: None,
-                                                                                },
-                                                                            ],
-                                                                            res: Some(
-                                                                                Def(
-                                                                                    4,
-                                                                                ),
-                                                                            ),
-                                                                        },
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 61,
-                                                                        hi: 62,
-                                                                    },
-                                                                },
-                                                                Expr {
-                                                                    hir_id: 98,
-                                                                    kind: Path(
-                                                                        Path {
-                                                                            segments: [
-                                                                                PathSegment {
-                                                                                    name: "IS_POWER_OF_TWO",
-                                                                                    args: None,
-                                                                                },
-                                                                            ],
-                                                                            res: Some(
-                                                                                Def(
-                                                                                    5,
-                                                                                ),
-                                                                            ),
-                                                                        },
-                                                                    ),
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 62,
-                                                                        hi: 63,
-                                                                    },
-                                                                },
-                                                            ],
                                                         ),
                                                         span: Span {
                                                             file: 8223692258976248347,
-                                                            lo: 59,
-                                                            hi: 60,
+                                                            lo: 47,
+                                                            hi: 48,
                                                         },
                                                     },
                                                 ),

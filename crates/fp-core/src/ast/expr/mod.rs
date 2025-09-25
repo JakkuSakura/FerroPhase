@@ -42,6 +42,7 @@ common_enum! {
         Let(ExprLet),
         Closure(ExprClosure),
         Array(ExprArray),
+        StdIoPrintln(ExprStdIoPrintln),
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosured),
         Paren(ExprParen),

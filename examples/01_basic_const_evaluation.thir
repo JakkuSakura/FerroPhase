@@ -274,22 +274,22 @@ Program {
                                                 thir_id: 11,
                                                 kind: Path(
                                                     ItemRef {
-                                                        name: "println",
+                                                        name: "std::io::println",
                                                         def_id: None,
                                                     },
                                                 ),
                                                 ty: Ty {
-                                                    kind: Int(
-                                                        I32,
+                                                    kind: Tuple(
+                                                        [],
                                                     ),
                                                     flags: TypeFlags(
                                                         0x0,
                                                     ),
                                                 },
                                                 span: Span {
-                                                    file: 8223692258976248347,
-                                                    lo: 58,
-                                                    hi: 59,
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
                                                 },
                                             },
                                             args: [
@@ -297,7 +297,7 @@ Program {
                                                     thir_id: 12,
                                                     kind: Literal(
                                                         Str(
-                                                            "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
+                                                            "Config: buffer=4KB, connections=150, timeout=30000ms, debug=0",
                                                         ),
                                                     ),
                                                     ty: Ty {
@@ -319,222 +319,9 @@ Program {
                                                         ),
                                                     },
                                                     span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 47,
-                                                        hi: 48,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 13,
-                                                    kind: Binary(
-                                                        Div,
-                                                        Expr {
-                                                            thir_id: 14,
-                                                            kind: Field {
-                                                                base: Expr {
-                                                                    thir_id: 15,
-                                                                    kind: Path(
-                                                                        ItemRef {
-                                                                            name: "DEFAULT_CONFIG",
-                                                                            def_id: Some(
-                                                                                8,
-                                                                            ),
-                                                                        },
-                                                                    ),
-                                                                    ty: Ty {
-                                                                        kind: Int(
-                                                                            I32,
-                                                                        ),
-                                                                        flags: TypeFlags(
-                                                                            0x0,
-                                                                        ),
-                                                                    },
-                                                                    span: Span {
-                                                                        file: 8223692258976248347,
-                                                                        lo: 50,
-                                                                        hi: 51,
-                                                                    },
-                                                                },
-                                                                field_idx: 0,
-                                                            },
-                                                            ty: Ty {
-                                                                kind: Int(
-                                                                    I32,
-                                                                ),
-                                                                flags: TypeFlags(
-                                                                    0x0,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 8223692258976248347,
-                                                                lo: 49,
-                                                                hi: 50,
-                                                            },
-                                                        },
-                                                        Expr {
-                                                            thir_id: 16,
-                                                            kind: Literal(
-                                                                Int(
-                                                                    1024,
-                                                                    I32,
-                                                                ),
-                                                            ),
-                                                            ty: Ty {
-                                                                kind: Int(
-                                                                    I32,
-                                                                ),
-                                                                flags: TypeFlags(
-                                                                    0x0,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 8223692258976248347,
-                                                                lo: 51,
-                                                                hi: 52,
-                                                            },
-                                                        },
-                                                    ),
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I32,
-                                                        ),
-                                                        flags: TypeFlags(
-                                                            0x0,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 48,
-                                                        hi: 49,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 17,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 18,
-                                                            kind: Path(
-                                                                ItemRef {
-                                                                    name: "DEFAULT_CONFIG",
-                                                                    def_id: Some(
-                                                                        8,
-                                                                    ),
-                                                                },
-                                                            ),
-                                                            ty: Ty {
-                                                                kind: Int(
-                                                                    I32,
-                                                                ),
-                                                                flags: TypeFlags(
-                                                                    0x0,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 8223692258976248347,
-                                                                lo: 53,
-                                                                hi: 54,
-                                                            },
-                                                        },
-                                                        field_idx: 0,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I32,
-                                                        ),
-                                                        flags: TypeFlags(
-                                                            0x0,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 52,
-                                                        hi: 53,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 19,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 20,
-                                                            kind: Path(
-                                                                ItemRef {
-                                                                    name: "DEFAULT_CONFIG",
-                                                                    def_id: Some(
-                                                                        8,
-                                                                    ),
-                                                                },
-                                                            ),
-                                                            ty: Ty {
-                                                                kind: Int(
-                                                                    I32,
-                                                                ),
-                                                                flags: TypeFlags(
-                                                                    0x0,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 8223692258976248347,
-                                                                lo: 55,
-                                                                hi: 56,
-                                                            },
-                                                        },
-                                                        field_idx: 0,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I32,
-                                                        ),
-                                                        flags: TypeFlags(
-                                                            0x0,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 54,
-                                                        hi: 55,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 21,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 22,
-                                                            kind: Path(
-                                                                ItemRef {
-                                                                    name: "DEFAULT_CONFIG",
-                                                                    def_id: Some(
-                                                                        8,
-                                                                    ),
-                                                                },
-                                                            ),
-                                                            ty: Ty {
-                                                                kind: Int(
-                                                                    I32,
-                                                                ),
-                                                                flags: TypeFlags(
-                                                                    0x0,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 8223692258976248347,
-                                                                lo: 57,
-                                                                hi: 58,
-                                                            },
-                                                        },
-                                                        field_idx: 0,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I32,
-                                                        ),
-                                                        flags: TypeFlags(
-                                                            0x0,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 56,
-                                                        hi: 57,
+                                                        file: 0,
+                                                        lo: 0,
+                                                        hi: 0,
                                                     },
                                                 },
                                             ],
@@ -559,36 +346,36 @@ Program {
                             Stmt {
                                 kind: Expr(
                                     Expr {
-                                        thir_id: 23,
+                                        thir_id: 13,
                                         kind: Call {
                                             fun: Expr {
-                                                thir_id: 24,
+                                                thir_id: 14,
                                                 kind: Path(
                                                     ItemRef {
-                                                        name: "println",
+                                                        name: "std::io::println",
                                                         def_id: None,
                                                     },
                                                 ),
                                                 ty: Ty {
-                                                    kind: Int(
-                                                        I32,
+                                                    kind: Tuple(
+                                                        [],
                                                     ),
                                                     flags: TypeFlags(
                                                         0x0,
                                                     ),
                                                 },
                                                 span: Span {
-                                                    file: 8223692258976248347,
-                                                    lo: 63,
-                                                    hi: 64,
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
                                                 },
                                             },
                                             args: [
                                                 Expr {
-                                                    thir_id: 25,
+                                                    thir_id: 15,
                                                     kind: Literal(
                                                         Str(
-                                                            "Computed: factorial={}, is_pow2={}",
+                                                            "Computed: factorial=120, is_pow2=true",
                                                         ),
                                                     ),
                                                     ty: Ty {
@@ -610,57 +397,9 @@ Program {
                                                         ),
                                                     },
                                                     span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 60,
-                                                        hi: 61,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 26,
-                                                    kind: Path(
-                                                        ItemRef {
-                                                            name: "FACTORIAL_5",
-                                                            def_id: Some(
-                                                                4,
-                                                            ),
-                                                        },
-                                                    ),
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I32,
-                                                        ),
-                                                        flags: TypeFlags(
-                                                            0x0,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 61,
-                                                        hi: 62,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 27,
-                                                    kind: Path(
-                                                        ItemRef {
-                                                            name: "IS_POWER_OF_TWO",
-                                                            def_id: Some(
-                                                                5,
-                                                            ),
-                                                        },
-                                                    ),
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I32,
-                                                        ),
-                                                        flags: TypeFlags(
-                                                            0x0,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 8223692258976248347,
-                                                        lo: 62,
-                                                        hi: 63,
+                                                        file: 0,
+                                                        lo: 0,
+                                                        hi: 0,
                                                     },
                                                 },
                                             ],
@@ -676,8 +415,8 @@ Program {
                                         },
                                         span: Span {
                                             file: 8223692258976248347,
-                                            lo: 59,
-                                            hi: 60,
+                                            lo: 47,
+                                            hi: 48,
                                         },
                                     },
                                 ),
@@ -704,5 +443,5 @@ Program {
             locals: [],
         },
     },
-    next_thir_id: 28,
+    next_thir_id: 16,
 }

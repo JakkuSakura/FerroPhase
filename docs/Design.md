@@ -15,13 +15,34 @@ efficiency in later optimization and code generation.
 #### Core Pipeline Stages
 
 - **Frontend**: Source Language → CST (Concrete Syntax Tree, optional for parsing details) → LAST (Language-specific
-  AST, e.g., Python or FerroPhase nodes) → AST (Unified, language-agnostic AST).
+  AST, e.g., Python or FerroPhase nodes) → AST (Unified, language-agnostic AST). The LAST → AST transition is where
+  each language’s built-in library is rewritten into a canonical, language-agnostic `std` package so that everything
+  downstream consumes the same primitives.
 - **Interpretation**: A shared evaluation phase, configurable for compile-time (Comptime) or runtime behavior, handling
   tasks like constant folding, type querying, and execution.
 - **Desugaring and IR Lowering**: AST → HIR (High-level IR, structured for inference) → THIR (Typed HIR, with embedded
   resolved types) → MIR (Mid-level Intermediate Representation, an SSA control-flow graph for dataflow and ownership
   analysis) → LIR (Low-level IR, near-machine representation).
 - **Output Generation**: Mode-specific backends, such as WASM/LLVM IR, bytecode, Rust code, or direct execution.
+
+### Standard Library Normalisation
+
+Different frontends ship different standard libraries, but the rest of the compiler expects a single, consistent view
+of core services (collections, strings, IO shims, etc.). The convergence process happens immediately after LAST is
+constructed:
+
+1. **Capture** – LAST nodes record which native modules or prelude bindings were pulled in (for example, Python’s
+   `__builtins__`, JavaScript host globals, or FerroPhase’s structural helpers) and tag them with canonical intents.
+2. **Rewrite** – while producing the unified AST, those intents are remapped onto the canonical `std` hierarchy. The
+   AST therefore references only language-agnostic modules such as `std::string`, `std::iter`, or `std::intrinsics`.
+3. **Propagation** – EAST, HIR, THIR, MIR, and LIR simply reuse the canonical package; no later stage needs to know
+   which frontend supplied the definitions.
+4. **Realisation** – emitters translate the canonical `std` back into the appropriate target form: high-level
+   transpilers re-introduce surface imports, whereas low-level backends map calls to runtime helpers or LLVM intrinsics.
+
+Because the mapping is completed before const evaluation runs, every downstream optimisation and diagnostic treats
+`std` like any other user-defined module. Adding a new frontend only requires defining the mapping from its native
+library surface into the shared `std` vocabulary.
 
 #### Execution Modes and Their Flows
 

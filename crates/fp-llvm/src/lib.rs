@@ -7,7 +7,7 @@ pub mod target;
 use crate::codegen::LirCodegen;
 use crate::context::LlvmContext;
 use crate::debug_info::DebugInfoBuilder;
-use crate::linking::{LinkerConfig, ModuleLinker};
+use crate::linking::LinkerConfig;
 use crate::target::{TargetCodegen, TargetConfig};
 use anyhow::Context as AnyhowContext;
 use fp_core::error::Result;
@@ -120,7 +120,7 @@ impl LlvmCompiler {
             .map_err(fp_core::error::Error::from)?;
 
         // Create target codegen
-        let target_codegen = TargetCodegen::new(self.config.target.clone())
+        let _target_codegen = TargetCodegen::new(self.config.target.clone())
             .with_context(|| "Failed to create target codegen")
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
 
@@ -146,6 +146,21 @@ impl LlvmCompiler {
             .with_context(|| "Failed to generate LLVM IR from LIR")
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
 
+        tracing::debug!(
+            "LLVM module contains {} functions and {} globals",
+            llvm_ctx.module.functions.len(),
+            llvm_ctx.module.global_vars.len()
+        );
+        for func in &llvm_ctx.module.functions {
+            let instr_count: usize = func.basic_blocks.iter().map(|bb| bb.instrs.len()).sum();
+            tracing::debug!(
+                "LLVM function: {} with {} blocks and {} instructions",
+                func.name,
+                func.basic_blocks.len(),
+                instr_count
+            );
+        }
+
         // Finalize debug info
         if let Some(ref debug_info) = debug_builder {
             debug_info.finalize();
@@ -156,12 +171,14 @@ impl LlvmCompiler {
             .verify_module()
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
 
-        // Create module linker and compile to final output
-        let module_linker = ModuleLinker::new(self.config.linker.clone());
-        let output_path = module_linker
-            .link_modules(&[&llvm_ctx.module], &target_codegen)
-            .with_context(|| "Failed to link LLVM modules")
+        // Persist LLVM IR to file for downstream tools (llc/clang)
+        let output_path = self.config.linker.output_path.clone();
+        llvm_ctx
+            .write_to_file(&output_path)
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        // TODO: Once native object emission is supported, reinstate ModuleLinker
+        // and target codegen to produce object files directly.
 
         Ok(output_path)
     }
