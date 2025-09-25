@@ -10,7 +10,6 @@ pub mod error;
 pub mod ir;
 pub mod orchestrators;
 pub mod passes;
-pub mod pipeline; // New unified pipeline
 pub mod queries;
 pub mod transformations;
 pub mod utils;

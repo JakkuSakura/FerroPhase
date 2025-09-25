@@ -103,6 +103,52 @@ impl InterpretationOrchestrator {
             }
         }
 
+        // Handle built-in string methods for const evaluation
+        match (obj_runtime.get_value(), method_name.as_str()) {
+            (Value::String(s), "len") => {
+                if !args.is_empty() {
+                    return Err(optimization_error(
+                        "String.len() method takes no arguments".to_string(),
+                    ));
+                }
+                return Ok(Value::int(s.value.len() as i64));
+            }
+            (Value::String(s), "contains") => {
+                if args.len() != 1 {
+                    return Err(optimization_error(
+                        "String.contains() method takes exactly one argument".to_string(),
+                    ));
+                }
+                let arg_val = self.interpret_expr(&args[0], ctx)?;
+                if let Value::String(needle) = arg_val {
+                    return Ok(Value::bool(s.value.contains(&needle.value)));
+                } else {
+                    return Err(optimization_error(
+                        "String.contains() argument must be a string".to_string(),
+                    ));
+                }
+            }
+            (Value::String(s), "find") => {
+                if args.len() != 1 {
+                    return Err(optimization_error(
+                        "String.find() method takes exactly one argument".to_string(),
+                    ));
+                }
+                let arg_val = self.interpret_expr(&args[0], ctx)?;
+                if let Value::String(needle) = arg_val {
+                    match s.value.find(&needle.value) {
+                        Some(pos) => return Ok(Value::int(pos as i64)),
+                        None => return Ok(Value::int(-1)),
+                    }
+                } else {
+                    return Err(optimization_error(
+                        "String.find() argument must be a string".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+
         // Fall back to built-in methods via runtime pass
         let args_runtime: Vec<RuntimeValue> = args
             .iter()

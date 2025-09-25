@@ -1,0 +1,2500 @@
+File(
+    File {
+        path: "examples/02_string_processing.fp",
+        items: [
+            DefFunction(
+                ItemDefFunction {
+                    attrs: [],
+                    name: #main,
+                    ty: None,
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: None,
+                    },
+                    body: Block(
+                        ExprBlock {
+                            stmts: [
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #APP_NAME,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Value(
+                                                String(
+                                                    ValueString {
+                                                        value: "FerroPhase",
+                                                        owned: false,
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #VERSION,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Value(
+                                                String(
+                                                    ValueString {
+                                                        value: "1.0.0",
+                                                        owned: false,
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #BANNER,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Add,
+                                                            lhs: Locator(
+                                                                #APP_NAME,
+                                                            ),
+                                                            rhs: Value(
+                                                                String(
+                                                                    ValueString {
+                                                                        value: " v",
+                                                                        owned: false,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: Locator(
+                                                        #VERSION,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #CONFIG_FILE,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Any(
+                                                RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: concat, span: bytes(8303..8309) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Ident { sym: APP_NAME, span: bytes(8311..8319) }, Punct { char: ',', spacing: Alone, span: bytes(8319..8320) }, Literal { lit: ".config", span: bytes(8321..8330) }] } } },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #LOG_FILE,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Any(
+                                                RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: concat, span: bytes(8391..8397) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Ident { sym: APP_NAME, span: bytes(8399..8407) }, Punct { char: ',', spacing: Alone, span: bytes(8407..8408) }, Literal { lit: "_", span: bytes(8409..8412) }, Punct { char: ',', spacing: Alone, span: bytes(8412..8413) }, Ident { sym: VERSION, span: bytes(8414..8421) }, Punct { char: ',', spacing: Alone, span: bytes(8421..8422) }, Literal { lit: ".log", span: bytes(8423..8429) }] } } },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #APP_NAME_LENGTH,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #APP_NAME,
+                                                            ),
+                                                            field: #len,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #VERSION_LENGTH,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #VERSION,
+                                                            ),
+                                                            field: #len,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #BANNER_LENGTH,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #BANNER,
+                                                            ),
+                                                            field: #len,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #UPPERCASE_NAME,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Value(
+                                                String(
+                                                    ValueString {
+                                                        value: "FERROPHASE",
+                                                        owned: false,
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #VERSION_HAS_BETA,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #bool,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #VERSION,
+                                                            ),
+                                                            field: #contains,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [
+                                                        Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: "beta",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #VERSION_HAS_DOT,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #bool,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #VERSION,
+                                                            ),
+                                                            field: #contains,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [
+                                                        Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: ".",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #BANNER_HAS_VERSION,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #bool,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #BANNER,
+                                                            ),
+                                                            field: #contains,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [
+                                                        Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: "1.0.0",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #APP_NAME_IS_EMPTY,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #bool,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Eq,
+                                                    lhs: Locator(
+                                                        #APP_NAME_LENGTH,
+                                                    ),
+                                                    rhs: Value(
+                                                        Int(
+                                                            ValueInt {
+                                                                value: 0,
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #BUFFER_SIZE,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: If(
+                                                ExprIf {
+                                                    cond: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Gt,
+                                                            lhs: Locator(
+                                                                #BANNER_LENGTH,
+                                                            ),
+                                                            rhs: Value(
+                                                                Int(
+                                                                    ValueInt {
+                                                                        value: 20,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                    then: Value(
+                                                        Int(
+                                                            ValueInt {
+                                                                value: 1024,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    elze: Some(
+                                                        Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 512,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #NEEDS_LARGE_BUFFER,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #bool,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Gt,
+                                                    lhs: Any(
+                                                        RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: strlen, span: bytes(9195..9201) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Ident { sym: LOG_FILE, span: bytes(9203..9211) }] } } },
+                                                    ),
+                                                    rhs: Value(
+                                                        Int(
+                                                            ValueInt {
+                                                                value: 15,
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #HASH_BASE,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 31,
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #SIMPLE_HASH,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Mul,
+                                                            lhs: Locator(
+                                                                #APP_NAME_LENGTH,
+                                                            ),
+                                                            rhs: Locator(
+                                                                #HASH_BASE,
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: Locator(
+                                                        #VERSION_LENGTH,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #DOT_POSITION,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Invoke(
+                                                ExprInvoke {
+                                                    target: Method(
+                                                        ExprSelect {
+                                                            obj: Locator(
+                                                                #VERSION,
+                                                            ),
+                                                            field: #find,
+                                                            select: Method,
+                                                        },
+                                                    ),
+                                                    args: [
+                                                        Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: ".",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #COMPUTED_HASH,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: If(
+                                                ExprIf {
+                                                    cond: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Ge,
+                                                            lhs: Locator(
+                                                                #DOT_POSITION,
+                                                            ),
+                                                            rhs: Value(
+                                                                Int(
+                                                                    ValueInt {
+                                                                        value: 0,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                    then: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Add,
+                                                            lhs: Locator(
+                                                                #SIMPLE_HASH,
+                                                            ),
+                                                            rhs: Locator(
+                                                                #DOT_POSITION,
+                                                            ),
+                                                        },
+                                                    ),
+                                                    elze: Some(
+                                                        Locator(
+                                                            #SIMPLE_HASH,
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #DEBUG_PREFIX,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Add,
+                                                            lhs: Value(
+                                                                String(
+                                                                    ValueString {
+                                                                        value: "[",
+                                                                        owned: false,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            rhs: Locator(
+                                                                #APP_NAME,
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: Value(
+                                                        String(
+                                                            ValueString {
+                                                                value: "]",
+                                                                owned: false,
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #STATUS_MESSAGE,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Any(
+                                                RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: concat, span: bytes(9765..9771) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Literal { lit: "Application ", span: bytes(9773..9787) }, Punct { char: ',', spacing: Alone, span: bytes(9787..9788) }, Ident { sym: APP_NAME, span: bytes(9789..9797) }, Punct { char: ',', spacing: Alone, span: bytes(9797..9798) }, Literal { lit: " version ", span: bytes(9799..9810) }, Punct { char: ',', spacing: Alone, span: bytes(9810..9811) }, Ident { sym: VERSION, span: bytes(9812..9819) }, Punct { char: ',', spacing: Alone, span: bytes(9819..9820) }, Literal { lit: " loaded", span: bytes(9821..9830) }] } } },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #ERROR_LOG_FILE,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: Locator(
+                                                        #APP_NAME,
+                                                    ),
+                                                    rhs: Value(
+                                                        String(
+                                                            ValueString {
+                                                                value: "_errors.log",
+                                                                owned: false,
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefStruct(
+                                        ItemDefStruct {
+                                            visibility: Private,
+                                            name: #AppInfo,
+                                            value: TypeStruct {
+                                                name: #AppInfo,
+                                                fields: [
+                                                    StructuralField {
+                                                        name: #banner,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #String,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #config_file,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #String,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #log_file,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #String,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #error_log_file,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #String,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #debug_prefix,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #String,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #status_message,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #String,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #app_name_length,
+                                                        value: Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #buffer_size,
+                                                        value: Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #hash_code,
+                                                        value: Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    },
+                                                    StructuralField {
+                                                        name: #has_version_dot,
+                                                        value: Expr(
+                                                            Locator(
+                                                                #bool,
+                                                            ),
+                                                        ),
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #APP_INFO,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #AppInfo,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Struct(
+                                                ExprStruct {
+                                                    name: Locator(
+                                                        #AppInfo,
+                                                    ),
+                                                    fields: [
+                                                        ExprField {
+                                                            name: #banner,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #BANNER,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #config_file,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #CONFIG_FILE,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #log_file,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #LOG_FILE,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #error_log_file,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #ERROR_LOG_FILE,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #debug_prefix,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #DEBUG_PREFIX,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #status_message,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #STATUS_MESSAGE,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #app_name_length,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #APP_NAME_LENGTH,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #buffer_size,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #BUFFER_SIZE,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #hash_code,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #COMPUTED_HASH,
+                                                                ),
+                                                            ),
+                                                        },
+                                                        ExprField {
+                                                            name: #has_version_dot,
+                                                            value: Some(
+                                                                Locator(
+                                                                    #VERSION_HAS_DOT,
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "=== String Processing Results ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "App name: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " (length: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            ")",
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #APP_NAME,
+                                                        ),
+                                                        Locator(
+                                                            #APP_NAME_LENGTH,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Version: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " (length: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            ")",
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #VERSION,
+                                                        ),
+                                                        Locator(
+                                                            #VERSION_LENGTH,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Banner: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " (length: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            ")",
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #BANNER,
+                                                        ),
+                                                        Locator(
+                                                            #BANNER_LENGTH,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== String Analysis ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Version has 'beta': ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #VERSION_HAS_BETA,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Version has '.': ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #VERSION_HAS_DOT,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Banner contains version: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #BANNER_HAS_VERSION,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "App name is empty: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #APP_NAME_IS_EMPTY,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Dot position in version: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #DOT_POSITION,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== String Concatenation Results ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Banner (+ operator): ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #banner,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Config file (concat! macro): ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #config_file,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Log file (multi-concat): ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #log_file,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Error log file (+ operator): ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #error_log_file,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Debug prefix: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #debug_prefix,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Status message: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #status_message,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== File Configuration ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Buffer size: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            "KB",
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        BinOp(
+                                                            ExprBinOp {
+                                                                kind: Div,
+                                                                lhs: Select(
+                                                                    ExprSelect {
+                                                                        obj: Locator(
+                                                                            #APP_INFO,
+                                                                        ),
+                                                                        field: #buffer_size,
+                                                                        select: Field,
+                                                                    },
+                                                                ),
+                                                                rhs: Value(
+                                                                    Int(
+                                                                        ValueInt {
+                                                                            value: 1024,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Needs large buffer: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #NEEDS_LARGE_BUFFER,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Computed Values ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Simple hash: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #SIMPLE_HASH,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Computed hash: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #APP_INFO,
+                                                                ),
+                                                                field: #hash_code,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Hash computation: (",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " * ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            ") + ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " + ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " = ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #APP_NAME_LENGTH,
+                                                        ),
+                                                        Locator(
+                                                            #HASH_BASE,
+                                                        ),
+                                                        Locator(
+                                                            #VERSION_LENGTH,
+                                                        ),
+                                                        Locator(
+                                                            #DOT_POSITION,
+                                                        ),
+                                                        Locator(
+                                                            #COMPUTED_HASH,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #IS_VALID_APP,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #bool,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: And,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: And,
+                                                            lhs: UnOp(
+                                                                ExprUnOp {
+                                                                    op: Not,
+                                                                    val: Locator(
+                                                                        #APP_NAME_IS_EMPTY,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            rhs: Locator(
+                                                                #VERSION_HAS_DOT,
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Ge,
+                                                            lhs: Locator(
+                                                                #APP_NAME_LENGTH,
+                                                            ),
+                                                            rhs: Value(
+                                                                Int(
+                                                                    ValueInt {
+                                                                        value: 5,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #CONFIG_COMPLEXITY,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Add,
+                                                            lhs: Locator(
+                                                                #APP_NAME_LENGTH,
+                                                            ),
+                                                            rhs: Locator(
+                                                                #VERSION_LENGTH,
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: Locator(
+                                                        #BANNER_LENGTH,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #OPTIMIZATION_LEVEL,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: If(
+                                                ExprIf {
+                                                    cond: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Gt,
+                                                            lhs: Locator(
+                                                                #CONFIG_COMPLEXITY,
+                                                            ),
+                                                            rhs: Value(
+                                                                Int(
+                                                                    ValueInt {
+                                                                        value: 30,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                    then: Value(
+                                                        Int(
+                                                            ValueInt {
+                                                                value: 3,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    elze: Some(
+                                                        If(
+                                                            ExprIf {
+                                                                cond: BinOp(
+                                                                    ExprBinOp {
+                                                                        kind: Gt,
+                                                                        lhs: Locator(
+                                                                            #CONFIG_COMPLEXITY,
+                                                                        ),
+                                                                        rhs: Value(
+                                                                            Int(
+                                                                                ValueInt {
+                                                                                    value: 20,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                then: Value(
+                                                                    Int(
+                                                                        ValueInt {
+                                                                            value: 2,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                                elze: Some(
+                                                                    Value(
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 1,
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Validation & Optimization ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Is valid app config: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #IS_VALID_APP,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Config complexity: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #CONFIG_COMPLEXITY,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Recommended optimization level: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #OPTIMIZATION_LEVEL,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: If(
+                                            ExprIf {
+                                                cond: Locator(
+                                                    #IS_VALID_APP,
+                                                ),
+                                                then: Block(
+                                                    ExprBlock {
+                                                        stmts: [
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: StdIoPrintln(
+                                                                        ExprStdIoPrintln {
+                                                                            format: ExprFormatString {
+                                                                                parts: [
+                                                                                    Literal(
+                                                                                        "✓ Application configuration is valid",
+                                                                                    ),
+                                                                                ],
+                                                                                args: [],
+                                                                                kwargs: [],
+                                                                            },
+                                                                            newline: true,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                ),
+                                                elze: Some(
+                                                    Block(
+                                                        ExprBlock {
+                                                            stmts: [
+                                                                Expr(
+                                                                    BlockStmtExpr {
+                                                                        expr: StdIoPrintln(
+                                                                            ExprStdIoPrintln {
+                                                                                format: ExprFormatString {
+                                                                                    parts: [
+                                                                                        Literal(
+                                                                                            "⚠ Application configuration needs review",
+                                                                                        ),
+                                                                                    ],
+                                                                                    args: [],
+                                                                                    kwargs: [],
+                                                                                },
+                                                                                newline: true,
+                                                                            },
+                                                                        ),
+                                                                        semicolon: Some(
+                                                                            true,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            false,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: If(
+                                            ExprIf {
+                                                cond: Locator(
+                                                    #VERSION_HAS_BETA,
+                                                ),
+                                                then: Block(
+                                                    ExprBlock {
+                                                        stmts: [
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: StdIoPrintln(
+                                                                        ExprStdIoPrintln {
+                                                                            format: ExprFormatString {
+                                                                                parts: [
+                                                                                    Literal(
+                                                                                        "🚧 Development/Beta build detected",
+                                                                                    ),
+                                                                                ],
+                                                                                args: [],
+                                                                                kwargs: [],
+                                                                            },
+                                                                            newline: true,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                ),
+                                                elze: Some(
+                                                    Block(
+                                                        ExprBlock {
+                                                            stmts: [
+                                                                Expr(
+                                                                    BlockStmtExpr {
+                                                                        expr: StdIoPrintln(
+                                                                            ExprStdIoPrintln {
+                                                                                format: ExprFormatString {
+                                                                                    parts: [
+                                                                                        Literal(
+                                                                                            "🚀 Production build ready",
+                                                                                        ),
+                                                                                    ],
+                                                                                    args: [],
+                                                                                    kwargs: [],
+                                                                                },
+                                                                                newline: true,
+                                                                            },
+                                                                        ),
+                                                                        semicolon: Some(
+                                                                            true,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            ],
+                                                        },
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            false,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Concatenation Methods Demo ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #DEMO_PLUS,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Add,
+                                                            lhs: Value(
+                                                                String(
+                                                                    ValueString {
+                                                                        value: "Method",
+                                                                        owned: false,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            rhs: Value(
+                                                                String(
+                                                                    ValueString {
+                                                                        value: ": ",
+                                                                        owned: false,
+                                                                    },
+                                                                ),
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: Value(
+                                                        String(
+                                                            ValueString {
+                                                                value: "+ operator",
+                                                                owned: false,
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #DEMO_CONCAT,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Any(
+                                                RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: concat, span: bytes(13372..13378) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Literal { lit: "Method", span: bytes(13380..13388) }, Punct { char: ',', spacing: Alone, span: bytes(13388..13389) }, Literal { lit: ": ", span: bytes(13390..13394) }, Punct { char: ',', spacing: Alone, span: bytes(13394..13395) }, Literal { lit: "concat! macro", span: bytes(13396..13411) }] } } },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #DEMO_PLUS,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #DEMO_CONCAT,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Summary ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #TOTAL_CHARS,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: BinOp(
+                                                ExprBinOp {
+                                                    kind: Add,
+                                                    lhs: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Add,
+                                                            lhs: Locator(
+                                                                #APP_NAME_LENGTH,
+                                                            ),
+                                                            rhs: Locator(
+                                                                #VERSION_LENGTH,
+                                                            ),
+                                                        },
+                                                    ),
+                                                    rhs: Locator(
+                                                        #BANNER_LENGTH,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #SUMMARY,
+                                            ty: Some(
+                                                Expr(
+                                                    Locator(
+                                                        #String,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Any(
+                                                RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: concat, span: bytes(13625..13631) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Literal { lit: "Processed 3 base strings with ", span: bytes(13633..13665) }, Punct { char: ',', spacing: Alone, span: bytes(13665..13666) }, Ident { sym: TOTAL_CHARS, span: bytes(13667..13678) }, Punct { char: ',', spacing: Alone, span: bytes(13678..13679) }, Literal { lit: " total characters", span: bytes(13680..13699) }] } } },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #SUMMARY,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Uppercase variant: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #UPPERCASE_NAME,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Generated ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            " concatenated strings during compilation",
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 7,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                    visibility: Private,
+                },
+            ),
+        ],
+    },
+)

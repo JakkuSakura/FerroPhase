@@ -2,7 +2,8 @@
 
 use eyre::eyre;
 use fp_core::error::Result;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// Stateless dependency analysis queries
 pub struct DependencyQueries;
@@ -60,15 +61,21 @@ impl DependencyQueries {
             }
         }
 
-        let mut queue: VecDeque<u64> = in_degree
+        let mut queue: BinaryHeap<Reverse<u64>> = in_degree
             .iter()
-            .filter_map(|(node, degree)| if *degree == 0 { Some(*node) } else { None })
+            .filter_map(|(node, degree)| {
+                if *degree == 0 {
+                    Some(Reverse(*node))
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let mut ordered = Vec::with_capacity(in_degree.len());
         let mut remaining = in_degree.clone();
 
-        while let Some(node) = queue.pop_front() {
+        while let Some(Reverse(node)) = queue.pop() {
             ordered.push(node);
 
             if let Some(children) = dependants.get(&node) {
@@ -77,7 +84,7 @@ impl DependencyQueries {
                         if *entry > 0 {
                             *entry -= 1;
                             if *entry == 0 {
-                                queue.push_back(*child);
+                                queue.push(Reverse(*child));
                             }
                         }
                     }

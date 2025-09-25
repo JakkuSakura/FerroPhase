@@ -1,9 +1,18 @@
 # Standard Library Normalisation
 
-FerroPhase ingests multiple surface languages, each with its own “standard library” expectations. To guarantee that the
+FerroPhase ingests multiple surface languages, each with its own "standard library" expectations. To guarantee that the
 rest of the pipeline sees a single, stable vocabulary, the compiler translates every language-specific library surface
 into a canonical `std` package as the program moves from LAST to the unified AST. This document describes that process
 and how it flows through the intermediate representations.
+
+## Implementation Status
+
+The std library normalization system is now fully implemented with dedicated std nodes throughout the compilation pipeline:
+
+- **AST Level**: `ExprStdIoPrintln` and other std library nodes capture semantic information
+- **HIR Level**: `StdIoPrintln` nodes maintain std library semantics through type checking
+- **Runtime Mapping**: Systematic mapping from std functions to C runtime implementations
+- **C Stdlib Integration**: Dedicated module with macro-based function declarations
 
 ## Goals
 
@@ -18,25 +27,37 @@ and how it flows through the intermediate representations.
 
 ```
 CST → LAST —[capture native std usage]→ AST —[canonical std projection]→ EAST → HIR → THIR → MIR → LIR → Backends
+                                             ↓                                      ↓
+                                     ExprStdIoPrintln                        StdIoPrintln
+                                                                                   ↓
+                                                                            std::io::println
+                                                                                   ↓
+                                                                               C stdlib
+                                                                              (puts, etc.)
 ```
 
 1. **Capture in LAST**
-   - Frontend shims annotate imports/builtins with canonical intents. Example: a Python frontend records that `len`
-     maps to `std::iter::len`, while a FerroPhase module that uses `@sizeof` marks `std::intrinsics::sizeof`.
-   - Metadata tracks origin and any language-only nuances (e.g., dynamic dispatch requirements).
+   - Frontend shims annotate imports/builtins with canonical intents. Example: `println!` macro is recognized and
+     mapped to `std::io::println`, while a FerroPhase module that uses `@sizeof` marks `std::intrinsics::sizeof`.
+   - Metadata tracks origin and any language-only nuances (e.g., format string handling, newline behavior).
 
 2. **Canonical projection during LAST → AST**
-   - The converter rewrites bindings so the AST references the canonical `std` modules. User code is untouched; only the
-     injected library nodes change.
-   - Symbols are namespaced using the shared package system (`std::<component>::…`).
+   - The converter creates dedicated std library nodes like `ExprStdIoPrintln` that preserve semantic information
+     about the standard library function being called.
+   - Format strings and arguments are properly parsed and structured within these dedicated nodes.
 
 3. **Propagation to later IRs**
-   - EAST, HIR, THIR, MIR, and LIR all operate on the canonical `std`. Const evaluation, optimisation, and diagnostics
-     therefore treat library calls exactly like user-defined modules.
+   - **HIR**: `StdIoPrintln` nodes maintain the high-level semantics while preparing for lowering
+   - **THIR**: Std library calls are converted to regular function calls with canonical names (e.g., `std::io::println`)
+   - **MIR/LIR**: Function calls are preserved with their canonical names for runtime mapping
 
-4. **Realisation in emitters**
-   - High-level transpilers (Rust, C, JavaScript) translate `std` back into the target’s native imports or prelude names.
-   - Low-level backends (LLVM, VM bytecode) map `std` nodes onto runtime helpers, intrinsics, or generated support code.
+4. **Runtime mapping in LLVM backend**
+   - LIR codegen maps canonical std library functions to their C runtime equivalents:
+     - `std::io::println` → `puts` (C stdio)
+     - `std::alloc::alloc` → `malloc` (C stdlib)  
+     - `std::f64::sin` → `sin` (libm)
+   - C stdlib module provides type-safe function declarations using a macro-based system
+   - Unknown functions result in compilation errors rather than silent fallbacks
 
 ## Package Layout
 

@@ -1,12 +1,12 @@
 //! C Standard Library Function Declarations for LLVM IR Generation
-//! 
-//! This module provides declarations for C standard library functions that 
+//!
+//! This module provides declarations for C standard library functions that
 //! FerroPhase std library functions map to at runtime.
 
-use llvm_ir::*;
+use llvm_ir::function::{CallingConvention, Function, Parameter};
+use llvm_ir::module::{DLLStorageClass, Linkage, Visibility};
 use llvm_ir::types::{FPType, Types};
-use llvm_ir::function::{Function, Parameter, CallingConvention};
-use llvm_ir::module::{Linkage, Visibility, DLLStorageClass};
+use llvm_ir::*;
 
 /// Macro to declare C functions with less verbosity
 macro_rules! declare_c_func {
@@ -32,7 +32,7 @@ macro_rules! declare_c_func {
             return_type: $return_ty,
         }
     };
-    
+
     // Function with one parameter
     ($name:expr, $param1_name:expr, $param1_ty:expr, $return_ty:expr) => {
         Function {
@@ -59,7 +59,7 @@ macro_rules! declare_c_func {
             return_type: $return_ty,
         }
     };
-    
+
     // Function with two parameters
     ($name:expr, $param1_name:expr, $param1_ty:expr, $param2_name:expr, $param2_ty:expr, $return_ty:expr) => {
         Function {
@@ -74,7 +74,7 @@ macro_rules! declare_c_func {
                     name: Name::Name(Box::new($param2_name.to_string())),
                     ty: $param2_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -93,7 +93,7 @@ macro_rules! declare_c_func {
             return_type: $return_ty,
         }
     };
-    
+
     // Variadic function with one required parameter
     (variadic $name:expr, $param1_name:expr, $param1_ty:expr, $return_ty:expr) => {
         Function {
@@ -135,13 +135,13 @@ impl CStdLib {
             "fprintf" => Some(Self::declare_fprintf(types)),
             "sprintf" => Some(Self::declare_sprintf(types)),
             "snprintf" => Some(Self::declare_snprintf(types)),
-            
+
             // Memory management functions
             "malloc" => Some(Self::declare_malloc(types)),
             "free" => Some(Self::declare_free(types)),
             "realloc" => Some(Self::declare_realloc(types)),
             "calloc" => Some(Self::declare_calloc(types)),
-            
+
             // String functions
             "strlen" => Some(Self::declare_strlen(types)),
             "strcmp" => Some(Self::declare_strcmp(types)),
@@ -152,20 +152,24 @@ impl CStdLib {
             "strncat" => Some(Self::declare_strncat(types)),
             "strchr" => Some(Self::declare_strchr(types)),
             "strstr" => Some(Self::declare_strstr(types)),
-            
+
             // Math functions (libm)
-            "sin" | "cos" | "tan" | "sqrt" | "log" | "exp" => Some(Self::declare_math_f64(fn_name, types)),
-            "sinf" | "cosf" | "tanf" | "sqrtf" | "logf" | "expf" => Some(Self::declare_math_f32(fn_name, types)),
+            "sin" | "cos" | "tan" | "sqrt" | "log" | "exp" => {
+                Some(Self::declare_math_f64(fn_name, types))
+            }
+            "sinf" | "cosf" | "tanf" | "sqrtf" | "logf" | "expf" => {
+                Some(Self::declare_math_f32(fn_name, types))
+            }
             "pow" => Some(Self::declare_pow_f64(types)),
             "powf" => Some(Self::declare_pow_f32(types)),
             "fabs" => Some(Self::declare_fabs(types)),
             "fabsf" => Some(Self::declare_fabsf(types)),
-            
+
             // Process functions
             "exit" => Some(Self::declare_exit(types)),
             "abort" => Some(Self::declare_abort(types)),
             "atexit" => Some(Self::declare_atexit(types)),
-            
+
             // File I/O functions
             "fopen" => Some(Self::declare_fopen(types)),
             "fclose" => Some(Self::declare_fclose(types)),
@@ -173,14 +177,15 @@ impl CStdLib {
             "fwrite" => Some(Self::declare_fwrite(types)),
             "fseek" => Some(Self::declare_fseek(types)),
             "ftell" => Some(Self::declare_ftell(types)),
-            
+
             _ => None,
         }
     }
-    
+
     /// Check if a function name is a known C stdlib function
     pub fn is_stdlib_function(fn_name: &str) -> bool {
-        matches!(fn_name,
+        matches!(
+            fn_name,
             // I/O functions
             "puts" | "printf" | "fprintf" | "sprintf" | "snprintf" |
             // Memory management
@@ -222,7 +227,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("format".to_string())),
                     ty: ptr_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: true,
             visibility: Visibility::Default,
@@ -257,7 +262,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("format".to_string())),
                     ty: ptr_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: true,
             visibility: Visibility::Default,
@@ -298,7 +303,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("format".to_string())),
                     ty: ptr_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: true,
             visibility: Visibility::Default,
@@ -342,7 +347,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("size".to_string())),
                     ty: size_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -377,7 +382,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("size".to_string())),
                     ty: size_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -441,7 +446,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("s2".to_string())),
                     ty: ptr_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -482,7 +487,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("n".to_string())),
                     ty: size_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -516,7 +521,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("src".to_string())),
                     ty: ptr_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -556,7 +561,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("n".to_string())),
                     ty: size_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -590,7 +595,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("src".to_string())),
                     ty: ptr_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -630,7 +635,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("n".to_string())),
                     ty: size_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -665,7 +670,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("c".to_string())),
                     ty: i32_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -699,7 +704,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("needle".to_string())),
                     ty: ptr_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -788,7 +793,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("y".to_string())),
                     ty: f64_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -822,7 +827,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("y".to_string())),
                     ty: f32_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -991,7 +996,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("mode".to_string())),
                     ty: ptr_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -1064,7 +1069,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("stream".to_string())),
                     ty: ptr_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -1109,7 +1114,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("stream".to_string())),
                     ty: ptr_ty,
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,
@@ -1150,7 +1155,7 @@ impl CStdLib {
                     name: Name::Name(Box::new("whence".to_string())),
                     ty: i32_ty.clone(),
                     attributes: vec![],
-                }
+                },
             ],
             is_var_arg: false,
             visibility: Visibility::Default,

@@ -132,6 +132,14 @@ struct CompileArgs {
     /// Watch for file changes and recompile
     #[arg(short, long)]
     watch: bool,
+
+    /// Enable error tolerance during compilation
+    #[arg(long)]
+    error_tolerance: bool,
+
+    /// Maximum number of errors to collect when tolerance is enabled (0 = unlimited)
+    #[arg(long, default_value = "50")]
+    max_errors: usize,
 }
 
 #[derive(Args)]
@@ -319,6 +327,8 @@ async fn main() -> Result<()> {
                 define: args.define,
                 run: args.run,
                 watch: args.watch,
+                error_tolerance: args.error_tolerance,
+                max_errors: args.max_errors,
             };
             commands::compile_command(compile_args, &config).await
         }
