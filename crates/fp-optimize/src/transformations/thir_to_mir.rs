@@ -16,6 +16,8 @@ pub struct MirGenerator {
     current_locals: HashMap<thir::ThirId, mir::LocalId>,
     current_blocks: Vec<mir::BasicBlockData>,
     local_decls: Vec<mir::LocalDecl>,
+    loop_stack: Vec<LoopContext>,
+    current_return_local: Option<mir::LocalId>,
 }
 
 struct ExprOutcome {
@@ -23,9 +25,11 @@ struct ExprOutcome {
     block: mir::BasicBlockId,
 }
 
-struct ExprOutcome {
-    place: mir::Place,
-    block: mir::BasicBlockId,
+#[derive(Clone, Copy)]
+struct LoopContext {
+    continue_block: mir::BasicBlockId,
+    break_block: mir::BasicBlockId,
+    break_result: Option<mir::LocalId>,
 }
 
 impl MirGenerator {
@@ -38,33 +42,35 @@ impl MirGenerator {
             current_locals: HashMap::new(),
             current_blocks: Vec::new(),
             local_decls: Vec::new(),
+            loop_stack: Vec::new(),
+            current_return_local: None,
         }
     }
 
     /// Transform a THIR program to MIR
-    pub fn transform(&mut self, thir_program: thir::ThirProgram) -> Result<mir::MirProgram> {
-        let mut mir_program = mir::MirProgram::new();
+    pub fn transform(&mut self, thir_program: thir::Program) -> Result<mir::Program> {
+        let mut mir_program = mir::Program::new();
 
         for item in &thir_program.items {
             match &item.kind {
-                thir::ThirItemKind::Function(func) => {
+                thir::ItemKind::Function(func) => {
                     let (mir_func, maybe_body) =
                         self.transform_function_with_body(func.clone(), &thir_program)?;
                     if let Some((body_id, body)) = maybe_body {
                         mir_program.bodies.insert(body_id, body);
                     }
-                    mir_program.items.push(mir::MirItem {
+                    mir_program.items.push(mir::Item {
                         mir_id: self.next_id(),
-                        kind: mir::MirItemKind::Function(mir_func),
+                        kind: mir::ItemKind::Function(mir_func),
                     });
                 }
-                thir::ThirItemKind::Struct(_) => {
+                thir::ItemKind::Struct(_) => {
                     // Structs don't need MIR representation - they're handled at type level
                 }
-                thir::ThirItemKind::Const(_const_item) => {
+                thir::ItemKind::Const(_const_item) => {
                     // Skip const items for now
                 }
-                thir::ThirItemKind::Impl(_) => {
+                thir::ItemKind::Impl(_) => {
                     // Skip impl items for now
                 }
             }
@@ -76,9 +82,9 @@ impl MirGenerator {
     /// Transform a THIR function to MIR
     fn transform_function_with_body(
         &mut self,
-        func: thir::ThirFunction,
-        thir_program: &thir::ThirProgram,
-    ) -> Result<(mir::MirFunction, Option<(mir::BodyId, mir::MirBody)>)> {
+        func: thir::Function,
+        thir_program: &thir::Program,
+    ) -> Result<(mir::Function, Option<(mir::BodyId, mir::Body)>)> {
         // Reset generator state for new function
         self.reset_for_new_function();
 
@@ -91,23 +97,23 @@ impl MirGenerator {
             param_locals.push(local_id);
         }
 
-        // Create a body. If THIR has one, transform it and store in MIR program bodies.
-        let param_count = param_locals.len();
+        // Track the return slot so `return` expressions can write into it.
+        self.current_return_local = Some(return_local);
 
         let (body_id, body_opt) = if let Some(body_id) = func.body_id {
             if let Some(thir_body) = thir_program.bodies.get(&body_id) {
-                let mir_body = self.transform_body(thir_body.clone(), return_local, &param_locals)?;
-                (mir::BodyId(body_id.0), Some(mir_body))
+                let mir_body =
+                    self.transform_body(thir_body.clone(), return_local, &param_locals)?;
+                (mir::BodyId::new(body_id.0), Some(mir_body))
             } else {
                 let mir_body =
                     self.create_external_function_body(return_local, param_locals.len())?;
-                (mir::BodyId(0), Some(mir_body))
+                (mir::BodyId::new(0), Some(mir_body))
             }
         } else {
             // External function - minimal body
-            let mir_body =
-                self.create_external_function_body(return_local, param_locals.len())?;
-            (mir::BodyId(0), Some(mir_body))
+            let mir_body = self.create_external_function_body(return_local, param_locals.len())?;
+            (mir::BodyId::new(0), Some(mir_body))
         };
         let mir_ty = self.transform_type(&func.sig.output);
         let inputs = param_locals
@@ -115,13 +121,16 @@ impl MirGenerator {
             .map(|&local_id| self.local_decls[local_id as usize].ty.clone())
             .collect();
 
-        let func = mir::MirFunction {
-            sig: mir::MirFunctionSig {
+        let func = mir::Function {
+            sig: mir::FunctionSig {
                 inputs,
                 output: mir_ty,
             },
             body_id,
         };
+
+        // Clear return slot tracking before leaving the function.
+        self.current_return_local = None;
 
         Ok((func, body_opt.map(|b| (body_id, b))))
     }
@@ -129,10 +138,10 @@ impl MirGenerator {
     /// Transform a THIR body to MIR body
     fn transform_body(
         &mut self,
-        thir_body: thir::ThirBody,
+        thir_body: thir::Body,
         return_local: mir::LocalId,
         param_locals: &[mir::LocalId],
-    ) -> Result<mir::MirBody> {
+    ) -> Result<mir::Body> {
         // Create entry basic block
         let entry_bb = self.create_basic_block();
 
@@ -146,6 +155,8 @@ impl MirGenerator {
             self.current_locals
                 .insert(base_thir_local + offset as thir::ThirId, mir_local);
         }
+
+        self.current_return_local = Some(return_local);
 
         tracing::debug!(
             "Transforming THIR body with expression kind: {:?}",
@@ -164,7 +175,7 @@ impl MirGenerator {
             mir::Statement {
                 kind: mir::StatementKind::Assign(
                     mir::Place::from_local(return_local),
-                    mir::Rvalue::Use(mir::MirOperand::Move(result_place)),
+                    mir::Rvalue::Use(mir::Operand::Move(result_place)),
                 ),
                 source_info: Span::new(0, 0, 0),
             },
@@ -191,7 +202,7 @@ impl MirGenerator {
         //     })
         //     .collect();
 
-        Ok(mir::MirBody {
+        Ok(mir::Body {
             basic_blocks: self.current_blocks.clone(),
             locals: self.local_decls.clone(),
             arg_count: param_locals.len(),
@@ -204,11 +215,11 @@ impl MirGenerator {
     /// Transform a THIR expression to MIR, returning the place where result is stored and the current block
     fn transform_expr(
         &mut self,
-        expr: thir::ThirExpr,
+        expr: thir::Expr,
         current_bb: mir::BasicBlockId,
     ) -> Result<ExprOutcome> {
         match expr.kind {
-            thir::ThirExprKind::Field { base, field_idx: _ } => {
+            thir::ExprKind::Field { base, field_idx: _ } => {
                 // Lower field selection by first lowering the base
                 // For now, if the base lowered to a constant struct literal, extract constant field.
                 // Since our types are placeholders, treat base as producing its fields directly when possible.
@@ -224,14 +235,14 @@ impl MirGenerator {
                     mir::Statement {
                         kind: mir::StatementKind::Assign(
                             place.clone(),
-                            mir::Rvalue::Use(mir::MirOperand::Move(base_place)),
+                            mir::Rvalue::Use(mir::Operand::Move(base_place)),
                         ),
                         source_info: expr.span,
                     },
                 );
                 Ok(ExprOutcome { place, block })
             }
-            thir::ThirExprKind::Literal(lit) => {
+            thir::ExprKind::Literal(lit) => {
                 let temp_local = self.create_local(expr.ty);
                 let place = mir::Place::from_local(temp_local);
 
@@ -251,7 +262,7 @@ impl MirGenerator {
                     block: current_bb,
                 })
             }
-            thir::ThirExprKind::Path(item_ref) => {
+            thir::ExprKind::Path(item_ref) => {
                 let mir_ty = self.transform_type(&expr.ty);
                 // Use type information to distinguish between function references and global constants
                 let constant_kind = if self.is_function_type(&expr.ty) {
@@ -269,7 +280,7 @@ impl MirGenerator {
                     mir::Statement {
                         kind: mir::StatementKind::Assign(
                             place.clone(),
-                            mir::Rvalue::Use(mir::MirOperand::Constant(mir::Constant {
+                            mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
                                 user_ty: None,
                                 literal: constant_kind,
@@ -283,7 +294,7 @@ impl MirGenerator {
                     block: current_bb,
                 })
             }
-            thir::ThirExprKind::Binary(op, lhs, rhs) => {
+            thir::ExprKind::Binary(op, lhs, rhs) => {
                 let ExprOutcome {
                     place: lhs_place,
                     block: after_lhs,
@@ -305,8 +316,8 @@ impl MirGenerator {
                             result_place.clone(),
                             mir::Rvalue::BinaryOp(
                                 self.transform_binary_op(binop_kind)?,
-                                mir::MirOperand::Move(lhs_place),
-                                mir::MirOperand::Move(rhs_place),
+                                mir::Operand::Move(lhs_place),
+                                mir::Operand::Move(rhs_place),
                             ),
                         ),
                         source_info: expr.span,
@@ -317,71 +328,41 @@ impl MirGenerator {
                     block: after_rhs,
                 })
             }
-            thir::ThirExprKind::Call { fun, args, .. } => {
-                // Transform callee and arguments
-                // Get callee name if it's a Path; otherwise lower callee to operand
-                let func_name_opt = match fun.kind {
-                    thir::ThirExprKind::Path(ref item) => Some(item.name.clone()),
-                    _ => None,
-                };
+            thir::ExprKind::Call { fun, args, .. } => {
+                tracing::debug!("Processing Call with {} args", args.len());
 
-                tracing::debug!(
-                    "Processing Call to function: {:?} with {} args",
-                    func_name_opt,
-                    args.len()
-                );
-                // Lower function expression; we don't need the place for a direct Fn(...) constant
-                let ExprOutcome { block: mut current_block, .. } =
-                    self.transform_expr(*fun, current_bb)?;
+                let callee_expr = *fun;
+                let ExprOutcome {
+                    place: callee_place,
+                    block: mut current_block,
+                } = self.transform_expr(callee_expr, current_bb)?;
+
                 let mut arg_operands = Vec::new();
                 for arg in args {
-                    // If the argument is a literal, pass it directly as a MIR constant operand
                     match &arg.kind {
-                        thir::ThirExprKind::Literal(lit) => {
+                        thir::ExprKind::Literal(lit) => {
                             arg_operands.push(self.literal_to_operand(lit.clone(), arg.span));
                         }
-                        thir::ThirExprKind::Field { .. } => {
-                            // Attempt to lower field to a value (const/copy). As a fallback, treat as Move of lowered place.
-                            let ExprOutcome { place: arg_place, block } =
-                                self.transform_expr(arg.clone(), current_block)?;
-                            current_block = block;
-                            arg_operands.push(mir::MirOperand::Move(arg_place));
-                        }
                         _ => {
-                            let ExprOutcome { place: arg_place, block } =
-                                self.transform_expr(arg, current_block)?;
+                            let ExprOutcome {
+                                place: arg_place,
+                                block,
+                            } = self.transform_expr(arg, current_block)?;
                             current_block = block;
-                            arg_operands.push(mir::MirOperand::Move(arg_place));
+                            arg_operands.push(mir::Operand::Move(arg_place));
                         }
                     }
                 }
-                // Allocate a result local and emit a Call terminator returning to a new block
+
                 let result_local = self.create_local(expr.ty);
                 let result_place = mir::Place::from_local(result_local);
-
-                // Create a continuation block
                 let cont_bb = self.create_basic_block();
+
                 self.set_block_terminator(
                     current_block,
                     mir::Terminator {
                         kind: mir::TerminatorKind::Call {
-                            func: if let Some(fname) = func_name_opt {
-                                mir::MirOperand::Constant(mir::Constant {
-                                    span: expr.span,
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        fname,
-                                        // TODO: use proper type
-                                        Ty::new(TyKind::Never),
-                                    ),
-                                })
-                            } else {
-                                mir::MirOperand::Constant(mir::Constant {
-                                    span: expr.span,
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::Ty(()),
-                                })
-                            },
+                            func: mir::Operand::Move(callee_place),
                             args: arg_operands,
                             destination: Some((result_place.clone(), cont_bb)),
                             cleanup: None,
@@ -391,60 +372,612 @@ impl MirGenerator {
                         source_info: expr.span,
                     },
                 );
+
                 Ok(ExprOutcome {
                     place: result_place,
                     block: cont_bb,
                 })
             }
-            thir::ThirExprKind::VarRef { id } => {
+            thir::ExprKind::LogicalOp { op, lhs, rhs } => {
+                let ExprOutcome {
+                    place: lhs_place,
+                    block: lhs_block,
+                } = self.transform_expr(*lhs, current_bb)?;
+
+                if self.block_has_terminator(lhs_block) {
+                    return Ok(ExprOutcome {
+                        place: lhs_place,
+                        block: lhs_block,
+                    });
+                }
+
+                let rhs_entry = self.create_basic_block();
+                let short_block = self.create_basic_block();
+                let join_block = self.create_basic_block();
+
+                let result_local = self.create_local(expr.ty.clone());
+                let result_place = mir::Place::from_local(result_local);
+
+                let (switch_values, switch_targets, short_value) = match op {
+                    thir::LogicalOp::And => (
+                        vec![1],
+                        vec![rhs_entry],
+                        false,
+                    ),
+                    thir::LogicalOp::Or => (
+                        vec![0],
+                        vec![rhs_entry],
+                        true,
+                    ),
+                };
+
+                self.add_statement_to_block(
+                    short_block,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(
+                            result_place.clone(),
+                            mir::Rvalue::Use(self.bool_operand(short_value, expr.span)),
+                        ),
+                        source_info: expr.span,
+                    },
+                );
+                self.ensure_goto(short_block, join_block, expr.span);
+
+                self.set_block_terminator(
+                    lhs_block,
+                    mir::Terminator {
+                        kind: mir::TerminatorKind::SwitchInt {
+                            discr: mir::Operand::Move(lhs_place),
+                            switch_ty: self.transform_type(&expr.ty),
+                            targets: mir::SwitchTargets {
+                                values: switch_values,
+                                targets: switch_targets,
+                                otherwise: short_block,
+                            },
+                        },
+                        source_info: expr.span,
+                    },
+                );
+
+                let ExprOutcome {
+                    place: rhs_place,
+                    block: rhs_block_end,
+                } = self.transform_expr(*rhs, rhs_entry)?;
+
+                if !self.block_has_terminator(rhs_block_end) {
+                    self.add_statement_to_block(
+                        rhs_block_end,
+                        mir::Statement {
+                            kind: mir::StatementKind::Assign(
+                                result_place.clone(),
+                                mir::Rvalue::Use(mir::Operand::Move(rhs_place)),
+                            ),
+                            source_info: expr.span,
+                        },
+                    );
+                    self.ensure_goto(rhs_block_end, join_block, expr.span);
+                }
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: join_block,
+                })
+            }
+            thir::ExprKind::If {
+                cond,
+                then,
+                else_opt,
+            } => {
+                let cond_expr = *cond;
+                let cond_ty = cond_expr.ty.clone();
+                let ExprOutcome {
+                    place: cond_place,
+                    block: cond_block,
+                } = self.transform_expr(cond_expr, current_bb)?;
+
+                let then_block = self.create_basic_block();
+                let else_block = self.create_basic_block();
+                let join_block = self.create_basic_block();
+
+                let result_local = self.create_local(expr.ty.clone());
+                let result_place = mir::Place::from_local(result_local);
+
+                self.set_block_terminator(
+                    cond_block,
+                    mir::Terminator {
+                        kind: mir::TerminatorKind::SwitchInt {
+                            discr: mir::Operand::Move(cond_place),
+                            switch_ty: self.transform_type(&cond_ty),
+                            targets: mir::SwitchTargets {
+                                values: vec![1],
+                                targets: vec![then_block],
+                                otherwise: else_block,
+                            },
+                        },
+                        source_info: expr.span,
+                    },
+                );
+
+                let ExprOutcome {
+                    place: then_place,
+                    block: end_then_block,
+                } = self.transform_expr(*then, then_block)?;
+                if !self.block_has_terminator(end_then_block) {
+                    self.add_statement_to_block(
+                        end_then_block,
+                        mir::Statement {
+                            kind: mir::StatementKind::Assign(
+                                result_place.clone(),
+                                mir::Rvalue::Use(mir::Operand::Move(then_place)),
+                            ),
+                            source_info: expr.span,
+                        },
+                    );
+                    self.ensure_goto(end_then_block, join_block, expr.span);
+                }
+
+                if let Some(else_expr) = else_opt {
+                    let ExprOutcome {
+                        place: else_place,
+                        block: end_else_block,
+                    } = self.transform_expr(*else_expr, else_block)?;
+                    if !self.block_has_terminator(end_else_block) {
+                        self.add_statement_to_block(
+                            end_else_block,
+                            mir::Statement {
+                                kind: mir::StatementKind::Assign(
+                                    result_place.clone(),
+                                    mir::Rvalue::Use(mir::Operand::Move(else_place)),
+                                ),
+                                source_info: expr.span,
+                            },
+                        );
+                        self.ensure_goto(end_else_block, join_block, expr.span);
+                    }
+                } else {
+                    if !self.block_has_terminator(else_block) && self.is_unit_type(&expr.ty) {
+                        self.add_statement_to_block(
+                            else_block,
+                            mir::Statement {
+                                kind: mir::StatementKind::Assign(
+                                    result_place.clone(),
+                                    self.unit_rvalue(),
+                                ),
+                                source_info: expr.span,
+                            },
+                        );
+                    }
+                    self.ensure_goto(else_block, join_block, expr.span);
+                }
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: join_block,
+                })
+            }
+            thir::ExprKind::Loop { body } => {
+                let loop_body_block = self.create_basic_block();
+                let exit_block = self.create_basic_block();
+
+                let result_local = self.create_local(expr.ty.clone());
+                let break_result = if self.is_never_type(&expr.ty) {
+                    None
+                } else {
+                    Some(result_local)
+                };
+
+                self.loop_stack.push(LoopContext {
+                    continue_block: loop_body_block,
+                    break_block: exit_block,
+                    break_result,
+                });
+
+                self.ensure_goto(current_bb, loop_body_block, expr.span);
+
+                let ExprOutcome {
+                    block: end_block, ..
+                } = self.transform_expr(*body, loop_body_block)?;
+                if end_block != exit_block && !self.block_has_terminator(end_block) {
+                    self.ensure_goto(end_block, loop_body_block, expr.span);
+                }
+
+                self.loop_stack.pop();
+
+                Ok(ExprOutcome {
+                    place: mir::Place::from_local(result_local),
+                    block: exit_block,
+                })
+            }
+            thir::ExprKind::Break { value } => {
+                if let Some(loop_ctx) = self.loop_stack.last().cloned() {
+                    let mut block = current_bb;
+
+                    if let Some(val_expr) = value {
+                        let ExprOutcome {
+                            place: break_place,
+                            block: after_value,
+                        } = self.transform_expr(*val_expr, block)?;
+                        block = after_value;
+                        if let Some(local) = loop_ctx.break_result {
+                            self.add_statement_to_block(
+                                block,
+                                mir::Statement {
+                                    kind: mir::StatementKind::Assign(
+                                        mir::Place::from_local(local),
+                                        mir::Rvalue::Use(mir::Operand::Move(break_place)),
+                                    ),
+                                    source_info: expr.span,
+                                },
+                            );
+                        }
+                    } else if let Some(local) = loop_ctx.break_result {
+                        self.add_statement_to_block(
+                            block,
+                            mir::Statement {
+                                kind: mir::StatementKind::Assign(
+                                    mir::Place::from_local(local),
+                                    self.unit_rvalue(),
+                                ),
+                                source_info: expr.span,
+                            },
+                        );
+                    }
+
+                    self.ensure_goto(block, loop_ctx.break_block, expr.span);
+
+                    Ok(ExprOutcome {
+                        place: loop_ctx
+                            .break_result
+                            .map(mir::Place::from_local)
+                            .unwrap_or_else(|| {
+                                mir::Place::from_local(self.create_local(expr.ty.clone()))
+                            }),
+                        block: loop_ctx.break_block,
+                    })
+                } else {
+                    let temp_local = self.create_local(expr.ty);
+                    Ok(ExprOutcome {
+                        place: mir::Place::from_local(temp_local),
+                        block: current_bb,
+                    })
+                }
+            }
+            thir::ExprKind::Continue => {
+                if let Some(loop_ctx) = self.loop_stack.last().cloned() {
+                    let continue_block = loop_ctx.continue_block;
+                    let break_result = loop_ctx.break_result;
+
+                    self.ensure_goto(current_bb, continue_block, expr.span);
+
+                    let place = match break_result {
+                        Some(local) => mir::Place::from_local(local),
+                        None => mir::Place::from_local(self.create_local(expr.ty.clone())),
+                    };
+
+                    Ok(ExprOutcome {
+                        place,
+                        block: continue_block,
+                    })
+                } else {
+                    let temp_local = self.create_local(expr.ty);
+                    Ok(ExprOutcome {
+                        place: mir::Place::from_local(temp_local),
+                        block: current_bb,
+                    })
+                }
+            }
+            thir::ExprKind::Return { value } => {
+                let mut block = current_bb;
+
+                if let Some(ret_expr) = value {
+                    let ExprOutcome {
+                        place: ret_place,
+                        block: after_ret,
+                    } = self.transform_expr(*ret_expr, block)?;
+                    block = after_ret;
+                    if let Some(return_local) = self.current_return_local {
+                        self.add_statement_to_block(
+                            block,
+                            mir::Statement {
+                                kind: mir::StatementKind::Assign(
+                                    mir::Place::from_local(return_local),
+                                    mir::Rvalue::Use(mir::Operand::Move(ret_place)),
+                                ),
+                                source_info: expr.span,
+                            },
+                        );
+                    }
+                }
+
+                self.set_block_terminator(
+                    block,
+                    mir::Terminator {
+                        kind: mir::TerminatorKind::Return,
+                        source_info: expr.span,
+                    },
+                );
+
+                let return_place = self
+                    .current_return_local
+                    .map(mir::Place::from_local)
+                    .unwrap_or_else(|| mir::Place::from_local(self.create_local(expr.ty.clone())));
+
+                Ok(ExprOutcome {
+                    place: return_place,
+                    block,
+                })
+            }
+            thir::ExprKind::Match { scrutinee, arms } => {
+                let ExprOutcome {
+                    place: scrutinee_place,
+                    block: mut current_block,
+                } = self.transform_expr(*scrutinee, current_bb)?;
+
+                let result_local = self.create_local(expr.ty.clone());
+                let result_place = mir::Place::from_local(result_local);
+                let join_block = self.create_basic_block();
+
+                let mut handled = false;
+
+                for arm in arms {
+                    if arm.guard.is_some() {
+                        tracing::warn!("THIR→MIR: match guard lowering not yet supported; skipping arm");
+                        continue;
+                    }
+
+                    match arm.pattern.kind {
+                        thir::PatKind::Wild => {
+                            let ExprOutcome {
+                                place: arm_place,
+                                block: arm_block,
+                            } = self.transform_expr(arm.body, current_block)?;
+
+                            if !self.block_has_terminator(arm_block) {
+                                self.add_statement_to_block(
+                                    arm_block,
+                                    mir::Statement {
+                                        kind: mir::StatementKind::Assign(
+                                            result_place.clone(),
+                                            mir::Rvalue::Use(mir::Operand::Move(arm_place)),
+                                        ),
+                                        source_info: arm.span,
+                                    },
+                                );
+                                self.ensure_goto(arm_block, join_block, arm.span);
+                            }
+
+                            handled = true;
+                            current_block = join_block;
+                            break;
+                        }
+                        thir::PatKind::Constant { ref value } => {
+                            // Create blocks for this arm's success and the next candidate.
+                            let arm_block_id = self.create_basic_block();
+                            let next_block_id = self.create_basic_block();
+
+                            self.add_statement_to_block(
+                                current_block,
+                                mir::Statement {
+                                    kind: mir::StatementKind::Assign(
+                                        result_place.clone(),
+                                        self.default_rvalue_for_type(&expr.ty, arm.span),
+                                    ),
+                                    source_info: arm.span,
+                                },
+                            );
+
+                            self.set_block_terminator(
+                                current_block,
+                                mir::Terminator {
+                                    kind: mir::TerminatorKind::SwitchInt {
+                                        discr: mir::Operand::Copy(scrutinee_place.clone()),
+                                        switch_ty: self.transform_type(&arm.pattern.ty),
+                                        targets: mir::SwitchTargets {
+                                            values: vec![self.constant_to_u128(value)],
+                                            targets: vec![arm_block_id],
+                                            otherwise: next_block_id,
+                                        },
+                                    },
+                                    source_info: arm.span,
+                                },
+                            );
+
+                            let ExprOutcome {
+                                place: arm_place,
+                                block: block_after_arm,
+                            } = self.transform_expr(arm.body, arm_block_id)?;
+
+                            if !self.block_has_terminator(block_after_arm) {
+                                self.add_statement_to_block(
+                                    block_after_arm,
+                                    mir::Statement {
+                                        kind: mir::StatementKind::Assign(
+                                            result_place.clone(),
+                                            mir::Rvalue::Use(mir::Operand::Move(arm_place)),
+                                        ),
+                                        source_info: arm.span,
+                                    },
+                                );
+                                self.ensure_goto(block_after_arm, join_block, arm.span);
+                            }
+
+                            current_block = next_block_id;
+                        }
+                        thir::PatKind::Binding { var, .. } => {
+                            // Bind scrutinee into the pattern local before evaluating the body.
+                            let bound_local =
+                                self.get_or_create_local(var, arm.pattern.ty.clone());
+                            self.add_statement_to_block(
+                                current_block,
+                                mir::Statement {
+                                    kind: mir::StatementKind::Assign(
+                                        mir::Place::from_local(bound_local),
+                                        mir::Rvalue::Use(mir::Operand::Copy(
+                                            scrutinee_place.clone(),
+                                        )),
+                                    ),
+                                    source_info: arm.span,
+                                },
+                            );
+
+                            let ExprOutcome {
+                                place: arm_place,
+                                block: arm_block,
+                            } = self.transform_expr(arm.body, current_block)?;
+
+                            if !self.block_has_terminator(arm_block) {
+                                self.add_statement_to_block(
+                                    arm_block,
+                                    mir::Statement {
+                                        kind: mir::StatementKind::Assign(
+                                            result_place.clone(),
+                                            mir::Rvalue::Use(mir::Operand::Move(arm_place)),
+                                        ),
+                                        source_info: arm.span,
+                                    },
+                                );
+                                self.ensure_goto(arm_block, join_block, arm.span);
+                            }
+
+                            handled = true;
+                            current_block = join_block;
+                            break;
+                        }
+                        _ => {
+                            tracing::warn!(
+                                "THIR→MIR: pattern kind {:?} not supported; falling back to wildcard handling",
+                                arm.pattern.kind
+                            );
+                            let ExprOutcome {
+                                place: arm_place,
+                                block: arm_block,
+                            } = self.transform_expr(arm.body, current_block)?;
+
+                            if !self.block_has_terminator(arm_block) {
+                                self.add_statement_to_block(
+                                    arm_block,
+                                    mir::Statement {
+                                        kind: mir::StatementKind::Assign(
+                                            result_place.clone(),
+                                            mir::Rvalue::Use(mir::Operand::Move(arm_place)),
+                                        ),
+                                        source_info: arm.span,
+                                    },
+                                );
+                                self.ensure_goto(arm_block, join_block, arm.span);
+                            }
+
+                            handled = true;
+                            current_block = join_block;
+                            break;
+                        }
+                    }
+                }
+
+                if !handled && !self.block_has_terminator(current_block) {
+                    self.add_statement_to_block(
+                        current_block,
+                        mir::Statement {
+                            kind: mir::StatementKind::Assign(
+                                result_place.clone(),
+                                self.default_rvalue_for_type(&expr.ty, expr.span),
+                            ),
+                            source_info: expr.span,
+                        },
+                    );
+                    self.ensure_goto(current_block, join_block, expr.span);
+                }
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: join_block,
+                })
+            }
+            thir::ExprKind::Scope { value, .. } => self.transform_expr(*value, current_bb),
+            thir::ExprKind::Use(inner) => self.transform_expr(*inner, current_bb),
+            thir::ExprKind::Let {
+                expr: value_expr,
+                pat,
+            } => {
+                let ExprOutcome {
+                    place: value_place,
+                    block: current_block,
+                } = self.transform_expr(*value_expr, current_bb)?;
+
+                if let Some(local_id) = self.binding_local_from_pattern(&pat) {
+                    let local = self.get_or_create_local(local_id, pat.ty.clone());
+                    self.add_statement_to_block(
+                        current_block,
+                        mir::Statement {
+                            kind: mir::StatementKind::Assign(
+                                mir::Place::from_local(local),
+                                mir::Rvalue::Use(mir::Operand::Move(value_place)),
+                            ),
+                            source_info: pat.span,
+                        },
+                    );
+                }
+
+                let result_local = self.create_local(expr.ty.clone());
+                let result_place = mir::Place::from_local(result_local);
+
+                let assign_rvalue = match expr.ty.kind {
+                    TyKind::Bool => mir::Rvalue::Use(self.bool_operand(true, expr.span)),
+                    TyKind::Tuple(ref elems) if elems.is_empty() => self.unit_rvalue(),
+                    _ => mir::Rvalue::Use(self.bool_operand(true, expr.span)),
+                };
+
+                self.add_statement_to_block(
+                    current_block,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(
+                            result_place.clone(),
+                            assign_rvalue,
+                        ),
+                        source_info: expr.span,
+                    },
+                );
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: current_block,
+                })
+            }
+            thir::ExprKind::VarRef { id } => {
                 let local = self.get_or_create_local(id, expr.ty.clone());
                 Ok(ExprOutcome {
                     place: mir::Place::from_local(local),
                     block: current_bb,
                 })
             }
-            thir::ThirExprKind::Block(block) => {
-                // Process all statements in the block
-                let mut current_bb = current_bb;
+            thir::ExprKind::Block(block) => {
+                let thir::Block {
+                    stmts,
+                    expr: tail_expr,
+                    ..
+                } = block;
 
-                tracing::debug!("Processing block with {} statements", block.stmts.len());
-                for (i, stmt) in block.stmts.iter().enumerate() {
-                    match &stmt.kind {
-                        thir::ThirStmtKind::Expr(expr) => {
-                            tracing::debug!("Processing statement {}: {:?}", i, expr.kind);
+                let mut current_block = current_bb;
+                let stmt_count = stmts.len();
+                let has_tail_expr = tail_expr.is_some();
 
-                            // Transform expression as a statement (result is discarded)
-                            let outcome = self.transform_expr(expr.clone(), current_bb)?;
-                            current_bb = outcome.block;
+                tracing::debug!("Processing block with {} statements", stmt_count);
+                for (index, stmt) in stmts.into_iter().enumerate() {
+                    current_block = self.transform_stmt(stmt, current_block)?;
 
-                            // Check if the current block has a terminator set
-                            // If so, we need to continue in a new basic block
-                            if let Some(block_data) = self.current_blocks.get(current_bb as usize) {
-                                if block_data.terminator.is_some() {
-                                    // Current block has a terminator, create a new block for subsequent statements
-                                    current_bb = self.create_basic_block();
-                                    tracing::debug!(
-                                        "Created new basic block {} after statement {}",
-                                        current_bb,
-                                        i
-                                    );
-                                }
-                            }
-                        }
-                        thir::ThirStmtKind::Let { .. } => {
-                            // TODO: Handle let statements
-                        }
+                    let more_to_process = index + 1 < stmt_count || has_tail_expr;
+                    if more_to_process && self.block_has_terminator(current_block) {
+                        current_block = self.create_basic_block();
                     }
                 }
 
-                // If block has a final expression, transform it and return its place
-                if let Some(final_expr) = &block.expr {
-                    self.transform_expr(*final_expr.clone(), current_bb)
+                if let Some(final_expr) = tail_expr {
+                    self.transform_expr(*final_expr, current_block)
                 } else {
                     let temp_local = self.create_local(expr.ty);
                     Ok(ExprOutcome {
                         place: mir::Place::from_local(temp_local),
-                        block: current_bb,
+                        block: current_block,
                     })
                 }
             }
@@ -459,6 +992,58 @@ impl MirGenerator {
         }
     }
 
+    fn transform_stmt(
+        &mut self,
+        stmt: thir::Stmt,
+        current_bb: mir::BasicBlockId,
+    ) -> Result<mir::BasicBlockId> {
+        match stmt.kind {
+            thir::StmtKind::Expr(expr) => {
+                let ExprOutcome { block, .. } = self.transform_expr(expr, current_bb)?;
+                Ok(block)
+            }
+            thir::StmtKind::Let {
+                initializer,
+                pattern,
+                ..
+            } => {
+                let mut block = current_bb;
+
+                if let Some(init_expr) = initializer {
+                    let ExprOutcome {
+                        place: init_place,
+                        block: after_init,
+                    } = self.transform_expr(init_expr, block)?;
+                    block = after_init;
+
+                    if let Some(local_id) = self.binding_local_from_pattern(&pattern) {
+                        let mir_local = self.get_or_create_local(local_id, pattern.ty.clone());
+                        self.add_statement_to_block(
+                            block,
+                            mir::Statement {
+                                kind: mir::StatementKind::Assign(
+                                    mir::Place::from_local(mir_local),
+                                    mir::Rvalue::Use(mir::Operand::Move(init_place)),
+                                ),
+                                source_info: pattern.span,
+                            },
+                        );
+                    }
+                }
+
+                Ok(block)
+            }
+        }
+    }
+
+    fn binding_local_from_pattern(&self, pattern: &thir::Pat) -> Option<thir::LocalId> {
+        match &pattern.kind {
+            thir::PatKind::Binding { var, .. } => Some(*var),
+            thir::PatKind::Deref { subpattern } => self.binding_local_from_pattern(subpattern),
+            _ => None,
+        }
+    }
+
     /// Helper methods
     fn reset_for_new_function(&mut self) {
         self.next_local_id = 0;
@@ -466,6 +1051,8 @@ impl MirGenerator {
         self.current_locals.clear();
         self.current_blocks.clear();
         self.local_decls.clear();
+        self.loop_stack.clear();
+        self.current_return_local = None;
     }
 
     fn create_local(&mut self, ty: Ty) -> mir::LocalId {
@@ -518,11 +1105,66 @@ impl MirGenerator {
         }
     }
 
+    fn block_has_terminator(&self, bb_id: mir::BasicBlockId) -> bool {
+        self.current_blocks
+            .get(bb_id as usize)
+            .and_then(|block| block.terminator.as_ref())
+            .is_some()
+    }
+
+    fn ensure_goto(&mut self, bb_id: mir::BasicBlockId, target: mir::BasicBlockId, span: Span) {
+        if !self.block_has_terminator(bb_id) {
+            self.set_block_terminator(
+                bb_id,
+                mir::Terminator {
+                    kind: mir::TerminatorKind::Goto { target },
+                    source_info: span,
+                },
+            );
+        }
+    }
+
+    fn is_unit_type(&self, ty: &Ty) -> bool {
+        matches!(ty.kind, TyKind::Tuple(ref elems) if elems.is_empty())
+    }
+
+    fn is_never_type(&self, ty: &Ty) -> bool {
+        matches!(ty.kind, TyKind::Never)
+    }
+
+    fn unit_rvalue(&self) -> mir::Rvalue {
+        mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new())
+    }
+
+    fn bool_operand(&self, value: bool, span: Span) -> mir::Operand {
+        mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Bool(value),
+        })
+    }
+
+    fn default_rvalue_for_type(&self, ty: &Ty, span: Span) -> mir::Rvalue {
+        match &ty.kind {
+            TyKind::Bool => mir::Rvalue::Use(self.bool_operand(false, span)),
+            TyKind::Tuple(elems) if elems.is_empty() => self.unit_rvalue(),
+            TyKind::Never => mir::Rvalue::Use(self.bool_operand(false, span)),
+            _ => mir::Rvalue::Use(self.bool_operand(false, span)),
+        }
+    }
+
+    fn constant_to_u128(&self, _value: &thir::ConstValue) -> u128 {
+        tracing::warn!(
+            "THIR→MIR: const pattern lowering uses placeholder value; treating as zero"
+        );
+        0
+    }
+
     fn create_external_function_body(
         &mut self,
         return_local: mir::LocalId,
         param_count: usize,
-    ) -> Result<mir::MirBody> {
+    ) -> Result<mir::Body> {
         let entry_bb = self.create_basic_block();
 
         self.set_block_terminator(
@@ -533,7 +1175,7 @@ impl MirGenerator {
             },
         );
 
-        Ok(mir::MirBody {
+        Ok(mir::Body {
             basic_blocks: self.current_blocks.clone(),
             locals: self.local_decls.clone(),
             arg_count: param_count,
@@ -559,22 +1201,22 @@ impl MirGenerator {
         }
     }
 
-    fn literal_to_operand(&self, lit: thir::ThirLit, span: Span) -> mir::MirOperand {
+    fn literal_to_operand(&self, lit: thir::Lit, span: Span) -> mir::Operand {
         let literal = match lit {
-            thir::ThirLit::Bool(b) => mir::ConstantKind::Bool(b),
-            thir::ThirLit::Int(v, _) => mir::ConstantKind::Int(v as i64),
-            thir::ThirLit::Uint(v, _) => mir::ConstantKind::UInt(v as u64),
-            thir::ThirLit::Float(v, _) => mir::ConstantKind::Float(v as f64),
-            thir::ThirLit::Str(s) => mir::ConstantKind::Str(s),
-            thir::ThirLit::Char(c) => mir::ConstantKind::Int(c as i64),
-            thir::ThirLit::Byte(b) => mir::ConstantKind::UInt(b as u64),
-            thir::ThirLit::ByteStr(bytes) => {
+            thir::Lit::Bool(b) => mir::ConstantKind::Bool(b),
+            thir::Lit::Int(v, _) => mir::ConstantKind::Int(v as i64),
+            thir::Lit::Uint(v, _) => mir::ConstantKind::UInt(v as u64),
+            thir::Lit::Float(v, _) => mir::ConstantKind::Float(v as f64),
+            thir::Lit::Str(s) => mir::ConstantKind::Str(s),
+            thir::Lit::Char(c) => mir::ConstantKind::Int(c as i64),
+            thir::Lit::Byte(b) => mir::ConstantKind::UInt(b as u64),
+            thir::Lit::ByteStr(bytes) => {
                 // Represent as string for now
                 let s = String::from_utf8_lossy(&bytes).into_owned();
                 mir::ConstantKind::Str(s)
             }
         };
-        mir::MirOperand::Constant(mir::Constant {
+        mir::Operand::Constant(mir::Constant {
             span,
             user_ty: None,
             literal,
@@ -616,8 +1258,8 @@ impl MirGenerator {
     }
 }
 
-impl IrTransform<thir::ThirProgram, mir::MirProgram> for MirGenerator {
-    fn transform(&mut self, source: thir::ThirProgram) -> Result<mir::MirProgram> {
+impl IrTransform<thir::Program, mir::Program> for MirGenerator {
+    fn transform(&mut self, source: thir::Program) -> Result<mir::Program> {
         MirGenerator::transform(self, source)
     }
 }
@@ -683,7 +1325,7 @@ mod tests {
     #[test]
     fn test_empty_thir_program_transformation() {
         let mut generator = MirGenerator::new();
-        let thir_program = thir::ThirProgram::new();
+        let thir_program = thir::Program::new();
 
         let result = generator.transform(thir_program);
         assert!(result.is_ok());
