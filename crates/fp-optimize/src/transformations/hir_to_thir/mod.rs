@@ -1,0 +1,287 @@
+use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
+use fp_core::error::Result;
+use fp_core::span::Span;
+use fp_core::{hir, thir, types};
+use std::collections::HashMap;
+use std::mem;
+
+use super::IrTransform;
+
+mod context;
+mod lowering;
+
+#[cfg(test)]
+mod tests;
+
+use context::TypeContext;
+
+/// Generator for transforming HIR to THIR (Typed High-level IR)
+/// This transformation performs type checking and inference
+pub struct ThirGenerator {
+    next_thir_id: thir::ThirId,
+    type_context: TypeContext,
+    body_map: HashMap<thir::BodyId, thir::Body>,
+    next_body_id: u32,
+    /// Map constant names to their THIR body IDs for resolution
+    const_symbols: HashMap<types::DefId, thir::BodyId>,
+    /// Map constant names to their original HIR initializer expression for inlining
+    const_init_map: HashMap<types::DefId, hir::Expr>,
+    /// Track simple local bindings we can inline by name.
+    binding_inits: HashMap<String, hir::Expr>,
+}
+
+impl ThirGenerator {
+    /// Create a new THIR generator
+    pub fn new() -> Self {
+        Self {
+            next_thir_id: 0,
+            type_context: TypeContext::new(),
+            body_map: HashMap::new(),
+            next_body_id: 0,
+            const_symbols: HashMap::new(),
+            const_init_map: HashMap::new(),
+            binding_inits: HashMap::new(),
+        }
+    }
+
+    /// Transform HIR program to THIR
+    pub fn transform(&mut self, hir_program: hir::Program) -> Result<thir::Program> {
+        let mut thir_program = thir::Program::new();
+
+        // Pass 0: collect type information
+        self.collect_type_info(&hir_program)?;
+
+        // Pass 1: transform and register consts first so paths can resolve to them
+        for hir_item in &hir_program.items {
+            if let hir::ItemKind::Const(const_def) = &hir_item.kind {
+                let def_id = hir_item.def_id as types::DefId;
+                self.const_init_map
+                    .insert(def_id, const_def.body.value.clone());
+                let thir_const = self.transform_const(Some(def_id), const_def.clone())?;
+                let thir_id = self.next_id();
+                let const_ty = self.hir_ty_to_ty(&const_def.ty)?;
+                thir_program.items.push(thir::Item {
+                    thir_id,
+                    kind: thir::ItemKind::Const(thir_const),
+                    ty: const_ty,
+                    span: hir_item.span,
+                });
+            }
+        }
+
+        // Pass 2: transform remaining items with consts available
+        for hir_item in hir_program.items {
+            if matches!(hir_item.kind, hir::ItemKind::Const(_)) {
+                continue; // already handled
+            }
+            let thir_item = self.transform_item(hir_item)?;
+            thir_program.items.push(thir_item);
+        }
+
+        thir_program.bodies = self.body_map.clone();
+        thir_program.next_thir_id = self.next_thir_id;
+
+        Ok(thir_program)
+    }
+
+    /// Generate next THIR ID
+    fn next_id(&mut self) -> thir::ThirId {
+        let id = self.next_thir_id;
+        self.next_thir_id += 1;
+        id
+    }
+
+    /// Generate next body ID
+    fn next_body_id(&mut self) -> thir::BodyId {
+        let id = thir::BodyId::new(self.next_body_id);
+        self.next_body_id += 1;
+        id
+    }
+
+    /// Collect type information from HIR program
+    fn collect_type_info(&mut self, hir_program: &hir::Program) -> Result<()> {
+        for item in &hir_program.items {
+            if let hir::ItemKind::Struct(struct_def) = &item.kind {
+                self.type_context
+                    .declare_struct(item.def_id as types::DefId, &struct_def.name);
+            }
+        }
+
+        for item in &hir_program.items {
+            match &item.kind {
+                hir::ItemKind::Function(func) => {
+                    let fn_sig = self.build_fn_sig(&func.sig)?;
+                    self.type_context.register_function(
+                        item.def_id as types::DefId,
+                        &func.sig.name,
+                        fn_sig,
+                    );
+                }
+                hir::ItemKind::Struct(struct_def) => {
+                    let fields = struct_def
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let ty = self.hir_ty_to_ty(&field.ty)?;
+                            Ok((field.name.clone(), ty))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    self.type_context
+                        .init_struct_fields(item.def_id as types::DefId, fields);
+                }
+                hir::ItemKind::Const(const_def) => {
+                    let ty = self.hir_ty_to_ty(&const_def.ty)?;
+                    self.type_context.register_const(
+                        item.def_id as types::DefId,
+                        &const_def.name,
+                        ty,
+                    );
+                }
+                hir::ItemKind::Impl(impl_block) => {
+                    if let Some(owner_def_id) = self.resolve_ty_def_id(&impl_block.self_ty)? {
+                        for impl_item in &impl_block.items {
+                            if let hir::ImplItemKind::Method(method) = &impl_item.kind {
+                                let fn_sig = self.build_fn_sig(&method.sig)?;
+                                self.type_context.register_method(
+                                    owner_def_id,
+                                    &method.sig.name,
+                                    fn_sig,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn build_fn_sig(&mut self, sig: &hir::FunctionSig) -> Result<types::FnSig> {
+        let input_types = sig
+            .inputs
+            .iter()
+            .map(|param| self.hir_ty_to_ty(&param.ty))
+            .collect::<Result<Vec<_>>>()?;
+
+        let output_type = self.hir_ty_to_ty(&sig.output)?;
+
+        Ok(types::FnSig {
+            inputs: input_types.into_iter().map(Box::new).collect(),
+            output: Box::new(output_type),
+            c_variadic: false,
+            unsafety: types::Unsafety::Normal,
+            abi: types::Abi::Rust,
+        })
+    }
+
+    fn resolve_ty_def_id(&mut self, hir_ty: &hir::Ty) -> Result<Option<types::DefId>> {
+        let ty = self.hir_ty_to_ty(hir_ty)?;
+        Ok(Self::type_def_id(&ty))
+    }
+
+    fn type_def_id(ty: &types::Ty) -> Option<types::DefId> {
+        match &ty.kind {
+            types::TyKind::Adt(adt_def, _) => Some(adt_def.did),
+            types::TyKind::Ref(_, inner, _) => Self::type_def_id(inner),
+            _ => None,
+        }
+    }
+
+    fn make_primitive_ty(&self, name: &str) -> Option<types::Ty> {
+        match name {
+            "bool" => Some(types::Ty::bool()),
+            "char" => Some(types::Ty::char()),
+            "str" => Some(types::Ty::new(types::TyKind::Slice(Box::new(
+                types::Ty::char(),
+            )))),
+            "String" => Some(types::Ty::new(types::TyKind::Adt(
+                types::AdtDef {
+                    did: 0,
+                    variants: Vec::new(),
+                    flags: types::AdtFlags::IS_STRUCT,
+                    repr: types::ReprOptions {
+                        int: None,
+                        align: None,
+                        pack: None,
+                        flags: types::ReprFlags::empty(),
+                        field_shuffle_seed: 0,
+                    },
+                },
+                Vec::new(),
+            ))),
+            "i8" => Some(types::Ty::int(types::IntTy::I8)),
+            "i16" => Some(types::Ty::int(types::IntTy::I16)),
+            "i32" => Some(types::Ty::int(types::IntTy::I32)),
+            "i64" => Some(types::Ty::int(types::IntTy::I64)),
+            "i128" => Some(types::Ty::int(types::IntTy::I128)),
+            "isize" => Some(types::Ty::int(types::IntTy::Isize)),
+            "u8" => Some(types::Ty::uint(types::UintTy::U8)),
+            "u16" => Some(types::Ty::uint(types::UintTy::U16)),
+            "u32" => Some(types::Ty::uint(types::UintTy::U32)),
+            "u64" => Some(types::Ty::uint(types::UintTy::U64)),
+            "u128" => Some(types::Ty::uint(types::UintTy::U128)),
+            "usize" => Some(types::Ty::uint(types::UintTy::Usize)),
+            "f32" => Some(types::Ty::float(types::FloatTy::F32)),
+            "f64" => Some(types::Ty::float(types::FloatTy::F64)),
+            _ => None,
+        }
+    }
+
+    fn path_to_type_info(
+        &mut self,
+        path: &hir::Path,
+    ) -> Result<(Option<types::DefId>, String, String, types::SubstsRef)> {
+        if let Some(segment) = path.segments.last() {
+            let base_name = segment.name.clone();
+            let qualified = path
+                .segments
+                .iter()
+                .map(|seg| seg.name.clone())
+                .collect::<Vec<_>>()
+                .join("::");
+            let substs = if let Some(args) = &segment.args {
+                self.convert_hir_generic_args(args)?
+            } else {
+                Vec::new()
+            };
+            let def_id = match path.res {
+                Some(hir::Res::Def(id)) => Some(id as types::DefId),
+                _ => None,
+            };
+            Ok((def_id, qualified, base_name, substs))
+        } else {
+            Err(crate::error::optimization_error(
+                "Encountered empty path while lowering type".to_string(),
+            ))
+        }
+    }
+
+    fn convert_hir_generic_args(&mut self, args: &hir::GenericArgs) -> Result<types::SubstsRef> {
+        let mut substs = Vec::new();
+        for arg in &args.args {
+            match arg {
+                hir::GenericArg::Type(ty) => {
+                    substs.push(types::GenericArg::Type(self.hir_ty_to_ty(ty)?));
+                }
+                hir::GenericArg::Const(_) => {
+                    substs.push(types::GenericArg::Const(types::ConstKind::Value(
+                        types::ConstValue::ZeroSized,
+                    )));
+                }
+            }
+        }
+        Ok(substs)
+    }
+}
+
+impl IrTransform<hir::Program, thir::Program> for ThirGenerator {
+    fn transform(&mut self, source: hir::Program) -> Result<thir::Program> {
+        ThirGenerator::transform(self, source)
+    }
+}
+
+impl Default for ThirGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
