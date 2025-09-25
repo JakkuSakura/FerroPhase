@@ -16,307 +16,341 @@ LirProgram {
                     instructions: [
                         LirInstruction {
                             id: 0,
-                            kind: Unreachable,
+                            kind: Div(
+                                Global(
+                                    "DEFAULT_CONFIG",
+                                    Ty {
+                                        kind: Int(
+                                            I32,
+                                        ),
+                                        flags: TypeFlags(
+                                            0x0,
+                                        ),
+                                    },
+                                ),
+                                Constant(
+                                    Int(
+                                        1024,
+                                        I64,
+                                    ),
+                                ),
+                            ),
                             type_hint: Some(
                                 I32,
                             ),
                             debug_info: None,
                         },
+                        LirInstruction {
+                            id: 1,
+                            kind: Call {
+                                function: Global(
+                                    "println",
+                                    Ty {
+                                        kind: Int(
+                                            I32,
+                                        ),
+                                        flags: TypeFlags(
+                                            0x0,
+                                        ),
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
+                                        ),
+                                    ),
+                                    Register(
+                                        0,
+                                    ),
+                                    Global(
+                                        "DEFAULT_CONFIG",
+                                        Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                            flags: TypeFlags(
+                                                0x0,
+                                            ),
+                                        },
+                                    ),
+                                    Global(
+                                        "DEFAULT_CONFIG",
+                                        Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                            flags: TypeFlags(
+                                                0x0,
+                                            ),
+                                        },
+                                    ),
+                                    Global(
+                                        "DEFAULT_CONFIG",
+                                        Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                            flags: TypeFlags(
+                                                0x0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
                     ],
-                    terminator: Return(
-                        None,
+                    terminator: Br(
+                        1,
                     ),
                     predecessors: [],
-                    successors: [],
+                    successors: [
+                        1,
+                    ],
                 },
                 LirBasicBlock {
                     id: 1,
                     label: Some(
                         "bb1",
                     ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
+                    instructions: [
+                        LirInstruction {
+                            id: 2,
+                            kind: Call {
+                                function: Global(
+                                    "println",
+                                    Ty {
+                                        kind: Int(
+                                            I32,
+                                        ),
+                                        flags: TypeFlags(
+                                            0x0,
+                                        ),
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "Computed: factorial={}, is_pow2={}",
+                                        ),
+                                    ),
+                                    Global(
+                                        "FACTORIAL_5",
+                                        Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                            flags: TypeFlags(
+                                                0x0,
+                                            ),
+                                        },
+                                    ),
+                                    Global(
+                                        "IS_POWER_OF_TWO",
+                                        Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                            flags: TypeFlags(
+                                                0x0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        2,
                     ),
-                    predecessors: [],
-                    successors: [],
+                    predecessors: [
+                        0,
+                    ],
+                    successors: [
+                        2,
+                    ],
                 },
                 LirBasicBlock {
                     id: 2,
                     label: Some(
                         "bb2",
                     ),
-                    instructions: [
-                        LirInstruction {
-                            id: 1,
-                            kind: Call {
-                                function: Global(
-                                    "printf",
-                                    Ty {
-                                        kind: Int(
-                                            I32,
-                                        ),
-                                        flags: TypeFlags(
-                                            0x0,
-                                        ),
-                                    },
-                                ),
-                                args: [
-                                    Constant(
-                                        String(
-                                            "Computed: factorial=%d, is_pow2=%d\n",
-                                        ),
-                                    ),
-                                    Global(
-                                        "FACTORIAL_5",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "IS_POWER_OF_TWO",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                ],
-                                calling_convention: C,
-                                tail_call: false,
-                            },
-                            type_hint: Some(
-                                I32,
-                            ),
-                            debug_info: None,
-                        },
+                    instructions: [],
+                    terminator: Return(
+                        None,
+                    ),
+                    predecessors: [
+                        1,
                     ],
-                    terminator: Br(
-                        3,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 3,
-                    label: Some(
-                        "bb3",
-                    ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 4,
-                    label: Some(
-                        "bb4",
-                    ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 5,
-                    label: Some(
-                        "bb5",
-                    ),
-                    instructions: [
-                        LirInstruction {
-                            id: 2,
-                            kind: Unreachable,
-                            type_hint: Some(
-                                I32,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 3,
-                            kind: Call {
-                                function: Global(
-                                    "printf",
-                                    Ty {
-                                        kind: Int(
-                                            I32,
-                                        ),
-                                        flags: TypeFlags(
-                                            0x0,
-                                        ),
-                                    },
-                                ),
-                                args: [
-                                    Constant(
-                                        String(
-                                            "Config: buffer=%dKB, connections=%d, timeout=%dms, debug=%d\n",
-                                        ),
-                                    ),
-                                    Register(
-                                        36,
-                                    ),
-                                    Global(
-                                        "DEFAULT_CONFIG",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "DEFAULT_CONFIG",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "DEFAULT_CONFIG",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                ],
-                                calling_convention: C,
-                                tail_call: false,
-                            },
-                            type_hint: Some(
-                                I32,
-                            ),
-                            debug_info: None,
-                        },
-                    ],
-                    terminator: Br(
-                        6,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 6,
-                    label: Some(
-                        "bb6",
-                    ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 7,
-                    label: Some(
-                        "bb7",
-                    ),
-                    instructions: [
-                        LirInstruction {
-                            id: 4,
-                            kind: Call {
-                                function: Global(
-                                    "printf",
-                                    Ty {
-                                        kind: Int(
-                                            I32,
-                                        ),
-                                        flags: TypeFlags(
-                                            0x0,
-                                        ),
-                                    },
-                                ),
-                                args: [
-                                    Constant(
-                                        String(
-                                            "Computed: factorial=%d, is_pow2=%d\n",
-                                        ),
-                                    ),
-                                    Global(
-                                        "FACTORIAL_5",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                    Global(
-                                        "IS_POWER_OF_TWO",
-                                        Ty {
-                                            kind: Int(
-                                                I32,
-                                            ),
-                                            flags: TypeFlags(
-                                                0x0,
-                                            ),
-                                        },
-                                    ),
-                                ],
-                                calling_convention: C,
-                                tail_call: false,
-                            },
-                            type_hint: Some(
-                                I32,
-                            ),
-                            debug_info: None,
-                        },
-                    ],
-                    terminator: Br(
-                        8,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 8,
-                    label: Some(
-                        "bb8",
-                    ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
-                    ),
-                    predecessors: [],
-                    successors: [],
-                },
-                LirBasicBlock {
-                    id: 9,
-                    label: Some(
-                        "bb9",
-                    ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
-                    ),
-                    predecessors: [],
                     successors: [],
                 },
             ],
-            locals: [],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 6,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 7,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 8,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 9,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 10,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 11,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 12,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 13,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 14,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 15,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 16,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 17,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 18,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 19,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 20,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 21,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 22,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 23,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 24,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 25,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
             stack_slots: [],
             calling_convention: C,
             linkage: Internal,
