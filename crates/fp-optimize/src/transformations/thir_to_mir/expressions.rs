@@ -1,219 +1,7 @@
-use fp_core::error::Result;
-use fp_core::ops::BinOpKind;
-use fp_core::span::Span;
-use fp_core::types::{Ty, TyKind};
-use fp_core::{mir, thir};
-// use fp_core::ast::Visibility; // not used here
-use std::collections::HashMap;
-
-use super::IrTransform;
-
-/// Generator for transforming THIR to MIR (Mid-level IR)
-pub struct MirGenerator {
-    next_mir_id: mir::MirId,
-    next_local_id: u32,
-    next_bb_id: u32,
-    current_locals: HashMap<thir::ThirId, mir::LocalId>,
-    current_blocks: Vec<mir::BasicBlockData>,
-    local_decls: Vec<mir::LocalDecl>,
-    loop_stack: Vec<LoopContext>,
-    current_return_local: Option<mir::LocalId>,
-}
-
-struct ExprOutcome {
-    place: mir::Place,
-    block: mir::BasicBlockId,
-}
-
-#[derive(Clone, Copy)]
-struct LoopContext {
-    continue_block: mir::BasicBlockId,
-    break_block: mir::BasicBlockId,
-    break_result: Option<mir::LocalId>,
-}
+use super::*;
 
 impl MirGenerator {
-    /// Create a new MIR generator
-    pub fn new() -> Self {
-        Self {
-            next_mir_id: 0,
-            next_local_id: 0,
-            next_bb_id: 0,
-            current_locals: HashMap::new(),
-            current_blocks: Vec::new(),
-            local_decls: Vec::new(),
-            loop_stack: Vec::new(),
-            current_return_local: None,
-        }
-    }
-
-    /// Transform a THIR program to MIR
-    pub fn transform(&mut self, thir_program: thir::Program) -> Result<mir::Program> {
-        let mut mir_program = mir::Program::new();
-
-        for item in &thir_program.items {
-            match &item.kind {
-                thir::ItemKind::Function(func) => {
-                    let (mir_func, maybe_body) =
-                        self.transform_function_with_body(func.clone(), &thir_program)?;
-                    if let Some((body_id, body)) = maybe_body {
-                        mir_program.bodies.insert(body_id, body);
-                    }
-                    mir_program.items.push(mir::Item {
-                        mir_id: self.next_id(),
-                        kind: mir::ItemKind::Function(mir_func),
-                    });
-                }
-                thir::ItemKind::Struct(_) => {
-                    // Structs don't need MIR representation - they're handled at type level
-                }
-                thir::ItemKind::Const(_const_item) => {
-                    // Skip const items for now
-                }
-                thir::ItemKind::Impl(_) => {
-                    // Skip impl items for now
-                }
-            }
-        }
-
-        Ok(mir_program)
-    }
-
-    /// Transform a THIR function to MIR
-    fn transform_function_with_body(
-        &mut self,
-        func: thir::Function,
-        thir_program: &thir::Program,
-    ) -> Result<(mir::Function, Option<(mir::BodyId, mir::Body)>)> {
-        // Reset generator state for new function
-        self.reset_for_new_function();
-
-        // Create locals for parameters and return value
-        let return_local = self.create_local(func.sig.output.clone());
-        let mut param_locals = Vec::new();
-
-        for param in &func.sig.inputs {
-            let local_id = self.create_local(param.clone());
-            param_locals.push(local_id);
-        }
-
-        // Track the return slot so `return` expressions can write into it.
-        self.current_return_local = Some(return_local);
-
-        let (body_id, body_opt) = if let Some(body_id) = func.body_id {
-            if let Some(thir_body) = thir_program.bodies.get(&body_id) {
-                let mir_body =
-                    self.transform_body(thir_body.clone(), return_local, &param_locals)?;
-                (mir::BodyId::new(body_id.0), Some(mir_body))
-            } else {
-                let mir_body =
-                    self.create_external_function_body(return_local, param_locals.len())?;
-                (mir::BodyId::new(0), Some(mir_body))
-            }
-        } else {
-            // External function - minimal body
-            let mir_body = self.create_external_function_body(return_local, param_locals.len())?;
-            (mir::BodyId::new(0), Some(mir_body))
-        };
-        let mir_ty = self.transform_type(&func.sig.output);
-        let inputs = param_locals
-            .iter()
-            .map(|&local_id| self.local_decls[local_id as usize].ty.clone())
-            .collect();
-
-        let func = mir::Function {
-            sig: mir::FunctionSig {
-                inputs,
-                output: mir_ty,
-            },
-            body_id,
-        };
-
-        // Clear return slot tracking before leaving the function.
-        self.current_return_local = None;
-
-        Ok((func, body_opt.map(|b| (body_id, b))))
-    }
-
-    /// Transform a THIR body to MIR body
-    fn transform_body(
-        &mut self,
-        thir_body: thir::Body,
-        return_local: mir::LocalId,
-        param_locals: &[mir::LocalId],
-    ) -> Result<mir::Body> {
-        // Create entry basic block
-        let entry_bb = self.create_basic_block();
-
-        for (idx, &local) in param_locals.iter().enumerate() {
-            self.current_locals.insert(idx as thir::ThirId, local);
-        }
-
-        let base_thir_local = param_locals.len() as thir::ThirId;
-        for (offset, local_decl) in thir_body.locals.iter().enumerate() {
-            let mir_local = self.create_local(local_decl.ty.clone());
-            self.current_locals
-                .insert(base_thir_local + offset as thir::ThirId, mir_local);
-        }
-
-        self.current_return_local = Some(return_local);
-
-        tracing::debug!(
-            "Transforming THIR body with expression kind: {:?}",
-            thir_body.value.kind
-        );
-
-        // Transform the body expression
-        let ExprOutcome {
-            place: result_place,
-            block: current_block,
-        } = self.transform_expr(thir_body.value, entry_bb)?;
-
-        // Add return statement
-        self.add_statement_to_block(
-            current_block,
-            mir::Statement {
-                kind: mir::StatementKind::Assign(
-                    mir::Place::from_local(return_local),
-                    mir::Rvalue::Use(mir::Operand::Move(result_place)),
-                ),
-                source_info: Span::new(0, 0, 0),
-            },
-        );
-
-        // Set terminator for entry block
-        self.set_block_terminator(
-            current_block,
-            mir::Terminator {
-                kind: mir::TerminatorKind::Return,
-                source_info: Span::new(0, 0, 0),
-            },
-        );
-
-        // let locals: Vec<mir::LocalDecl> = (0..self.next_local_id)
-        //     .map(|_| mir::LocalDecl {
-        //         mutability: mir::Mutability::Not,
-        //         local_info: mir::LocalInfo::Other,
-        //         internal: false,
-        //         is_block_tail: None,
-        //         ty: todo!(),
-        //         user_ty: None,
-        //         source_info: Span::new(0, 0, 0),
-        //     })
-        //     .collect();
-
-        Ok(mir::Body {
-            basic_blocks: self.current_blocks.clone(),
-            locals: self.local_decls.clone(),
-            arg_count: param_locals.len(),
-            return_local,
-            var_debug_info: Vec::new(),
-            span: Span::new(0, 0, 0),
-        })
-    }
-
-    /// Transform a THIR expression to MIR, returning the place where result is stored and the current block
-    fn transform_expr(
+    pub(super) fn transform_expr(
         &mut self,
         expr: thir::Expr,
         current_bb: mir::BasicBlockId,
@@ -1006,151 +794,11 @@ impl MirGenerator {
         }
     }
 
-    fn transform_stmt(
-        &mut self,
-        stmt: thir::Stmt,
-        current_bb: mir::BasicBlockId,
-    ) -> Result<mir::BasicBlockId> {
-        match stmt.kind {
-            thir::StmtKind::Expr(expr) => {
-                let ExprOutcome { block, .. } = self.transform_expr(expr, current_bb)?;
-                Ok(block)
-            }
-            thir::StmtKind::Let {
-                initializer,
-                pattern,
-                ..
-            } => {
-                let mut block = current_bb;
-
-                if let Some(init_expr) = initializer {
-                    let ExprOutcome {
-                        place: init_place,
-                        block: after_init,
-                    } = self.transform_expr(init_expr, block)?;
-                    block = after_init;
-
-                    if let Some(local_id) = self.binding_local_from_pattern(&pattern) {
-                        let mir_local = self.get_or_create_local(local_id, pattern.ty.clone());
-                        self.add_statement_to_block(
-                            block,
-                            mir::Statement {
-                                kind: mir::StatementKind::Assign(
-                                    mir::Place::from_local(mir_local),
-                                    mir::Rvalue::Use(mir::Operand::Move(init_place)),
-                                ),
-                                source_info: pattern.span,
-                            },
-                        );
-                    }
-                }
-
-                Ok(block)
-            }
-        }
-    }
-
-    fn binding_local_from_pattern(&self, pattern: &thir::Pat) -> Option<thir::LocalId> {
-        match &pattern.kind {
-            thir::PatKind::Binding { var, .. } => Some(*var),
-            thir::PatKind::Deref { subpattern } => self.binding_local_from_pattern(subpattern),
-            _ => None,
-        }
-    }
-
-    /// Helper methods
-    fn reset_for_new_function(&mut self) {
-        self.next_local_id = 0;
-        self.next_bb_id = 0;
-        self.current_locals.clear();
-        self.current_blocks.clear();
-        self.local_decls.clear();
-        self.loop_stack.clear();
-        self.current_return_local = None;
-    }
-
-    fn create_local(&mut self, ty: Ty) -> mir::LocalId {
-        let local_id = self.next_local_id;
-        self.next_local_id += 1;
-        self.local_decls.push(mir::LocalDecl {
-            mutability: mir::Mutability::Not,
-            local_info: mir::LocalInfo::Other,
-            internal: false,
-            is_block_tail: None,
-            ty,
-            user_ty: None,
-            source_info: Span::new(0, 0, 0),
-        });
-        local_id
-    }
-
-    fn get_or_create_local(&mut self, thir_id: thir::ThirId, ty: Ty) -> mir::LocalId {
-        if let Some(&local) = self.current_locals.get(&thir_id) {
-            local
-        } else {
-            let local = self.create_local(ty);
-            self.current_locals.insert(thir_id, local);
-            local
-        }
-    }
-
-    fn create_basic_block(&mut self) -> mir::BasicBlockId {
-        let bb_id = self.next_bb_id;
-        self.next_bb_id += 1;
-
-        self.current_blocks.push(mir::BasicBlockData {
-            statements: Vec::new(),
-            terminator: None,
-            is_cleanup: false,
-        });
-
-        bb_id
-    }
-
-    fn add_statement_to_block(&mut self, bb_id: mir::BasicBlockId, stmt: mir::Statement) {
-        if let Some(block) = self.current_blocks.get_mut(bb_id as usize) {
-            block.statements.push(stmt);
-        }
-    }
-
-    fn set_block_terminator(&mut self, bb_id: mir::BasicBlockId, terminator: mir::Terminator) {
-        if let Some(block) = self.current_blocks.get_mut(bb_id as usize) {
-            block.terminator = Some(terminator);
-        }
-    }
-
-    fn block_has_terminator(&self, bb_id: mir::BasicBlockId) -> bool {
-        self.current_blocks
-            .get(bb_id as usize)
-            .and_then(|block| block.terminator.as_ref())
-            .is_some()
-    }
-
-    fn ensure_goto(&mut self, bb_id: mir::BasicBlockId, target: mir::BasicBlockId, span: Span) {
-        if !self.block_has_terminator(bb_id) {
-            self.set_block_terminator(
-                bb_id,
-                mir::Terminator {
-                    kind: mir::TerminatorKind::Goto { target },
-                    source_info: span,
-                },
-            );
-        }
-    }
-
-    fn is_unit_type(&self, ty: &Ty) -> bool {
-        matches!(ty.kind, TyKind::Tuple(ref elems) if elems.is_empty())
-    }
-
-    fn is_never_type(&self, ty: &Ty) -> bool {
-        matches!(ty.kind, TyKind::Never)
-    }
-
-    fn unit_rvalue(&self) -> mir::Rvalue {
+    pub(super) fn unit_rvalue(&self) -> mir::Rvalue {
         mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new())
     }
 
-    fn bool_operand(&self, value: bool, span: Span) -> mir::Operand {
+    pub(super) fn bool_operand(&self, value: bool, span: Span) -> mir::Operand {
         mir::Operand::Constant(mir::Constant {
             span,
             user_ty: None,
@@ -1158,7 +806,7 @@ impl MirGenerator {
         })
     }
 
-    fn default_rvalue_for_type(&self, ty: &Ty, span: Span) -> mir::Rvalue {
+    pub(super) fn default_rvalue_for_type(&self, ty: &Ty, span: Span) -> mir::Rvalue {
         match &ty.kind {
             TyKind::Bool => mir::Rvalue::Use(self.bool_operand(false, span)),
             TyKind::Tuple(elems) if elems.is_empty() => self.unit_rvalue(),
@@ -1167,37 +815,12 @@ impl MirGenerator {
         }
     }
 
-    fn constant_to_u128(&self, _value: &thir::ConstValue) -> u128 {
+    pub(super) fn constant_to_u128(&self, _value: &thir::ConstValue) -> u128 {
         tracing::warn!("THIR→MIR: const pattern lowering uses placeholder value; treating as zero");
         0
     }
 
-    fn create_external_function_body(
-        &mut self,
-        return_local: mir::LocalId,
-        param_count: usize,
-    ) -> Result<mir::Body> {
-        let entry_bb = self.create_basic_block();
-
-        self.set_block_terminator(
-            entry_bb,
-            mir::Terminator {
-                kind: mir::TerminatorKind::Return,
-                source_info: Span::new(0, 0, 0),
-            },
-        );
-
-        Ok(mir::Body {
-            basic_blocks: self.current_blocks.clone(),
-            locals: self.local_decls.clone(),
-            arg_count: param_count,
-            return_local,
-            var_debug_info: Vec::new(),
-            span: Span::new(0, 0, 0),
-        })
-    }
-
-    fn transform_binary_op(&self, op: BinOpKind) -> Result<mir::BinOp> {
+    pub(super) fn transform_binary_op(&self, op: BinOpKind) -> Result<mir::BinOp> {
         match op {
             BinOpKind::Add => Ok(mir::BinOp::Add),
             BinOpKind::Sub => Ok(mir::BinOp::Sub),
@@ -1213,7 +836,7 @@ impl MirGenerator {
         }
     }
 
-    fn literal_to_operand(&self, lit: thir::Lit, span: Span) -> mir::Operand {
+    pub(super) fn literal_to_operand(&self, lit: thir::Lit, span: Span) -> mir::Operand {
         let literal = match lit {
             thir::Lit::Bool(b) => mir::ConstantKind::Bool(b),
             thir::Lit::Int(v, _) => mir::ConstantKind::Int(v as i64),
@@ -1236,11 +859,12 @@ impl MirGenerator {
     }
 
     /// Check if a type is a function type
-    fn is_function_type(&self, ty: &Ty) -> bool {
+
+    pub(super) fn is_function_type(&self, ty: &Ty) -> bool {
         matches!(ty.kind, TyKind::FnDef(..) | TyKind::FnPtr(..))
     }
 
-    fn convert_thir_binop_to_kind(&self, op: thir::BinOp) -> BinOpKind {
+    pub(super) fn convert_thir_binop_to_kind(&self, op: thir::BinOp) -> BinOpKind {
         match op {
             thir::BinOp::Add => BinOpKind::Add,
             thir::BinOp::Sub => BinOpKind::Sub,
@@ -1254,95 +878,5 @@ impl MirGenerator {
             thir::BinOp::Ge => BinOpKind::Ge,
             _ => BinOpKind::Add, // Default fallback for other ops
         }
-    }
-
-    fn next_id(&mut self) -> mir::MirId {
-        let id = self.next_mir_id;
-        self.next_mir_id += 1;
-        id
-    }
-
-    /// Transform THIR type to MIR type (simplified mapping)
-    fn transform_type(&self, ty: &fp_core::types::Ty) -> fp_core::types::Ty {
-        // For now, just clone the THIR type since MIR can use the same type system
-        // In a full implementation, this might transform types to MIR-specific representations
-        ty.clone()
-    }
-}
-
-impl IrTransform<thir::Program, mir::Program> for MirGenerator {
-    fn transform(&mut self, source: thir::Program) -> Result<mir::Program> {
-        MirGenerator::transform(self, source)
-    }
-}
-
-impl Default for MirGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fp_core::id::Ident;
-
-    #[test]
-    fn test_mir_generator_creation() {
-        let generator = MirGenerator::new();
-        assert_eq!(generator.next_mir_id, 0);
-        assert_eq!(generator.next_local_id, 0);
-        assert_eq!(generator.next_bb_id, 0);
-    }
-
-    #[test]
-    fn test_local_creation() {
-        let mut generator = MirGenerator::new();
-        let ty = Ty::new(TyKind::Tuple(Vec::new()));
-
-        let local1 = generator.create_local(ty.clone());
-        let local2 = generator.create_local(ty.clone());
-
-        assert_eq!(local1, 0);
-        assert_eq!(local2, 1);
-        assert_eq!(generator.next_local_id, 2);
-    }
-
-    #[test]
-    fn test_basic_block_creation() {
-        let mut generator = MirGenerator::new();
-
-        let bb1 = generator.create_basic_block();
-        let bb2 = generator.create_basic_block();
-
-        assert_eq!(bb1, 0);
-        assert_eq!(bb2, 1);
-        assert_eq!(generator.current_blocks.len(), 2);
-    }
-
-    #[test]
-    fn test_binary_op_transformation() {
-        let generator = MirGenerator::new();
-
-        assert_eq!(
-            generator.transform_binary_op(BinOpKind::Add).unwrap(),
-            mir::BinOp::Add
-        );
-        assert_eq!(
-            generator.transform_binary_op(BinOpKind::Eq).unwrap(),
-            mir::BinOp::Eq
-        );
-    }
-
-    #[test]
-    fn test_empty_thir_program_transformation() {
-        let mut generator = MirGenerator::new();
-        let thir_program = thir::Program::new();
-
-        let result = generator.transform(thir_program);
-        assert!(result.is_ok());
-
-        let mir_program = result.unwrap();
-        assert_eq!(mir_program.items.len(), 0);
     }
 }

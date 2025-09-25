@@ -1,289 +1,7 @@
-use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
-use fp_core::error::Result;
-use fp_core::span::Span;
-use fp_core::{hir, thir, types};
-use std::collections::HashMap;
-use std::mem;
-
-use super::IrTransform;
-
-/// Generator for transforming HIR to THIR (Typed High-level IR)
-/// This transformation performs type checking and inference
-pub struct ThirGenerator {
-    next_thir_id: thir::ThirId,
-    type_context: TypeContext,
-    body_map: HashMap<thir::BodyId, thir::Body>,
-    next_body_id: u32,
-    /// Map constant names to their THIR body IDs for resolution
-    const_symbols: HashMap<types::DefId, thir::BodyId>,
-    /// Map constant names to their original HIR initializer expression for inlining
-    const_init_map: HashMap<types::DefId, hir::Expr>,
-    /// Track simple local bindings we can inline by name.
-    binding_inits: HashMap<String, hir::Expr>,
-}
-
-/// Type checking context
-#[derive(Clone)]
-struct StructInfo {
-    adt_def: types::AdtDef,
-    field_map: HashMap<String, (usize, types::Ty)>,
-}
-
-struct TypeContext {
-    function_signatures: HashMap<types::DefId, types::FnSig>,
-    method_signatures: HashMap<types::DefId, HashMap<String, types::FnSig>>,
-    structs: HashMap<types::DefId, StructInfo>,
-    struct_names: HashMap<String, types::DefId>,
-    value_names: HashMap<String, types::DefId>,
-    const_types: HashMap<types::DefId, types::Ty>,
-    next_def_id: types::DefId,
-}
+use super::*;
 
 impl ThirGenerator {
-    /// Create a new THIR generator
-    pub fn new() -> Self {
-        Self {
-            next_thir_id: 0,
-            type_context: TypeContext::new(),
-            body_map: HashMap::new(),
-            next_body_id: 0,
-            const_symbols: HashMap::new(),
-            const_init_map: HashMap::new(),
-            binding_inits: HashMap::new(),
-        }
-    }
-
-    /// Transform HIR program to THIR
-    pub fn transform(&mut self, hir_program: hir::Program) -> Result<thir::Program> {
-        let mut thir_program = thir::Program::new();
-
-        // Pass 0: collect type information
-        self.collect_type_info(&hir_program)?;
-
-        // Pass 1: transform and register consts first so paths can resolve to them
-        for hir_item in &hir_program.items {
-            if let hir::ItemKind::Const(const_def) = &hir_item.kind {
-                let def_id = hir_item.def_id as types::DefId;
-                self.const_init_map
-                    .insert(def_id, const_def.body.value.clone());
-                let thir_const = self.transform_const(Some(def_id), const_def.clone())?;
-                let thir_id = self.next_id();
-                let const_ty = self.hir_ty_to_ty(&const_def.ty)?;
-                thir_program.items.push(thir::Item {
-                    thir_id,
-                    kind: thir::ItemKind::Const(thir_const),
-                    ty: const_ty,
-                    span: hir_item.span,
-                });
-            }
-        }
-
-        // Pass 2: transform remaining items with consts available
-        for hir_item in hir_program.items {
-            if matches!(hir_item.kind, hir::ItemKind::Const(_)) {
-                continue; // already handled
-            }
-            let thir_item = self.transform_item(hir_item)?;
-            thir_program.items.push(thir_item);
-        }
-
-        thir_program.bodies = self.body_map.clone();
-        thir_program.next_thir_id = self.next_thir_id;
-
-        Ok(thir_program)
-    }
-
-    /// Generate next THIR ID
-    fn next_id(&mut self) -> thir::ThirId {
-        let id = self.next_thir_id;
-        self.next_thir_id += 1;
-        id
-    }
-
-    /// Generate next body ID
-    fn next_body_id(&mut self) -> thir::BodyId {
-        let id = thir::BodyId::new(self.next_body_id);
-        self.next_body_id += 1;
-        id
-    }
-
-    /// Collect type information from HIR program
-    fn collect_type_info(&mut self, hir_program: &hir::Program) -> Result<()> {
-        for item in &hir_program.items {
-            if let hir::ItemKind::Struct(struct_def) = &item.kind {
-                self.type_context
-                    .declare_struct(item.def_id as types::DefId, &struct_def.name);
-            }
-        }
-
-        for item in &hir_program.items {
-            match &item.kind {
-                hir::ItemKind::Function(func) => {
-                    let fn_sig = self.build_fn_sig(&func.sig)?;
-                    self.type_context.register_function(
-                        item.def_id as types::DefId,
-                        &func.sig.name,
-                        fn_sig,
-                    );
-                }
-                hir::ItemKind::Struct(struct_def) => {
-                    let fields = struct_def
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let ty = self.hir_ty_to_ty(&field.ty)?;
-                            Ok((field.name.clone(), ty))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    self.type_context
-                        .init_struct_fields(item.def_id as types::DefId, fields);
-                }
-                hir::ItemKind::Const(const_def) => {
-                    let ty = self.hir_ty_to_ty(&const_def.ty)?;
-                    self.type_context.register_const(
-                        item.def_id as types::DefId,
-                        &const_def.name,
-                        ty,
-                    );
-                }
-                hir::ItemKind::Impl(impl_block) => {
-                    if let Some(owner_def_id) = self.resolve_ty_def_id(&impl_block.self_ty)? {
-                        for impl_item in &impl_block.items {
-                            if let hir::ImplItemKind::Method(method) = &impl_item.kind {
-                                let fn_sig = self.build_fn_sig(&method.sig)?;
-                                self.type_context.register_method(
-                                    owner_def_id,
-                                    &method.sig.name,
-                                    fn_sig,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn build_fn_sig(&mut self, sig: &hir::FunctionSig) -> Result<types::FnSig> {
-        let input_types = sig
-            .inputs
-            .iter()
-            .map(|param| self.hir_ty_to_ty(&param.ty))
-            .collect::<Result<Vec<_>>>()?;
-
-        let output_type = self.hir_ty_to_ty(&sig.output)?;
-
-        Ok(types::FnSig {
-            inputs: input_types.into_iter().map(Box::new).collect(),
-            output: Box::new(output_type),
-            c_variadic: false,
-            unsafety: types::Unsafety::Normal,
-            abi: types::Abi::Rust,
-        })
-    }
-
-    fn resolve_ty_def_id(&mut self, hir_ty: &hir::Ty) -> Result<Option<types::DefId>> {
-        let ty = self.hir_ty_to_ty(hir_ty)?;
-        Ok(Self::type_def_id(&ty))
-    }
-
-    fn type_def_id(ty: &types::Ty) -> Option<types::DefId> {
-        match &ty.kind {
-            types::TyKind::Adt(adt_def, _) => Some(adt_def.did),
-            types::TyKind::Ref(_, inner, _) => Self::type_def_id(inner),
-            _ => None,
-        }
-    }
-
-    fn make_primitive_ty(&self, name: &str) -> Option<types::Ty> {
-        match name {
-            "bool" => Some(types::Ty::bool()),
-            "char" => Some(types::Ty::char()),
-            "str" => Some(types::Ty::new(types::TyKind::Slice(Box::new(
-                types::Ty::char(),
-            )))),
-            "String" => Some(types::Ty::new(types::TyKind::Adt(
-                types::AdtDef {
-                    did: 0,
-                    variants: Vec::new(),
-                    flags: types::AdtFlags::IS_STRUCT,
-                    repr: types::ReprOptions {
-                        int: None,
-                        align: None,
-                        pack: None,
-                        flags: types::ReprFlags::empty(),
-                        field_shuffle_seed: 0,
-                    },
-                },
-                Vec::new(),
-            ))),
-            "i8" => Some(types::Ty::int(types::IntTy::I8)),
-            "i16" => Some(types::Ty::int(types::IntTy::I16)),
-            "i32" => Some(types::Ty::int(types::IntTy::I32)),
-            "i64" => Some(types::Ty::int(types::IntTy::I64)),
-            "i128" => Some(types::Ty::int(types::IntTy::I128)),
-            "isize" => Some(types::Ty::int(types::IntTy::Isize)),
-            "u8" => Some(types::Ty::uint(types::UintTy::U8)),
-            "u16" => Some(types::Ty::uint(types::UintTy::U16)),
-            "u32" => Some(types::Ty::uint(types::UintTy::U32)),
-            "u64" => Some(types::Ty::uint(types::UintTy::U64)),
-            "u128" => Some(types::Ty::uint(types::UintTy::U128)),
-            "usize" => Some(types::Ty::uint(types::UintTy::Usize)),
-            "f32" => Some(types::Ty::float(types::FloatTy::F32)),
-            "f64" => Some(types::Ty::float(types::FloatTy::F64)),
-            _ => None,
-        }
-    }
-
-    fn path_to_type_info(
-        &mut self,
-        path: &hir::Path,
-    ) -> Result<(Option<types::DefId>, String, String, types::SubstsRef)> {
-        if let Some(segment) = path.segments.last() {
-            let base_name = segment.name.clone();
-            let qualified = path
-                .segments
-                .iter()
-                .map(|seg| seg.name.clone())
-                .collect::<Vec<_>>()
-                .join("::");
-            let substs = if let Some(args) = &segment.args {
-                self.convert_hir_generic_args(args)?
-            } else {
-                Vec::new()
-            };
-            let def_id = match path.res {
-                Some(hir::Res::Def(id)) => Some(id as types::DefId),
-                _ => None,
-            };
-            Ok((def_id, qualified, base_name, substs))
-        } else {
-            Err(crate::error::optimization_error(
-                "Encountered empty path while lowering type".to_string(),
-            ))
-        }
-    }
-
-    fn convert_hir_generic_args(&mut self, args: &hir::GenericArgs) -> Result<types::SubstsRef> {
-        let mut substs = Vec::new();
-        for arg in &args.args {
-            match arg {
-                hir::GenericArg::Type(ty) => {
-                    substs.push(types::GenericArg::Type(self.hir_ty_to_ty(ty)?));
-                }
-                hir::GenericArg::Const(_) => {
-                    substs.push(types::GenericArg::Const(types::ConstKind::Value(
-                        types::ConstValue::ZeroSized,
-                    )));
-                }
-            }
-        }
-        Ok(substs)
-    }
-
-    /// Transform HIR item to THIR
-    fn transform_item(&mut self, hir_item: hir::Item) -> Result<thir::Item> {
+    pub(super) fn transform_item(&mut self, hir_item: hir::Item) -> Result<thir::Item> {
         let thir_id = self.next_id();
         let def_id = hir_item.def_id as types::DefId;
         let span = hir_item.span;
@@ -326,7 +44,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR function to THIR
-    fn transform_function(&mut self, hir_func: hir::Function) -> Result<thir::Function> {
+    pub(super) fn transform_function(&mut self, hir_func: hir::Function) -> Result<thir::Function> {
         let inputs = hir_func
             .sig
             .inputs
@@ -358,7 +76,7 @@ impl ThirGenerator {
         })
     }
 
-    fn transform_impl(&mut self, hir_impl: hir::Impl) -> Result<thir::Impl> {
+    pub(super) fn transform_impl(&mut self, hir_impl: hir::Impl) -> Result<thir::Impl> {
         let self_ty = self.hir_ty_to_ty(&hir_impl.self_ty)?;
 
         let mut items = Vec::new();
@@ -389,7 +107,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR struct to THIR
-    fn transform_struct(&mut self, hir_struct: hir::Struct) -> Result<thir::Struct> {
+    pub(super) fn transform_struct(&mut self, hir_struct: hir::Struct) -> Result<thir::Struct> {
         let fields = hir_struct
             .fields
             .into_iter()
@@ -403,7 +121,10 @@ impl ThirGenerator {
     }
 
     /// Transform HIR struct field to THIR
-    fn transform_struct_field(&mut self, hir_field: hir::StructField) -> Result<thir::StructField> {
+    pub(super) fn transform_struct_field(
+        &mut self,
+        hir_field: hir::StructField,
+    ) -> Result<thir::StructField> {
         let thir_id = self.next_id();
         let ty = self.hir_ty_to_ty(&hir_field.ty)?;
         let vis = self.transform_visibility(hir_field.vis);
@@ -412,7 +133,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR const to THIR
-    fn transform_const(
+    pub(super) fn transform_const(
         &mut self,
         def_id: Option<types::DefId>,
         hir_const: hir::Const,
@@ -429,7 +150,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR body to THIR
-    fn transform_body(&mut self, hir_body: hir::Body) -> Result<thir::Body> {
+    pub(super) fn transform_body(&mut self, hir_body: hir::Body) -> Result<thir::Body> {
         let saved_bindings = mem::take(&mut self.binding_inits);
         let value = self.transform_expr(hir_body.value)?;
 
@@ -457,7 +178,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR expression to THIR with type checking
-    fn transform_expr(&mut self, hir_expr: hir::Expr) -> Result<thir::Expr> {
+    pub(super) fn transform_expr(&mut self, hir_expr: hir::Expr) -> Result<thir::Expr> {
         let thir_id = self.next_id();
 
         let (kind, ty) = match hir_expr.kind {
@@ -827,7 +548,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR block to THIR
-    fn transform_block(&mut self, hir_block: hir::Block) -> Result<thir::Block> {
+    pub(super) fn transform_block(&mut self, hir_block: hir::Block) -> Result<thir::Block> {
         let stmts = hir_block
             .stmts
             .into_iter()
@@ -850,7 +571,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR statement to THIR
-    fn transform_stmt(&mut self, hir_stmt: hir::Stmt) -> Result<thir::Stmt> {
+    pub(super) fn transform_stmt(&mut self, hir_stmt: hir::Stmt) -> Result<thir::Stmt> {
         let kind = match hir_stmt.kind {
             hir::StmtKind::Expr(expr) => {
                 let thir_expr = self.transform_expr(expr)?;
@@ -892,7 +613,10 @@ impl ThirGenerator {
     }
 
     /// Transform HIR literal to THIR with type inference
-    fn transform_literal(&mut self, hir_lit: hir::Lit) -> Result<(thir::Lit, types::Ty)> {
+    pub(super) fn transform_literal(
+        &mut self,
+        hir_lit: hir::Lit,
+    ) -> Result<(thir::Lit, types::Ty)> {
         let (thir_lit, ty) = match hir_lit {
             hir::Lit::Bool(b) => (thir::Lit::Bool(b), types::Ty::bool()),
             hir::Lit::Integer(i) => (
@@ -910,7 +634,7 @@ impl ThirGenerator {
     }
 
     /// Transform HIR binary operator to THIR
-    fn transform_binary_op(&self, hir_op: hir::BinOp) -> thir::BinOp {
+    pub(super) fn transform_binary_op(&self, hir_op: hir::BinOp) -> thir::BinOp {
         match hir_op {
             hir::BinOp::Add => thir::BinOp::Add,
             hir::BinOp::Sub => thir::BinOp::Sub,
@@ -933,7 +657,7 @@ impl ThirGenerator {
     }
 
     /// Convert HIR type to types::Ty
-    fn hir_ty_to_ty(&mut self, hir_ty: &hir::Ty) -> Result<types::Ty> {
+    pub(super) fn hir_ty_to_ty(&mut self, hir_ty: &hir::Ty) -> Result<types::Ty> {
         match &hir_ty.kind {
             hir::TyKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
             hir::TyKind::Path(path) => {
@@ -1021,7 +745,7 @@ impl ThirGenerator {
         }
     }
 
-    fn primitive_ty_to_ty(&mut self, prim: &TypePrimitive) -> types::Ty {
+    pub(super) fn primitive_ty_to_ty(&mut self, prim: &TypePrimitive) -> types::Ty {
         match prim {
             TypePrimitive::Bool => types::Ty::bool(),
             TypePrimitive::Char => types::Ty::char(),
@@ -1059,7 +783,7 @@ impl ThirGenerator {
     }
 
     /// Type checking for binary operations
-    fn check_binary_op_types(
+    pub(super) fn check_binary_op_types(
         &self,
         left_ty: &types::Ty,
         right_ty: &types::Ty,
@@ -1075,7 +799,7 @@ impl ThirGenerator {
     }
 
     /// Infer type from HIR path
-    fn infer_path_type(&mut self, path: &hir::Path) -> Result<types::Ty> {
+    pub(super) fn infer_path_type(&mut self, path: &hir::Path) -> Result<types::Ty> {
         let (def_id_opt, qualified_name, base_name, substs) = self.path_to_type_info(path)?;
 
         if let Some(def_id) = def_id_opt {
@@ -1118,7 +842,11 @@ impl ThirGenerator {
     }
 
     /// Infer return type of function call
-    fn infer_call_return_type(&self, func: &thir::Expr, _args: &[thir::Expr]) -> Result<types::Ty> {
+    pub(super) fn infer_call_return_type(
+        &self,
+        func: &thir::Expr,
+        _args: &[thir::Expr],
+    ) -> Result<types::Ty> {
         if let thir::ExprKind::Path(item_ref) = &func.kind {
             if let Some(def_id) = item_ref.def_id {
                 if let Some(sig) = self.type_context.lookup_function_signature(def_id) {
@@ -1134,7 +862,7 @@ impl ThirGenerator {
     }
 
     /// Infer type of block expression
-    fn infer_block_type(&self, block: &thir::Block) -> Result<types::Ty> {
+    pub(super) fn infer_block_type(&self, block: &thir::Block) -> Result<types::Ty> {
         if let Some(expr) = &block.expr {
             Ok(expr.ty.clone())
         } else {
@@ -1143,12 +871,16 @@ impl ThirGenerator {
     }
 
     /// Get function type
-    fn get_function_type(&self, def_id: types::DefId, _func: &thir::Function) -> Result<types::Ty> {
+    pub(super) fn get_function_type(
+        &self,
+        def_id: types::DefId,
+        _func: &thir::Function,
+    ) -> Result<types::Ty> {
         Ok(types::Ty::new(types::TyKind::FnDef(def_id, Vec::new())))
     }
 
     /// Transform visibility
-    fn transform_visibility(&self, hir_vis: hir::Visibility) -> thir::Visibility {
+    pub(super) fn transform_visibility(&self, hir_vis: hir::Visibility) -> thir::Visibility {
         match hir_vis {
             hir::Visibility::Public => thir::Visibility::Public,
             hir::Visibility::Private => thir::Visibility::Inherited,
@@ -1156,19 +888,19 @@ impl ThirGenerator {
     }
 
     // Helper methods for creating common types
-    fn create_unit_type(&self) -> types::Ty {
+    pub(super) fn create_unit_type(&self) -> types::Ty {
         types::Ty::new(types::TyKind::Tuple(Vec::new()))
     }
 
-    fn create_never_type(&self) -> types::Ty {
+    pub(super) fn create_never_type(&self) -> types::Ty {
         types::Ty::never()
     }
 
-    fn create_i32_type(&self) -> types::Ty {
+    pub(super) fn create_i32_type(&self) -> types::Ty {
         types::Ty::int(types::IntTy::I32)
     }
 
-    fn create_string_type(&self) -> types::Ty {
+    pub(super) fn create_string_type(&self) -> types::Ty {
         // Simplified string type representation
         types::Ty::new(types::TyKind::RawPtr(types::TypeAndMut {
             ty: Box::new(types::Ty::int(types::IntTy::I8)),
@@ -1176,7 +908,7 @@ impl ThirGenerator {
         }))
     }
 
-    fn create_wildcard_pattern(&mut self) -> thir::Pat {
+    pub(super) fn create_wildcard_pattern(&mut self) -> thir::Pat {
         thir::Pat {
             thir_id: self.next_id(),
             kind: thir::PatKind::Wild,
@@ -1186,7 +918,7 @@ impl ThirGenerator {
     }
 
     /// Transform unary operator
-    fn transform_unary_op(&self, op: hir::UnOp) -> thir::UnOp {
+    pub(super) fn transform_unary_op(&self, op: hir::UnOp) -> thir::UnOp {
         match op {
             hir::UnOp::Not => thir::UnOp::Not,
             hir::UnOp::Neg => thir::UnOp::Neg,
@@ -1195,13 +927,17 @@ impl ThirGenerator {
     }
 
     /// Check type for unary operations
-    fn check_unary_op_type(&self, operand_ty: &types::Ty, _op: &thir::UnOp) -> Result<types::Ty> {
+    pub(super) fn check_unary_op_type(
+        &self,
+        operand_ty: &types::Ty,
+        _op: &thir::UnOp,
+    ) -> Result<types::Ty> {
         // Simplified type checking - return the operand type
         Ok(operand_ty.clone())
     }
 
     /// Infer method call return type
-    fn infer_method_call_return_type(
+    pub(super) fn infer_method_call_return_type(
         &self,
         receiver: &thir::Expr,
         method_name: &str,
@@ -1217,7 +953,7 @@ impl ThirGenerator {
     }
 
     /// Unify two types
-    fn unify_types(&self, ty1: &types::Ty, ty2: &types::Ty) -> Result<types::Ty> {
+    pub(super) fn unify_types(&self, ty1: &types::Ty, ty2: &types::Ty) -> Result<types::Ty> {
         // Simplified type unification - return the first type
         if ty1 == ty2 {
             Ok(ty1.clone())
@@ -1227,351 +963,12 @@ impl ThirGenerator {
     }
 
     /// Transform pattern
-    fn transform_pattern(&mut self, _pat: hir::Pat) -> Result<thir::Pat> {
+    pub(super) fn transform_pattern(&mut self, _pat: hir::Pat) -> Result<thir::Pat> {
         Ok(thir::Pat {
             thir_id: self.next_id(),
             kind: thir::PatKind::Wild, // Simplified
             ty: self.create_unit_type(),
             span: Span::new(0, 0, 0),
         })
-    }
-}
-
-impl IrTransform<hir::Program, thir::Program> for ThirGenerator {
-    fn transform(&mut self, source: hir::Program) -> Result<thir::Program> {
-        ThirGenerator::transform(self, source)
-    }
-}
-
-impl TypeContext {
-    fn new() -> Self {
-        Self {
-            function_signatures: HashMap::new(),
-            method_signatures: HashMap::new(),
-            structs: HashMap::new(),
-            struct_names: HashMap::new(),
-            value_names: HashMap::new(),
-            const_types: HashMap::new(),
-            next_def_id: 1,
-        }
-    }
-
-    fn register_function(&mut self, def_id: types::DefId, name: &str, sig: types::FnSig) {
-        self.function_signatures.insert(def_id, sig);
-        self.insert_value_name(name, def_id);
-    }
-
-    fn register_const(&mut self, def_id: types::DefId, name: &str, ty: types::Ty) {
-        self.const_types.insert(def_id, ty);
-        self.insert_value_name(name, def_id);
-    }
-
-    fn declare_struct(&mut self, def_id: types::DefId, name: &str) {
-        self.insert_struct_name(name, def_id);
-        if !self.structs.contains_key(&def_id) {
-            let adt_def = self.build_adt_def(def_id, name, Vec::new());
-            self.structs.insert(
-                def_id,
-                StructInfo {
-                    adt_def,
-                    field_map: HashMap::new(),
-                },
-            );
-        }
-        self.method_signatures.entry(def_id).or_default();
-    }
-
-    fn init_struct_fields(&mut self, def_id: types::DefId, fields: Vec<(String, types::Ty)>) {
-        if !self.structs.contains_key(&def_id) {
-            let struct_name = self
-                .struct_names
-                .iter()
-                .find(|(_, &id)| id == def_id)
-                .map(|(name, _)| name.clone())
-                .unwrap_or_else(|| format!("<anon:{}>", def_id));
-            let adt_def = self.build_adt_def(def_id, &struct_name, Vec::new());
-            self.structs.insert(
-                def_id,
-                StructInfo {
-                    adt_def,
-                    field_map: HashMap::new(),
-                },
-            );
-        }
-
-        let struct_name = self
-            .structs
-            .get(&def_id)
-            .and_then(|info| info.adt_def.variants.first())
-            .map(|variant| variant.ident.clone())
-            .or_else(|| {
-                self.struct_names
-                    .iter()
-                    .find(|(_, &id)| id == def_id)
-                    .map(|(name, _)| name.clone())
-            })
-            .unwrap_or_else(|| format!("<anon:{}>", def_id));
-
-        let mut field_defs = Vec::new();
-        let mut field_map = HashMap::new();
-        for (idx, (field_name, field_ty)) in fields.into_iter().enumerate() {
-            let field_def = types::FieldDef {
-                did: self.allocate_def_id(),
-                ident: field_name.clone(),
-                vis: types::Visibility::Public,
-            };
-            field_defs.push(field_def);
-            field_map.insert(field_name, (idx, field_ty));
-        }
-
-        let new_adt = self.build_adt_def(def_id, &struct_name, field_defs);
-
-        if let Some(info) = self.structs.get_mut(&def_id) {
-            info.field_map = field_map;
-            info.adt_def = new_adt;
-        }
-    }
-
-    fn insert_value_name(&mut self, name: &str, def_id: types::DefId) {
-        self.value_names.insert(name.to_string(), def_id);
-        if let Some(base) = name.rsplit("::").next() {
-            self.value_names.entry(base.to_string()).or_insert(def_id);
-        }
-    }
-
-    fn insert_struct_name(&mut self, name: &str, def_id: types::DefId) {
-        self.struct_names.insert(name.to_string(), def_id);
-        if let Some(base) = name.rsplit("::").next() {
-            self.struct_names.entry(base.to_string()).or_insert(def_id);
-        }
-    }
-
-    fn register_method(&mut self, owner_def_id: types::DefId, method: &str, sig: types::FnSig) {
-        self.method_signatures
-            .entry(owner_def_id)
-            .or_default()
-            .insert(method.to_string(), sig);
-    }
-
-    fn make_struct_ty_by_id(
-        &self,
-        def_id: types::DefId,
-        substs: types::SubstsRef,
-    ) -> Option<types::Ty> {
-        self.structs
-            .get(&def_id)
-            .map(|info| types::Ty::new(types::TyKind::Adt(info.adt_def.clone(), substs)))
-    }
-
-    fn lookup_struct_def_id(&self, name: &str) -> Option<types::DefId> {
-        self.struct_names.get(name).copied()
-    }
-
-    fn lookup_value_def_id(&self, name: &str) -> Option<types::DefId> {
-        self.value_names.get(name).copied()
-    }
-
-    fn lookup_function_signature(&self, def_id: types::DefId) -> Option<&types::FnSig> {
-        self.function_signatures.get(&def_id)
-    }
-
-    fn lookup_const_type(&self, def_id: types::DefId) -> Option<&types::Ty> {
-        self.const_types.get(&def_id)
-    }
-
-    fn lookup_field_info(&self, ty: &types::Ty, field_name: &str) -> Option<(usize, types::Ty)> {
-        match &ty.kind {
-            types::TyKind::Adt(adt_def, _) => self
-                .structs
-                .get(&adt_def.did)
-                .and_then(|info| info.field_map.get(field_name).cloned()),
-            types::TyKind::Ref(_, inner, _) => self.lookup_field_info(inner, field_name),
-            _ => None,
-        }
-    }
-
-    fn lookup_method_signature(
-        &self,
-        owner_ty: &types::Ty,
-        method_name: &str,
-    ) -> Option<&types::FnSig> {
-        match &owner_ty.kind {
-            types::TyKind::Adt(adt_def, _) => self
-                .method_signatures
-                .get(&adt_def.did)
-                .and_then(|methods| methods.get(method_name)),
-            types::TyKind::Ref(_, inner, _) => self.lookup_method_signature(inner, method_name),
-            _ => None,
-        }
-    }
-
-    fn ensure_struct_stub(&mut self, name: &str) -> types::DefId {
-        if let Some(def_id) = self.struct_names.get(name) {
-            *def_id
-        } else {
-            let def_id = self.allocate_def_id();
-            self.insert_struct_name(name, def_id);
-            self.structs.insert(
-                def_id,
-                StructInfo {
-                    adt_def: self.build_adt_def(def_id, name, Vec::new()),
-                    field_map: HashMap::new(),
-                },
-            );
-            self.method_signatures.entry(def_id).or_default();
-            def_id
-        }
-    }
-
-    fn build_adt_def(
-        &self,
-        def_id: types::DefId,
-        name: &str,
-        field_defs: Vec<types::FieldDef>,
-    ) -> types::AdtDef {
-        let variant = types::VariantDef {
-            def_id,
-            ctor_def_id: None,
-            ident: name.to_string(),
-            discr: types::VariantDiscr::Relative(0),
-            fields: field_defs,
-            ctor_kind: types::CtorKind::Const,
-            is_recovered: false,
-        };
-
-        types::AdtDef {
-            did: def_id,
-            variants: vec![variant],
-            flags: types::AdtFlags::IS_STRUCT,
-            repr: types::ReprOptions {
-                int: None,
-                align: None,
-                pack: None,
-                flags: types::ReprFlags::empty(),
-                field_shuffle_seed: 0,
-            },
-        }
-    }
-
-    fn allocate_def_id(&mut self) -> types::DefId {
-        let id = self.next_def_id;
-        self.next_def_id += 1;
-        id
-    }
-}
-
-impl Default for ThirGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::transformations::ast_to_hir::HirGenerator;
-    use fp_core::ast::{register_threadlocal_serializer, File};
-    use fp_core::Result;
-    use fp_rust::{printer::RustPrinter, shll_parse_items};
-    use std::sync::Arc;
-
-    #[test]
-    fn test_thir_generator_creation() {
-        let generator = ThirGenerator::new();
-        assert_eq!(generator.next_thir_id, 0);
-    }
-
-    #[test]
-    fn test_literal_transformation() -> Result<()> {
-        let mut generator = ThirGenerator::new();
-        let (thir_lit, ty) = generator.transform_literal(hir::Lit::Integer(42)).unwrap();
-
-        match thir_lit {
-            thir::Lit::Int(value, thir::IntTy::I32) => {
-                assert_eq!(value, 42);
-            }
-            _ => {
-                return Err(crate::error::optimization_error(
-                    "Expected i32 literal".to_string(),
-                ))
-            }
-        }
-
-        assert!(ty.is_integral());
-        Ok(())
-    }
-
-    #[test]
-    fn test_binary_op_transformation() {
-        let generator = ThirGenerator::new();
-        let op = generator.transform_binary_op(hir::BinOp::Add);
-        assert_eq!(op, thir::BinOp::Add);
-    }
-
-    #[test]
-    fn lowers_impl_items() -> Result<()> {
-        let printer = Arc::new(RustPrinter::new());
-        register_threadlocal_serializer(printer.clone());
-
-        let items = shll_parse_items! {
-            struct Point {
-                x: i64,
-            }
-
-            impl Point {
-                fn get_x(&self) -> i64 {
-                    self.x
-                }
-            }
-        };
-
-        let ast_file = File {
-            path: "thir_test.fp".into(),
-            items,
-        };
-
-        let mut hir_gen = HirGenerator::new();
-        let hir_program = hir_gen.transform_file(&ast_file)?;
-
-        let mut thir_gen = ThirGenerator::new();
-        let thir_program = thir_gen.transform(hir_program)?;
-
-        assert!(thir_program
-            .items
-            .iter()
-            .any(|item| matches!(item.kind, thir::ItemKind::Struct(_))));
-        assert!(thir_program
-            .items
-            .iter()
-            .any(|item| matches!(item.kind, thir::ItemKind::Impl(_))));
-
-        let point_id = thir_gen
-            .type_context
-            .lookup_struct_def_id("Point")
-            .expect("point id");
-        let point_ty = thir_gen
-            .type_context
-            .make_struct_ty_by_id(point_id, Vec::new())
-            .expect("point type registered");
-        let (idx, field_ty) = thir_gen
-            .type_context
-            .lookup_field_info(&point_ty, "x")
-            .expect("field info");
-        assert_eq!(idx, 0);
-        assert!(matches!(
-            field_ty.kind,
-            types::TyKind::Int(types::IntTy::I64)
-        ));
-
-        let method_sig = thir_gen
-            .type_context
-            .lookup_method_signature(&point_ty, "get_x")
-            .expect("method signature");
-        assert!(matches!(
-            method_sig.output.kind,
-            types::TyKind::Int(types::IntTy::I64)
-        ));
-
-        Ok(())
     }
 }
