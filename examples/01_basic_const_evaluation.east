@@ -1,9 +1,22 @@
-Block(
-    ExprBlock {
-        stmts: [
-            Expr(
-                BlockStmtExpr {
-                    expr: Block(
+File(
+    File {
+        path: "examples/01_basic_const_evaluation.fp",
+        items: [
+            DefFunction(
+                ItemDefFunction {
+                    attrs: [],
+                    name: #main,
+                    ty: None,
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: None,
+                    },
+                    body: Block(
                         ExprBlock {
                             stmts: [
                                 Item(
@@ -251,7 +264,7 @@ Block(
                                             value: If(
                                                 ExprIf {
                                                     cond: Any(
-                                                        RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: cfg, span: bytes(478..481) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Ident { sym: debug_assertions, span: bytes(483..499) }] } } },
+                                                        RawExprMacro { raw: ExprMacro { attrs: [], mac: Macro { path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: cfg, span: bytes(2001..2004) }, arguments: PathArguments::None }] }, bang_token: Not, delimiter: MacroDelimiter::Paren(Paren), tokens: TokenStream [Ident { sym: debug_assertions, span: bytes(2006..2022) }] } } },
                                                     ),
                                                     then: Value(
                                                         Int(
@@ -536,7 +549,7 @@ Block(
                             ],
                         },
                     ),
-                    semicolon: None,
+                    visibility: Private,
                 },
             ),
         ],
