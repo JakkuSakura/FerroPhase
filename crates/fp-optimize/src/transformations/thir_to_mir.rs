@@ -721,12 +721,38 @@ impl MirGenerator {
 
                 for arm in arms {
                     if arm.guard.is_some() {
-                        tracing::warn!("THIR→MIR: match guard lowering not yet supported; skipping arm");
-                        continue;
+                        tracing::warn!("THIR→MIR: match guards not yet supported");
                     }
 
                     match arm.pattern.kind {
                         thir::PatKind::Wild => {
+                            let ExprOutcome {
+                                place: arm_place,
+                                block: arm_block,
+                            } = self.transform_expr(arm.body, current_block)?;
+
+                            if !self.block_has_terminator(arm_block) {
+                                self.add_statement_to_block(
+                                    arm_block,
+                                    mir::Statement {
+                                        kind: mir::StatementKind::Assign(
+                                            result_place.clone(),
+                                            mir::Rvalue::Use(mir::Operand::Move(arm_place)),
+                                        ),
+                                        source_info: arm.span,
+                                    },
+                                );
+                                self.ensure_goto(arm_block, join_block, arm.span);
+                            }
+
+                            handled = true;
+                            current_block = join_block;
+                            break;
+                        }
+                        thir::PatKind::Range { .. } => {
+                            tracing::warn!(
+                                "THIR→MIR: range patterns lowered as wildcard (no bounds check)"
+                            );
                             let ExprOutcome {
                                 place: arm_place,
                                 block: arm_block,
