@@ -1,4 +1,4 @@
-use crate::ast::AstType;
+use crate::ast::Ty;
 use crate::common_struct;
 use crate::id::Ident;
 use serde::{Deserialize, Serialize};
@@ -71,11 +71,11 @@ impl<'a> From<&'a Path> for Path {
 common_struct! {
     pub struct ParameterPathSegment {
         pub ident: Ident,
-        pub args: Vec<AstType>,
+        pub args: Vec<Ty>,
     }
 }
 impl ParameterPathSegment {
-    pub fn new(ident: Ident, args: Vec<AstType>) -> Self {
+    pub fn new(ident: Ident, args: Vec<Ty>) -> Self {
         Self { ident, args }
     }
 }

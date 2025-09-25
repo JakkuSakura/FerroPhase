@@ -1,4 +1,4 @@
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
@@ -8,7 +8,7 @@ use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
-fn interpret_const_expr(expr: AstExpr) -> Result<AstValue> {
+fn interpret_const_expr(expr: Expr) -> Result<Value> {
     let interpreter = Interpreter::new(Arc::new(RustPrinter::new()));
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)
@@ -362,7 +362,7 @@ fn test_edge_cases_empty_blocks() -> Result<()> {
     // Test edge case: empty blocks
     let code = shll_parse_expr!({});
     let value = interpret_const_expr(code)?;
-    assert!(matches!(value, AstValue::Unit(_)));
+    assert!(matches!(value, Value::Unit(_)));
 
     Ok(())
 }

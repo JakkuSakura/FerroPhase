@@ -73,7 +73,7 @@
 // }
 //
 // pub enum TransformResult {
-//     Value(fp_core::ast::AstValue),
+//     Value(fp_core::ast::Value),
 //     Code(String),
 //     Lir(lir::LirModule),
 // }

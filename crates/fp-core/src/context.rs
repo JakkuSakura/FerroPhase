@@ -1,5 +1,5 @@
-use crate::ast::{AstExpr, ExprClosured, Visibility};
-use crate::ast::{AstType, AstValue, RuntimeValue, ValueFunction};
+use crate::ast::{Expr, ExprClosured, Visibility};
+use crate::ast::{RuntimeValue, Ty, Value, ValueFunction};
 use crate::id::{Ident, Path};
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -17,9 +17,9 @@ pub enum ExecutionMode {
 
 #[derive(Clone, Default)]
 pub struct ValueSlot {
-    value: Option<AstValue>,
+    value: Option<Value>,
     runtime_value: Option<RuntimeValue>,
-    ty: Option<AstType>,
+    ty: Option<Ty>,
     closure: Option<Arc<ScopedContext>>,
 }
 #[derive(Clone, Default)]
@@ -36,13 +36,13 @@ impl SharedValueSlot {
         let mut storage = self.storage.lock().unwrap();
         func(&mut storage)
     }
-    pub fn value(&self) -> Option<AstValue> {
+    pub fn value(&self) -> Option<Value> {
         self.with_storage(|x| x.value.clone())
     }
-    pub fn ty(&self) -> Option<AstType> {
+    pub fn ty(&self) -> Option<Ty> {
         self.with_storage(|x| x.ty.clone())
     }
-    pub fn set_value(&self, value: AstValue) {
+    pub fn set_value(&self, value: Value) {
         self.with_storage(|x| x.value = Some(value));
     }
     pub fn runtime_value(&self) -> Option<RuntimeValue> {
@@ -51,7 +51,7 @@ impl SharedValueSlot {
     pub fn set_runtime_value(&self, value: RuntimeValue) {
         self.with_storage(|x| x.runtime_value = Some(value));
     }
-    pub fn set_ty(&self, ty: AstType) {
+    pub fn set_ty(&self, ty: Ty) {
         self.with_storage(|x| x.ty = Some(ty));
     }
     pub fn closure(&self) -> Option<Arc<ScopedContext>> {
@@ -108,15 +108,15 @@ impl ScopedContext {
         self.execution_mode
     }
 
-    pub fn insert_value(&self, key: impl Into<Ident>, value: AstValue) {
+    pub fn insert_value(&self, key: impl Into<Ident>, value: Value) {
         self.storages
             .entry(key.into())
             .or_default()
             .set_value(value);
     }
 
-    pub fn insert_expr(&self, key: impl Into<Ident>, value: AstExpr) {
-        self.insert_value(key, AstValue::expr(value));
+    pub fn insert_expr(&self, key: impl Into<Ident>, value: Expr) {
+        self.insert_value(key, Value::expr(value));
     }
 
     pub fn insert_runtime_value(&self, key: impl Into<Ident>, value: RuntimeValue) {
@@ -156,9 +156,9 @@ impl ScopedContext {
         for key in self.storages.iter() {
             let (k, v) = key.pair();
             v.with_storage(|v| {
-                let value = v.value.as_ref().unwrap_or(&AstValue::UNDEFINED);
+                let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
 
-                let ty = v.ty.as_ref().unwrap_or(&AstType::UNKNOWN);
+                let ty = v.ty.as_ref().unwrap_or(&Ty::UNKNOWN);
                 debug!("{}: val:{} ty:{}", k, value, ty)
             })
         }
@@ -210,7 +210,7 @@ impl SharedScopedContext {
     pub fn get_function(&self, key: impl Into<Path>) -> Option<(ValueFunction, Self)> {
         let value = self.get_storage(key, true)?;
         value.with_storage(|value| match value.value.clone()? {
-            AstValue::Function(func) => Some((func.clone(), Self(value.closure.clone().unwrap()))),
+            Value::Function(func) => Some((func.clone(), Self(value.closure.clone().unwrap()))),
             _ => None,
         })
     }
@@ -262,11 +262,11 @@ impl SharedScopedContext {
         let value = this.storages.get(&key[0])?.value().clone();
         Some(value)
     }
-    pub fn get_value(&self, key: impl Into<Path>) -> Option<AstValue> {
+    pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
         let storage = self.get_storage(key, true)?;
         storage.value()
     }
-    pub fn insert_value_with_ctx(&self, key: impl Into<Ident>, value: AstValue) {
+    pub fn insert_value_with_ctx(&self, key: impl Into<Ident>, value: Value) {
         let store = self.storages.entry(key.into()).or_default();
         store.with_storage(|store| {
             store.value = Some(value);
@@ -310,24 +310,24 @@ impl SharedScopedContext {
         self.get_runtime_value_storage(Ident::new(key))
     }
     /// insert type inference
-    pub fn insert_type(&self, key: impl Into<Ident>, ty: AstType) {
+    pub fn insert_type(&self, key: impl Into<Ident>, ty: Ty) {
         let store = self.storages.entry(key.into()).or_default();
         store.set_ty(ty)
     }
-    pub fn get_expr(&self, key: impl Into<Path>) -> Option<AstExpr> {
-        self.get_value(key).map(AstExpr::value)
+    pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
+        self.get_value(key).map(Expr::value)
     }
-    pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<AstExpr> {
+    pub fn get_expr_with_ctx(&self, key: impl Into<Path>) -> Option<Expr> {
         let storage = self.get_storage(key, true)?;
         storage.with_storage(|storage| {
-            let expr = storage.value.clone().map(AstExpr::value)?;
+            let expr = storage.value.clone().map(Expr::value)?;
             if let Some(closure) = storage.closure.clone() {
                 return Some(ExprClosured::new(Self(closure), expr.into()).into());
             }
             Some(expr)
         })
     }
-    pub fn get_type(&self, key: impl Into<Path>) -> Option<AstType> {
+    pub fn get_type(&self, key: impl Into<Path>) -> Option<Ty> {
         let storage = self.get_storage(key, true)?;
         storage.ty()
     }
@@ -337,11 +337,11 @@ impl SharedScopedContext {
             .unwrap_or_else(|| self.clone())
     }
     // TODO: integrate it to optimizers
-    pub fn try_get_value_from_expr(&self, expr: &AstExpr) -> Option<AstValue> {
+    pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr {
-            AstExpr::Locator(ident) => self.get_value(ident.to_path()),
-            AstExpr::Value(value) => Some(value.get()),
+            Expr::Locator(ident) => self.get_value(ident.to_path()),
+            Expr::Value(value) => Some(value.get()),
             _ => None,
         };
         debug!(
@@ -351,14 +351,14 @@ impl SharedScopedContext {
         );
         ret
     }
-    pub fn get_value_recursive(&self, key: impl Into<Path>) -> Option<AstValue> {
+    pub fn get_value_recursive(&self, key: impl Into<Path>) -> Option<Value> {
         let key = key.into();
         debug!("get_value_recursive {}", key);
         let expr = self.get_expr(&key)?;
         debug!("get_value_recursive {} => {:?}", key, expr);
         match expr {
-            AstExpr::Locator(ident) => self.get_value_recursive(ident.to_path()),
-            _ => Some(AstValue::expr(expr)),
+            Expr::Locator(ident) => self.get_value_recursive(ident.to_path()),
+            _ => Some(Value::expr(expr)),
         }
     }
     pub fn get_parent(&self) -> Option<Self> {

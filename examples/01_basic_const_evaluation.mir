@@ -1,10 +1,10 @@
-MirProgram {
+Program {
     items: [
-        MirItem {
+        Item {
             mir_id: 0,
             kind: Function(
-                MirFunction {
-                    sig: MirFunctionSig {
+                Function {
+                    sig: FunctionSig {
                         inputs: [],
                         output: Ty {
                             kind: Int(
@@ -25,7 +25,7 @@ MirProgram {
     bodies: {
         BodyId(
             0,
-        ): MirBody {
+        ): Body {
             basic_blocks: [
                 BasicBlockData {
                     statements: [

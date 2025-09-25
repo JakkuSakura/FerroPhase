@@ -1,7 +1,6 @@
 use fp_core::span::Span;
 use fp_core::thir::{
-    self, BodyId, ThirBody, ThirExpr, ThirExprKind, ThirFunction, ThirFunctionSig, ThirItem,
-    ThirItemKind, ThirLit,
+    self, Body, BodyId, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Lit,
 };
 use fp_core::types::{IntTy, Ty, TyKind, TypeFlags};
 
@@ -12,18 +11,18 @@ fn int_ty() -> Ty {
     }
 }
 
-pub fn literal_expr(value: i64) -> ThirExpr {
-    ThirExpr::new(
+pub fn literal_expr(value: i64) -> Expr {
+    Expr::new(
         0,
-        ThirExprKind::Literal(ThirLit::Int(value, thir::IntTy::I32)),
+        ExprKind::Literal(Lit::Int(value, thir::IntTy::I32)),
         int_ty(),
         Span::new(0, 0, 0),
     )
 }
 
-pub fn body_with_expr(expr: ThirExpr) -> (BodyId, ThirBody) {
+pub fn body_with_expr(expr: Expr) -> (BodyId, Body) {
     let body_id = BodyId::new(0);
-    let body = ThirBody {
+    let body = Body {
         params: Vec::new(),
         value: expr,
         locals: Vec::new(),
@@ -31,22 +30,22 @@ pub fn body_with_expr(expr: ThirExpr) -> (BodyId, ThirBody) {
     (body_id, body)
 }
 
-pub fn function_item(name: &str, body_id: Option<BodyId>) -> ThirItem {
-    let sig = ThirFunctionSig {
+pub fn function_item(name: &str, body_id: Option<BodyId>) -> Item {
+    let sig = FunctionSig {
         inputs: Vec::new(),
         output: int_ty(),
         c_variadic: false,
     };
 
-    let function = ThirFunction {
+    let function = Function {
         sig,
         body_id,
         is_const: false,
     };
 
-    ThirItem {
+    Item {
         thir_id: 0,
-        kind: ThirItemKind::Function(function),
+        kind: ItemKind::Function(function),
         ty: int_ty(),
         span: Span::new(0, 0, 0),
     }

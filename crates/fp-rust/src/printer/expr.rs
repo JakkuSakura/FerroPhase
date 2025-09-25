@@ -4,20 +4,20 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use fp_core::ast::{
-    AstExpr, BlockStmt, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField,
-    ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprLet, ExprLoop, ExprMatch, ExprParen,
-    ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple,
-    ExprUnOp, ExprWhile, StmtLet,
+    BlockStmt, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField, ExprIf,
+    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprLet, ExprLoop, ExprMatch, ExprParen, ExprRange,
+    ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple, ExprUnOp,
+    ExprWhile, StmtLet,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 
 use crate::printer::RustPrinter;
 
 impl RustPrinter {
-    pub fn print_expr_no_braces(&self, node: &AstExpr) -> Result<TokenStream> {
+    pub fn print_expr_no_braces(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            AstExpr::Block(n) => self.print_block_no_braces(&n),
-            AstExpr::Value(v) if v.is_unit() => Ok(quote!()),
+            Expr::Block(n) => self.print_block_no_braces(&n),
+            Expr::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
     }
@@ -25,33 +25,33 @@ impl RustPrinter {
         let ident = format_ident!("_expr_{}", id);
         Ok(quote!(#ident))
     }
-    pub fn print_expr(&self, node: &AstExpr) -> Result<TokenStream> {
+    pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node {
-            AstExpr::Id(id) => self.print_expr_id(*id),
-            AstExpr::Locator(loc) => self.print_locator(loc),
-            AstExpr::Value(n) => self.print_value(n),
-            AstExpr::Invoke(n) => self.print_invoke_expr(n),
-            AstExpr::UnOp(op) => self.print_un_op(op),
-            AstExpr::BinOp(op) => self.print_bin_op(op),
-            AstExpr::Any(n) => self.print_any(n),
-            AstExpr::Match(n) => self.print_match(n),
-            AstExpr::If(n) => self.print_if(n),
-            AstExpr::Block(n) => self.print_block(n),
-            AstExpr::Struct(n) => self.print_struct_expr(n),
-            AstExpr::Select(n) => self.print_select(n),
-            AstExpr::Reference(n) => self.print_ref(n),
-            AstExpr::Assign(n) => self.print_assign(n),
-            AstExpr::Index(n) => self.print_index(n),
-            AstExpr::Closured(n) => self.print_expr(&n.expr),
-            AstExpr::Paren(n) => self.print_paren(n),
-            AstExpr::Loop(n) => self.print_loop(n),
-            AstExpr::Range(n) => self.print_range(n),
-            AstExpr::Tuple(n) => self.print_expr_tuple(n),
-            AstExpr::Try(n) => self.print_expr_try(&n.expr),
-            AstExpr::While(n) => self.print_while(n),
-            AstExpr::Let(n) => self.print_expr_let(n),
-            AstExpr::Closure(n) => self.print_expr_closure(n),
-            AstExpr::Array(n) => self.print_expr_array(n),
+            Expr::Id(id) => self.print_expr_id(*id),
+            Expr::Locator(loc) => self.print_locator(loc),
+            Expr::Value(n) => self.print_value(n),
+            Expr::Invoke(n) => self.print_invoke_expr(n),
+            Expr::UnOp(op) => self.print_un_op(op),
+            Expr::BinOp(op) => self.print_bin_op(op),
+            Expr::Any(n) => self.print_any(n),
+            Expr::Match(n) => self.print_match(n),
+            Expr::If(n) => self.print_if(n),
+            Expr::Block(n) => self.print_block(n),
+            Expr::Struct(n) => self.print_struct_expr(n),
+            Expr::Select(n) => self.print_select(n),
+            Expr::Reference(n) => self.print_ref(n),
+            Expr::Assign(n) => self.print_assign(n),
+            Expr::Index(n) => self.print_index(n),
+            Expr::Closured(n) => self.print_expr(&n.expr),
+            Expr::Paren(n) => self.print_paren(n),
+            Expr::Loop(n) => self.print_loop(n),
+            Expr::Range(n) => self.print_range(n),
+            Expr::Tuple(n) => self.print_expr_tuple(n),
+            Expr::Try(n) => self.print_expr_try(&n.expr),
+            Expr::While(n) => self.print_while(n),
+            Expr::Let(n) => self.print_expr_let(n),
+            Expr::Closure(n) => self.print_expr_closure(n),
+            Expr::Array(n) => self.print_expr_array(n),
 
             _ => bail!("Unable to serialize {:?}", node),
         }
@@ -163,7 +163,7 @@ impl RustPrinter {
                     with_semicolon = false;
                 } else {
                     match &*expr0.expr {
-                        AstExpr::Block(_) | AstExpr::If(_) => with_semicolon = false,
+                        Expr::Block(_) | Expr::If(_) => with_semicolon = false,
                         _ => with_semicolon = true,
                     }
                 }
@@ -333,7 +333,7 @@ impl RustPrinter {
             )),
         }
     }
-    fn print_expr_try(&self, node: &AstExpr) -> Result<TokenStream> {
+    fn print_expr_try(&self, node: &Expr) -> Result<TokenStream> {
         let expr = self.print_expr(node)?;
         Ok(quote!(#expr?))
     }

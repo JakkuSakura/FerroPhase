@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use fp_core::ast::{
-    AstExpr, AstValue, ValueBool, ValueChar, ValueDecimal, ValueInt, ValueList, ValueString,
-    ValueStruct, ValueUndefined, ValueUnit,
+    Expr, Value, ValueBool, ValueChar, ValueDecimal, ValueInt, ValueList, ValueString, ValueStruct,
+    ValueUndefined, ValueUnit,
 };
 use fp_core::bail;
 use itertools::Itertools;
@@ -12,28 +12,28 @@ impl RustPrinter {
     pub fn print_undefined(&self, _n: &ValueUndefined) -> fp_core::Result<TokenStream> {
         Ok(quote!(undefined))
     }
-    pub fn print_value(&self, v: &AstValue) -> fp_core::Result<TokenStream> {
+    pub fn print_value(&self, v: &Value) -> fp_core::Result<TokenStream> {
         let v = match v {
-            AstValue::Function(f) => self.print_func_value(f)?,
-            AstValue::Int(i) => self.print_int(i)?,
-            AstValue::Bool(b) => self.print_bool(b)?,
-            AstValue::Decimal(d) => self.print_decimal(d)?,
-            AstValue::Char(c) => self.print_char(c)?,
-            AstValue::String(s) => self.print_string(s)?,
-            AstValue::List(l) => self.print_list_value(l)?,
-            AstValue::Unit(u) => self.print_unit(u)?,
-            AstValue::Type(t) => self.print_type(t)?,
-            AstValue::Struct(s) => self.print_struct_value(s)?,
-            AstValue::Any(n) => self.print_any(n)?,
-            AstValue::BinOpKind(op) => self.print_bin_op_kind(op),
-            AstValue::Expr(e) => self.print_expr(&e.get())?,
-            AstValue::Undefined(u) => self.print_undefined(u)?,
-            AstValue::None(_) => quote!(None),
-            AstValue::Some(s) => {
+            Value::Function(f) => self.print_func_value(f)?,
+            Value::Int(i) => self.print_int(i)?,
+            Value::Bool(b) => self.print_bool(b)?,
+            Value::Decimal(d) => self.print_decimal(d)?,
+            Value::Char(c) => self.print_char(c)?,
+            Value::String(s) => self.print_string(s)?,
+            Value::List(l) => self.print_list_value(l)?,
+            Value::Unit(u) => self.print_unit(u)?,
+            Value::Type(t) => self.print_type(t)?,
+            Value::Struct(s) => self.print_struct_value(s)?,
+            Value::Any(n) => self.print_any(n)?,
+            Value::BinOpKind(op) => self.print_bin_op_kind(op),
+            Value::Expr(e) => self.print_expr(&e.get())?,
+            Value::Undefined(u) => self.print_undefined(u)?,
+            Value::None(_) => quote!(None),
+            Value::Some(s) => {
                 let s = self.print_value(&s.value)?;
                 quote!(Some(#s))
             }
-            AstValue::Option(o) => match o.value {
+            Value::Option(o) => match o.value {
                 Some(ref v) => {
                     let v = self.print_value(v)?;
                     quote!(Some(#v))
@@ -83,7 +83,7 @@ impl RustPrinter {
             ))
         };
     }
-    pub fn print_list_expr(&self, n: &[AstExpr]) -> fp_core::Result<TokenStream> {
+    pub fn print_list_expr(&self, n: &[Expr]) -> fp_core::Result<TokenStream> {
         let n: Vec<_> = n.iter().map(|x| self.print_expr(x)).try_collect()?;
         Ok(quote!(vec![#(#n),*]))
     }

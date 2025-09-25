@@ -7,7 +7,7 @@ use fp_rust::printer::RustPrinter;
 use fp_rust::shll_parse_expr;
 use std::sync::Arc;
 
-fn specialize_shll_expr(mut expr: AstExpr) -> Result<AstExpr> {
+fn specialize_shll_expr(mut expr: Expr) -> Result<Expr> {
     let serializer = Arc::new(RustPrinter::new());
     let optimizer = FoldOptimizer::new(
         serializer.clone(),

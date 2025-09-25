@@ -12,8 +12,8 @@ fn make_orchestrator() -> ConstEvaluationOrchestrator {
     ConstEvaluationOrchestrator::new(printer)
 }
 
-fn empty_module(name: &str) -> AstModule {
-    AstModule {
+fn empty_module(name: &str) -> Module {
+    Module {
         visibility: Visibility::Public,
         name: name.into(),
         items: Vec::new(),
@@ -27,11 +27,11 @@ fn generates_new_struct_type() -> Result<()> {
 
     orchestrator.record_const_eval(ConstEval::GenerateType {
         type_name: "GeneratedType".to_string(),
-        type_definition: AstType::Struct(TypeStruct {
+        type_definition: Ty::Struct(TypeStruct {
             name: "GeneratedType".into(),
             fields: vec![StructuralField::new(
                 "value".into(),
-                AstType::ident("i64".into()),
+                Ty::ident("i64".into()),
             )],
         }),
     });
@@ -42,7 +42,7 @@ fn generates_new_struct_type() -> Result<()> {
 
     let item = &module.items[0];
     match item {
-        AstItem::DefStruct(def) => {
+        Item::DefStruct(def) => {
             assert_eq!(def.name.name, "GeneratedType");
             assert_eq!(def.value.fields.len(), 1);
             assert_eq!(def.value.fields[0].name.name, "value");
@@ -57,7 +57,7 @@ fn generates_new_struct_type() -> Result<()> {
 fn augments_existing_struct_with_field() -> Result<()> {
     let mut orchestrator = make_orchestrator();
     let mut module = empty_module("test_module");
-    module.items.push(AstItem::DefStruct(ItemDefStruct {
+    module.items.push(Item::DefStruct(ItemDefStruct {
         visibility: Visibility::Public,
         name: "Base".into(),
         value: TypeStruct {
@@ -69,14 +69,14 @@ fn augments_existing_struct_with_field() -> Result<()> {
     orchestrator.record_const_eval(ConstEval::GenerateField {
         target_type: "Base".to_string(),
         field_name: "extra".to_string(),
-        field_type: AstType::ident("bool".into()),
+        field_type: Ty::ident("bool".into()),
     });
 
     let changed = orchestrator.apply_const_eval_ops_to_module(&mut module)?;
     assert!(changed);
 
     match &module.items[0] {
-        AstItem::DefStruct(def) => {
+        Item::DefStruct(def) => {
             assert_eq!(def.value.fields.len(), 1);
             assert_eq!(def.value.fields[0].name.name, "extra");
             assert_eq!(def.value.fields[0].value.to_string(), "bool");
@@ -91,7 +91,7 @@ fn augments_existing_struct_with_field() -> Result<()> {
 fn generates_impl_with_method() -> Result<()> {
     let mut orchestrator = make_orchestrator();
     let mut module = empty_module("test_module");
-    module.items.push(AstItem::DefStruct(ItemDefStruct {
+    module.items.push(Item::DefStruct(ItemDefStruct {
         visibility: Visibility::Public,
         name: "Widget".into(),
         value: TypeStruct {
@@ -103,7 +103,7 @@ fn generates_impl_with_method() -> Result<()> {
     orchestrator.record_const_eval(ConstEval::GenerateMethod {
         target_type: "Widget".to_string(),
         method_name: "tick".to_string(),
-        method_body: AstExpr::Value(AstValue::unit().into()),
+        method_body: Expr::Value(Value::unit().into()),
     });
 
     let changed = orchestrator.apply_const_eval_ops_to_module(&mut module)?;
@@ -111,12 +111,12 @@ fn generates_impl_with_method() -> Result<()> {
 
     assert_eq!(module.items.len(), 2, "struct plus generated impl");
     match &module.items[1] {
-        AstItem::Impl(impl_block) => {
+        Item::Impl(impl_block) => {
             assert!(impl_block.trait_ty.is_none());
-            assert!(matches!(impl_block.self_ty.as_ref(), AstExpr::Locator(_)));
+            assert!(matches!(impl_block.self_ty.as_ref(), Expr::Locator(_)));
             assert_eq!(impl_block.items.len(), 1);
             match &impl_block.items[0] {
-                AstItem::DefFunction(func) => {
+                Item::DefFunction(func) => {
                     assert_eq!(func.name.name, "tick");
                 }
                 _ => panic!("expected generated function"),

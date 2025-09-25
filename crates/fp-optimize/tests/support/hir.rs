@@ -1,50 +1,50 @@
 use fp_core::hir::{
-    self, HirBody, HirExpr, HirExprKind, HirFunction, HirFunctionSig, HirGenerics, HirItem,
-    HirItemKind, HirProgram, HirTy, HirTyKind,
+    self, Body, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program, Ty,
+    TyKind,
 };
 use fp_core::span::Span;
 
-pub fn literal_expr(value: i64) -> HirExpr {
-    HirExpr::new(
+pub fn literal_expr(value: i64) -> Expr {
+    Expr::new(
         0,
-        HirExprKind::Literal(hir::HirLit::Integer(value)),
+        ExprKind::Literal(hir::Lit::Integer(value)),
         Span::new(0, 0, 0),
     )
 }
 
-pub fn unit_type() -> HirTy {
-    HirTy::new(0, HirTyKind::Tuple(Vec::new()), Span::new(0, 0, 0))
+pub fn unit_type() -> Ty {
+    Ty::new(0, TyKind::Tuple(Vec::new()), Span::new(0, 0, 0))
 }
 
-pub fn function_item(name: &str, body: HirExpr) -> HirItem {
-    let func_body = HirBody {
+pub fn function_item(name: &str, body: Expr) -> Item {
+    let func_body = Body {
         hir_id: 1,
         params: Vec::new(),
         value: body,
     };
 
-    let sig = HirFunctionSig {
+    let sig = FunctionSig {
         name: name.to_string(),
         inputs: Vec::new(),
         output: unit_type(),
-        generics: HirGenerics {
+        generics: Generics {
             params: Vec::new(),
             where_clause: None,
         },
     };
 
-    let function = HirFunction::new(sig, Some(func_body), false);
+    let function = Function::new(sig, Some(func_body), false);
 
-    HirItem {
+    Item {
         hir_id: 0,
         def_id: 0,
-        kind: HirItemKind::Function(function),
+        kind: ItemKind::Function(function),
         span: Span::new(0, 0, 0),
     }
 }
 
-pub fn program_with_items(items: Vec<HirItem>) -> HirProgram {
-    let mut program = HirProgram::new();
+pub fn program_with_items(items: Vec<Item>) -> Program {
+    let mut program = Program::new();
     program.items = items;
     program.next_hir_id = program.items.len() as u32;
     program

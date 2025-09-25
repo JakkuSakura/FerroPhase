@@ -19,7 +19,8 @@ efficiency in later optimization and code generation.
 - **Interpretation**: A shared evaluation phase, configurable for compile-time (Comptime) or runtime behavior, handling
   tasks like constant folding, type querying, and execution.
 - **Desugaring and IR Lowering**: AST → HIR (High-level IR, structured for inference) → THIR (Typed HIR, with embedded
-  resolved types) → MIR (Mid-level IR, for optimizations) → LIR (Low-level IR, near-machine representation).
+  resolved types) → MIR (Mid-level Intermediate Representation, an SSA control-flow graph for dataflow and ownership
+  analysis) → LIR (Low-level IR, near-machine representation).
 - **Output Generation**: Mode-specific backends, such as WASM/LLVM IR, bytecode, Rust code, or direct execution.
 
 #### Execution Modes and Their Flows
@@ -28,9 +29,9 @@ Here's a tabular overview for clarity:
 
 | Mode                             | Key Flow                                                                                                                                                                                                                             | Purpose and Characteristics                                                                                                                                                                                                                                                                                            |
 |----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Compile**                      | Frontend → Interpretation(Comptime) → Desugar to HIR → [Type Inference + Refinement (interleaved with remaining comptime)] → [High-Level Optimization] → THIR (embed types) → MIR (mid-level opts) → LIR → WASM/LLVM IR              | Full compilation to native/web targets; emphasizes optimization and static analysis for performance. Inference on HIR allows structured type resolution, with interleaving ensuring comptime dependencies are handled iteratively.                                                                                     |
+| **Compile**                      | Frontend → Interpretation(Comptime) → Desugar to HIR → [Type Inference + Refinement (interleaved with remaining comptime)] → [High-Level Optimization] → THIR (embed types) → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR → WASM/LLVM IR              | Full compilation to native/web targets; emphasizes optimization and static analysis for performance. Inference on HIR allows structured type resolution, with interleaving ensuring comptime dependencies are handled iteratively.                                                                                     |
 | **Interpret**                    | Frontend → Interpretation(Runtime)                                                                                                                                                                                                   | Direct runtime execution on the AST; lightweight, dynamic, suitable for scripting or quick testing. No IR lowering, focusing on immediate evaluation.                                                                                                                                                                  |
-| **Bytecode**                     | Frontend → Interpretation(Comptime, lightweight) → Desugar to HIR → [Type Inference + Refinement (interleaved, minimal)] → THIR (embed types) → MIR (mid-level opts, optional) → LIR → Custom Bytecode Gen (pyc-like) → VM Execution | Generates portable, stack-based bytecode similar to Python's pyc format for VM execution; supports stepped debugging (e.g., opcode-by-opcode with inspection). Lightweight comptime enables initial folding and querying without full overhead. Bytecode generation starts post-LIR for optimized, low-level emission. |
+| **Bytecode**                     | Frontend → Interpretation(Comptime, lightweight) → Desugar to HIR → [Type Inference + Refinement (interleaved, minimal)] → THIR (embed types) → MIR (Mid-level Intermediate Representation; SSA CFG, optional) → LIR → Custom Bytecode Gen (pyc-like) → VM Execution | Generates portable, stack-based bytecode similar to Python's pyc format for VM execution; supports stepped debugging (e.g., opcode-by-opcode with inspection). Lightweight comptime enables initial folding and querying without full overhead. Bytecode generation starts post-LIR for optimized, low-level emission. |
 | **Transpile (Surface)**          | Frontend → Interpretation(Comptime) → Codegen to Rust/... (walk annotated AST/EAST)                                                                                                                                                  | Converts to higher-level targets with comptime-driven transformations; keeps everything at the AST/EAST layer for fast migration, light refactors, or prototype sharing without deep analysis.                                                                                                                         |
 | **Transpile (Static/Low-Level)** | Frontend → Interpretation(Comptime) → Desugar to HIR → [Algorithm W Inference + Type Projection + High-Level Optimization] → THIR (embed ConcreteType) → TAST Lift (with re-sugaring hints) → Codegen to Rust/C/...                     | Reuses the compile typing pipeline to obtain concrete layouts via a HIR→THIR projection, applies HIR-level optimizations, then lifts a Typed AST (TAST) that mirrors surface syntax (re-sugared) for emitters that require explicit types and ABI-aware code such as C.                                                |
 
@@ -39,12 +40,12 @@ Here's a tabular overview for clarity:
 The system uses a phased type system with 2-3 sets to support evolution from flexible inference to concrete codegen.
 This is summarized below:
 
-- **AstType** (Flexible, used in AST/HIR): Supports inference placeholders (e.g., type variables, unknowns), queries for
-  comptime, and annotations. Stored in a type map (e.g., `HashMap<NodeId, AstType>`) for easy updates during
+- **Ty** (Flexible, used in AST/HIR): Supports inference placeholders (e.g., type variables, unknowns), queries for
+  comptime, and annotations. Stored in a type map (e.g., `HashMap<NodeId, Ty>`) for easy updates during
   interleaving.
 - **ConcreteType** (Resolved, used in THIR/MIR/LIR): Immutable, machine-oriented (e.g., with sizes, layouts); embedded
   directly into IR nodes for efficiency post-resolution.
-- **IntermediateType** (Optional third set, used in MIR/LIR if needed): Bridges AstType and ConcreteType for
+- **IntermediateType** (Optional third set, used in MIR/LIR if needed): Bridges Ty and ConcreteType for
   optimization-specific details (e.g., polymorphic variants or VM abstractions); only added for complex backends like
   diverse bytecode targets.
 
@@ -56,19 +57,20 @@ This is summarized below:
 >   - **EAST**: Evaluated AST snapshot after comptime interpretation/macro expansion.
 >   - **HIR**: High-level IR with desugared control flow, suited for inference and high-level opts.
 >   - **THIR**: Typed HIR produced via HIR→THIR projection; embeds `ConcreteType` data.
-> - From **THIR**, the pipeline forks:
->   - **TAST** (static transpile branch): Typed AST lifted from THIR, reintroducing surface sugar for emitters like C.
->   - **MIR** → **LIR** (compile/bytecode branch): Mid-level IR for SSA optimizations followed by Low-level IR ahead of backend codegen.
+- From **THIR**, the pipeline forks:
+  - **TAST** (static transpile branch): Typed AST lifted from THIR, reintroducing surface sugar for emitters like C.
+  - **MIR** → **LIR** (compile/bytecode branch): Mid-level Intermediate Representation forming an SSA control-flow graph,
+    followed by Low-level IR ahead of backend codegen.
 
 | Stage/IR                                 | Primary Type Set                   | Storage Method          | Key Usage                                     |
 |------------------------------------------|------------------------------------|-------------------------|-----------------------------------------------|
-| AST                                      | AstType                            | Type Map                | Initial parsing, comptime querying.           |
-| HIR                                      | AstType                            | Type Map                | Inference, interleaving with comptime.        |
+| AST                                      | Ty                            | Type Map                | Initial parsing, comptime querying.           |
+| HIR                                      | Ty                            | Type Map                | Inference, interleaving with comptime.        |
 | THIR                                     | ConcreteType                       | Embedded in nodes       | Post-resolution opts, type sealing.           |
-| MIR/LIR                                  | ConcreteType (or IntermediateType) | Embedded in nodes       | Mid/low-level opts, codegen (e.g., bytecode). |
-| Non-IR Modes (e.g., Interpret/Transpile) | AstType                            | Type Map or Annotations | Dynamic eval or output gen.                   |
+| MIR/LIR                                  | ConcreteType (or IntermediateType) | Embedded in nodes       | MIR: SSA control-flow & ownership dataflow; LIR: low-level codegen prep. |
+| Non-IR Modes (e.g., Interpret/Transpile) | Ty                            | Type Map or Annotations | Dynamic eval or output gen.                   |
 
-This structure ensures consistency across modes while minimizing overhead—e.g., interpret mode relies solely on AstType
+This structure ensures consistency across modes while minimizing overhead—e.g., interpret mode relies solely on Ty
 for runtime flexibility.
 
 ## Detailed Discussion: Execution Modes
@@ -94,8 +96,9 @@ dependencies— for instance, a comptime function might reveal new type informat
 passes. This interleaving stabilizes the program state, preventing errors like incomplete constant folding by ensuring
 types are available when needed. High-level optimizations, such as dead code elimination or inlining, are applied
 post-inference, leveraging the resolved state. The pipeline then lowers to THIR, where types are embedded directly into
-nodes for a sealed, typed view. Mid-level optimizations in MIR (e.g., SSA transformations) and low-level adjustments in
-LIR (e.g., register allocation) prepare for final emission to WASM or LLVM IR. This mode excels in performance-critical
+nodes for a sealed, typed view. MIR then constructs a Rust-style Mid-level Intermediate Representation: an SSA
+control-flow graph with explicit drop sequencing and ownership-aware dataflow that underpins optimizations and static
+checks. Low-level adjustments in LIR (e.g., register allocation) prepare for final emission to WASM or LLVM IR. This mode excels in performance-critical
 scenarios, with the multi-IR approach allowing targeted optimizations at each level.
 
 ### Interpret Mode: Immediate Runtime Execution
@@ -105,7 +108,7 @@ runtime interpretation. This involves a tree-walking evaluator on the AST, execu
 without IR lowering or static optimizations. Runtime interpretation shares the same evaluation logic as comptime but
 configured for dynamic behavior, supporting features like lazy evaluation or runtime type checks. It's particularly
 useful for languages with dynamic semantics, as it bypasses the need for full type resolution, relying instead on
-flexible AstType representations during execution. While less optimized than compile mode, it provides fast feedback
+flexible Ty representations during execution. While less optimized than compile mode, it provides fast feedback
 loops, making it ideal for REPLs or embedded scripting.
 
 ### Bytecode Mode: Portable VM Execution with Debugging
@@ -119,8 +122,8 @@ mappings in the bytecode.
 
 The flow begins with the frontend, followed by a lightweight comptime interpretation to perform initial constant folding
 and type querying without full overhead. Desugaring to HIR enables minimal type inference and refinement, interleaved as
-needed but kept concise to prioritize speed. Lowering continues through THIR (embedding resolved types), optional
-mid-level optimizations in MIR, and LIR for low-level refinements. Bytecode generation starts after LIR, mapping its
+needed but kept concise to prioritize speed. Lowering continues through THIR (embedding resolved types), the optional
+MIR Mid-level Intermediate Representation pass, and LIR for low-level refinements. Bytecode generation starts after LIR, mapping its
 operations directly to pyc-like instructions— for example, an LIR arithmetic op becomes a BINARY_ADD opcode, with
 dynamic type handling to mimic Python's flexibility. The resulting bytecode is executed in a custom VM, which can be
 toggled for stepped mode to support debugging workflows. This mode is versatile for environments requiring portability,
@@ -149,8 +152,10 @@ qualifiers available without performing additional inference loops. This approac
 mode while keeping a polished, surface-shaped handoff for emitters.
 
 Const-evaluation transformations never mutate the unified AST in place. Each block records structural edits and, when
-new types are needed, allocates provisional `mut type` handles (mirroring the language construct) through the shared
-`TypeQueryEngine`. On success those handles are frozen into concrete definitions, producing the EAST snapshot shared by
+new types are needed, allocates provisional `mut type` tokens (mirroring the language construct) through the shared
+`TypeQueryEngine`. Inline `struct`/`impl` syntax executed during const evaluation produces the same tokens, so surface
+syntax and builder intrinsics share a single pipeline. On success those tokens are frozen into concrete definitions,
+producing the EAST snapshot shared by
 every downstream mode.
 
 In practice, the unified AST becomes EAST after the comptime interpreter runs, encapsulating evaluated constants and
@@ -172,7 +177,7 @@ ConcreteType data before the TAST lift resurfaces a typed, human-friendly tree f
 ## Detailed Discussion: Type System Design
 
 The type system is phased to match the pipeline's progression, using distinct representations to optimize for each
-stage's needs. Early stages prioritize flexibility with AstType, an expressive set that includes variants for unknowns,
+stage's needs. Early stages prioritize flexibility with Ty, an expressive set that includes variants for unknowns,
 generics, and comptime-queryable structures. This is managed via a type map, allowing non-destructive updates during
 inference or interleaving, which is crucial for modes involving iterative refinement.
 
@@ -182,23 +187,27 @@ and is embedded into IR nodes to eliminate lookup overhead during optimizations.
 such as MIR-level specializations or bytecode abstractions, an optional IntermediateType can serve as a bridge,
 handling polymorphic or VM-specific details before final concretization.
 
-In non-lowering modes like interpret or surface transpile, AstType suffices, providing runtime flexibility or
+In non-lowering modes like interpret or surface transpile, Ty suffices, providing runtime flexibility or
 annotation-based output. When concrete layouts are required, the compiler lowers to THIR, then lifts a Typed AST (TAST)
 from those ConcreteTypes—re-sugaring shapes based on stored provenance—so emitters retain surface structure while
-gaining sealed type information. AstType and ConcreteType share the same underlying arena: const evaluation creates
-provisional `mut type` handles (AstType + pending layout) and, once frozen, THIR consumes the resulting `ConcreteType`
+gaining sealed type information. Ty and ConcreteType share the same underlying arena: const evaluation creates
+provisional `mut type` tokens (Ty + pending layout) and, once frozen, THIR consumes the resulting `ConcreteType`
 records directly. This 2-3 set approach—rooted in the needs of multi-mode execution—ensures efficiency: for example,
 bytecode generation from LIR uses ConcreteType to emit typed instructions where possible, while static transpile reuses
 the same data to produce explicit signatures for C without sacrificing readable syntax. Overall, it supports robust
 features like type execution in comptime while scaling to diverse backends.
 backends.
 
+Opaque token boundaries ensure these identifiers never leak into user-visible APIs. Backends operate on surfaced type
+data (ConcreteType or TAST annotations), preserving the flexibility to refactor token layout without breaking
+downstream consumers.
+
 ## Conclusion and Benefits
 
 This multi-mode compiler design achieves a balance of flexibility, performance, and debuggability through shared
 components like the frontend and interpretation phases, while tailoring outputs to specific use cases. The compile mode
 delivers optimized natives, interpret enables quick runs, bytecode provides portable debugging with stepped execution,
-and transpile modes facilitate interoperability. The type system's evolution from AstType to ConcreteType (with an
+and transpile modes facilitate interoperability. The type system's evolution from Ty to ConcreteType (with an
 optional intermediate) ensures consistency and efficiency across stages. This architecture not only addresses practical
 needs—like multi-language inputs and custom bytecode—but also draws from proven systems, positioning it for
 extensibility in future enhancements.

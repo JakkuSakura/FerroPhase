@@ -7,8 +7,8 @@ use fp_core::warn;
 use pretty_assertions::assert_eq;
 
 use fp_core::ast::*;
-use fp_core::ast::{AstItem, ItemDefFunction, ItemImpl, Visibility};
-use fp_core::ast::{AstType, FunctionParam, FunctionSignature, TypePrimitive};
+use fp_core::ast::{FunctionParam, FunctionSignature, Ty, TypePrimitive};
+use fp_core::ast::{Item, ItemDefFunction, ItemImpl, Visibility};
 use fp_core::id::Locator;
 use fp_rust::printer::RustPrinter;
 use fp_rust::{shll_parse_expr, shll_parse_item};
@@ -26,7 +26,7 @@ fn test_parse_fn() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstItem::DefFunction(ItemDefFunction {
+        Item::DefFunction(ItemDefFunction {
             attrs: vec![],
             name: "foo".into(),
             ty: None,
@@ -35,10 +35,10 @@ fn test_parse_fn() -> Result<()> {
                 receiver: None,
                 params: vec![FunctionParam::new(
                     "a".into(),
-                    AstType::Primitive(TypePrimitive::i64())
+                    Ty::Primitive(TypePrimitive::i64())
                 )],
                 generics_params: vec![],
-                ret_ty: Some(AstType::Primitive(TypePrimitive::i64()))
+                ret_ty: Some(Ty::Primitive(TypePrimitive::i64()))
             },
             body: block.into(),
             visibility: Visibility::Private,
@@ -58,7 +58,7 @@ fn test_parse_block_noop() -> Result<()> {
     // println!("{:?} => {}", code, code);
     assert_eq!(
         code,
-        AstExpr::Block(ExprBlock {
+        Expr::Block(ExprBlock {
             stmts: vec![BlockStmt::Noop, BlockStmt::Noop, BlockStmt::Noop],
         })
     );
@@ -74,9 +74,9 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstExpr::If(ExprIf {
-            cond: AstExpr::value(AstValue::bool(true)).into(),
-            then: AstExpr::Block(ExprBlock::new()).into(),
+        Expr::If(ExprIf {
+            cond: Expr::value(Value::bool(true)).into(),
+            then: Expr::Block(ExprBlock::new()).into(),
             elze: None,
         })
     );
@@ -89,10 +89,10 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstExpr::If(ExprIf {
-            cond: AstExpr::value(AstValue::bool(true)).into(),
-            then: AstExpr::Block(ExprBlock::new()).into(),
-            elze: Some(AstExpr::Block(ExprBlock::new()).into()),
+        Expr::If(ExprIf {
+            cond: Expr::value(Value::bool(true)).into(),
+            then: Expr::Block(ExprBlock::new()).into(),
+            elze: Some(Expr::Block(ExprBlock::new()).into()),
         }),
     );
     let code = shll_parse_expr! {
@@ -104,13 +104,13 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstExpr::If(ExprIf {
-            cond: AstExpr::value(AstValue::bool(true)).into(),
-            then: AstExpr::Block(ExprBlock::new()).into(),
+        Expr::If(ExprIf {
+            cond: Expr::value(Value::bool(true)).into(),
+            then: Expr::Block(ExprBlock::new()).into(),
             elze: Some(
-                AstExpr::If(ExprIf {
-                    cond: AstExpr::value(AstValue::bool(false)).into(),
-                    then: AstExpr::Block(ExprBlock::new()).into(),
+                Expr::If(ExprIf {
+                    cond: Expr::value(Value::bool(false)).into(),
+                    then: Expr::Block(ExprBlock::new()).into(),
                     elze: None,
                 })
                 .into()
@@ -126,15 +126,15 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstExpr::If(ExprIf {
-            cond: AstExpr::value(AstValue::bool(true)).into(),
-            then: AstExpr::unit().into(),
+        Expr::If(ExprIf {
+            cond: Expr::value(Value::bool(true)).into(),
+            then: Expr::unit().into(),
             elze: Some(
-                AstExpr::If(ExprIf {
-                    cond: AstExpr::value(AstValue::bool(false)).into(),
-                    then: AstExpr::Block(ExprBlock::new_stmts_expr(
+                Expr::If(ExprIf {
+                    cond: Expr::value(Value::bool(false)).into(),
+                    then: Expr::Block(ExprBlock::new_stmts_expr(
                         vec![BlockStmt::Noop,],
-                        AstExpr::Block(ExprBlock::new())
+                        Expr::Block(ExprBlock::new())
                     ))
                     .into(),
                     elze: None,
@@ -162,19 +162,19 @@ fn test_parse_block_if() -> Result<()> {
     // println!("{:?} => {}", code, code);
     assert_eq!(
         code,
-        AstExpr::Block(ExprBlock::new_stmts(vec![
+        Expr::Block(ExprBlock::new_stmts(vec![
             BlockStmt::Expr(
-                BlockStmtExpr::new(AstExpr::If(ExprIf {
-                    cond: AstExpr::value(AstValue::bool(true)).into(),
-                    then: AstExpr::Block(ExprBlock::new()).into(),
+                BlockStmtExpr::new(Expr::If(ExprIf {
+                    cond: Expr::value(Value::bool(true)).into(),
+                    then: Expr::Block(ExprBlock::new()).into(),
                     elze: None,
                 }))
                 .with_semicolon(false)
             ),
             BlockStmt::Expr(
-                BlockStmtExpr::new(AstExpr::If(ExprIf {
-                    cond: AstExpr::value(AstValue::bool(true)).into(),
-                    then: AstExpr::Block(ExprBlock::new()).into(),
+                BlockStmtExpr::new(Expr::If(ExprIf {
+                    cond: Expr::value(Value::bool(true)).into(),
+                    then: Expr::Block(ExprBlock::new()).into(),
                     elze: None,
                 }))
                 .with_semicolon(true)
@@ -196,9 +196,9 @@ fn test_parse_impl_for() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstItem::Impl(ItemImpl {
+        Item::Impl(ItemImpl {
             trait_ty: Some(Locator::Ident("Foo".into())),
-            self_ty: AstExpr::ident("Bar".into()),
+            self_ty: Expr::ident("Bar".into()),
             items: vec![shll_parse_item! {
                 fn foo(a: i64) -> i64 {
                     a + 1
@@ -217,10 +217,10 @@ fn test_parse_static() -> Result<()> {
     };
     assert_eq!(
         code,
-        AstItem::DefStatic(ItemDefStatic {
+        Item::DefStatic(ItemDefStatic {
             name: "FOO".into(),
-            ty: AstType::Primitive(TypePrimitive::i64()),
-            value: AstExpr::value(AstValue::int(1)).into(),
+            ty: Ty::Primitive(TypePrimitive::i64()),
+            value: Expr::value(Value::int(1)).into(),
             visibility: Visibility::Private,
         })
     );
@@ -236,7 +236,7 @@ fn test_parse_fn_self() -> Result<()> {
 
     assert_eq!(
         code,
-        AstItem::DefFunction(ItemDefFunction {
+        Item::DefFunction(ItemDefFunction {
             attrs: vec![],
             name: "foo".into(),
             ty: None,
@@ -247,7 +247,7 @@ fn test_parse_fn_self() -> Result<()> {
                 generics_params: vec![],
                 ret_ty: None
             },
-            body: AstExpr::Block(ExprBlock::new()).into(),
+            body: Expr::Block(ExprBlock::new()).into(),
             visibility: Visibility::Private,
         })
     );
@@ -257,7 +257,7 @@ fn test_parse_fn_self() -> Result<()> {
 
     assert_eq!(
         code,
-        AstItem::DefFunction(ItemDefFunction {
+        Item::DefFunction(ItemDefFunction {
             attrs: vec![],
             name: "foo".into(),
             ty: None,
@@ -268,7 +268,7 @@ fn test_parse_fn_self() -> Result<()> {
                 generics_params: vec![],
                 ret_ty: None
             },
-            body: AstExpr::Block(ExprBlock::new()).into(),
+            body: Expr::Block(ExprBlock::new()).into(),
             visibility: Visibility::Private,
         })
     );

@@ -75,16 +75,19 @@ const STRUCT_INFO: StructInfo = {
 #### Metaprogramming with Transformations
 ```rust
 const GENERATED_STRUCT: Type = {
-    let mut builder = create_struct!("GeneratedPoint");
-    
-    addfield!(builder, "x", f64);
-    addfield!(builder, "y", f64);
-    
-    if ENABLE_3D {
-        addfield!(builder, "z", f64);
+    struct GeneratedPoint {
+        x: f64,
+        y: f64,
     }
-    
-    builder  // Returns type reference
+
+    if ENABLE_3D {
+        // Struct declarations inside const blocks reopen the pending type so fields can be appended.
+        struct GeneratedPoint {
+            z: f64,
+        }
+    }
+
+    GeneratedPoint
 };
 ```
 
@@ -114,42 +117,58 @@ Const blocks can generate code through scheduled transformations:
 
 ```rust
 const CONTAINER_TYPE: Type = {
-    let mut container = create_struct!("Container");
-    
-    // Transformation: adds field to struct definition
-    addfield!(container, "data", Vec<T>);
-    addfield!(container, "len", usize);
-    
-    // Transformation: adds method to struct
-    addmethod!(container, "push", |&mut self, item: T| {
-        self.data.push(item);
-        self.len += 1;
-    });
-    
-    container
+    struct Container {
+        data: Vec<T>,
+        len: usize,
+    }
+
+    impl Container {
+        fn push(&mut self, item: T) {
+            self.data.push(item);
+            self.len += 1;
+        }
+    }
+
+    Container
 };
 ```
 
-**Transformation Actions:**
-- `addfield!`: Add field to struct
-- `addmethod!`: Add method to type
-- `addimpl!`: Add trait implementation
+**Common Transformation Tools:**
+- Inline `struct` declarations inside const blocks register new types or extend the current pending type token.
+- Inline `impl` blocks attach inherent methods or trait implementations when their surrounding control flow evaluates to `true`.
+- `addfield!`: Add field to struct (kept for lower-level builder workflows).
+- `addmethod!`: Add method to type (kept for lower-level builder workflows).
 - `compile_error!`: Trigger compilation error
 - `compile_warning!`: Emit compilation warning
+
+### Inline `struct`/`impl` Semantics
+
+- **Registration:** The first `struct Name { ... }` encountered in a const block creates a fresh `mut type` token. Subsequent
+  declarations of the same `struct Name` within the block reopen that pending token to append more fields (useful for
+  conditional extensions).
+- **Returning the type:** The identifier (`Name`) acts as the token value, so returning it from the const block yields a
+  handle the rest of the program can reference.
+- **Conditional logic:** `if`/`match`/`for` statements run during const evaluation. `impl` blocks inside them are only
+  recorded when the control flow executes, allowing patterns like `if cfg!(feature = "metrics") { impl Metrics for Cache { ... } }`.
+- **Trait vs inherent impls:** Trait implementations (`impl Trait for Name`) and inherent impls (`impl Name`) use the same
+  mechanism; they are merged into the EAST module exactly once even if the const block is evaluated multiple times.
+- **Validation:** Conditions must be const-evaluable. If an `if` guard depends on a runtime value, the interpreter reports
+  a diagnostics error before any `impl` is recorded.
 
 ### Error Handling in Const Blocks
 
 ```rust
 const VALIDATED_CONFIG: Type = {
-    let mut config = create_struct!("Config");
-    addfield!(config, "buffer_size", usize);
-    
+    struct Config {
+        buffer_size: usize,
+    }
+
     // Compile-time validation
-    if sizeof!(config) > MAX_STRUCT_SIZE {
+    if sizeof!(Config) > MAX_STRUCT_SIZE {
         compile_error!("Config struct exceeds maximum size");
     }
-    
-    config
+
+    Config
 };
 ```
 
@@ -177,7 +196,7 @@ Phase 3: Final Type Checking
 #### Phase 2: Const Evaluation & Metaprogramming
 - **Discover const blocks** and build dependency graph
 - **Evaluate const expressions** in topological order
-- **Execute intrinsics** like `sizeof!`, `create_struct!`, `addfield!`
+- **Execute intrinsics** like `sizeof!`, `addfield!`, `addmethod!`
 - **Record transformations** (generated fields, methods, new types)
 - **Apply recorded transformations** to the AST snapshot
 - **Query established types** from Phase 1 as needed
@@ -194,20 +213,24 @@ Phase 3: Final Type Checking
 Const evaluation relies on a dedicated type-query layer rather than ad-hoc lookups:
 
 - **Snapshot Inputs**: Phase 1 produces a read-only `TypeSnapshot` that the evaluator consults. It exposes canonical
-  handles into a shared `TypeArena` used by later lowering passes.
-- **Comptime `mut type` handles**: When transformations need new types (e.g., `create_struct!`), the query engine
-  allocates provisional handles that mirror the language-level `mut type` construct (`let mut T = struct Name { ... };`).
-  Each handle stores its syntactic shape as an `AstType` plus the data needed to emit a `ConcreteType` record later. They
+  type tokens into a shared `TypeArena` used by later lowering passes.
+- **Comptime `mut type` tokens**: When const blocks declare new `struct` items (or use builder intrinsics), the query engine
+  allocates provisional tokens that mirror the language-level `mut type` construct (`let mut T = struct Name { ... };`).
+  Each token stores its syntactic shape as a `Ty` plus the data needed to emit a `ConcreteType` record later. Tokens
   live only during Phase 2, carry explicit provenance, and are immutable once committed.
 - **Memoised Queries**: Intrinsics such as `@sizeof`/`@hasfield` route through a `TypeQueryEngine` that caches results by
-  handle + parameters, avoiding redundant computation across const blocks. Cache entries are keyed by `(query, type_id,
-  mut_revision)` so they automatically stay valid until a new `mut type` handle commits.
-- **Deterministic Commits**: When a const block finishes, all `mut type` handles it introduced are atomically promoted to
+  token + parameters, avoiding redundant computation across const blocks. Cache entries are keyed by `(query, type_id,
+  mut_revision)` so they automatically stay valid until a new `mut type` token commits.
+- **Deterministic Commits**: When a const block finishes, all `mut type` tokens it introduced are atomically promoted to
   full `ConcreteType` entries in the shared arena (or discarded on failure). No in-place mutation occurs on previously
   materialised types.
 - **Diagnostics**: Failed queries emit structured diagnostics that Phase 3 can surface alongside traditional type errors.
 
-When Phase 2 completes for a compilation unit, all committed `mut type` handles are frozen into concrete definitions and
+Type tokens are compiler-internal and opaque to user-facing APIs. Transformations may capture them during Phase 2, but
+backends read the resulting struct/enum definitions rather than inspecting token IDs, preventing accidental coupling to
+implementation details.
+
+When Phase 2 completes for a compilation unit, all committed `mut type` tokens are frozen into concrete definitions and
 the updated AST snapshot is tagged as **EAST** (Evaluated AST). This EAST becomes the hand-off point for downstream
 stages (surface transpile, HIR lowering, etc.), guaranteeing they all consume identical, evaluation-stable source
 structure.
@@ -252,11 +275,13 @@ struct Point {
 const POINT_SIZE: usize = sizeof!(Point);
 
 const EXTENDED_POINT: Type = {
-    let mut builder = create_struct!("ExtendedPoint");
-    addfield!(builder, "x", i64);
-    addfield!(builder, "y", i64);
-    addfield!(builder, "z", i64);
-    builder
+    struct ExtendedPoint {
+        x: i64,
+        y: i64,
+        z: i64,
+    }
+
+    ExtendedPoint
 };
 
 fn process_point(p: Point) -> ExtendedPoint {
@@ -274,10 +299,8 @@ fn process_point(p: Point) -> ExtendedPoint {
 - 🔍 Discover const blocks: `POINT_SIZE`, `EXTENDED_POINT`
 - 📊 Build dependency graph: `POINT_SIZE` has no dependencies, `EXTENDED_POINT` has no dependencies
 - ⚡ Evaluate `POINT_SIZE = sizeof!(Point)` → queries type registry → returns 16
-- ⚡ Evaluate `EXTENDED_POINT` const block:
-  - Execute `create_struct!("ExtendedPoint")`
-  - Execute `addfield!(builder, "x", i64)`, `addfield!(builder, "y", i64)`, `addfield!(builder, "z", i64)`
-- Collect transformations: create new struct type `ExtendedPoint`
+- ⚡ Evaluate `EXTENDED_POINT` const block and materialise inline `struct ExtendedPoint { ... }`
+- Collect transformations: register new struct type `ExtendedPoint`
 - 🔧 Apply transformations: add `ExtendedPoint` struct to AST
 
 **Phase 3: Final Type Checking**
@@ -296,10 +319,10 @@ fn process_point(p: Point) -> ExtendedPoint {
 - `hasfield!(Type, "name")`: Check if field exists
 - `reflect_fields!(Type)`: Get field metadata array
 
-### Struct Creation
-- `create_struct!("Name")`: Create new struct type
+### Struct Construction
+- Inline `struct Name { ... }` inside const blocks: register or extend a pending type token (preferred surface syntax)
 - `clone_struct!(Type)`: Clone existing struct
-- `addfield!(struct, "name", Type)`: Add field to struct
+- `addfield!(struct, "name", Type)`: Add field to struct (legacy builder support)
 
 ### Code Generation
 - `addmethod!(struct, "name", body)`: Add method to struct
@@ -331,7 +354,7 @@ t! {
 **Important Notes:**
 - The `t!` macro is **only for parsing demonstration** in examples
 - It helps visualize how struct+method generation will work
-- The actual implementation will use const blocks and intrinsics (shown above)
+- The actual implementation will use const blocks with inline `struct`/`impl` plus supporting intrinsics (shown above)
 - Examples use `t!` to show the target functionality while the compiler develops
 
 ### Future Implementation
@@ -341,24 +364,27 @@ The final FerroPhase implementation will replace `t!` usage with proper const ev
 ```rust
 // Future: Real const evaluation syntax
 const POINT_TYPE: Type = {
-    let mut point = @create_struct("Point");
-    @addfield(point, "x", f64);
-    @addfield(point, "y", f64);
-    
-    @addmethod(point, "distance", |&self, other: &Point| -> f64 {
-        let dx = self.x - other.x;
-        let dy = self.y - other.y;
-        (dx * dx + dy * dy).sqrt()
-    });
-    
-    point
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    impl Point {
+        fn distance(&self, other: &Point) -> f64 {
+            let dx = self.x - other.x;
+            let dy = self.y - other.y;
+            (dx * dx + dy * dy).sqrt()
+        }
+    }
+
+    Point
 };
 ```
 
 ### Migration Path
 
 1. **Current**: `t!` macro for examples and demonstrations
-2. **Phase 1**: Add @ symbol parsing and basic intrinsics
+2. **Phase 1**: Land inline struct/impl parsing inside const contexts
 3. **Phase 2**: Implement transformation tracking and application
 4. **Phase 3**: Replace `t!` usage with proper const evaluation blocks
 5. **Final**: Remove `t!` macro entirely, use pure const evaluation

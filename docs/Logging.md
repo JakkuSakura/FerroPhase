@@ -25,13 +25,13 @@ work captured in `specs/003-compile/tasks.md` (T027).
 | Const Evaluation | `fp-cli/src/pipeline.rs:run_const_eval`            | Logs dependency graph and evaluation time |
 | HIR Lowering     | `fp-optimize/src/transformations/ast_to_hir.rs`    | Span-preserving logs, TODO for modules    |
 | THIR Projection  | `fp-optimize/src/transformations/hir_to_thir.rs`   | Placeholder instrumentation, to be expanded|
-| MIR/LIR          | `fp-optimize/src/transformations/{thir_to_mir,mir_to_lir}` | Basic skeleton logs                       |
+| MIR/LIR          | `fp-optimize/src/transformations/{thir_to_mir,mir_to_lir}` | MIR builds the Rust-style SSA graph; logging yet minimal |
 | Backends         | `fp-llvm/src/codegen.rs`                           | Emits target triple, optimisation level   |
 
 ## Tracing Roadmap (T027)
 
 1. **Structured Spans** – Introduce span guards for each pipeline step so nested operations (e.g., module lowering) are visible.
-2. **File/Module Attribution** – Include module names and `AstNodeId` references in logs for easier correlation with EAST/THIR outputs.
+2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with EAST/THIR outputs.
 3. **Error Correlation** – Ensure errors recorded through `tracing::error!` map back to EAST spans, matching the cross-stage guarantees.
 4. **CLI Flags** – Add `--log {level}` and `--log-format {pretty,json}` flags with sensible defaults.
 5. **Test Hooks** – Provide utilities in `fp-optimize/tests` to assert log spans when running pipeline tests.
@@ -44,6 +44,6 @@ work captured in `specs/003-compile/tasks.md` (T027).
 
 ## Next Steps
 
-- Implement span-based tracing in `fp-cli/src/pipeline.rs` and propagate handles to transformation passes.
+- Implement span-based tracing in `fp-cli/src/pipeline.rs` and propagate span handles to transformation passes.
 - Harden logging hooks in `fp-optimize` so tests can consume structured events.
 - Document environment variables and CLI options once implemented.
