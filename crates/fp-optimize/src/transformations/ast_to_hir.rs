@@ -21,6 +21,7 @@ pub struct HirGenerator {
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
+    preassigned_def_ids: HashMap<usize, hir::DefId>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +65,155 @@ impl HirGenerator {
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
+            preassigned_def_ids: HashMap::new(),
+        }
+    }
+
+    fn handle_import(&mut self, import: &ast::ItemImport) -> Result<()> {
+        let entries = self.expand_import_tree(&import.tree, Vec::new())?;
+        for (path_segments, alias) in entries {
+            let value_res = self.lookup_global_res(&path_segments, PathResolutionScope::Value);
+            let type_res = self.lookup_global_res(&path_segments, PathResolutionScope::Type);
+
+            if value_res.is_none() && type_res.is_none() {
+                return Err(crate::error::optimization_error(format!(
+                    "Unresolved import: {}",
+                    path_segments.join("::")
+                )));
+            }
+
+            if let Some(res) = value_res {
+                self.current_value_scope()
+                    .insert(alias.clone(), res.clone());
+                self.record_value_symbol(&alias, res, &import.visibility);
+            }
+
+            if let Some(res) = type_res {
+                self.current_type_scope().insert(alias.clone(), res.clone());
+                self.record_type_symbol(&alias, res, &import.visibility);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn expand_import_tree(
+        &self,
+        tree: &ast::ItemImportTree,
+        base: Vec<String>,
+    ) -> Result<Vec<(Vec<String>, String)>> {
+        match tree {
+            ast::ItemImportTree::Path(path) => self.expand_import_segments(&path.segments, base),
+            ast::ItemImportTree::Group(group) => {
+                let mut results = Vec::new();
+                for item in &group.items {
+                    results.extend(self.expand_import_tree(item, base.clone())?);
+                }
+                Ok(results)
+            }
+            ast::ItemImportTree::Root => self.expand_import_segments(&[], Vec::new()),
+            ast::ItemImportTree::SelfMod => {
+                self.expand_import_segments(&[], self.module_path.clone())
+            }
+            ast::ItemImportTree::SuperMod => {
+                self.expand_import_segments(&[], self.parent_module_path())
+            }
+            ast::ItemImportTree::Crate => self.expand_import_segments(&[], Vec::new()),
+            ast::ItemImportTree::Glob => Err(crate::error::optimization_error(
+                "Glob imports are not yet supported".to_string(),
+            )),
+            _ => self.expand_import_segments(std::slice::from_ref(tree), base),
+        }
+    }
+
+    fn expand_import_segments(
+        &self,
+        segments: &[ast::ItemImportTree],
+        base: Vec<String>,
+    ) -> Result<Vec<(Vec<String>, String)>> {
+        if segments.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let first = &segments[0];
+        let rest = &segments[1..];
+        match first {
+            ast::ItemImportTree::Ident(ident) => {
+                let name = ident.name.as_str();
+                let mut new_base = base;
+                match name {
+                    "self" => new_base = self.module_path.clone(),
+                    "super" => new_base = self.parent_module_path(),
+                    "crate" => new_base = Vec::new(),
+                    _ => new_base.push(ident.name.clone()),
+                }
+
+                if rest.is_empty() && !matches!(name, "self" | "super" | "crate") {
+                    Ok(vec![(new_base.clone(), ident.name.clone())])
+                } else if rest.is_empty() {
+                    Ok(Vec::new())
+                } else {
+                    self.expand_import_segments(rest, new_base)
+                }
+            }
+            ast::ItemImportTree::Rename(rename) => {
+                if !rest.is_empty() {
+                    return Err(crate::error::optimization_error(
+                        "Rename segments must be terminal".to_string(),
+                    ));
+                }
+                let mut new_base = base;
+                new_base.push(rename.from.name.clone());
+                Ok(vec![(new_base, rename.to.name.clone())])
+            }
+            ast::ItemImportTree::Group(group) => {
+                let mut results = Vec::new();
+                for item in &group.items {
+                    results.extend(self.expand_import_tree(item, base.clone())?);
+                }
+                if rest.is_empty() {
+                    Ok(results)
+                } else {
+                    let mut final_results = Vec::new();
+                    for (path_segments, alias) in results {
+                        let mut more = self.expand_import_segments(rest, path_segments.clone())?;
+                        if more.is_empty() {
+                            final_results.push((path_segments, alias));
+                        } else {
+                            final_results.append(&mut more);
+                        }
+                    }
+                    Ok(final_results)
+                }
+            }
+            ast::ItemImportTree::Path(path) => {
+                let nested = self.expand_import_segments(&path.segments, base.clone())?;
+                if rest.is_empty() {
+                    Ok(nested)
+                } else {
+                    let mut results = Vec::new();
+                    for (segments_acc, alias) in nested {
+                        let mut more = self.expand_import_segments(rest, segments_acc.clone())?;
+                        if more.is_empty() {
+                            results.push((segments_acc, alias));
+                        } else {
+                            results.append(&mut more);
+                        }
+                    }
+                    Ok(results)
+                }
+            }
+            ast::ItemImportTree::Root => self.expand_import_segments(rest, Vec::new()),
+            ast::ItemImportTree::SelfMod => {
+                self.expand_import_segments(rest, self.module_path.clone())
+            }
+            ast::ItemImportTree::SuperMod => {
+                self.expand_import_segments(rest, self.parent_module_path())
+            }
+            ast::ItemImportTree::Crate => self.expand_import_segments(rest, Vec::new()),
+            ast::ItemImportTree::Glob => Err(crate::error::optimization_error(
+                "Glob imports are not yet supported".to_string(),
+            )),
         }
     }
 
@@ -88,6 +238,7 @@ impl HirGenerator {
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
+            preassigned_def_ids: HashMap::new(),
         }
     }
 
@@ -108,6 +259,7 @@ impl HirGenerator {
         self.module_visibility.push(true);
         self.global_value_defs.clear();
         self.global_type_defs.clear();
+        self.preassigned_def_ids.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -172,6 +324,80 @@ impl HirGenerator {
         matches!(visibility, ast::Visibility::Public) && self.current_module_visibility_flag()
     }
 
+    fn map_visibility(&self, visibility: &ast::Visibility) -> hir::Visibility {
+        match visibility {
+            ast::Visibility::Public => hir::Visibility::Public,
+            ast::Visibility::Inherited => hir::Visibility::Private,
+            ast::Visibility::Private => hir::Visibility::Private,
+        }
+    }
+
+    fn item_key(item: &ast::Item) -> usize {
+        item as *const _ as usize
+    }
+
+    fn allocate_def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
+        let key = Self::item_key(item);
+        if let Some(existing) = self.preassigned_def_ids.get(&key) {
+            *existing
+        } else {
+            let def_id = self.next_def_id();
+            self.preassigned_def_ids.insert(key, def_id);
+            def_id
+        }
+    }
+
+    fn def_id_for_item(&mut self, item: &ast::Item) -> hir::DefId {
+        let key = Self::item_key(item);
+        if let Some(id) = self.preassigned_def_ids.get(&key) {
+            *id
+        } else {
+            self.allocate_def_id_for_item(item)
+        }
+    }
+
+    fn prepare_lowering_state(&mut self) {
+        self.type_scopes.clear();
+        self.type_scopes.push(HashMap::new());
+        self.value_scopes.clear();
+        self.value_scopes.push(HashMap::new());
+        self.module_path.clear();
+        self.module_visibility.clear();
+        self.module_visibility.push(true);
+        self.next_hir_id = 0;
+        self.current_position = 0;
+    }
+
+    fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
+        for item in items {
+            match item {
+                ast::Item::Module(module) => {
+                    self.allocate_def_id_for_item(item);
+                    self.push_module_scope(&module.name.name, &module.visibility);
+                    self.predeclare_items(&module.items)?;
+                    self.pop_module_scope();
+                }
+                ast::Item::DefConst(def_const) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_value_def(&def_const.name.name, def_id, &def_const.visibility);
+                }
+                ast::Item::DefStruct(def_struct) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
+                }
+                ast::Item::DefFunction(def_fn) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
+                }
+                ast::Item::Impl(_) => {
+                    self.allocate_def_id_for_item(item);
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn current_module_visibility_flag(&self) -> bool {
         *self.module_visibility.last().unwrap_or(&true)
     }
@@ -180,6 +406,16 @@ impl HirGenerator {
         match visibility {
             ast::Visibility::Public => self.current_module_visibility_flag(),
             _ => false,
+        }
+    }
+
+    fn parent_module_path(&self) -> Vec<String> {
+        if self.module_path.is_empty() {
+            Vec::new()
+        } else {
+            let mut parent = self.module_path.clone();
+            parent.pop();
+            parent
         }
     }
 
@@ -283,6 +519,7 @@ impl HirGenerator {
         let main_item = hir::Item {
             hir_id: self.next_id(),
             def_id: self.next_def_id(),
+            visibility: hir::Visibility::Public,
             kind: hir::ItemKind::Function(main_fn),
             span: self.create_span(4), // Span for "main" function
         };
@@ -295,6 +532,8 @@ impl HirGenerator {
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
         self.reset_file_context(&file.path);
+        self.predeclare_items(&file.items)?;
+        self.prepare_lowering_state();
         let mut program = hir::Program::new();
 
         for item in &file.items {
@@ -313,9 +552,11 @@ impl HirGenerator {
                 }
                 self.pop_module_scope();
             }
+            ast::Item::Import(import) => {
+                self.handle_import(import)?;
+            }
             _ => {
-                let boxed = Box::new(item.clone());
-                let hir_item = self.transform_item_to_hir(&boxed)?;
+                let hir_item = self.transform_item_to_hir(item)?;
                 program.def_map.insert(hir_item.def_id, hir_item.clone());
                 program.items.push(hir_item);
             }
@@ -793,21 +1034,24 @@ impl HirGenerator {
 
     /// Transform an AST item into a HIR statement
     fn transform_item_to_hir_stmt(&mut self, item: &ast::BItem) -> Result<hir::StmtKind> {
-        let hir_item = self.transform_item_to_hir(item)?;
+        let hir_item = self.transform_item_to_hir(item.as_ref())?;
         Ok(hir::StmtKind::Item(hir_item))
     }
 
     /// Transform an AST item into a HIR item
-    fn transform_item_to_hir(&mut self, item: &ast::BItem) -> Result<hir::Item> {
+    fn transform_item_to_hir(&mut self, item: &ast::Item) -> Result<hir::Item> {
         let hir_id = self.next_id();
-        let def_id = self.next_def_id();
+        let def_id = self.def_id_for_item(item);
         let span = self.create_span(1);
 
-        let kind = match item.as_ref() {
+        let (kind, visibility) = match item {
             ast::Item::DefConst(const_def) => {
                 self.register_value_def(&const_def.name.name, def_id, &const_def.visibility);
                 let hir_const = self.transform_const_def(const_def)?;
-                hir::ItemKind::Const(hir_const)
+                (
+                    hir::ItemKind::Const(hir_const),
+                    self.map_visibility(&const_def.visibility),
+                )
             }
             ast::Item::DefStruct(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
@@ -831,20 +1075,26 @@ impl HirGenerator {
                     where_clause: None,
                 };
 
-                hir::ItemKind::Struct(hir::Struct {
-                    name,
-                    fields,
-                    generics,
-                })
+                (
+                    hir::ItemKind::Struct(hir::Struct {
+                        name,
+                        fields,
+                        generics,
+                    }),
+                    self.map_visibility(&struct_def.visibility),
+                )
             }
             ast::Item::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 let function = self.transform_function(func_def, None)?;
-                hir::ItemKind::Function(function)
+                (
+                    hir::ItemKind::Function(function),
+                    self.map_visibility(&func_def.visibility),
+                )
             }
             ast::Item::Impl(impl_block) => {
                 let hir_impl = self.transform_impl(impl_block)?;
-                hir::ItemKind::Impl(hir_impl)
+                (hir::ItemKind::Impl(hir_impl), hir::Visibility::Private)
             }
             _ => {
                 return Err(crate::error::optimization_error(format!(
@@ -857,6 +1107,7 @@ impl HirGenerator {
         Ok(hir::Item {
             hir_id,
             def_id,
+            visibility,
             kind,
             span,
         })
@@ -1072,28 +1323,15 @@ impl HirGenerator {
             }
         };
 
-        let resolved = segments.last().and_then(|segment| match scope {
+        let mut resolved = segments.last().and_then(|segment| match scope {
             PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
             PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
         });
 
-        let resolved = if resolved.is_none() {
-            let qualified: String = segments
-                .iter()
-                .map(|seg| seg.name.as_str())
-                .collect::<Vec<_>>()
-                .join("::");
-            match scope {
-                PathResolutionScope::Value => self
-                    .lookup_symbol(&qualified, &self.global_value_defs)
-                    .or(resolved),
-                PathResolutionScope::Type => self
-                    .lookup_symbol(&qualified, &self.global_type_defs)
-                    .or(resolved),
-            }
-        } else {
-            resolved
-        };
+        if resolved.is_none() {
+            let canonical = self.canonicalize_segments(&segments);
+            resolved = self.lookup_global_res(&canonical, scope);
+        }
 
         Ok(hir::Path {
             segments,
@@ -1123,6 +1361,48 @@ impl HirGenerator {
         }
 
         Ok(hir::GenericArgs { args: hir_args })
+    }
+
+    fn canonicalize_segments(&self, segments: &[hir::PathSegment]) -> Vec<String> {
+        let mut result: Vec<String> = Vec::new();
+        for segment in segments {
+            match segment.name.as_str() {
+                "crate" => {
+                    result.clear();
+                }
+                "self" => {
+                    result = self.module_path.clone();
+                }
+                "super" => {
+                    if result.is_empty() {
+                        let mut parent = self.module_path.clone();
+                        if !parent.is_empty() {
+                            parent.pop();
+                        }
+                        result = parent;
+                    } else {
+                        result.pop();
+                    }
+                }
+                name => result.push(name.to_string()),
+            }
+        }
+        result
+    }
+
+    fn lookup_global_res(
+        &self,
+        segments: &[String],
+        scope: PathResolutionScope,
+    ) -> Option<hir::Res> {
+        if segments.is_empty() {
+            return None;
+        }
+        let key = segments.join("::");
+        match scope {
+            PathResolutionScope::Value => self.lookup_symbol(&key, &self.global_value_defs),
+            PathResolutionScope::Type => self.lookup_symbol(&key, &self.global_type_defs),
+        }
     }
 
     fn make_path_segment(&self, name: &str, args: Option<hir::GenericArgs>) -> hir::PathSegment {
