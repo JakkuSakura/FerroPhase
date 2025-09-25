@@ -399,15 +399,11 @@ impl LlvmContext {
         Operand::ConstantOperand(constant)
     }
 
-    /// Convert name to LLVM operand
-    pub fn operand_from_name(&self, name: Name) -> Operand {
-        // Use a conservative default type for now (i32)
-        // Construct a LocalOperand with an inline TypeRef (struct literal)
-        // Construct a LocalOperand using the module's i32 type
-        // FIXME: Use a placeholder type reference; we don't track real types yet
+    /// Convert name to LLVM operand with explicit type information
+    pub fn operand_from_name_and_type(&self, name: Name, ty: &Type) -> Operand {
         Operand::LocalOperand {
             name,
-            ty: self.module.types.void(),
+            ty: self.module.types.get_for_type(ty),
         }
     }
 
@@ -683,11 +679,24 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
             )
         }
         llvm_ir::Instruction::Call(call) => {
-            // Format call instruction with proper return type
+            // Format call instruction with proper return type and typed arguments
             let args_str = call
                 .arguments
                 .iter()
-                .map(|(op, _attrs)| format_operand(op))
+                .map(|(op, _attrs)| {
+                    // For call arguments, we need to include the type prefix
+                    match op {
+                        llvm_ir::Operand::ConstantOperand(const_ref) => {
+                            match const_ref.as_ref() {
+                                llvm_ir::Constant::GetElementPtr(_) => {
+                                    format!("ptr {}", format_operand(op))
+                                }
+                                _ => format_operand(op)
+                            }
+                        }
+                        _ => format_operand(op)
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -696,18 +705,24 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 either::Either::Right(operand) => format_operand(operand),
             };
 
+            // Get the return type from the function type
+            let return_type = match &call.function_ty.as_ref() {
+                llvm_ir::Type::FuncType { result_type, .. } => format_type(result_type),
+                _ => "i32".to_string(),
+            };
+            
             if let Some(dest) = &call.dest {
                 format!(
                     "{} = call {} {}({})",
                     format_name(dest),
-                    format_type(&call.function_ty),
+                    return_type,
                     function_operand,
                     args_str
                 )
             } else {
                 format!(
                     "call {} {}({})",
-                    format_type(&call.function_ty),
+                    return_type,
                     function_operand,
                     args_str
                 )
@@ -773,7 +788,7 @@ fn format_operand(operand: &llvm_ir::Operand) -> String {
                         _ => ("@.str.0".to_string(), "[4 x i8]".to_string()), // fallback
                     };
                     format!(
-                        "(getelementptr inbounds {}, ptr {}, i32 0, i32 0)",
+                        "getelementptr inbounds ({}, ptr {}, i32 0, i32 0)",
                         array_type, base_name
                     )
                 }
@@ -955,14 +970,20 @@ mod tests {
         assert_eq!(function_name, "add");
 
         // Create operands for parameters
-        let param1 = llvm_ctx.operand_from_name(Name::Name(Box::new("arg0".to_string())));
-        let param2 = llvm_ctx.operand_from_name(Name::Name(Box::new("arg1".to_string())));
+        let param1 = llvm_ctx.operand_from_name_and_type(
+            Name::Name(Box::new("arg0".to_string())),
+            &llvm_ctx.i32_type(),
+        );
+        let param2 = llvm_ctx.operand_from_name_and_type(
+            Name::Name(Box::new("arg1".to_string())),
+            &llvm_ctx.i32_type(),
+        );
 
         // Build add instruction
         let result_name = llvm_ctx.build_add(param1, param2, "add_result").unwrap();
 
         // Build return instruction
-        let return_operand = llvm_ctx.operand_from_name(result_name);
+        let return_operand = llvm_ctx.operand_from_name_and_type(result_name, &llvm_ctx.i32_type());
         llvm_ctx.build_return(Some(return_operand)).unwrap();
 
         // Verify the module

@@ -227,6 +227,14 @@ where
 {
     match item {
         Item::DefConst(def_const) => f(def_const),
+        Item::DefFunction(def_fn) => {
+            // Traverse function bodies to discover nested const items
+            walk_const_in_expr(def_fn.body.as_ref(), f);
+        }
+        Item::DefStatic(def_static) => {
+            // Static initializers can contain nested const declarations
+            walk_const_in_expr(def_static.value.as_ref(), f);
+        }
         Item::Module(module) => {
             for child in &module.items {
                 walk_const_in_item(child, f);
@@ -433,6 +441,12 @@ fn collect_expr_references(expr: &Expr, references: &mut HashSet<String>) {
 fn collect_item_references(item: &Item, references: &mut HashSet<String>) {
     match item {
         Item::DefConst(def_const) => collect_expr_references(def_const.value.as_ref(), references),
+        Item::DefFunction(def_fn) => {
+            collect_expr_references(def_fn.body.as_ref(), references);
+        }
+        Item::DefStatic(def_static) => {
+            collect_expr_references(def_static.value.as_ref(), references);
+        }
         Item::Module(module) => {
             for child in &module.items {
                 collect_item_references(child, references);

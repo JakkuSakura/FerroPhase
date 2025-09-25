@@ -299,6 +299,24 @@ impl ThirGenerator {
                 let block_ty = self.infer_block_type(&block_thir)?;
                 (thir::ExprKind::Block(block_thir), block_ty)
             }
+            hir::ExprKind::StdIoPrintln(println) => {
+                let func_expr = self.make_std_io_println_path_expr();
+
+                let mut args = Vec::new();
+                args.push(self.make_string_literal_expr(println.template.clone()));
+                for arg in println.args {
+                    args.push(self.transform_expr(arg)?);
+                }
+
+                (
+                    thir::ExprKind::Call {
+                        fun: Box::new(func_expr),
+                        args,
+                        from_hir_call: true,
+                    },
+                    self.create_unit_type(),
+                )
+            }
             hir::ExprKind::Unary(op, expr) => {
                 let expr_thir = self.transform_expr(*expr)?;
                 let op_thir = self.transform_unary_op(op);
@@ -906,6 +924,26 @@ impl ThirGenerator {
             ty: Box::new(types::Ty::int(types::IntTy::I8)),
             mutbl: types::Mutability::Not,
         }))
+    }
+
+    fn make_string_literal_expr(&mut self, template: String) -> thir::Expr {
+        thir::Expr {
+            thir_id: self.next_id(),
+            kind: thir::ExprKind::Literal(thir::Lit::Str(template)),
+            ty: self.create_string_type(),
+            span: Span::new(0, 0, 0),
+        }
+    }
+
+    fn make_std_io_println_path_expr(&mut self) -> thir::Expr {
+        let name = "std::io::println".to_string();
+        let def_id = self.type_context.lookup_value_def_id(&name);
+        thir::Expr {
+            thir_id: self.next_id(),
+            kind: thir::ExprKind::Path(thir::ItemRef { name, def_id }),
+            ty: self.create_unit_type(),
+            span: Span::new(0, 0, 0),
+        }
     }
 
     pub(super) fn create_wildcard_pattern(&mut self) -> thir::Pat {

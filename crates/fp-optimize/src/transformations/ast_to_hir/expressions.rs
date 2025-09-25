@@ -29,6 +29,7 @@ impl HirGenerator {
                 hir::ExprKind::Literal(hir::Lit::Bool(false))
             }
             Expr::FormatString(format_str) => self.transform_format_string_to_hir(format_str)?,
+            Expr::StdIoPrintln(println) => self.transform_std_io_println_to_hir(println)?,
             _ => {
                 return Err(crate::error::optimization_error(format!(
                     "Unimplemented AST expression type for HIR transformation: {:?}",
@@ -312,11 +313,8 @@ impl HirGenerator {
                 ))
             }
             ast::ExprInvokeTarget::Function(locator) => {
-                // Handle println! formatted calls specially to preserve template
-                if locator.to_string() == "println" {
-                    if let Some(ast::Expr::FormatString(fmt)) = invoke.args.get(0) {
-                        return self.transform_format_like_call(fmt, &invoke.args[1..]);
-                    }
+                if let Some(std_println) = ast::ExprStdIoPrintln::from_invoke(invoke) {
+                    return self.transform_std_io_println_to_hir(&std_println);
                 }
 
                 let func_expr = hir::Expr {
@@ -544,55 +542,46 @@ impl HirGenerator {
         &mut self,
         format_str: &ast::ExprFormatString,
     ) -> Result<hir::ExprKind> {
-        self.transform_format_like_call(format_str, &[])
+        self.transform_std_io_println_to_hir(&ast::ExprStdIoPrintln {
+            format: format_str.clone(),
+            newline: true,
+        })
     }
 
-    pub(super) fn transform_format_like_call(
+    pub(super) fn transform_std_io_println_to_hir(
         &mut self,
-        format_str: &ast::ExprFormatString,
-        trailing_args: &[ast::Expr],
+        println: &ast::ExprStdIoPrintln,
     ) -> Result<hir::ExprKind> {
         tracing::debug!(
-            "Preserving structured format string with {} parts and {} captured args",
-            format_str.parts.len(),
-            format_str.args.len()
+            "Lowering std::io::println with {} template parts and {} captured args",
+            println.format.parts.len(),
+            println.format.args.len()
         );
 
+        if !println.format.kwargs.is_empty() {
+            return Err(crate::error::optimization_error(
+                "Named arguments for println! are not yet supported",
+            ));
+        }
+
         let mut template = String::new();
-        for part in &format_str.parts {
+        for part in &println.format.parts {
             match part {
                 ast::FormatTemplatePart::Literal(text) => template.push_str(text),
                 ast::FormatTemplatePart::Placeholder(_) => template.push_str("{}"),
             }
         }
 
-        let mut call_args = Vec::new();
-        call_args.push(hir::Expr {
-            hir_id: self.next_id(),
-            kind: hir::ExprKind::Literal(hir::Lit::Str(template)),
-            span: self.create_span(1),
-        });
-
-        for arg in &format_str.args {
-            call_args.push(self.transform_expr_to_hir(arg)?);
-        }
-        for arg in trailing_args {
-            call_args.push(self.transform_expr_to_hir(arg)?);
+        let mut args = Vec::new();
+        for arg in &println.format.args {
+            args.push(self.transform_expr_to_hir(arg)?);
         }
 
-        let func_expr = hir::Expr {
-            hir_id: self.next_id(),
-            kind: hir::ExprKind::Path(hir::Path {
-                segments: vec![hir::PathSegment {
-                    name: "println".to_string(),
-                    args: None,
-                }],
-                res: None,
-            }),
-            span: self.create_span(1),
-        };
-
-        Ok(hir::ExprKind::Call(Box::new(func_expr), call_args))
+        Ok(hir::ExprKind::StdIoPrintln(hir::StdIoPrintln {
+            template,
+            args,
+            newline: println.newline,
+        }))
     }
 
     pub(super) fn transform_call_args(&mut self, args: &[ast::Expr]) -> Result<Vec<hir::Expr>> {

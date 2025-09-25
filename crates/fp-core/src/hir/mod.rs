@@ -120,6 +120,7 @@ pub enum ExprKind {
     Struct(Path, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Block(Block),
+    StdIoPrintln(StdIoPrintln),
     Let(Pat, Box<Ty>, Option<Box<Expr>>),
     Assign(Box<Expr>, Box<Expr>),
     Return(Option<Box<Expr>>),
@@ -134,6 +135,13 @@ pub struct StructExprField {
     pub hir_id: HirId,
     pub name: Symbol,
     pub expr: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StdIoPrintln {
+    pub template: String,
+    pub args: Vec<Expr>,
+    pub newline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
