@@ -1,12 +1,14 @@
 // Orchestrator: 3-Phase Const Evaluation System
 // Implements the comprehensive const evaluation system from ConstEval.md
 
+use crate::error::optimization_error;
 use crate::orchestrators::InterpretationOrchestrator;
 use crate::queries::{DependencyQueries, TypeQueries};
 use crate::utils::{ConstEval, ConstEvalTracker, EvaluationContext, IntrinsicEvaluationContext};
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
+use fp_core::id::Locator;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -87,6 +89,9 @@ impl ConstEvaluationOrchestrator {
         // Register basic types from the AST
         self.type_queries.register_basic_types(ast)?;
 
+        // Make type definitions available to the interpretation context
+        self.register_type_bindings(ast, ctx);
+
         // Validate non-const type references
         self.type_queries.validate_basic_references(ast, ctx)?;
 
@@ -135,6 +140,9 @@ impl ConstEvaluationOrchestrator {
         // Apply accumulated mutations to AST
         self.const_eval_tracker.apply(ast)?;
 
+        // Inline constant expressions now that const results are in context
+        self.inline_constant_expressions(ast, ctx)?;
+
         debug!("Phase 2 completed: Const evaluation operations applied");
         Ok(())
     }
@@ -165,21 +173,428 @@ impl ConstEvaluationOrchestrator {
     /// Evaluate a single const block
     /// Delegates to the InterpretationOrchestrator for actual evaluation
     fn evaluate_const_block(&mut self, block_id: u64, ctx: &SharedScopedContext) -> Result<()> {
-        let const_block = self.evaluation_context.get_const_block(block_id)?;
+        let (expr, name) = {
+            let const_block = self.evaluation_context.get_const_block(block_id)?;
+            (const_block.expr.clone(), const_block.name.clone())
+        };
 
         // Delegate actual expression evaluation to the interpretation orchestrator
         // The interpretation orchestrator knows how to handle const expressions and
         // intrinsics that may request AST mutations
-        let result = self.interpreter.evaluate_const_expression(
-            &const_block.expr,
-            ctx,
-            &self.intrinsic_context,
-        )?;
+        let result =
+            self.interpreter
+                .evaluate_const_expression(&expr, ctx, &self.intrinsic_context)?;
 
-        // Store the result
-        self.evaluation_context.set_block_result(block_id, result)?;
+        // Store the result for later queries
+        self.evaluation_context
+            .set_block_result(block_id, result.clone())?;
+
+        // Expose evaluated consts through the shared context so dependent blocks resolve
+        if let Some(name) = name {
+            ctx.insert_value_with_ctx(name, result.clone());
+        }
 
         Ok(())
+    }
+
+    /// Populate the shared context with structural and alias type bindings so the
+    /// interpreter can resolve identifiers like `Config` during const evaluation.
+    fn register_type_bindings(&self, node: &Node, ctx: &SharedScopedContext) {
+        match node {
+            Node::Item(item) => self.register_type_in_item(item, ctx),
+            Node::Expr(expr) => self.register_type_in_expr(expr, ctx),
+            Node::File(file) => {
+                for item in &file.items {
+                    self.register_type_in_item(item, ctx);
+                }
+            }
+        }
+    }
+
+    fn inline_constant_expressions(
+        &self,
+        node: &mut Node,
+        ctx: &SharedScopedContext,
+    ) -> Result<()> {
+        match node {
+            Node::Item(item) => self.inline_constants_in_item(item, ctx)?,
+            Node::Expr(expr) => self.inline_constants_in_expr(expr, ctx)?,
+            Node::File(file) => {
+                for item in &mut file.items {
+                    self.inline_constants_in_item(item, ctx)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn inline_constants_in_item(&self, item: &mut Item, ctx: &SharedScopedContext) -> Result<()> {
+        match item {
+            Item::DefFunction(def_fn) => {
+                self.inline_constants_in_expr(def_fn.body.as_mut(), ctx)?
+            }
+            Item::Module(module) => {
+                for child in &mut module.items {
+                    self.inline_constants_in_item(child, ctx)?;
+                }
+            }
+            Item::Impl(item_impl) => {
+                for child in &mut item_impl.items {
+                    self.inline_constants_in_item(child, ctx)?;
+                }
+            }
+            Item::Expr(expr) => self.inline_constants_in_expr(expr, ctx)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn inline_constants_in_expr(&self, expr: &mut Expr, ctx: &SharedScopedContext) -> Result<()> {
+        use fp_core::ast::Expr as E;
+
+        match expr {
+            E::Block(block) => {
+                for stmt in &mut block.stmts {
+                    match stmt {
+                        BlockStmt::Item(item) => {
+                            self.inline_constants_in_item(item.as_mut(), ctx)?
+                        }
+                        BlockStmt::Expr(inner) => {
+                            self.inline_constants_in_expr(inner.expr.as_mut(), ctx)?;
+                        }
+                        BlockStmt::Let(let_stmt) => {
+                            if let Some(init) = let_stmt.init.as_mut() {
+                                self.inline_constants_in_expr(init, ctx)?;
+                            }
+                            if let Some(diverge) = let_stmt.diverge.as_mut() {
+                                self.inline_constants_in_expr(diverge, ctx)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            E::If(if_expr) => {
+                self.inline_constants_in_expr(if_expr.cond.as_mut(), ctx)?;
+                self.inline_constants_in_expr(if_expr.then.as_mut(), ctx)?;
+                if let Some(elze) = if_expr.elze.as_mut() {
+                    self.inline_constants_in_expr(elze, ctx)?;
+                }
+            }
+            E::Invoke(invoke) => {
+                if let ExprInvokeTarget::Expr(target) = &mut invoke.target {
+                    self.inline_constants_in_expr(target.as_mut(), ctx)?;
+                }
+                for arg in &mut invoke.args {
+                    self.inline_constants_in_expr(arg, ctx)?;
+                }
+                if let Some(new_invoke) = self.render_const_format_call(invoke, ctx)? {
+                    *expr = Expr::Invoke(new_invoke);
+                    return Ok(());
+                }
+
+                return Ok(());
+            }
+            E::StdIoPrintln(println_expr) => {
+                for arg in &mut println_expr.format.args {
+                    self.inline_constants_in_expr(arg, ctx)?;
+                }
+                if let Some(rendered) = self.render_const_std_println(println_expr, ctx)? {
+                    *expr = Expr::StdIoPrintln(rendered);
+                    return Ok(());
+                }
+
+                return Ok(());
+            }
+            E::Select(select) => {
+                self.inline_constants_in_expr(select.obj.as_mut(), ctx)?;
+            }
+            E::Struct(struct_expr) => {
+                self.inline_constants_in_expr(struct_expr.name.as_mut(), ctx)?;
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.inline_constants_in_expr(value, ctx)?;
+                    }
+                }
+            }
+            E::Tuple(tuple) => {
+                for value in &mut tuple.values {
+                    self.inline_constants_in_expr(value, ctx)?;
+                }
+            }
+            E::Array(array) => {
+                for value in &mut array.values {
+                    self.inline_constants_in_expr(value, ctx)?;
+                }
+            }
+            E::Assign(assign) => {
+                self.inline_constants_in_expr(assign.target.as_mut(), ctx)?;
+                self.inline_constants_in_expr(assign.value.as_mut(), ctx)?;
+            }
+            E::Let(let_expr) => {
+                self.inline_constants_in_expr(let_expr.expr.as_mut(), ctx)?;
+            }
+            E::BinOp(binop) => {
+                self.inline_constants_in_expr(binop.lhs.as_mut(), ctx)?;
+                self.inline_constants_in_expr(binop.rhs.as_mut(), ctx)?;
+            }
+            E::UnOp(unop) => self.inline_constants_in_expr(unop.val.as_mut(), ctx)?,
+            E::FormatString(format_str) => {
+                for arg in &mut format_str.args {
+                    self.inline_constants_in_expr(arg, ctx)?;
+                }
+            }
+            E::Value(_) | E::Locator(_) | E::Any(_) => {}
+            _ => {}
+        }
+
+        self.try_fold_expr(expr, ctx)?;
+        Ok(())
+    }
+
+    fn try_fold_expr(&self, expr: &mut Expr, ctx: &SharedScopedContext) -> Result<()> {
+        // Avoid folding calls or other effectful expressions
+        if matches!(
+            expr,
+            Expr::Invoke(_) | Expr::Assign(_) | Expr::Loop(_) | Expr::While(_)
+        ) {
+            return Ok(());
+        }
+
+        let cloned = expr.clone();
+        match self
+            .interpreter
+            .evaluate_const_expression(&cloned, ctx, &self.intrinsic_context)
+        {
+            Ok(val @ (Value::Int(_) | Value::Bool(_) | Value::Decimal(_) | Value::String(_))) => {
+                *expr = Expr::value(val);
+            }
+            Ok(_) | Err(_) => {}
+        }
+        Ok(())
+    }
+
+    fn render_const_format_call(
+        &self,
+        invoke: &ExprInvoke,
+        ctx: &SharedScopedContext,
+    ) -> Result<Option<ExprInvoke>> {
+        // Only handle println!/println
+        let target_name = match &invoke.target {
+            ExprInvokeTarget::Function(Locator::Ident(ident)) => ident.as_str(),
+            ExprInvokeTarget::Function(Locator::Path(path)) if path.segments.len() == 1 => {
+                path.segments[0].as_str()
+            }
+            _ => return Ok(None),
+        };
+
+        if target_name != "println" && target_name != "println!" {
+            return Ok(None);
+        }
+
+        if invoke.args.is_empty() {
+            return Ok(None);
+        }
+
+        let format_expr = &invoke.args[0];
+        if !matches!(format_expr, Expr::FormatString(_)) {
+            return Ok(None);
+        }
+
+        let evaluated = self
+            .interpreter
+            .interpret_expr(format_expr, ctx)
+            .and_then(|value| match value {
+                Value::String(s) => Ok(s.value),
+                _ => Err(optimization_error("format string did not produce string")),
+            });
+
+        if let Ok(rendered) = evaluated {
+            // Replace invoke args with single literal string
+            let new_args = vec![Expr::value(Value::string(rendered))];
+            let mut new_invoke = invoke.clone();
+            new_invoke.args = new_args;
+            return Ok(Some(new_invoke));
+        }
+
+        Ok(None)
+    }
+
+    fn render_const_std_println(
+        &self,
+        println_expr: &ExprStdIoPrintln,
+        ctx: &SharedScopedContext,
+    ) -> Result<Option<ExprStdIoPrintln>> {
+        let format_expr = Expr::FormatString(println_expr.format.clone());
+        let evaluated = self
+            .interpreter
+            .interpret_expr(&format_expr, ctx)
+            .and_then(|value| match value {
+                Value::String(s) => Ok(s.value),
+                _ => Err(optimization_error("format string did not produce string")),
+            });
+
+        if let Ok(rendered) = evaluated {
+            let simplified = ExprStdIoPrintln {
+                format: ExprFormatString {
+                    parts: vec![FormatTemplatePart::Literal(rendered)],
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
+                newline: println_expr.newline,
+            };
+            return Ok(Some(simplified));
+        }
+
+        Ok(None)
+    }
+
+    fn register_type_in_item(&self, item: &Item, ctx: &SharedScopedContext) {
+        match item {
+            Item::DefStruct(def_struct) => {
+                ctx.insert_value_with_ctx(
+                    def_struct.name.clone(),
+                    Value::Type(Ty::Struct(def_struct.value.clone())),
+                );
+            }
+            Item::DefType(def_type) => {
+                ctx.insert_value_with_ctx(
+                    def_type.name.clone(),
+                    Value::Type(def_type.value.clone()),
+                );
+            }
+            Item::Module(module) => {
+                for child in &module.items {
+                    self.register_type_in_item(child, ctx);
+                }
+            }
+            Item::Impl(item_impl) => {
+                for child in &item_impl.items {
+                    self.register_type_in_item(child, ctx);
+                }
+            }
+            Item::DefFunction(def_fn) => {
+                self.register_type_in_expr(def_fn.body.as_ref(), ctx);
+            }
+            Item::Expr(expr) => self.register_type_in_expr(expr, ctx),
+            _ => {}
+        }
+    }
+
+    fn register_type_in_expr(&self, expr: &Expr, ctx: &SharedScopedContext) {
+        match expr {
+            Expr::Block(block) => {
+                for stmt in &block.stmts {
+                    match stmt {
+                        BlockStmt::Item(item) => self.register_type_in_item(item.as_ref(), ctx),
+                        BlockStmt::Let(let_stmt) => {
+                            if let Some(init) = &let_stmt.init {
+                                self.register_type_in_expr(init, ctx);
+                            }
+                            if let Some(diverge) = &let_stmt.diverge {
+                                self.register_type_in_expr(diverge, ctx);
+                            }
+                        }
+                        BlockStmt::Expr(inner) => {
+                            self.register_type_in_expr(inner.expr.as_ref(), ctx);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Expr::If(if_expr) => {
+                self.register_type_in_expr(&if_expr.cond, ctx);
+                self.register_type_in_expr(&if_expr.then, ctx);
+                if let Some(elze) = &if_expr.elze {
+                    self.register_type_in_expr(elze, ctx);
+                }
+            }
+            Expr::Invoke(invoke) => {
+                for arg in &invoke.args {
+                    self.register_type_in_expr(arg, ctx);
+                }
+                if let ExprInvokeTarget::Expr(target) = &invoke.target {
+                    self.register_type_in_expr(target.as_ref(), ctx);
+                }
+            }
+            Expr::Let(let_expr) => {
+                self.register_type_in_expr(let_expr.expr.as_ref(), ctx);
+            }
+            Expr::Assign(assign) => {
+                self.register_type_in_expr(assign.target.as_ref(), ctx);
+                self.register_type_in_expr(assign.value.as_ref(), ctx);
+            }
+            Expr::Struct(struct_expr) => {
+                self.register_type_in_expr(struct_expr.name.as_ref(), ctx);
+                for field in &struct_expr.fields {
+                    if let Some(value) = &field.value {
+                        self.register_type_in_expr(value, ctx);
+                    }
+                }
+            }
+            Expr::Tuple(tuple) => {
+                for value in &tuple.values {
+                    self.register_type_in_expr(value, ctx);
+                }
+            }
+            Expr::Array(array) => {
+                for value in &array.values {
+                    self.register_type_in_expr(value, ctx);
+                }
+            }
+            Expr::Value(value) => self.register_type_in_value(value.as_ref(), ctx),
+            Expr::Item(item) => self.register_type_in_item(item, ctx),
+            _ => {}
+        }
+    }
+
+    fn register_type_in_value(&self, value: &Value, ctx: &SharedScopedContext) {
+        match value {
+            Value::Expr(expr) => self.register_type_in_expr(expr, ctx),
+            Value::Struct(value_struct) => {
+                for field in &value_struct.structural.fields {
+                    self.register_type_in_value(&field.value, ctx);
+                }
+            }
+            Value::Structural(value_structural) => {
+                for field in &value_structural.fields {
+                    self.register_type_in_value(&field.value, ctx);
+                }
+            }
+            Value::Tuple(tuple) => {
+                for value in &tuple.values {
+                    self.register_type_in_value(value, ctx);
+                }
+            }
+            Value::Type(ty) => {
+                // Ensure nested types are also registered
+                self.register_nested_type(ty, ctx);
+            }
+            _ => {}
+        }
+    }
+
+    fn register_nested_type(&self, ty: &Ty, ctx: &SharedScopedContext) {
+        match ty {
+            Ty::Struct(struct_ty) => {
+                ctx.insert_value_with_ctx(
+                    struct_ty.name.clone(),
+                    Value::Type(Ty::Struct(struct_ty.clone())),
+                );
+                for field in &struct_ty.fields {
+                    self.register_nested_type(&field.value, ctx);
+                }
+            }
+            Ty::Tuple(tuple) => {
+                for ty in &tuple.types {
+                    self.register_nested_type(ty, ctx);
+                }
+            }
+            Ty::Vec(vec_ty) => self.register_nested_type(&vec_ty.ty, ctx),
+            Ty::Reference(reference) => self.register_nested_type(&reference.ty, ctx),
+            Ty::Expr(expr) => self.register_type_in_expr(expr, ctx),
+            _ => {}
+        }
     }
 
     /// Get the results of const evaluation

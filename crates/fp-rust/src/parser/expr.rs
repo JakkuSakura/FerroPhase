@@ -341,12 +341,15 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
 
     // Handle empty println!()
     if tokens_str.trim().is_empty() {
-        return Ok(Expr::Invoke(ExprInvoke {
-            target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(Ident::new(
-                "println",
-            )))),
-            args: vec![],
-        }));
+        let println_expr = Expr::StdIoPrintln(ExprStdIoPrintln {
+            format: ExprFormatString {
+                parts: vec![FormatTemplatePart::Literal(String::new())],
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
+            newline: true,
+        });
+        return Ok(println_expr);
     }
 
     // Parse as function call arguments - wrap in parentheses to make it a valid function call
@@ -367,17 +370,15 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
                         // Parse format string into template parts
                         let format_args = args[1..].to_vec();
                         let parts = parse_format_template(&format_str.value)?;
-                        let format_expr = Expr::FormatString(ExprFormatString {
+                        let format = ExprFormatString {
                             parts,
                             args: format_args,
                             kwargs: Vec::new(), // No named args for now
-                        });
+                        };
 
-                        return Ok(Expr::Invoke(ExprInvoke {
-                            target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(
-                                Ident::new("println"),
-                            ))),
-                            args: vec![format_expr],
+                        return Ok(Expr::StdIoPrintln(ExprStdIoPrintln {
+                            format,
+                            newline: true,
                         }));
                     }
                 }
@@ -393,11 +394,13 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
         }
         Err(_) => {
             // If parsing fails, fall back to treating it as a string literal
-            Ok(Expr::Invoke(ExprInvoke {
-                target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(Ident::new(
-                    "println",
-                )))),
-                args: vec![Expr::value(Value::String(ValueString::new_ref(tokens_str)))],
+            Ok(Expr::StdIoPrintln(ExprStdIoPrintln {
+                format: ExprFormatString {
+                    parts: vec![FormatTemplatePart::Literal(tokens_str)],
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
+                newline: true,
             }))
         }
     }

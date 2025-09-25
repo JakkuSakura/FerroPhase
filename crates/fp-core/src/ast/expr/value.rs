@@ -101,6 +101,14 @@ common_struct! {
     }
 }
 
+common_struct! {
+    /// Canonical representation of `std::io::println` invocations after std-lib normalisation.
+    pub struct ExprStdIoPrintln {
+        pub format: ExprFormatString,
+        pub newline: bool,
+    }
+}
+
 impl Display for ExprFormatString {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "format!(\"")?;
@@ -151,6 +159,79 @@ impl Display for FormatArgRef {
 impl Display for FormatKwArg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}={}", self.name, self.value)
+    }
+}
+
+impl ExprStdIoPrintln {
+    /// Attempt to recognise a canonical `std::io::println` invocation inside a generic call expression.
+    pub fn from_invoke(invoke: &ExprInvoke) -> Option<Self> {
+        use crate::ast::Expr;
+
+        let matches_locator = match &invoke.target {
+            ExprInvokeTarget::Function(locator) => {
+                match locator {
+                    Locator::Ident(ident) => ident.name == "println",
+                    Locator::Path(path) => {
+                        let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+                        matches!(names.as_slice(), ["println"]) || matches!(names.as_slice(), ["std", "io", "println"])
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+
+        if !matches_locator {
+            return None;
+        }
+
+        if invoke.args.is_empty() {
+            let format = ExprFormatString {
+                parts: vec![FormatTemplatePart::Literal(String::new())],
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            };
+            return Some(Self {
+                format,
+                newline: true,
+            });
+        }
+
+        match &invoke.args[0] {
+            Expr::FormatString(fmt) => {
+                let mut format = fmt.clone();
+                if invoke.args.len() > 1 {
+                    format
+                        .args
+                        .extend(invoke.args[1..].iter().cloned());
+                }
+                Some(Self {
+                    format,
+                    newline: true,
+                })
+            }
+            Expr::Value(value) => {
+                if let Value::String(str_val) = &**value {
+                    let mut format = ExprFormatString {
+                        parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                    };
+                    if invoke.args.len() > 1 {
+                        format
+                            .args
+                            .extend(invoke.args[1..].iter().cloned());
+                    }
+                    Some(Self {
+                        format,
+                        newline: true,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 }
 

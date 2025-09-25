@@ -390,106 +390,100 @@ File(
                                 ),
                                 Expr(
                                     BlockStmtExpr {
-                                        expr: Invoke(
-                                            ExprInvoke {
-                                                target: Function(
-                                                    #println,
-                                                ),
-                                                args: [
-                                                    FormatString(
-                                                        ExprFormatString {
-                                                            parts: [
-                                                                Literal(
-                                                                    "Config: buffer=",
-                                                                ),
-                                                                Placeholder(
-                                                                    FormatPlaceholder {
-                                                                        arg_ref: Implicit,
-                                                                        format_spec: None,
-                                                                    },
-                                                                ),
-                                                                Literal(
-                                                                    "KB, connections=",
-                                                                ),
-                                                                Placeholder(
-                                                                    FormatPlaceholder {
-                                                                        arg_ref: Implicit,
-                                                                        format_spec: None,
-                                                                    },
-                                                                ),
-                                                                Literal(
-                                                                    ", timeout=",
-                                                                ),
-                                                                Placeholder(
-                                                                    FormatPlaceholder {
-                                                                        arg_ref: Implicit,
-                                                                        format_spec: None,
-                                                                    },
-                                                                ),
-                                                                Literal(
-                                                                    "ms, debug=",
-                                                                ),
-                                                                Placeholder(
-                                                                    FormatPlaceholder {
-                                                                        arg_ref: Implicit,
-                                                                        format_spec: None,
-                                                                    },
-                                                                ),
-                                                            ],
-                                                            args: [
-                                                                BinOp(
-                                                                    ExprBinOp {
-                                                                        kind: Div,
-                                                                        lhs: Select(
-                                                                            ExprSelect {
-                                                                                obj: Locator(
-                                                                                    #DEFAULT_CONFIG,
-                                                                                ),
-                                                                                field: #buffer_size,
-                                                                                select: Field,
-                                                                            },
-                                                                        ),
-                                                                        rhs: Value(
-                                                                            Int(
-                                                                                ValueInt {
-                                                                                    value: 1024,
-                                                                                },
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                Select(
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Config: buffer=",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            "KB, connections=",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            ", timeout=",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            "ms, debug=",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        BinOp(
+                                                            ExprBinOp {
+                                                                kind: Div,
+                                                                lhs: Select(
                                                                     ExprSelect {
                                                                         obj: Locator(
                                                                             #DEFAULT_CONFIG,
                                                                         ),
-                                                                        field: #max_connections,
+                                                                        field: #buffer_size,
                                                                         select: Field,
                                                                     },
                                                                 ),
-                                                                Select(
-                                                                    ExprSelect {
-                                                                        obj: Locator(
-                                                                            #DEFAULT_CONFIG,
-                                                                        ),
-                                                                        field: #timeout_ms,
-                                                                        select: Field,
-                                                                    },
+                                                                rhs: Value(
+                                                                    Int(
+                                                                        ValueInt {
+                                                                            value: 1024,
+                                                                        },
+                                                                    ),
                                                                 ),
-                                                                Select(
-                                                                    ExprSelect {
-                                                                        obj: Locator(
-                                                                            #DEFAULT_CONFIG,
-                                                                        ),
-                                                                        field: #debug_level,
-                                                                        select: Field,
-                                                                    },
+                                                            },
+                                                        ),
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #DEFAULT_CONFIG,
                                                                 ),
-                                                            ],
-                                                            kwargs: [],
-                                                        },
-                                                    ),
-                                                ],
+                                                                field: #max_connections,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #DEFAULT_CONFIG,
+                                                                ),
+                                                                field: #timeout_ms,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                        Select(
+                                                            ExprSelect {
+                                                                obj: Locator(
+                                                                    #DEFAULT_CONFIG,
+                                                                ),
+                                                                field: #debug_level,
+                                                                select: Field,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
                                             },
                                         ),
                                         semicolon: Some(
@@ -499,46 +493,40 @@ File(
                                 ),
                                 Expr(
                                     BlockStmtExpr {
-                                        expr: Invoke(
-                                            ExprInvoke {
-                                                target: Function(
-                                                    #println,
-                                                ),
-                                                args: [
-                                                    FormatString(
-                                                        ExprFormatString {
-                                                            parts: [
-                                                                Literal(
-                                                                    "Computed: factorial=",
-                                                                ),
-                                                                Placeholder(
-                                                                    FormatPlaceholder {
-                                                                        arg_ref: Implicit,
-                                                                        format_spec: None,
-                                                                    },
-                                                                ),
-                                                                Literal(
-                                                                    ", is_pow2=",
-                                                                ),
-                                                                Placeholder(
-                                                                    FormatPlaceholder {
-                                                                        arg_ref: Implicit,
-                                                                        format_spec: None,
-                                                                    },
-                                                                ),
-                                                            ],
-                                                            args: [
-                                                                Locator(
-                                                                    #FACTORIAL_5,
-                                                                ),
-                                                                Locator(
-                                                                    #IS_POWER_OF_TWO,
-                                                                ),
-                                                            ],
-                                                            kwargs: [],
-                                                        },
-                                                    ),
-                                                ],
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Computed: factorial=",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                        Literal(
+                                                            ", is_pow2=",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #FACTORIAL_5,
+                                                        ),
+                                                        Locator(
+                                                            #IS_POWER_OF_TWO,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
                                             },
                                         ),
                                         semicolon: Some(
