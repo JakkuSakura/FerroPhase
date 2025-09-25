@@ -168,16 +168,15 @@ impl ExprStdIoPrintln {
         use crate::ast::Expr;
 
         let matches_locator = match &invoke.target {
-            ExprInvokeTarget::Function(locator) => {
-                match locator {
-                    Locator::Ident(ident) => ident.name == "println",
-                    Locator::Path(path) => {
-                        let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
-                        matches!(names.as_slice(), ["println"]) || matches!(names.as_slice(), ["std", "io", "println"])
-                    }
-                    _ => false,
+            ExprInvokeTarget::Function(locator) => match locator {
+                Locator::Ident(ident) => ident.name == "println",
+                Locator::Path(path) => {
+                    let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
+                    matches!(names.as_slice(), ["println"])
+                        || matches!(names.as_slice(), ["std", "io", "println"])
                 }
-            }
+                _ => false,
+            },
             _ => false,
         };
 
@@ -201,9 +200,7 @@ impl ExprStdIoPrintln {
             Expr::FormatString(fmt) => {
                 let mut format = fmt.clone();
                 if invoke.args.len() > 1 {
-                    format
-                        .args
-                        .extend(invoke.args[1..].iter().cloned());
+                    format.args.extend(invoke.args[1..].iter().cloned());
                 }
                 Some(Self {
                     format,
@@ -218,9 +215,7 @@ impl ExprStdIoPrintln {
                         kwargs: Vec::new(),
                     };
                     if invoke.args.len() > 1 {
-                        format
-                            .args
-                            .extend(invoke.args[1..].iter().cloned());
+                        format.args.extend(invoke.args[1..].iter().cloned());
                     }
                     Some(Self {
                         format,

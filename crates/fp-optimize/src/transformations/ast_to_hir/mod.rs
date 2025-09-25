@@ -14,7 +14,16 @@ mod expressions;
 #[cfg(test)]
 mod tests;
 
+// Re-export error types from fp-core for convenience
+pub use fp_core::error::{
+    TransformationError, TransformationErrorKind, TransformationStage, TransformationWarning,
+    TransformationWarningKind,
+};
+
 /// Generator for transforming AST to HIR (High-level IR)
+///
+/// NOTE: This is transitioning from stateful to share-nothing architecture.
+/// The generator now supports error tolerance and will gradually become more pure.
 pub struct HirGenerator {
     next_hir_id: hir::HirId,
     next_def_id: hir::DefId,
@@ -27,6 +36,16 @@ pub struct HirGenerator {
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
     preassigned_def_ids: HashMap<usize, hir::DefId>,
+
+    // NEW: Error tolerance support
+    /// Collected errors during transformation (non-fatal)
+    pub errors: Vec<TransformationError>,
+    /// Collected warnings during transformation  
+    pub warnings: Vec<TransformationWarning>,
+    /// Whether error recovery should be attempted
+    pub error_tolerance: bool,
+    /// Maximum number of errors to collect before giving up
+    pub max_errors: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -71,20 +90,125 @@ impl HirGenerator {
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
+
+            // Initialize error tolerance support
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            error_tolerance: false, // Disabled by default for backward compatibility
+            max_errors: 10,
         }
     }
 
+    /// Create a new HIR generator with error tolerance enabled
+    pub fn with_error_tolerance(max_errors: usize) -> Self {
+        let mut generator = Self::new();
+        generator.error_tolerance = true;
+        generator.max_errors = max_errors;
+        generator
+    }
+
+    /// Enable error tolerance on an existing generator
+    pub fn enable_error_tolerance(&mut self, max_errors: usize) -> &mut Self {
+        self.error_tolerance = true;
+        self.max_errors = max_errors;
+        self
+    }
+
+    /// Add an error to the collection (for error tolerance mode)
+    fn add_error(&mut self, error: TransformationError) -> bool {
+        self.errors.push(error);
+        // Return false if we've hit the error limit (should stop transformation)
+        self.errors.len() < self.max_errors
+    }
+
+    /// Add a warning to the collection
+    fn add_warning(&mut self, warning: TransformationWarning) {
+        self.warnings.push(warning);
+    }
+
+    /// Check if we should continue after an error (in tolerance mode)
+    fn should_continue_after_error(&self) -> bool {
+        self.error_tolerance && self.errors.len() < self.max_errors
+    }
+
+    /// Create an error HIR expression for recovery
+    fn create_error_expr(&mut self) -> hir::Expr {
+        // Create a literal placeholder expression for error recovery
+        hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Literal(hir::Lit::Bool(false)), // Placeholder expression for recovery
+            span: Span::new(
+                self.current_file,
+                self.current_position,
+                self.current_position,
+            ),
+        }
+    }
+
+    /// Create an error HIR item for recovery  
+    fn create_error_item(&mut self) -> hir::Item {
+        // For now, skip creating error recovery items since HIR structure is complex
+        // In practice, error recovery at item level would handle this differently
+        panic!("Item-level error recovery not implemented yet")
+    }
+
+    /// Get all collected errors and warnings
+    pub fn take_diagnostics(&mut self) -> (Vec<TransformationError>, Vec<TransformationWarning>) {
+        (
+            std::mem::take(&mut self.errors),
+            std::mem::take(&mut self.warnings),
+        )
+    }
+
     fn handle_import(&mut self, import: &ast::ItemImport) -> Result<()> {
-        let entries = self.expand_import_tree(&import.tree, Vec::new())?;
+        let entries = match self.expand_import_tree(&import.tree, Vec::new()) {
+            Ok(entries) => entries,
+            Err(e) if self.error_tolerance => {
+                // In error tolerance mode, collect the error and continue
+                self.add_error(
+                    TransformationError::new(
+                        TransformationErrorKind::ImportError,
+                        TransformationStage::AstToHir,
+                        format!("Failed to expand import tree: {}", e),
+                    ) // No span available on ItemImport
+                    .with_suggestion("Check import syntax and module availability".to_string()),
+                );
+                return Ok(()); // Continue with empty imports
+            }
+            Err(e) => return Err(e), // Legacy behavior
+        };
+
         for (path_segments, alias) in entries {
             let value_res = self.lookup_global_res(&path_segments, PathResolutionScope::Value);
             let type_res = self.lookup_global_res(&path_segments, PathResolutionScope::Type);
 
             if value_res.is_none() && type_res.is_none() {
-                return Err(crate::error::optimization_error(format!(
-                    "Unresolved import: {}",
-                    path_segments.join("::")
-                )));
+                if self.error_tolerance {
+                    // Collect error and continue instead of early return
+                    let continue_processing = self.add_error(
+                        TransformationError::new(
+                            TransformationErrorKind::UnresolvedSymbol,
+                            TransformationStage::AstToHir,
+                            format!("Unresolved import: {}", path_segments.join("::")),
+                        ) // No span available on ItemImport
+                        .with_suggestions(vec![
+                            "Check if the module exists".to_string(),
+                            "Verify the import path".to_string(),
+                            "Make sure the symbol is exported".to_string(),
+                        ]),
+                    );
+
+                    if !continue_processing {
+                        return Err(crate::error::optimization_error("Too many import errors"));
+                    }
+                    continue; // Skip this import but continue with others
+                } else {
+                    // Legacy behavior: early return
+                    return Err(crate::error::optimization_error(format!(
+                        "Unresolved import: {}",
+                        path_segments.join("::")
+                    )));
+                }
             }
 
             if let Some(res) = value_res {
@@ -244,6 +368,12 @@ impl HirGenerator {
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
+
+            // Initialize error tolerance support
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            error_tolerance: false,
+            max_errors: 10,
         }
     }
 

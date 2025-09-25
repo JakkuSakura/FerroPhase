@@ -1,4 +1,6 @@
 use super::*;
+use fp_rust::parser::RustParser;
+use syn::parse::Parser;
 
 impl InterpretationOrchestrator {
     pub fn interpret_cond(&self, node: &ExprMatch, ctx: &SharedScopedContext) -> Result<Value> {
@@ -55,6 +57,10 @@ impl InterpretationOrchestrator {
             "print" if resolve => Ok(Value::any(builtin_print(self.serializer.clone()))),
             "println!" if resolve => Ok(Value::any(builtin_println(self.serializer.clone()))),
             "println" if resolve => Ok(Value::any(builtin_println(self.serializer.clone()))),
+            "strlen!" if resolve => Ok(Value::any(builtin_strlen())),
+            "strlen" if resolve => Ok(Value::any(builtin_strlen_fn())),
+            "concat!" if resolve => Ok(Value::any(builtin_concat())),
+            "concat" if resolve => Ok(Value::any(builtin_concat_fn())),
             "true" => Ok(Value::bool(true)),
             "false" => Ok(Value::bool(false)),
             "None" => Ok(Value::None(ValueNone)),
@@ -530,65 +536,18 @@ impl InterpretationOrchestrator {
 
                     // Handle strlen! macro
                     if raw_macro.raw.mac.path.is_ident("strlen") {
-                        // Parse the argument inside the macro
-                        let tokens = &raw_macro.raw.mac.tokens;
-                        let tokens_str = tokens.to_string();
-
-                        // Simple parsing: remove whitespace and try to interpret as identifier
-                        let arg_name = tokens_str.trim();
-
-                        // Try to get the value from context
-                        let ident = fp_core::id::Ident::new(arg_name);
-                        if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
-                            match value {
-                                Value::String(s) => return Ok(Value::int(s.value.len() as i64)),
-                                _ => opt_bail!(format!(
-                                    "strlen! expects string argument, got {:?}",
-                                    value
-                                )),
-                            }
-                        } else {
-                            opt_bail!(format!("strlen! could not find variable: {}", arg_name));
-                        }
+                        let values =
+                            self.evaluate_macro_arguments(&raw_macro.raw.mac.tokens, ctx)?;
+                        let builtin = builtin_strlen();
+                        return builtin.invoke(&values, ctx);
                     }
 
                     // Handle concat! macro
                     if raw_macro.raw.mac.path.is_ident("concat") {
-                        // Parse the arguments inside the macro
-                        let tokens = &raw_macro.raw.mac.tokens;
-                        let tokens_str = tokens.to_string();
-
-                        // Simple parsing: split by comma and evaluate each argument
-                        let mut result = String::new();
-
-                        for arg in tokens_str.split(',') {
-                            let arg = arg.trim();
-
-                            // Try to interpret as string literal first
-                            if arg.starts_with('"') && arg.ends_with('"') {
-                                // String literal - remove quotes
-                                let literal = &arg[1..arg.len() - 1];
-                                result.push_str(literal);
-                            } else {
-                                // Try to get the value from context
-                                let ident = fp_core::id::Ident::new(arg);
-                                if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
-                                    match value {
-                                        Value::String(s) => result.push_str(&s.value),
-                                        Value::Int(i) => result.push_str(&i.value.to_string()),
-                                        Value::Bool(b) => result.push_str(&b.value.to_string()),
-                                        _ => opt_bail!(format!(
-                                            "concat! cannot convert {:?} to string",
-                                            value
-                                        )),
-                                    }
-                                } else {
-                                    opt_bail!(format!("concat! could not find variable: {}", arg));
-                                }
-                            }
-                        }
-
-                        return Ok(Value::string(result));
+                        let values =
+                            self.evaluate_macro_arguments(&raw_macro.raw.mac.tokens, ctx)?;
+                        let builtin = builtin_concat();
+                        return builtin.invoke(&values, ctx);
                     }
 
                     // Handle introspection macros
@@ -753,6 +712,38 @@ impl InterpretationOrchestrator {
         ctx: &SharedScopedContext,
     ) -> Result<Value> {
         self.interpret_expr_common(node, ctx, false)
+    }
+
+    fn parse_macro_arguments(&self, tokens: &proc_macro2::TokenStream) -> Result<Vec<Expr>> {
+        let parser = RustParser::new();
+        let parsed = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
+            .parse2(tokens.clone())
+            .map_err(|err| {
+                optimization_error(format!("Failed to parse macro arguments: {}", err))
+            })?;
+
+        let mut expressions = Vec::with_capacity(parsed.len());
+        for syn_expr in parsed.into_iter() {
+            let expr = parser.parse_expr(syn_expr).map_err(|err| {
+                optimization_error(format!("Failed to lower macro argument: {}", err))
+            })?;
+            expressions.push(expr);
+        }
+
+        Ok(expressions)
+    }
+
+    fn evaluate_macro_arguments(
+        &self,
+        tokens: &proc_macro2::TokenStream,
+        ctx: &SharedScopedContext,
+    ) -> Result<Vec<Value>> {
+        let expressions = self.parse_macro_arguments(tokens)?;
+        let mut values = Vec::with_capacity(expressions.len());
+        for expr in expressions {
+            values.push(self.interpret_expr(&expr, ctx)?);
+        }
+        Ok(values)
     }
 
     pub fn evaluate_const_expression(

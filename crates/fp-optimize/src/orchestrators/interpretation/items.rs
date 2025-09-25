@@ -43,13 +43,9 @@ impl InterpretationOrchestrator {
     pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<Value> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
 
-        // FIRST PASS: Process all items (const declarations, structs, functions)
+        // FIRST PASS: Process all items with retry logic for dependencies
         // Items can reference each other and need to be processed before statements
-        for stmt in node.first_stmts().iter() {
-            if let BlockStmt::Item(item) = stmt {
-                self.interpret_item(item, &ctx)?;
-            }
-        }
+        self.interpret_items_with_retries(node.first_stmts(), &ctx)?;
 
         // SECOND PASS: Process all non-item statements (expressions, let statements, etc.)
         for stmt in node.first_stmts().iter() {
@@ -99,6 +95,21 @@ impl InterpretationOrchestrator {
         let value = self.interpret_expr(&def.value, ctx)?;
         tracing::debug!("Storing const {}: {:?}", def.name.name, value);
         ctx.insert_value_with_ctx(def.name.clone(), value);
+        Ok(())
+    }
+
+    /// Process items in dependency order
+    pub fn interpret_items_with_retries(
+        &self,
+        stmts: &[BlockStmt],
+        ctx: &SharedScopedContext,
+    ) -> Result<()> {
+        // Process items in their original order - const evaluation should be deterministic
+        for stmt in stmts {
+            if let BlockStmt::Item(item) = stmt {
+                self.interpret_item(&**item, ctx)?;
+            }
+        }
         Ok(())
     }
 

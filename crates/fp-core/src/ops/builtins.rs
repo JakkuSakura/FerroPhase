@@ -320,6 +320,55 @@ fn format_value(value: &Value) -> String {
         _ => format!("{:?}", value), // Fallback for complex types
     }
 }
+
+fn builtin_strlen_named(name: &str) -> BuiltinFn {
+    let ident = Ident::new(name);
+    let name_owned = name.to_string();
+    BuiltinFn::new_with_ident(ident, move |args, _ctx| {
+        let name = &name_owned;
+        if args.len() != 1 {
+            bail!("{} expects 1 argument, got: {:?}", name, args);
+        }
+
+        match &args[0] {
+            Value::String(s) => Ok(Value::int(s.value.len() as i64)),
+            Value::Bytes(b) => Ok(Value::int(b.value.len() as i64)),
+            other => bail!("{} expects a string-like argument, got: {:?}", name, other),
+        }
+    })
+}
+
+fn builtin_concat_named(name: &str) -> BuiltinFn {
+    let ident = Ident::new(name);
+    BuiltinFn::new_with_ident(ident, move |args, _ctx| {
+        if args.is_empty() {
+            return Ok(Value::string(String::new()));
+        }
+
+        let mut result = String::new();
+        for value in args {
+            result.push_str(&format_value(value));
+        }
+
+        Ok(Value::string(result))
+    })
+}
+
+pub fn builtin_strlen() -> BuiltinFn {
+    builtin_strlen_named("strlen!")
+}
+
+pub fn builtin_strlen_fn() -> BuiltinFn {
+    builtin_strlen_named("strlen")
+}
+
+pub fn builtin_concat() -> BuiltinFn {
+    builtin_concat_named("concat!")
+}
+
+pub fn builtin_concat_fn() -> BuiltinFn {
+    builtin_concat_named("concat")
+}
 pub fn builtin_some() -> BuiltinFn {
     BuiltinFn::new_with_ident("Some".into(), move |args, _ctx| {
         if args.len() != 1 {
