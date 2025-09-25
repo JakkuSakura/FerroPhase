@@ -16,6 +16,7 @@ pub struct Program {
 pub struct Item {
     pub hir_id: HirId,
     pub def_id: DefId,
+    pub visibility: Visibility,
     pub kind: ItemKind,
     pub span: Span,
 }

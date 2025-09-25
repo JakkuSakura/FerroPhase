@@ -14,7 +14,7 @@ fn int_ty() -> Ty {
 pub fn literal_expr(value: i64) -> Expr {
     Expr::new(
         0,
-        ExprKind::Literal(Lit::Int(value, thir::IntTy::I32)),
+        ExprKind::Literal(Lit::Int(value.into(), thir::IntTy::I32)),
         int_ty(),
         Span::new(0, 0, 0),
     )
