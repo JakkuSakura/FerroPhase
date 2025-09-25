@@ -6,6 +6,10 @@ pub mod thir_to_mir;
 use fp_core::error::Result;
 
 /// Shared interface for lowering steps between IR stages.
+///
+/// NOTE: This trait is being enhanced to support error tolerance while maintaining
+/// backward compatibility. All transformations now support collecting multiple errors
+/// instead of early termination.
 pub trait IrTransform<Src, Dest> {
     fn transform(&mut self, source: Src) -> Result<Dest>;
 }

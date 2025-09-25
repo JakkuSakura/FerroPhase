@@ -3,7 +3,8 @@
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput},
+    config::{DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig},
+    pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -22,6 +23,10 @@ pub struct CompileArgs {
     pub define: Vec<String>,
     pub run: bool,
     pub watch: bool,
+    /// Enable error tolerance (collect multiple errors instead of early exit)
+    pub error_tolerance: bool,
+    /// Maximum number of errors to collect (0 = unlimited)
+    pub max_errors: usize,
 }
 
 /// Execute the compile command
@@ -111,6 +116,8 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     define: args.define.clone(),
                     run: args.run,
                     watch: false, // Prevent recursion
+                    error_tolerance: args.error_tolerance,
+                    max_errors: args.max_errors,
                 },
                 config,
             )
@@ -133,19 +140,45 @@ async fn compile_file(
 ) -> Result<()> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
-    // Configure pipeline for compilation
-    let pipeline_config = PipelineConfig {
-        optimization_level: args.opt_level as u8,
-        print_ast: false,
-        print_passes: false,
-        target: args.target.clone(),
-        runtime: "literal".to_string(),
+    // Configure pipeline for compilation with new options
+    let target = match args.target.as_str() {
+        "rust" => PipelineTarget::Rust,
+        "llvm" => PipelineTarget::Llvm,
+        "binary" => PipelineTarget::Binary,
+        _ => PipelineTarget::Interpret,
     };
 
-    // Execute pipeline
+    let pipeline_options = PipelineOptions {
+        target,
+        runtime: RuntimeConfig {
+            runtime_type: "literal".to_string(),
+            options: std::collections::HashMap::new(),
+        },
+        source_language: None,
+        optimization_level: args.opt_level,
+        save_intermediates: false,
+        base_path: Some(output.with_extension("")),
+        debug: DebugOptions {
+            print_ast: false,
+            print_passes: false,
+            verbose: args.debug,
+        },
+        error_tolerance: ErrorToleranceOptions {
+            enabled: args.error_tolerance,
+            max_errors: if args.max_errors == 0 {
+                50
+            } else {
+                args.max_errors
+            }, // Default cap
+            show_all_errors: true,
+            continue_on_error: true,
+        },
+    };
+
+    // Execute pipeline with new options
     let pipeline = Pipeline::new();
     let pipeline_output = pipeline
-        .execute(PipelineInput::File(input.to_path_buf()), &pipeline_config)
+        .execute_with_options(PipelineInput::File(input.to_path_buf()), pipeline_options)
         .await?;
 
     // Write output to file
@@ -183,19 +216,30 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
         "binary" => {
             for file in files {
                 // Check if file is executable (has .out extension or no extension on Unix, .exe on Windows)
-                let is_executable = file.extension().map_or(false, |ext| ext == "out" || ext == "exe") 
+                let is_executable = file
+                    .extension()
+                    .map_or(false, |ext| ext == "out" || ext == "exe")
                     || (cfg!(unix) && file.extension().is_none());
 
                 if is_executable {
-                    println!("{} Running compiled binary: {}", style("🚀").cyan(), file.display());
+                    println!(
+                        "{} Running compiled binary: {}",
+                        style("🚀").cyan(),
+                        file.display()
+                    );
 
                     // Run the executable directly
-                    let run_output = tokio::process::Command::new(file)
-                        .output()
-                        .await
-                        .map_err(|e| {
-                            CliError::Compilation(format!("Failed to run executable '{}': {}", file.display(), e))
-                        })?;
+                    let run_output =
+                        tokio::process::Command::new(file)
+                            .output()
+                            .await
+                            .map_err(|e| {
+                                CliError::Compilation(format!(
+                                    "Failed to run executable '{}': {}",
+                                    file.display(),
+                                    e
+                                ))
+                            })?;
 
                     // Print stdout
                     let stdout = String::from_utf8_lossy(&run_output.stdout);
@@ -212,7 +256,11 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
                     // Check exit status
                     if !run_output.status.success() {
                         let exit_code = run_output.status.code().unwrap_or(-1);
-                        println!("{} Process exited with code: {}", style("⚠").yellow(), exit_code);
+                        println!(
+                            "{} Process exited with code: {}",
+                            style("⚠").yellow(),
+                            exit_code
+                        );
                     }
                 }
             }

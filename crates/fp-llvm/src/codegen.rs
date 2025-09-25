@@ -1,4 +1,5 @@
 use crate::context::LlvmContext;
+use crate::stdlib::CStdLib;
 use fp_core::{error::Result, lir, Error};
 use llvm_ir::constant::Float;
 use llvm_ir::module::{DLLStorageClass, GlobalVariable, Linkage, ThreadLocalMode, Visibility};
@@ -337,19 +338,17 @@ impl<'ctx> LirCodegen<'ctx> {
                 calling_convention: _calling_convention,
                 tail_call: _tail_call,
             } => {
-                let mut fn_name = match &function {
+                let fn_name = match &function {
                     lir::LirValue::Global(name, _) => name.clone(),
                     lir::LirValue::Function(name) => name.clone(),
                     _ => "".to_string(),
                 };
 
-                if fn_name == "println" || fn_name == "println!" || fn_name == "std::io::println" || fn_name.is_empty() {
-                    fn_name = "puts".to_string();
-                }
+                // Map std library functions to their runtime implementations
+                let runtime_fn_name = self.map_std_function_to_runtime(&fn_name);
 
-                if fn_name == "puts" {
-                    self.ensure_puts_decl();
-                }
+                // Ensure runtime function declaration exists
+                self.ensure_runtime_function_decl(&runtime_fn_name)?;
 
                 let i32_ref = self.llvm_ctx.module.types.i32();
                 let ptr_ref = self.llvm_ctx.module.types.pointer();
@@ -361,7 +360,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
                 let callee = either::Either::Right(Operand::ConstantOperand(ConstantRef::new(
                     Constant::GlobalReference {
-                        name: Name::Name(Box::new(fn_name.clone())),
+                        name: Name::Name(Box::new(runtime_fn_name.clone())),
                         ty: fn_ty.clone(),
                     },
                 )));
@@ -415,43 +414,71 @@ impl<'ctx> LirCodegen<'ctx> {
         Ok(())
     }
 
-    fn ensure_puts_decl(&mut self) {
-        let already = self
+    /// Map std library functions to their runtime implementations
+    fn map_std_function_to_runtime(&self, fn_name: &str) -> String {
+        match fn_name {
+            // I/O functions
+            "println" | "println!" | "std::io::println" => "puts".to_string(),
+            "print" | "print!" | "std::io::print" => "printf".to_string(),
+            "eprint" | "eprint!" | "std::io::eprint" => "fprintf".to_string(),
+            "eprintln" | "eprintln!" | "std::io::eprintln" => "fprintf".to_string(),
+
+            // Memory management functions
+            "std::alloc::alloc" => "malloc".to_string(),
+            "std::alloc::dealloc" => "free".to_string(),
+            "std::alloc::realloc" => "realloc".to_string(),
+
+            // Math functions (map to libm)
+            "std::f64::sin" => "sin".to_string(),
+            "std::f64::cos" => "cos".to_string(),
+            "std::f64::tan" => "tan".to_string(),
+            "std::f64::sqrt" => "sqrt".to_string(),
+            "std::f64::pow" => "pow".to_string(),
+            "std::f32::sin" => "sinf".to_string(),
+            "std::f32::cos" => "cosf".to_string(),
+            "std::f32::tan" => "tanf".to_string(),
+            "std::f32::sqrt" => "sqrtf".to_string(),
+            "std::f32::pow" => "powf".to_string(),
+
+            // String functions
+            "std::str::len" => "strlen".to_string(),
+            "std::str::cmp" => "strcmp".to_string(),
+
+            // Process functions
+            "std::process::exit" => "exit".to_string(),
+            "std::process::abort" => "abort".to_string(),
+
+            // For unknown functions, return as-is
+            _ => fn_name.to_string(),
+        }
+    }
+
+    /// Ensure runtime function declaration exists in LLVM module
+    fn ensure_runtime_function_decl(&mut self, fn_name: &str) -> Result<()> {
+        // Check if function already exists
+        let already_exists = self
             .llvm_ctx
             .module
             .functions
             .iter()
-            .any(|f| f.name == "puts");
-        if already {
-            return;
+            .any(|f| f.name == fn_name);
+
+        if already_exists {
+            return Ok(());
         }
 
-        let i32_ty = self.llvm_ctx.module.types.i32();
-        let ptr_ty = self.llvm_ctx.module.types.pointer();
-        let puts_fn = Function {
-            name: "puts".to_string(),
-            parameters: vec![function::Parameter {
-                name: Name::Name(Box::new("".to_string())),
-                ty: ptr_ty,
-                attributes: vec![],
-            }],
-            is_var_arg: false,
-            visibility: Visibility::Default,
-            linkage: Linkage::External,
-            calling_convention: function::CallingConvention::C,
-            section: None,
-            comdat: None,
-            alignment: 0,
-            garbage_collector_name: None,
-            personality_function: None,
-            basic_blocks: vec![],
-            function_attributes: vec![],
-            return_attributes: vec![],
-            dll_storage_class: DLLStorageClass::Default,
-            debugloc: None,
-            return_type: i32_ty,
-        };
-        self.llvm_ctx.module.functions.push(puts_fn);
+        // Try to get function declaration from C stdlib
+        if let Some(func_decl) = CStdLib::get_function_decl(fn_name, &self.llvm_ctx.module.types) {
+            self.llvm_ctx.module.functions.push(func_decl);
+            tracing::debug!("Added C stdlib function declaration: {}", fn_name);
+            Ok(())
+        } else {
+            // Return error for unknown functions
+            Err(Error::from(format!(
+                "Unknown runtime function '{}'. Available functions are those in the C standard library (stdio, stdlib, string, math, etc.)",
+                fn_name
+            )))
+        }
     }
 
     /// Generate LLVM IR for a LIR terminator

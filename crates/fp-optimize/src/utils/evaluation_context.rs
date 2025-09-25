@@ -4,7 +4,9 @@ use crate::queries::TypeQueries;
 use eyre::eyre;
 use fp_core::ast::*;
 use fp_core::error::Result;
+use fp_rust::parser::RustParser;
 use std::collections::{HashMap, HashSet};
+use syn::parse::Parser;
 
 /// Represents a const block or expression that needs evaluation
 #[derive(Debug, Clone)]
@@ -359,6 +361,25 @@ where
     }
 }
 
+fn parse_macro_exprs(tokens: &proc_macro2::TokenStream) -> Result<Vec<Expr>> {
+    let parsed = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
+        .parse2(tokens.clone())
+        .map_err(|err| {
+            fp_core::error::Error::Generic(eyre!("Failed to parse macro arguments: {}", err))
+        })?;
+
+    let parser = RustParser::new();
+    let mut expressions = Vec::with_capacity(parsed.len());
+    for syn_expr in parsed.into_iter() {
+        let expr = parser.parse_expr(syn_expr).map_err(|err| {
+            fp_core::error::Error::Generic(eyre!("Failed to lower macro argument: {}", err))
+        })?;
+        expressions.push(expr);
+    }
+
+    Ok(expressions)
+}
+
 fn collect_expr_references(expr: &Expr, references: &mut HashSet<String>) {
     match expr {
         Expr::Locator(locator) => {
@@ -434,6 +455,19 @@ fn collect_expr_references(expr: &Expr, references: &mut HashSet<String>) {
             }
         }
         Expr::Item(item) => collect_item_references(item, references),
+        Expr::Any(node) => {
+            if let Some(raw_macro) = node.downcast_ref::<fp_rust::RawExprMacro>() {
+                let mac = &raw_macro.raw.mac;
+
+                if mac.path.is_ident("strlen") || mac.path.is_ident("concat") {
+                    if let Ok(exprs) = parse_macro_exprs(&mac.tokens) {
+                        for expr in exprs {
+                            collect_expr_references(&expr, references);
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }
