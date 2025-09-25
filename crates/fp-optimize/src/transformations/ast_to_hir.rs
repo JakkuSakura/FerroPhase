@@ -18,8 +18,30 @@ pub struct HirGenerator {
     type_scopes: Vec<HashMap<String, hir::Res>>,
     value_scopes: Vec<HashMap<String, hir::Res>>,
     module_path: Vec<String>,
-    global_value_defs: HashMap<String, hir::Res>,
-    global_type_defs: HashMap<String, hir::Res>,
+    module_visibility: Vec<bool>,
+    global_value_defs: HashMap<String, SymbolEntry>,
+    global_type_defs: HashMap<String, SymbolEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct SymbolEntry {
+    res: hir::Res,
+    export: SymbolExport,
+}
+
+#[derive(Debug, Clone)]
+enum SymbolExport {
+    Public,
+    Scoped(Vec<String>),
+}
+
+impl SymbolExport {
+    fn can_access(&self, current_module: &[String]) -> bool {
+        match self {
+            SymbolExport::Public => true,
+            SymbolExport::Scoped(scope) => current_module.starts_with(scope.as_slice()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,6 +61,7 @@ impl HirGenerator {
             type_scopes: vec![HashMap::new()],
             value_scopes: vec![HashMap::new()],
             module_path: Vec::new(),
+            module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
         }
@@ -62,6 +85,7 @@ impl HirGenerator {
             type_scopes: vec![HashMap::new()],
             value_scopes: vec![HashMap::new()],
             module_path: Vec::new(),
+            module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
         }
@@ -80,6 +104,8 @@ impl HirGenerator {
         self.value_scopes.clear();
         self.value_scopes.push(HashMap::new());
         self.module_path.clear();
+        self.module_visibility.clear();
+        self.module_visibility.push(true);
         self.global_value_defs.clear();
         self.global_type_defs.clear();
     }
@@ -101,12 +127,11 @@ impl HirGenerator {
             .insert(name.to_string(), hir::Res::Local(hir_id));
     }
 
-    fn register_value_def(&mut self, name: &str, def_id: hir::DefId) {
+    fn register_value_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
+        let res = hir::Res::Def(def_id);
         self.current_value_scope()
-            .insert(name.to_string(), hir::Res::Def(def_id));
-        let qualified = self.qualify_name(name);
-        self.global_value_defs
-            .insert(qualified, hir::Res::Def(def_id));
+            .insert(name.to_string(), res.clone());
+        self.record_value_symbol(name, res, visibility);
     }
 
     fn register_value_local(&mut self, name: &str, hir_id: hir::HirId) {
@@ -114,16 +139,54 @@ impl HirGenerator {
             .insert(name.to_string(), hir::Res::Local(hir_id));
     }
 
-    fn register_type_def(&mut self, name: &str, def_id: hir::DefId) {
+    fn register_type_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
+        let res = hir::Res::Def(def_id);
         self.current_type_scope()
-            .insert(name.to_string(), hir::Res::Def(def_id));
-        let qualified = self.qualify_name(name);
-        self.global_type_defs
-            .insert(qualified, hir::Res::Def(def_id));
+            .insert(name.to_string(), res.clone());
+        self.record_type_symbol(name, res, visibility);
     }
 
-    fn push_module_scope(&mut self, name: &str) {
+    fn record_value_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
+        let qualified = self.qualify_name(name);
+        let export = self.symbol_export_marker(visibility);
+        self.global_value_defs
+            .insert(qualified, SymbolEntry { res, export });
+    }
+
+    fn record_type_symbol(&mut self, name: &str, res: hir::Res, visibility: &ast::Visibility) {
+        let qualified = self.qualify_name(name);
+        let export = self.symbol_export_marker(visibility);
+        self.global_type_defs
+            .insert(qualified, SymbolEntry { res, export });
+    }
+
+    fn symbol_export_marker(&self, visibility: &ast::Visibility) -> SymbolExport {
+        if self.should_export(visibility) {
+            SymbolExport::Public
+        } else {
+            SymbolExport::Scoped(self.module_path.clone())
+        }
+    }
+
+    fn should_export(&self, visibility: &ast::Visibility) -> bool {
+        matches!(visibility, ast::Visibility::Public) && self.current_module_visibility_flag()
+    }
+
+    fn current_module_visibility_flag(&self) -> bool {
+        *self.module_visibility.last().unwrap_or(&true)
+    }
+
+    fn compute_child_visibility(&self, visibility: &ast::Visibility) -> bool {
+        match visibility {
+            ast::Visibility::Public => self.current_module_visibility_flag(),
+            _ => false,
+        }
+    }
+
+    fn push_module_scope(&mut self, name: &str, visibility: &ast::Visibility) {
         self.module_path.push(name.to_string());
+        let child_visibility = self.compute_child_visibility(visibility);
+        self.module_visibility.push(child_visibility);
         self.push_type_scope();
         self.push_value_scope();
     }
@@ -132,6 +195,10 @@ impl HirGenerator {
         self.pop_value_scope();
         self.pop_type_scope();
         self.module_path.pop();
+        self.module_visibility.pop();
+        if self.module_visibility.is_empty() {
+            self.module_visibility.push(true);
+        }
     }
 
     fn qualify_name(&self, name: &str) -> String {
@@ -145,12 +212,22 @@ impl HirGenerator {
         }
     }
 
+    fn lookup_symbol(&self, key: &str, map: &HashMap<String, SymbolEntry>) -> Option<hir::Res> {
+        map.get(key).and_then(|entry| {
+            if entry.export.can_access(&self.module_path) {
+                Some(entry.res.clone())
+            } else {
+                None
+            }
+        })
+    }
+
     fn resolve_type_symbol(&self, name: &str) -> Option<hir::Res> {
         self.type_scopes
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
-            .or_else(|| self.global_type_defs.get(name).cloned())
+            .or_else(|| self.lookup_symbol(name, &self.global_type_defs))
     }
 
     fn resolve_value_symbol(&self, name: &str) -> Option<hir::Res> {
@@ -158,7 +235,7 @@ impl HirGenerator {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
-            .or_else(|| self.global_value_defs.get(name).cloned())
+            .or_else(|| self.lookup_symbol(name, &self.global_value_defs))
     }
 
     fn push_value_scope(&mut self) {
@@ -230,7 +307,7 @@ impl HirGenerator {
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {
         match item {
             ast::Item::Module(module) => {
-                self.push_module_scope(&module.name.name);
+                self.push_module_scope(&module.name.name, &module.visibility);
                 for child in &module.items {
                     self.append_item(program, child)?;
                 }
@@ -728,12 +805,12 @@ impl HirGenerator {
 
         let kind = match item.as_ref() {
             ast::Item::DefConst(const_def) => {
-                self.register_value_def(&const_def.name.name, def_id);
+                self.register_value_def(&const_def.name.name, def_id, &const_def.visibility);
                 let hir_const = self.transform_const_def(const_def)?;
                 hir::ItemKind::Const(hir_const)
             }
             ast::Item::DefStruct(struct_def) => {
-                self.register_type_def(&struct_def.name.name, def_id);
+                self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
                 let name = self.qualify_name(&struct_def.name.name);
                 let fields = struct_def
                     .value
@@ -761,7 +838,7 @@ impl HirGenerator {
                 })
             }
             ast::Item::DefFunction(func_def) => {
-                self.register_value_def(&func_def.name.name, def_id);
+                self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 let function = self.transform_function(func_def, None)?;
                 hir::ItemKind::Function(function)
             }
@@ -1007,12 +1084,12 @@ impl HirGenerator {
                 .collect::<Vec<_>>()
                 .join("::");
             match scope {
-                PathResolutionScope::Value => {
-                    self.global_value_defs.get(&qualified).cloned().or(resolved)
-                }
-                PathResolutionScope::Type => {
-                    self.global_type_defs.get(&qualified).cloned().or(resolved)
-                }
+                PathResolutionScope::Value => self
+                    .lookup_symbol(&qualified, &self.global_value_defs)
+                    .or(resolved),
+                PathResolutionScope::Type => self
+                    .lookup_symbol(&qualified, &self.global_type_defs)
+                    .or(resolved),
             }
         } else {
             resolved
