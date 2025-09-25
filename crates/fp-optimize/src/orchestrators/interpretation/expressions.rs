@@ -518,6 +518,15 @@ impl InterpretationOrchestrator {
                 .ok_or_else(|| optimization_error(format!("could not find {:?} in context", n))),
             Expr::Value(n) => self.interpret_value(n, ctx, resolve),
             Expr::Block(n) => self.interpret_block(n, ctx),
+            Expr::StdIoPrintln(print) => {
+                let formatted = self.interpret_format_string(&print.format, ctx)?;
+                let mut text = self.value_to_string(&formatted)?;
+                if print.newline {
+                    text.push('\n');
+                }
+                ctx.root().print_str(text);
+                Ok(Value::unit())
+            }
             Expr::Match(c) => self.interpret_cond(c, ctx),
             Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
             Expr::BinOp(op) => self.interpret_binop(op, ctx),
