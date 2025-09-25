@@ -292,7 +292,8 @@ impl Pipeline {
         // Step 7: LIR → LLVM IR
         let llvm_span = info_span!("pipeline.lower.llvm");
         let _enter_llvm = llvm_span.enter();
-        let llvm_config = fp_llvm::LlvmConfig::new();
+        let llvm_output = base_path.with_extension("ll");
+        let llvm_config = fp_llvm::LlvmConfig::executable(&llvm_output);
         let llvm_compiler = fp_llvm::LlvmCompiler::new(llvm_config);
 
         // Pass the global const map to LLVM compiler

@@ -7,8 +7,8 @@ Program {
                     sig: FunctionSig {
                         inputs: [],
                         output: Ty {
-                            kind: Int(
-                                I32,
+                            kind: Tuple(
+                                [],
                             ),
                             flags: TypeFlags(
                                 0x0,
@@ -255,9 +255,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
+                                file: 8223692258976248347,
+                                lo: 58,
+                                hi: 59,
                             },
                             kind: Assign(
                                 Place {
@@ -268,9 +268,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
+                                                file: 8223692258976248347,
+                                                lo: 58,
+                                                hi: 59,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -291,9 +291,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 49,
-                                hi: 50,
+                                file: 8223692258976248347,
+                                lo: 50,
+                                hi: 51,
                             },
                             kind: Assign(
                                 Place {
@@ -304,9 +304,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 49,
-                                                hi: 50,
+                                                file: 8223692258976248347,
+                                                lo: 50,
+                                                hi: 51,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -327,9 +327,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 48,
-                                hi: 49,
+                                file: 8223692258976248347,
+                                lo: 49,
+                                hi: 50,
                             },
                             kind: Assign(
                                 Place {
@@ -348,9 +348,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 50,
-                                hi: 51,
+                                file: 8223692258976248347,
+                                lo: 51,
+                                hi: 52,
                             },
                             kind: Assign(
                                 Place {
@@ -361,9 +361,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 50,
-                                                hi: 51,
+                                                file: 8223692258976248347,
+                                                lo: 51,
+                                                hi: 52,
                                             },
                                             user_ty: None,
                                             literal: Int(
@@ -376,9 +376,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 47,
-                                hi: 48,
+                                file: 8223692258976248347,
+                                lo: 48,
+                                hi: 49,
                             },
                             kind: Assign(
                                 Place {
@@ -404,9 +404,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 52,
-                                hi: 53,
+                                file: 8223692258976248347,
+                                lo: 53,
+                                hi: 54,
                             },
                             kind: Assign(
                                 Place {
@@ -417,9 +417,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 52,
-                                                hi: 53,
+                                                file: 8223692258976248347,
+                                                lo: 53,
+                                                hi: 54,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -440,9 +440,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 51,
-                                hi: 52,
+                                file: 8223692258976248347,
+                                lo: 52,
+                                hi: 53,
                             },
                             kind: Assign(
                                 Place {
@@ -461,9 +461,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 54,
-                                hi: 55,
+                                file: 8223692258976248347,
+                                lo: 55,
+                                hi: 56,
                             },
                             kind: Assign(
                                 Place {
@@ -474,9 +474,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 54,
-                                                hi: 55,
+                                                file: 8223692258976248347,
+                                                lo: 55,
+                                                hi: 56,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -497,9 +497,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 53,
-                                hi: 54,
+                                file: 8223692258976248347,
+                                lo: 54,
+                                hi: 55,
                             },
                             kind: Assign(
                                 Place {
@@ -518,9 +518,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 56,
-                                hi: 57,
+                                file: 8223692258976248347,
+                                lo: 57,
+                                hi: 58,
                             },
                             kind: Assign(
                                 Place {
@@ -531,9 +531,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 56,
-                                                hi: 57,
+                                                file: 8223692258976248347,
+                                                lo: 57,
+                                                hi: 58,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -554,9 +554,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 55,
-                                hi: 56,
+                                file: 8223692258976248347,
+                                lo: 56,
+                                hi: 57,
                             },
                             kind: Assign(
                                 Place {
@@ -573,52 +573,88 @@ Program {
                                 ),
                             ),
                         },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 0,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 50,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
                     ],
                     terminator: Some(
                         Terminator {
                             source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
+                                file: 8223692258976248347,
+                                lo: 46,
+                                hi: 47,
                             },
-                            kind: Return,
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 9,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 8223692258976248347,
+                                                lo: 47,
+                                                hi: 48,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
+                                            ),
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 13,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 15,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 17,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 19,
+                                            projection: [],
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 20,
+                                            projection: [],
+                                        },
+                                        1,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 8223692258976248347,
+                                    lo: 46,
+                                    hi: 47,
+                                },
+                            },
                         },
                     ),
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [],
-                    terminator: None,
                     is_cleanup: false,
                 },
                 BasicBlockData {
                     statements: [
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
+                                file: 8223692258976248347,
+                                lo: 63,
+                                hi: 64,
                             },
                             kind: Assign(
                                 Place {
@@ -629,9 +665,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
+                                                file: 8223692258976248347,
+                                                lo: 63,
+                                                hi: 64,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -652,9 +688,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 58,
-                                hi: 59,
+                                file: 8223692258976248347,
+                                lo: 61,
+                                hi: 62,
                             },
                             kind: Assign(
                                 Place {
@@ -665,9 +701,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 58,
-                                                hi: 59,
+                                                file: 8223692258976248347,
+                                                lo: 61,
+                                                hi: 62,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -688,9 +724,9 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 59,
-                                hi: 60,
+                                file: 8223692258976248347,
+                                lo: 62,
+                                hi: 63,
                             },
                             kind: Assign(
                                 Place {
@@ -701,9 +737,9 @@ Program {
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 59,
-                                                hi: 60,
+                                                file: 8223692258976248347,
+                                                lo: 62,
+                                                hi: 63,
                                             },
                                             user_ty: None,
                                             literal: Global(
@@ -726,37 +762,24 @@ Program {
                     terminator: Some(
                         Terminator {
                             source_info: Span {
-                                file: 0,
-                                lo: 57,
-                                hi: 58,
+                                file: 8223692258976248347,
+                                lo: 59,
+                                hi: 60,
                             },
                             kind: Call {
-                                func: Constant(
-                                    Constant {
-                                        span: Span {
-                                            file: 0,
-                                            lo: 57,
-                                            hi: 58,
-                                        },
-                                        user_ty: None,
-                                        literal: Fn(
-                                            "println",
-                                            Ty {
-                                                kind: Never,
-                                                flags: TypeFlags(
-                                                    0x0,
-                                                ),
-                                            },
-                                        ),
+                                func: Move(
+                                    Place {
+                                        local: 21,
+                                        projection: [],
                                     },
                                 ),
                                 args: [
                                     Constant(
                                         Constant {
                                             span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
+                                                file: 8223692258976248347,
+                                                lo: 60,
+                                                hi: 61,
                                             },
                                             user_ty: None,
                                             literal: Str(
@@ -783,29 +806,19 @@ Program {
                                             local: 24,
                                             projection: [],
                                         },
-                                        3,
+                                        2,
                                     ),
                                 ),
                                 cleanup: None,
                                 from_hir_call: true,
                                 fn_span: Span {
-                                    file: 0,
-                                    lo: 57,
-                                    hi: 58,
+                                    file: 8223692258976248347,
+                                    lo: 59,
+                                    hi: 60,
                                 },
                             },
                         },
                     ),
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [],
-                    terminator: None,
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [],
-                    terminator: None,
                     is_cleanup: false,
                 },
                 BasicBlockData {
@@ -818,536 +831,13 @@ Program {
                             },
                             kind: Assign(
                                 Place {
-                                    local: 26,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 27,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 28,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 29,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 30,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 31,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 32,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 33,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 34,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "println",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 108,
-                                hi: 109,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 35,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 108,
-                                                hi: 109,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "DEFAULT_CONFIG",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 107,
-                                hi: 108,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 36,
+                                    local: 0,
                                     projection: [],
                                 },
                                 Use(
                                     Move(
                                         Place {
-                                            local: 35,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 109,
-                                hi: 110,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 37,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 109,
-                                                hi: 110,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                1024,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 106,
-                                hi: 107,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 38,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Div,
-                                    Move(
-                                        Place {
-                                            local: 36,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 37,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 111,
-                                hi: 112,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 39,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 111,
-                                                hi: 112,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "DEFAULT_CONFIG",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 110,
-                                hi: 111,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 40,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 39,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 113,
-                                hi: 114,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 41,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 113,
-                                                hi: 114,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "DEFAULT_CONFIG",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 112,
-                                hi: 113,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 42,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 41,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 115,
-                                hi: 116,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 43,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 115,
-                                                hi: 116,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "DEFAULT_CONFIG",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 114,
-                                hi: 115,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 44,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 43,
+                                            local: 25,
                                             projection: [],
                                         },
                                     ),
@@ -1359,292 +849,537 @@ Program {
                         Terminator {
                             source_info: Span {
                                 file: 0,
-                                lo: 105,
-                                hi: 106,
-                            },
-                            kind: Call {
-                                func: Constant(
-                                    Constant {
-                                        span: Span {
-                                            file: 0,
-                                            lo: 105,
-                                            hi: 106,
-                                        },
-                                        user_ty: None,
-                                        literal: Fn(
-                                            "println",
-                                            Ty {
-                                                kind: Never,
-                                                flags: TypeFlags(
-                                                    0x0,
-                                                ),
-                                            },
-                                        ),
-                                    },
-                                ),
-                                args: [
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Str(
-                                                "Config: buffer={}KB, connections={}, timeout={}ms, debug={}",
-                                            ),
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 38,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 40,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 42,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 44,
-                                            projection: [],
-                                        },
-                                    ),
-                                ],
-                                destination: Some(
-                                    (
-                                        Place {
-                                            local: 45,
-                                            projection: [],
-                                        },
-                                        6,
-                                    ),
-                                ),
-                                cleanup: None,
-                                from_hir_call: true,
-                                fn_span: Span {
-                                    file: 0,
-                                    lo: 105,
-                                    hi: 106,
-                                },
-                            },
-                        },
-                    ),
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [],
-                    terminator: None,
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [
-                        Statement {
-                            source_info: Span {
-                                file: 0,
                                 lo: 0,
                                 hi: 0,
                             },
-                            kind: Assign(
-                                Place {
-                                    local: 46,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "println",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 117,
-                                hi: 118,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 47,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 117,
-                                                hi: 118,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "FACTORIAL_5",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 118,
-                                hi: 119,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 48,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 118,
-                                                hi: 119,
-                                            },
-                                            user_ty: None,
-                                            literal: Global(
-                                                "IS_POWER_OF_TWO",
-                                                Ty {
-                                                    kind: Int(
-                                                        I32,
-                                                    ),
-                                                    flags: TypeFlags(
-                                                        0x0,
-                                                    ),
-                                                },
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                    ],
-                    terminator: Some(
-                        Terminator {
-                            source_info: Span {
-                                file: 0,
-                                lo: 116,
-                                hi: 117,
-                            },
-                            kind: Call {
-                                func: Constant(
-                                    Constant {
-                                        span: Span {
-                                            file: 0,
-                                            lo: 116,
-                                            hi: 117,
-                                        },
-                                        user_ty: None,
-                                        literal: Fn(
-                                            "println",
-                                            Ty {
-                                                kind: Never,
-                                                flags: TypeFlags(
-                                                    0x0,
-                                                ),
-                                            },
-                                        ),
-                                    },
-                                ),
-                                args: [
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 0,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                            user_ty: None,
-                                            literal: Str(
-                                                "Computed: factorial={}, is_pow2={}",
-                                            ),
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 47,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 48,
-                                            projection: [],
-                                        },
-                                    ),
-                                ],
-                                destination: Some(
-                                    (
-                                        Place {
-                                            local: 49,
-                                            projection: [],
-                                        },
-                                        8,
-                                    ),
-                                ),
-                                cleanup: None,
-                                from_hir_call: true,
-                                fn_span: Span {
-                                    file: 0,
-                                    lo: 116,
-                                    hi: 117,
-                                },
-                            },
+                            kind: Return,
                         },
                     ),
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [],
-                    terminator: None,
-                    is_cleanup: false,
-                },
-                BasicBlockData {
-                    statements: [],
-                    terminator: None,
                     is_cleanup: false,
                 },
             ],
-            locals: [],
+            locals: [
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+            ],
             arg_count: 0,
             return_local: 0,
             var_debug_info: [],
