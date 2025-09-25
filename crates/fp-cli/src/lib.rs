@@ -9,6 +9,7 @@ pub mod commands;
 pub mod compilation;
 pub mod config;
 pub mod diagnostics;
+pub mod frontend;
 pub mod languages;
 pub mod pipeline;
 pub mod project;

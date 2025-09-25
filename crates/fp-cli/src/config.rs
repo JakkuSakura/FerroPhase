@@ -8,6 +8,8 @@ pub struct PipelineOptions {
     pub target: PipelineTarget,
     /// Runtime configuration
     pub runtime: RuntimeConfig,
+    /// Explicit source language override (defaults to detection)
+    pub source_language: Option<String>,
     /// Optimization level (0-3)
     pub optimization_level: u8,
     /// Whether to save intermediate files
@@ -16,6 +18,8 @@ pub struct PipelineOptions {
     pub base_path: Option<PathBuf>,
     /// Debug options
     pub debug: DebugOptions,
+    /// Error tolerance options
+    pub error_tolerance: ErrorToleranceOptions,
 }
 
 /// Compilation targets
@@ -51,6 +55,30 @@ pub struct DebugOptions {
     pub verbose: bool,
 }
 
+/// Error tolerance configuration
+#[derive(Debug, Clone)]
+pub struct ErrorToleranceOptions {
+    /// Enable error tolerance mode (collect multiple errors instead of early exit)
+    pub enabled: bool,
+    /// Maximum number of errors to collect before giving up (0 = unlimited)
+    pub max_errors: usize,
+    /// Show all errors vs progressive disclosure
+    pub show_all_errors: bool,
+    /// Continue compilation through non-fatal errors  
+    pub continue_on_error: bool,
+}
+
+impl Default for ErrorToleranceOptions {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Disabled by default for backward compatibility
+            max_errors: 10,
+            show_all_errors: false,
+            continue_on_error: true,
+        }
+    }
+}
+
 impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
@@ -59,6 +87,7 @@ impl Default for PipelineOptions {
                 runtime_type: "literal".to_string(),
                 options: HashMap::new(),
             },
+            source_language: None,
             optimization_level: 0,
             save_intermediates: false,
             base_path: None,
@@ -67,6 +96,7 @@ impl Default for PipelineOptions {
                 print_passes: false,
                 verbose: false,
             },
+            error_tolerance: ErrorToleranceOptions::default(),
         }
     }
 }
@@ -96,6 +126,7 @@ impl From<&PipelineConfig> for PipelineOptions {
                 runtime_type: config.runtime.clone(),
                 options: HashMap::new(),
             },
+            source_language: None,
             optimization_level: config.optimization_level,
             save_intermediates: true, // Default for legacy compatibility
             base_path: None,
@@ -104,6 +135,7 @@ impl From<&PipelineConfig> for PipelineOptions {
                 print_passes: config.print_passes,
                 verbose: false,
             },
+            error_tolerance: ErrorToleranceOptions::default(),
         }
     }
 }

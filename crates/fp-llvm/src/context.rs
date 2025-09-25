@@ -686,15 +686,13 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 .map(|(op, _attrs)| {
                     // For call arguments, we need to include the type prefix
                     match op {
-                        llvm_ir::Operand::ConstantOperand(const_ref) => {
-                            match const_ref.as_ref() {
-                                llvm_ir::Constant::GetElementPtr(_) => {
-                                    format!("ptr {}", format_operand(op))
-                                }
-                                _ => format_operand(op)
+                        llvm_ir::Operand::ConstantOperand(const_ref) => match const_ref.as_ref() {
+                            llvm_ir::Constant::GetElementPtr(_) => {
+                                format!("ptr {}", format_operand(op))
                             }
-                        }
-                        _ => format_operand(op)
+                            _ => format_operand(op),
+                        },
+                        _ => format_operand(op),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -710,7 +708,7 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 llvm_ir::Type::FuncType { result_type, .. } => format_type(result_type),
                 _ => "i32".to_string(),
             };
-            
+
             if let Some(dest) = &call.dest {
                 format!(
                     "{} = call {} {}({})",
@@ -720,12 +718,7 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                     args_str
                 )
             } else {
-                format!(
-                    "call {} {}({})",
-                    return_type,
-                    function_operand,
-                    args_str
-                )
+                format!("call {} {}({})", return_type, function_operand, args_str)
             }
         }
         // Delegate to llvm-ir's Display for instructions we didn't custom-format
@@ -849,7 +842,8 @@ fn format_global_variable(global: &llvm_ir::module::GlobalVariable) -> String {
                                 let s = String::from_utf8_lossy(
                                     &chars[..chars.len().saturating_sub(1)],
                                 );
-                                format!("c\"{}\\00\"", s.escape_debug())
+                                let escaped = s.escape_default().to_string().replace("\\'", "'");
+                                format!("c\"{}\\00\"", escaped)
                             } else {
                                 // Format as array of i8 values with correct syntax
                                 format!(
