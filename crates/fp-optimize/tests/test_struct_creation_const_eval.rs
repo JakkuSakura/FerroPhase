@@ -2,7 +2,7 @@
 // Tests compile-time struct generation based on parameters, types, and constants
 // Focus: Parameter-driven struct layout and structural metaprogramming
 
-use fp_core::ast::AstValue;
+use fp_core::ast::Value;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
@@ -16,7 +16,7 @@ fn create_struct_evaluator() -> InterpretationOrchestrator {
     InterpretationOrchestrator::new(Arc::new(RustPrinter::new()))
 }
 
-fn evaluate_struct_expr(expr: AstExpr) -> Result<AstValue> {
+fn evaluate_struct_expr(expr: Expr) -> Result<Value> {
     let interpreter = create_struct_evaluator();
     let ctx = SharedScopedContext::new();
     interpreter.interpret_expr(expr, &ctx)

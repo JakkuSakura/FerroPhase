@@ -39,7 +39,7 @@ impl FoldOptimizer {
         &self,
         mut invoke: ExprInvoke,
         ctx: &SharedScopedContext,
-    ) -> Result<AstExpr> {
+    ) -> Result<Expr> {
         let mut func;
         let mut closure_context = None;
         match &invoke.target {
@@ -58,14 +58,14 @@ impl FoldOptimizer {
                 todo!()
             }
             ExprInvokeTarget::Closure(v) => {
-                func = AstExpr::value(v.clone().into());
+                func = Expr::value(v.clone().into());
             }
             ExprInvokeTarget::Expr(expr) => {
                 func = self.optimize_expr(expr.get(), ctx)?;
             }
         }
 
-        if let AstExpr::Closured(f) = &func {
+        if let Expr::Closured(f) = &func {
             closure_context = Some(f.ctx.clone());
             func = f.expr.get();
         }
@@ -82,8 +82,8 @@ impl FoldOptimizer {
             ControlFlow::Into => {
                 // FIXME: optimize out this clone
                 match func.clone() {
-                    AstExpr::Value(value) => match value.into() {
-                        AstValue::Function(mut f) => {
+                    Expr::Value(value) => match value.into() {
+                        Value::Function(mut f) => {
                             // TODO: when calling function, use context of its own, instead of use current context
 
                             let sub_ctx = closure_context
@@ -106,7 +106,7 @@ impl FoldOptimizer {
 
                             let ret = self.pass.optimize_invoke(
                                 invoke.clone(),
-                                &AstValue::Function(f),
+                                &Value::Function(f),
                                 &sub_ctx,
                             )?;
 
@@ -130,29 +130,29 @@ impl FoldOptimizer {
                             invoke, func
                         );
                         ctx.print_values()?;
-                        Ok(AstExpr::Invoke(invoke.into()))
+                        Ok(Expr::Invoke(invoke.into()))
                     }
                 }
             }
-            ControlFlow::Continue => Ok(AstExpr::Invoke(invoke.into())),
+            ControlFlow::Continue => Ok(Expr::Invoke(invoke.into())),
             _ => opt_bail!(format!("Cannot handle control flow {:?}", control)),
         }
     }
 
-    pub fn optimize_expr(&self, mut expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
+    pub fn optimize_expr(&self, mut expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         let serialized = self.serializer.serialize_expr(&expr)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
         expr = match expr {
-            AstExpr::Locator(val) => {
+            Expr::Locator(val) => {
                 info!("Looking for {}", val);
                 ctx.get_expr_with_ctx(val.to_path())
                     .ok_or_else(|| optimization_error(format!("Couldn't find {}", val)))?
             }
-            AstExpr::Block(x) => self.optimize_block(x, ctx)?,
-            AstExpr::Match(x) => self.optimize_match(x, ctx)?,
-            AstExpr::If(x) => self.optimize_if(x, ctx)?,
-            AstExpr::Invoke(x) => self.optimize_invoke(x, ctx)?,
+            Expr::Block(x) => self.optimize_block(x, ctx)?,
+            Expr::Match(x) => self.optimize_match(x, ctx)?,
+            Expr::If(x) => self.optimize_if(x, ctx)?,
+            Expr::Invoke(x) => self.optimize_invoke(x, ctx)?,
             _ => self.pass.optimize_expr(expr, ctx)?,
         };
 
@@ -171,10 +171,10 @@ impl FoldOptimizer {
 
     pub fn optimize_module(
         &self,
-        mut module: AstModule,
+        mut module: Module,
         ctx: &SharedScopedContext,
         with_submodule: bool,
-    ) -> Result<AstModule> {
+    ) -> Result<Module> {
         let sub = if with_submodule {
             ctx.child(module.name.clone(), module.visibility, false)
         } else {
@@ -195,31 +195,31 @@ impl FoldOptimizer {
         let module = self.pass.optimize_module(module, ctx)?;
         Ok(module)
     }
-    fn prescan_item(&self, item: &AstItem, ctx: &SharedScopedContext) -> Result<()> {
+    fn prescan_item(&self, item: &Item, ctx: &SharedScopedContext) -> Result<()> {
         match item {
-            AstItem::DefFunction(x) => self.prescan_def_function(x, ctx),
-            AstItem::Module(x) => self.prescan_module(x, ctx),
+            Item::DefFunction(x) => self.prescan_def_function(x, ctx),
+            Item::Module(x) => self.prescan_module(x, ctx),
             _ => Ok(()),
         }
     }
-    fn prescan_module(&self, module: &AstModule, ctx: &SharedScopedContext) -> Result<()> {
+    fn prescan_module(&self, module: &Module, ctx: &SharedScopedContext) -> Result<()> {
         let module = module.clone();
         for item in module.items {
             self.prescan_item(&item, ctx)?;
         }
         Ok(())
     }
-    pub fn optimize_item(&self, mut item: AstItem, ctx: &SharedScopedContext) -> Result<AstItem> {
+    pub fn optimize_item(&self, mut item: Item, ctx: &SharedScopedContext) -> Result<Item> {
         let serialized = self.serializer.serialize_item(&item)?;
         debug!("Doing {} for {}", self.pass.name(), serialized);
 
         item = match item {
             // Item::DefFunction(x) => self.optimize_def_function(x, ctx).map(Item::DefFunction)?,
-            AstItem::Import(x) => self.optimize_import(x, ctx).map(AstItem::Import)?,
-            AstItem::Module(x) => self.optimize_module(x, ctx, true).map(AstItem::Module)?,
-            AstItem::Expr(x) => {
+            Item::Import(x) => self.optimize_import(x, ctx).map(Item::Import)?,
+            Item::Module(x) => self.optimize_module(x, ctx, true).map(Item::Module)?,
+            Item::Expr(x) => {
                 let expr = self.optimize_expr(x, ctx)?;
-                AstItem::Expr(expr)
+                Item::Expr(expr)
             }
             _ => item,
         };
@@ -282,7 +282,7 @@ impl FoldOptimizer {
             _ => Ok(()),
         }
     }
-    pub fn optimize_block(&self, mut b: ExprBlock, ctx: &SharedScopedContext) -> Result<AstExpr> {
+    pub fn optimize_block(&self, mut b: ExprBlock, ctx: &SharedScopedContext) -> Result<Expr> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
         b.stmts
             .iter()
@@ -297,9 +297,9 @@ impl FoldOptimizer {
 
         b.stmts = stmts;
 
-        Ok(AstExpr::block(b))
+        Ok(Expr::block(b))
     }
-    pub fn optimize_match(&self, b: ExprMatch, ctx: &SharedScopedContext) -> Result<AstExpr> {
+    pub fn optimize_match(&self, b: ExprMatch, ctx: &SharedScopedContext) -> Result<Expr> {
         let mut cases = vec![];
         for case in b.cases {
             let cond: BExpr = self.optimize_expr(case.cond.into(), ctx)?.into();
@@ -320,25 +320,25 @@ impl FoldOptimizer {
             }
         }
 
-        Ok(AstExpr::Match(ExprMatch { cases }))
+        Ok(Expr::Match(ExprMatch { cases }))
     }
-    pub fn optimize_if(&self, if_: ExprIf, ctx: &SharedScopedContext) -> Result<AstExpr> {
+    pub fn optimize_if(&self, if_: ExprIf, ctx: &SharedScopedContext) -> Result<Expr> {
         let mut cases = vec![ExprMatchCase {
             cond: if_.cond,
             body: if_.then,
         }];
         if let Some(elze) = if_.elze {
             cases.push(ExprMatchCase {
-                cond: AstExpr::Value(AstValue::Bool(ValueBool { value: true }).into()).into(),
+                cond: Expr::Value(Value::Bool(ValueBool { value: true }).into()).into(),
                 body: elze,
             });
         }
         let match_ = ExprMatch { cases };
 
         let match_ = self.optimize_match(match_, ctx)?;
-        if let AstExpr::Match(match_) = match_ {
+        if let Expr::Match(match_) = match_ {
             if match_.cases.len() == 0 {
-                return Ok(AstExpr::Value(AstValue::Unit(ValueUnit).into()));
+                return Ok(Expr::Value(Value::Unit(ValueUnit).into()));
             }
 
             if match_.cases.len() >= 1 {
@@ -391,15 +391,15 @@ impl FoldOptimizer {
                     self.serializer.serialize_def_function(def)?,
                 );
 
-                ctx.insert_value_with_ctx(def.name.clone(), AstValue::Function(def._to_value()));
+                ctx.insert_value_with_ctx(def.name.clone(), Value::Function(def._to_value()));
                 Ok(())
             }
         }
     }
-    pub fn optimize_file(&self, mut file: AstFile, ctx: &SharedScopedContext) -> Result<AstFile> {
+    pub fn optimize_file(&self, mut file: File, ctx: &SharedScopedContext) -> Result<File> {
         file.items = self
             .optimize_module(
-                AstModule {
+                Module {
                     name: "__file__".into(),
                     items: file.items,
                     visibility: Visibility::Public,
@@ -410,19 +410,19 @@ impl FoldOptimizer {
             .items;
         Ok(file)
     }
-    pub fn optimize_tree(&self, node: AstNode, ctx: &SharedScopedContext) -> Result<AstNode> {
+    pub fn optimize_tree(&self, node: Node, ctx: &SharedScopedContext) -> Result<Node> {
         match node {
-            AstNode::Item(item) => {
+            Node::Item(item) => {
                 let item = self.optimize_item(item, ctx)?;
-                Ok(AstNode::Item(item))
+                Ok(Node::Item(item))
             }
-            AstNode::Expr(expr) => {
+            Node::Expr(expr) => {
                 let expr = self.optimize_expr(expr, ctx)?;
-                Ok(AstNode::Expr(expr))
+                Ok(Node::Expr(expr))
             }
-            AstNode::File(file) => {
+            Node::File(file) => {
                 let file = self.optimize_file(file, ctx)?;
-                Ok(AstNode::File(file))
+                Ok(Node::File(file))
             }
         }
     }

@@ -11,7 +11,7 @@ use fp_rust::printer::RustPrinter;
 use fp_rust::shll_parse_expr;
 use std::sync::Arc;
 
-fn test_const_optimization(expr: AstExpr) -> Result<AstExpr> {
+fn test_const_optimization(expr: Expr) -> Result<Expr> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let serializer = Arc::new(RustPrinter::new());

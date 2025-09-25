@@ -36,17 +36,17 @@ impl LirGenerator {
     }
 
     /// Transform a MIR program to LIR
-    pub fn transform(&mut self, mir_program: mir::MirProgram) -> Result<lir::LirProgram> {
+    pub fn transform(&mut self, mir_program: mir::Program) -> Result<lir::LirProgram> {
         let mut lir_program = lir::LirProgram::new();
 
         for mir_item in mir_program.items {
             match mir_item.kind {
-                mir::MirItemKind::Function(mir_func) => {
+                mir::ItemKind::Function(mir_func) => {
                     let lir_func =
                         self.transform_function_with_bodies(mir_func, &mir_program.bodies)?;
                     lir_program.functions.push(lir_func);
                 }
-                mir::MirItemKind::Static(mir_static) => {
+                mir::ItemKind::Static(mir_static) => {
                     let lir_static = self.transform_static(mir_static)?;
                     lir_program.globals.push(lir_static);
                 }
@@ -59,8 +59,8 @@ impl LirGenerator {
     /// Transform a MIR function to LIR
     fn transform_function_with_bodies(
         &mut self,
-        mir_func: mir::MirFunction,
-        bodies: &std::collections::HashMap<mir::BodyId, mir::MirBody>,
+        mir_func: mir::Function,
+        bodies: &std::collections::HashMap<mir::BodyId, mir::Body>,
     ) -> Result<lir::LirFunction> {
         // Reset generator state for new function
         self.reset_for_new_function();
@@ -116,7 +116,7 @@ impl LirGenerator {
     }
 
     /// Transform a MIR static to LIR global
-    fn transform_static(&mut self, _mir_static: mir::MirStatic) -> Result<lir::LirGlobal> {
+    fn transform_static(&mut self, _mir_static: mir::Static) -> Result<lir::LirGlobal> {
         Ok(lir::LirGlobal {
             name: format!("global_{}", self.next_lir_id),
             ty: lir::LirType::I32,
@@ -237,7 +237,7 @@ impl LirGenerator {
                 // emit a call to printf with a naive format string.
                 let mut term = lir::LirTerminator::Return(None);
 
-                if let mir::MirOperand::Constant(mir::Constant {
+                if let mir::Operand::Constant(mir::Constant {
                     literal: mir::ConstantKind::Fn(name, _ty),
                     ..
                 }) = func
@@ -290,11 +290,11 @@ impl LirGenerator {
     }
 
     /// Transform a MIR operand to LIR value
-    fn transform_operand(&mut self, operand: &mir::MirOperand) -> Result<lir::LirValue> {
+    fn transform_operand(&mut self, operand: &mir::Operand) -> Result<lir::LirValue> {
         match operand {
-            mir::MirOperand::Move(place) => Ok(self.get_or_create_register_for_place(place)),
-            mir::MirOperand::Copy(place) => Ok(self.get_or_create_register_for_place(place)),
-            mir::MirOperand::Constant(constant) => match &constant.literal {
+            mir::Operand::Move(place) => Ok(self.get_or_create_register_for_place(place)),
+            mir::Operand::Copy(place) => Ok(self.get_or_create_register_for_place(place)),
+            mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::Fn(name, ty) => {
                     Ok(lir::LirValue::Global(name.clone(), ty.clone()))
                 }
@@ -372,8 +372,8 @@ impl LirGenerator {
     }
 }
 
-impl IrTransform<mir::MirProgram, lir::LirProgram> for LirGenerator {
-    fn transform(&mut self, source: mir::MirProgram) -> Result<lir::LirProgram> {
+impl IrTransform<mir::Program, lir::LirProgram> for LirGenerator {
+    fn transform(&mut self, source: mir::Program) -> Result<lir::LirProgram> {
         LirGenerator::transform(self, source)
     }
 }

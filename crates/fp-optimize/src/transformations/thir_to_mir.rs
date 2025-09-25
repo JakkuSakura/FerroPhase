@@ -18,6 +18,16 @@ pub struct MirGenerator {
     local_decls: Vec<mir::LocalDecl>,
 }
 
+struct ExprOutcome {
+    place: mir::Place,
+    block: mir::BasicBlockId,
+}
+
+struct ExprOutcome {
+    place: mir::Place,
+    block: mir::BasicBlockId,
+}
+
 impl MirGenerator {
     /// Create a new MIR generator
     pub fn new() -> Self {
@@ -86,15 +96,17 @@ impl MirGenerator {
 
         let (body_id, body_opt) = if let Some(body_id) = func.body_id {
             if let Some(thir_body) = thir_program.bodies.get(&body_id) {
-                let mir_body = self.transform_body(thir_body.clone(), return_local, param_count)?;
+                let mir_body = self.transform_body(thir_body.clone(), return_local, &param_locals)?;
                 (mir::BodyId(body_id.0), Some(mir_body))
             } else {
-                let mir_body = self.create_external_function_body(return_local, param_count)?;
+                let mir_body =
+                    self.create_external_function_body(return_local, param_locals.len())?;
                 (mir::BodyId(0), Some(mir_body))
             }
         } else {
             // External function - minimal body
-            let mir_body = self.create_external_function_body(return_local, param_count)?;
+            let mir_body =
+                self.create_external_function_body(return_local, param_locals.len())?;
             (mir::BodyId(0), Some(mir_body))
         };
         let mir_ty = self.transform_type(&func.sig.output);
@@ -119,10 +131,21 @@ impl MirGenerator {
         &mut self,
         thir_body: thir::ThirBody,
         return_local: mir::LocalId,
-        param_count: usize,
+        param_locals: &[mir::LocalId],
     ) -> Result<mir::MirBody> {
         // Create entry basic block
         let entry_bb = self.create_basic_block();
+
+        for (idx, &local) in param_locals.iter().enumerate() {
+            self.current_locals.insert(idx as thir::ThirId, local);
+        }
+
+        let base_thir_local = param_locals.len() as thir::ThirId;
+        for (offset, local_decl) in thir_body.locals.iter().enumerate() {
+            let mir_local = self.create_local(local_decl.ty.clone());
+            self.current_locals
+                .insert(base_thir_local + offset as thir::ThirId, mir_local);
+        }
 
         tracing::debug!(
             "Transforming THIR body with expression kind: {:?}",
@@ -130,11 +153,14 @@ impl MirGenerator {
         );
 
         // Transform the body expression
-        let result_place = self.transform_expr(thir_body.value, entry_bb)?;
+        let ExprOutcome {
+            place: result_place,
+            block: current_block,
+        } = self.transform_expr(thir_body.value, entry_bb)?;
 
         // Add return statement
         self.add_statement_to_block(
-            entry_bb,
+            current_block,
             mir::Statement {
                 kind: mir::StatementKind::Assign(
                     mir::Place::from_local(return_local),
@@ -146,7 +172,7 @@ impl MirGenerator {
 
         // Set terminator for entry block
         self.set_block_terminator(
-            entry_bb,
+            current_block,
             mir::Terminator {
                 kind: mir::TerminatorKind::Return,
                 source_info: Span::new(0, 0, 0),
@@ -168,30 +194,33 @@ impl MirGenerator {
         Ok(mir::MirBody {
             basic_blocks: self.current_blocks.clone(),
             locals: self.local_decls.clone(),
-            arg_count: param_count,
+            arg_count: param_locals.len(),
             return_local,
             var_debug_info: Vec::new(),
             span: Span::new(0, 0, 0),
         })
     }
 
-    /// Transform a THIR expression to MIR, returning the place where result is stored
+    /// Transform a THIR expression to MIR, returning the place where result is stored and the current block
     fn transform_expr(
         &mut self,
         expr: thir::ThirExpr,
         current_bb: mir::BasicBlockId,
-    ) -> Result<mir::Place> {
+    ) -> Result<ExprOutcome> {
         match expr.kind {
             thir::ThirExprKind::Field { base, field_idx: _ } => {
                 // Lower field selection by first lowering the base
                 // For now, if the base lowered to a constant struct literal, extract constant field.
                 // Since our types are placeholders, treat base as producing its fields directly when possible.
-                let base_place = self.transform_expr(*base, current_bb)?;
+                let ExprOutcome {
+                    place: base_place,
+                    block,
+                } = self.transform_expr(*base, current_bb)?;
                 // Without a real aggregate model, emit a move of base and rely on earlier inlining to have simplified this.
                 let temp_local = self.create_local(expr.ty);
                 let place = mir::Place::from_local(temp_local);
                 self.add_statement_to_block(
-                    current_bb,
+                    block,
                     mir::Statement {
                         kind: mir::StatementKind::Assign(
                             place.clone(),
@@ -200,7 +229,7 @@ impl MirGenerator {
                         source_info: expr.span,
                     },
                 );
-                Ok(place)
+                Ok(ExprOutcome { place, block })
             }
             thir::ThirExprKind::Literal(lit) => {
                 let temp_local = self.create_local(expr.ty);
@@ -217,7 +246,10 @@ impl MirGenerator {
                     },
                 );
 
-                Ok(place)
+                Ok(ExprOutcome {
+                    place,
+                    block: current_bb,
+                })
             }
             thir::ThirExprKind::Path(item_ref) => {
                 let mir_ty = self.transform_type(&expr.ty);
@@ -246,11 +278,20 @@ impl MirGenerator {
                         source_info: expr.span,
                     },
                 );
-                Ok(place)
+                Ok(ExprOutcome {
+                    place,
+                    block: current_bb,
+                })
             }
             thir::ThirExprKind::Binary(op, lhs, rhs) => {
-                let lhs_place = self.transform_expr(*lhs, current_bb)?;
-                let rhs_place = self.transform_expr(*rhs, current_bb)?;
+                let ExprOutcome {
+                    place: lhs_place,
+                    block: after_lhs,
+                } = self.transform_expr(*lhs, current_bb)?;
+                let ExprOutcome {
+                    place: rhs_place,
+                    block: after_rhs,
+                } = self.transform_expr(*rhs, after_lhs)?;
                 let result_local = self.create_local(expr.ty);
                 let result_place = mir::Place::from_local(result_local);
 
@@ -258,7 +299,7 @@ impl MirGenerator {
                 let binop_kind = self.convert_thir_binop_to_kind(op);
 
                 self.add_statement_to_block(
-                    current_bb,
+                    after_rhs,
                     mir::Statement {
                         kind: mir::StatementKind::Assign(
                             result_place.clone(),
@@ -271,8 +312,10 @@ impl MirGenerator {
                         source_info: expr.span,
                     },
                 );
-
-                Ok(result_place)
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: after_rhs,
+                })
             }
             thir::ThirExprKind::Call { fun, args, .. } => {
                 // Transform callee and arguments
@@ -288,7 +331,8 @@ impl MirGenerator {
                     args.len()
                 );
                 // Lower function expression; we don't need the place for a direct Fn(...) constant
-                let _ = self.transform_expr(*fun, current_bb)?;
+                let ExprOutcome { block: mut current_block, .. } =
+                    self.transform_expr(*fun, current_bb)?;
                 let mut arg_operands = Vec::new();
                 for arg in args {
                     // If the argument is a literal, pass it directly as a MIR constant operand
@@ -298,11 +342,15 @@ impl MirGenerator {
                         }
                         thir::ThirExprKind::Field { .. } => {
                             // Attempt to lower field to a value (const/copy). As a fallback, treat as Move of lowered place.
-                            let arg_place = self.transform_expr(arg.clone(), current_bb)?;
+                            let ExprOutcome { place: arg_place, block } =
+                                self.transform_expr(arg.clone(), current_block)?;
+                            current_block = block;
                             arg_operands.push(mir::MirOperand::Move(arg_place));
                         }
                         _ => {
-                            let arg_place = self.transform_expr(arg, current_bb)?;
+                            let ExprOutcome { place: arg_place, block } =
+                                self.transform_expr(arg, current_block)?;
+                            current_block = block;
                             arg_operands.push(mir::MirOperand::Move(arg_place));
                         }
                     }
@@ -314,7 +362,7 @@ impl MirGenerator {
                 // Create a continuation block
                 let cont_bb = self.create_basic_block();
                 self.set_block_terminator(
-                    current_bb,
+                    current_block,
                     mir::Terminator {
                         kind: mir::TerminatorKind::Call {
                             func: if let Some(fname) = func_name_opt {
@@ -343,15 +391,17 @@ impl MirGenerator {
                         source_info: expr.span,
                     },
                 );
-                Ok(result_place)
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: cont_bb,
+                })
             }
-            thir::ThirExprKind::VarRef { .. } => {
-                // Variable reference - create proper local and place
-                let temp_local = self.create_local(expr.ty.clone());
-
-                // Add the local to current basic block if needed
-                let place = mir::Place::from_local(temp_local);
-                Ok(place)
+            thir::ThirExprKind::VarRef { id } => {
+                let local = self.get_or_create_local(id, expr.ty.clone());
+                Ok(ExprOutcome {
+                    place: mir::Place::from_local(local),
+                    block: current_bb,
+                })
             }
             thir::ThirExprKind::Block(block) => {
                 // Process all statements in the block
@@ -364,7 +414,8 @@ impl MirGenerator {
                             tracing::debug!("Processing statement {}: {:?}", i, expr.kind);
 
                             // Transform expression as a statement (result is discarded)
-                            let _place = self.transform_expr(expr.clone(), current_bb)?;
+                            let outcome = self.transform_expr(expr.clone(), current_bb)?;
+                            current_bb = outcome.block;
 
                             // Check if the current block has a terminator set
                             // If so, we need to continue in a new basic block
@@ -390,15 +441,20 @@ impl MirGenerator {
                 if let Some(final_expr) = &block.expr {
                     self.transform_expr(*final_expr.clone(), current_bb)
                 } else {
-                    // Block has no final expression, return unit
                     let temp_local = self.create_local(expr.ty);
-                    Ok(mir::Place::from_local(temp_local))
+                    Ok(ExprOutcome {
+                        place: mir::Place::from_local(temp_local),
+                        block: current_bb,
+                    })
                 }
             }
             _ => {
                 // Default case for unhandled expressions
                 let temp_local = self.create_local(expr.ty);
-                Ok(mir::Place::from_local(temp_local))
+                Ok(ExprOutcome {
+                    place: mir::Place::from_local(temp_local),
+                    block: current_bb,
+                })
             }
         }
     }
@@ -425,6 +481,16 @@ impl MirGenerator {
             source_info: Span::new(0, 0, 0),
         });
         local_id
+    }
+
+    fn get_or_create_local(&mut self, thir_id: thir::ThirId, ty: Ty) -> mir::LocalId {
+        if let Some(&local) = self.current_locals.get(&thir_id) {
+            local
+        } else {
+            let local = self.create_local(ty);
+            self.current_locals.insert(thir_id, local);
+            local
+        }
     }
 
     fn create_basic_block(&mut self) -> mir::BasicBlockId {

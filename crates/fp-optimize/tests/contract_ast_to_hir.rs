@@ -1,4 +1,4 @@
-use fp_core::hir::{self, HirItemKind};
+use fp_core::hir::{self, ItemKind};
 use fp_optimize::error::Result as OptimizeResult;
 use fp_optimize::transformations::{HirGenerator, IrTransform};
 
@@ -14,7 +14,7 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
     assert_eq!(program.items.len(), 1);
     let item = &program.items[0];
     match &item.kind {
-        HirItemKind::Function(func) => {
+        ItemKind::Function(func) => {
             assert_eq!(func.sig.name, "main");
             assert_eq!(func.sig.inputs.len(), 0);
             assert!(!func.is_const);
@@ -31,11 +31,11 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
 
 #[test]
 fn propagates_unimplemented_expression_error() {
-    use fp_core::ast::{AstExpr, ExprTry};
+    use fp_core::ast::{Expr, ExprTry};
 
     let mut generator = HirGenerator::new();
-    let unsupported = AstExpr::Try(ExprTry {
-        expr: Box::new(AstExpr::unit()),
+    let unsupported = Expr::Try(ExprTry {
+        expr: Box::new(Expr::unit()),
     });
     let result = generator.transform(&unsupported);
     assert!(result.is_err());

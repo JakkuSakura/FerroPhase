@@ -1,10 +1,10 @@
-ThirProgram {
+Program {
     items: [
-        ThirItem {
+        Item {
             thir_id: 0,
             kind: Function(
-                ThirFunction {
-                    sig: ThirFunctionSig {
+                Function {
+                    sig: FunctionSig {
                         inputs: [],
                         output: Ty {
                             kind: Int(
@@ -43,12 +43,12 @@ ThirProgram {
     bodies: {
         BodyId(
             0,
-        ): ThirBody {
+        ): Body {
             params: [],
-            value: ThirExpr {
+            value: Expr {
                 thir_id: 1,
                 kind: Block(
-                    ThirBlock {
+                    Block {
                         targeted_by_break: false,
                         region: 0,
                         span: Span {
@@ -57,12 +57,12 @@ ThirProgram {
                             hi: 0,
                         },
                         stmts: [
-                            ThirStmt {
+                            Stmt {
                                 kind: Expr(
-                                    ThirExpr {
+                                    Expr {
                                         thir_id: 2,
                                         kind: Block(
-                                            ThirBlock {
+                                            Block {
                                                 targeted_by_break: false,
                                                 region: 0,
                                                 span: Span {
@@ -71,9 +71,9 @@ ThirProgram {
                                                     hi: 0,
                                                 },
                                                 stmts: [
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 3,
                                                                 kind: Literal(
                                                                     Int(
@@ -97,9 +97,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 4,
                                                                 kind: Literal(
                                                                     Int(
@@ -123,9 +123,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 5,
                                                                 kind: Literal(
                                                                     Int(
@@ -149,9 +149,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 6,
                                                                 kind: Literal(
                                                                     Int(
@@ -175,9 +175,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 7,
                                                                 kind: Literal(
                                                                     Int(
@@ -201,9 +201,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 8,
                                                                 kind: Literal(
                                                                     Int(
@@ -227,9 +227,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 9,
                                                                 kind: Literal(
                                                                     Int(
@@ -253,9 +253,9 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 10,
                                                                 kind: Literal(
                                                                     Int(
@@ -279,12 +279,12 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 11,
                                                                 kind: Call {
-                                                                    fun: ThirExpr {
+                                                                    fun: Expr {
                                                                         thir_id: 12,
                                                                         kind: Path(
                                                                             "println",
@@ -304,7 +304,7 @@ ThirProgram {
                                                                         },
                                                                     },
                                                                     args: [
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 13,
                                                                             kind: Literal(
                                                                                 Str(
@@ -335,14 +335,14 @@ ThirProgram {
                                                                                 hi: 0,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 14,
                                                                             kind: Binary(
                                                                                 Div,
-                                                                                ThirExpr {
+                                                                                Expr {
                                                                                     thir_id: 15,
                                                                                     kind: Field {
-                                                                                        base: ThirExpr {
+                                                                                        base: Expr {
                                                                                             thir_id: 16,
                                                                                             kind: Path(
                                                                                                 "DEFAULT_CONFIG",
@@ -377,7 +377,7 @@ ThirProgram {
                                                                                         hi: 49,
                                                                                     },
                                                                                 },
-                                                                                ThirExpr {
+                                                                                Expr {
                                                                                     thir_id: 17,
                                                                                     kind: Literal(
                                                                                         Int(
@@ -414,10 +414,10 @@ ThirProgram {
                                                                                 hi: 48,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 18,
                                                                             kind: Field {
-                                                                                base: ThirExpr {
+                                                                                base: Expr {
                                                                                     thir_id: 19,
                                                                                     kind: Path(
                                                                                         "DEFAULT_CONFIG",
@@ -452,10 +452,10 @@ ThirProgram {
                                                                                 hi: 52,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 20,
                                                                             kind: Field {
-                                                                                base: ThirExpr {
+                                                                                base: Expr {
                                                                                     thir_id: 21,
                                                                                     kind: Path(
                                                                                         "DEFAULT_CONFIG",
@@ -490,10 +490,10 @@ ThirProgram {
                                                                                 hi: 54,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 22,
                                                                             kind: Field {
-                                                                                base: ThirExpr {
+                                                                                base: Expr {
                                                                                     thir_id: 23,
                                                                                     kind: Path(
                                                                                         "DEFAULT_CONFIG",
@@ -547,12 +547,12 @@ ThirProgram {
                                                             },
                                                         ),
                                                     },
-                                                    ThirStmt {
+                                                    Stmt {
                                                         kind: Expr(
-                                                            ThirExpr {
+                                                            Expr {
                                                                 thir_id: 24,
                                                                 kind: Call {
-                                                                    fun: ThirExpr {
+                                                                    fun: Expr {
                                                                         thir_id: 25,
                                                                         kind: Path(
                                                                             "println",
@@ -572,7 +572,7 @@ ThirProgram {
                                                                         },
                                                                     },
                                                                     args: [
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 26,
                                                                             kind: Literal(
                                                                                 Str(
@@ -603,7 +603,7 @@ ThirProgram {
                                                                                 hi: 0,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 27,
                                                                             kind: Path(
                                                                                 "FACTORIAL_5",
@@ -622,7 +622,7 @@ ThirProgram {
                                                                                 hi: 59,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 28,
                                                                             kind: Path(
                                                                                 "IS_POWER_OF_TWO",
@@ -683,10 +683,10 @@ ThirProgram {
                             },
                         ],
                         expr: Some(
-                            ThirExpr {
+                            Expr {
                                 thir_id: 29,
                                 kind: Block(
-                                    ThirBlock {
+                                    Block {
                                         targeted_by_break: false,
                                         region: 0,
                                         span: Span {
@@ -695,9 +695,9 @@ ThirProgram {
                                             hi: 0,
                                         },
                                         stmts: [
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 30,
                                                         kind: Literal(
                                                             Int(
@@ -721,9 +721,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 31,
                                                         kind: Literal(
                                                             Int(
@@ -747,9 +747,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 32,
                                                         kind: Literal(
                                                             Int(
@@ -773,9 +773,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 33,
                                                         kind: Literal(
                                                             Int(
@@ -799,9 +799,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 34,
                                                         kind: Literal(
                                                             Int(
@@ -825,9 +825,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 35,
                                                         kind: Literal(
                                                             Int(
@@ -851,9 +851,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 36,
                                                         kind: Literal(
                                                             Int(
@@ -877,9 +877,9 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 37,
                                                         kind: Literal(
                                                             Int(
@@ -903,12 +903,12 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 38,
                                                         kind: Call {
-                                                            fun: ThirExpr {
+                                                            fun: Expr {
                                                                 thir_id: 39,
                                                                 kind: Path(
                                                                     "println",
@@ -928,7 +928,7 @@ ThirProgram {
                                                                 },
                                                             },
                                                             args: [
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 40,
                                                                     kind: Literal(
                                                                         Str(
@@ -959,14 +959,14 @@ ThirProgram {
                                                                         hi: 0,
                                                                     },
                                                                 },
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 41,
                                                                     kind: Binary(
                                                                         Div,
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 42,
                                                                             kind: Field {
-                                                                                base: ThirExpr {
+                                                                                base: Expr {
                                                                                     thir_id: 43,
                                                                                     kind: Path(
                                                                                         "DEFAULT_CONFIG",
@@ -1001,7 +1001,7 @@ ThirProgram {
                                                                                 hi: 108,
                                                                             },
                                                                         },
-                                                                        ThirExpr {
+                                                                        Expr {
                                                                             thir_id: 44,
                                                                             kind: Literal(
                                                                                 Int(
@@ -1038,10 +1038,10 @@ ThirProgram {
                                                                         hi: 107,
                                                                     },
                                                                 },
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 45,
                                                                     kind: Field {
-                                                                        base: ThirExpr {
+                                                                        base: Expr {
                                                                             thir_id: 46,
                                                                             kind: Path(
                                                                                 "DEFAULT_CONFIG",
@@ -1076,10 +1076,10 @@ ThirProgram {
                                                                         hi: 111,
                                                                     },
                                                                 },
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 47,
                                                                     kind: Field {
-                                                                        base: ThirExpr {
+                                                                        base: Expr {
                                                                             thir_id: 48,
                                                                             kind: Path(
                                                                                 "DEFAULT_CONFIG",
@@ -1114,10 +1114,10 @@ ThirProgram {
                                                                         hi: 113,
                                                                     },
                                                                 },
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 49,
                                                                     kind: Field {
-                                                                        base: ThirExpr {
+                                                                        base: Expr {
                                                                             thir_id: 50,
                                                                             kind: Path(
                                                                                 "DEFAULT_CONFIG",
@@ -1171,12 +1171,12 @@ ThirProgram {
                                                     },
                                                 ),
                                             },
-                                            ThirStmt {
+                                            Stmt {
                                                 kind: Expr(
-                                                    ThirExpr {
+                                                    Expr {
                                                         thir_id: 51,
                                                         kind: Call {
-                                                            fun: ThirExpr {
+                                                            fun: Expr {
                                                                 thir_id: 52,
                                                                 kind: Path(
                                                                     "println",
@@ -1196,7 +1196,7 @@ ThirProgram {
                                                                 },
                                                             },
                                                             args: [
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 53,
                                                                     kind: Literal(
                                                                         Str(
@@ -1227,7 +1227,7 @@ ThirProgram {
                                                                         hi: 0,
                                                                     },
                                                                 },
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 54,
                                                                     kind: Path(
                                                                         "FACTORIAL_5",
@@ -1246,7 +1246,7 @@ ThirProgram {
                                                                         hi: 118,
                                                                     },
                                                                 },
-                                                                ThirExpr {
+                                                                Expr {
                                                                     thir_id: 55,
                                                                     kind: Path(
                                                                         "IS_POWER_OF_TWO",

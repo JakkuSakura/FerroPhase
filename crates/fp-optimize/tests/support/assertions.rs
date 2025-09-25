@@ -1,8 +1,8 @@
-use fp_core::hir::{self, HirExprKind};
+use fp_core::hir::{self, ExprKind};
 
-pub fn assert_hir_integer(expr: &hir::HirExpr, expected: i64) {
+pub fn assert_hir_integer(expr: &hir::Expr, expected: i64) {
     match &expr.kind {
-        HirExprKind::Literal(hir::HirLit::Integer(value)) => assert_eq!(*value, expected),
+        ExprKind::Literal(hir::Lit::Integer(value)) => assert_eq!(*value, expected),
         _ => panic!("expected integer literal, got {:?}", expr.kind),
     }
 }

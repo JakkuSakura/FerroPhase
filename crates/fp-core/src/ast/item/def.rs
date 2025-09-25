@@ -1,6 +1,6 @@
 use crate::ast::{
-    AstAttribute, AstType, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature,
-    ItemChunk, StructuralField, TypeBounds, TypeEnum, TypeFunction, TypeStruct, TypeStructural,
+    Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, ItemChunk,
+    StructuralField, Ty, TypeBounds, TypeEnum, TypeFunction, TypeStruct, TypeStructural,
     ValueFunction, Visibility,
 };
 use crate::common_struct;
@@ -44,14 +44,14 @@ common_struct! {
     pub struct ItemDefType {
         pub visibility: Visibility,
         pub name: Ident,
-        pub value: AstType,
+        pub value: Ty,
     }
 }
 common_struct! {
     pub struct ItemDefConst {
         pub visibility: Visibility,
         pub name: Ident,
-        pub ty: Option<AstType>,
+        pub ty: Option<Ty>,
         pub value: BExpr,
     }
 }
@@ -59,13 +59,13 @@ common_struct! {
     pub struct ItemDefStatic {
         pub visibility: Visibility,
         pub name: Ident,
-        pub ty: AstType,
+        pub ty: Ty,
         pub value: BExpr,
     }
 }
 common_struct! {
     pub struct ItemDefFunction {
-        pub attrs: Vec<AstAttribute>,
+        pub attrs: Vec<Attribute>,
         pub name: Ident,
         pub ty: Option<TypeFunction>,
         pub sig: FunctionSignature,
@@ -90,14 +90,14 @@ impl ItemDefFunction {
         self.sig.receiver = Some(receiver);
         self
     }
-    pub fn with_params(mut self, params: Vec<(Ident, AstType)>) -> Self {
+    pub fn with_params(mut self, params: Vec<(Ident, Ty)>) -> Self {
         self.sig.params = params
             .into_iter()
             .map(|(name, ty)| FunctionParam::new(name, ty))
             .collect();
         self
     }
-    pub fn with_ret_ty(mut self, ret_ty: AstType) -> Self {
+    pub fn with_ret_ty(mut self, ret_ty: Ty) -> Self {
         self.sig.ret_ty = Some(ret_ty);
         self
     }

@@ -9,7 +9,7 @@ use swc_ecma_codegen::Emitter;
 use swc_ecma_quote::swc_common::sync::Lrc;
 use swc_ecma_quote::swc_common::{SourceMap, DUMMY_SP};
 
-use fp_core::ast::{AstSerializer, AstType, EnumTypeVariant, TypeEnum, TypeStruct};
+use fp_core::ast::{AstSerializer, EnumTypeVariant, Ty, TypeEnum, TypeStruct};
 use fp_core::id::Ident;
 use fp_core::printer::AstSerializerConfig;
 
@@ -233,9 +233,9 @@ impl TsPrinter {
 unsafe impl Send for TsPrinter {}
 unsafe impl Sync for TsPrinter {}
 impl AstSerializer for TsPrinter {
-    fn serialize_type(&self, node: &AstType) -> Result<String> {
+    fn serialize_type(&self, node: &Ty) -> Result<String> {
         match node {
-            AstType::Enum(decl) => {
+            Ty::Enum(decl) => {
                 let decl = self.to_enum(decl)?;
 
                 self.print_script(&Script {
@@ -246,7 +246,7 @@ impl AstSerializer for TsPrinter {
                     shebang: None,
                 })
             }
-            AstType::Struct(struct_def) => {
+            Ty::Struct(struct_def) => {
                 let interface_decl = self.to_struct_interface(struct_def)?;
 
                 self.print_script(&Script {

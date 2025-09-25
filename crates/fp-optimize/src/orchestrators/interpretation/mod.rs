@@ -48,11 +48,11 @@ impl InterpretationOrchestrator {
     /// Interpret expression with runtime semantics
     pub fn interpret_expr_runtime(
         &self,
-        expr: &AstExpr,
+        expr: &Expr,
         ctx: &SharedScopedContext,
     ) -> Result<RuntimeValue> {
         match expr {
-            AstExpr::Locator(Locator::Ident(ident)) => {
+            Expr::Locator(Locator::Ident(ident)) => {
                 // Try to get runtime value first
                 if let Some(runtime_value) = ctx.get_runtime_value_recursive_path(ident) {
                     Ok(runtime_value)
@@ -62,13 +62,13 @@ impl InterpretationOrchestrator {
                     Ok(self.runtime_pass.create_runtime_value(literal))
                 }
             }
-            AstExpr::Select(select) => {
+            Expr::Select(select) => {
                 let obj = self.interpret_expr_runtime(&select.obj.get(), ctx)?;
                 self.runtime_pass
                     .access_field(obj, &select.field.name)
                     .map_err(|e| optimization_error(format!("Field access failed: {}", e)))
             }
-            AstExpr::Invoke(invoke) => self.interpret_invoke_runtime(invoke, ctx),
+            Expr::Invoke(invoke) => self.interpret_invoke_runtime(invoke, ctx),
             _ => {
                 // For other expressions, interpret as literal then wrap
                 let literal = self.interpret_expr(expr, ctx)?;
@@ -108,7 +108,7 @@ impl InterpretationOrchestrator {
     /// Runtime-aware assignment
     pub fn assign_runtime(
         &self,
-        target: &AstExpr,
+        target: &Expr,
         value: RuntimeValue,
         ctx: &SharedScopedContext,
     ) -> Result<()> {
@@ -117,18 +117,14 @@ impl InterpretationOrchestrator {
             .map_err(|e| optimization_error(format!("Assignment failed: {}", e)))
     }
 
-    pub fn interpret_items(&self, node: &ItemChunk, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_items(&self, node: &ItemChunk, ctx: &SharedScopedContext) -> Result<Value> {
         let result: Vec<_> = node
             .iter()
             .map(|x| self.interpret_item(x, ctx))
             .try_collect()?;
-        Ok(result.into_iter().next().unwrap_or(AstValue::unit()))
+        Ok(result.into_iter().next().unwrap_or(Value::unit()))
     }
-    pub fn interpret_invoke(
-        &self,
-        node: &ExprInvoke,
-        ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    pub fn interpret_invoke(&self, node: &ExprInvoke, ctx: &SharedScopedContext) -> Result<Value> {
         // FIXME: call stack may not work properly
         match &node.target {
             ExprInvokeTarget::Function(locator) => {
@@ -151,15 +147,15 @@ impl InterpretationOrchestrator {
     fn interpret_invoke_function(
         &self,
         locator: &Locator,
-        args: &[AstExpr],
+        args: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         match locator {
             Locator::Ident(ident) => {
                 let func = self.interpret_ident(&ident, ctx, true)?;
                 self.interpret_invoke(
                     &ExprInvoke {
-                        target: ExprInvokeTarget::expr(AstExpr::value(func).into()),
+                        target: ExprInvokeTarget::expr(Expr::value(func).into()),
                         args: args.to_vec(),
                     },
                     ctx,
@@ -171,7 +167,7 @@ impl InterpretationOrchestrator {
                     let func = self.interpret_ident(&path.segments[0], ctx, true)?;
                     self.interpret_invoke(
                         &ExprInvoke {
-                            target: ExprInvokeTarget::expr(AstExpr::value(func).into()),
+                            target: ExprInvokeTarget::expr(Expr::value(func).into()),
                             args: args.to_vec(),
                         },
                         ctx,
@@ -183,7 +179,7 @@ impl InterpretationOrchestrator {
                     })?;
                     self.interpret_invoke(
                         &ExprInvoke {
-                            target: ExprInvokeTarget::expr(AstExpr::value(func).into()),
+                            target: ExprInvokeTarget::expr(Expr::value(func).into()),
                             args: args.to_vec(),
                         },
                         ctx,
@@ -199,16 +195,16 @@ impl InterpretationOrchestrator {
     fn interpret_invoke_method(
         &self,
         select: &ExprSelect,
-        args: &[AstExpr],
+        args: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         let obj_runtime = self.interpret_expr_runtime(&select.obj.get(), ctx)?;
         let method_name = &select.field.name;
 
         // First, try to find a custom method defined in an impl block
         if let Some(custom_method) = self.lookup_custom_method(&obj_runtime, method_name, ctx)? {
             // Handle receiver methods differently
-            if let AstValue::Function(func) = &custom_method {
+            if let Value::Function(func) = &custom_method {
                 if func.sig.receiver.is_some() {
                     // Method has a receiver (&self, &mut self, or self)
                     return self.interpret_invoke_method_with_receiver(
@@ -221,7 +217,7 @@ impl InterpretationOrchestrator {
                     // Static method or associated function - no receiver
                     return self.interpret_invoke(
                         &ExprInvoke {
-                            target: ExprInvokeTarget::expr(AstExpr::value(custom_method).into()),
+                            target: ExprInvokeTarget::expr(Expr::value(custom_method).into()),
                             args: args.to_vec(),
                         },
                         ctx,
@@ -249,10 +245,10 @@ impl InterpretationOrchestrator {
         obj: &RuntimeValue,
         method_name: &str,
         ctx: &SharedScopedContext,
-    ) -> Result<Option<AstValue>> {
+    ) -> Result<Option<Value>> {
         // Determine the type of the object
         let type_name = match obj.get_value() {
-            AstValue::Struct(ref s) => s.ty.name.clone(),
+            Value::Struct(ref s) => s.ty.name.clone(),
             _ => return Ok(None), // Only structs can have custom methods for now
         };
 
@@ -264,12 +260,12 @@ impl InterpretationOrchestrator {
 
     fn interpret_invoke_method_with_receiver(
         &self,
-        method: &AstValue,
+        method: &Value,
         obj: &RuntimeValue,
-        args: &[AstExpr],
+        args: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
-        if let AstValue::Function(func) = method {
+    ) -> Result<Value> {
+        if let Value::Function(func) = method {
             // Create a new context for the function call
             let func_ctx = ctx.child(Ident::new("__method_call__"), Visibility::Private, true);
 
@@ -303,19 +299,19 @@ impl InterpretationOrchestrator {
 
     fn interpret_invoke_expr(
         &self,
-        expr: &AstExpr,
-        args: &[AstExpr],
+        expr: &Expr,
+        args: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         match expr {
-            AstExpr::Value(value) => match value.as_ref() {
-                AstValue::BinOpKind(kind) => self.interpret_invoke_binop(kind.clone(), args, ctx),
-                AstValue::UnOpKind(func) => {
+            Expr::Value(value) => match value.as_ref() {
+                Value::BinOpKind(kind) => self.interpret_invoke_binop(kind.clone(), args, ctx),
+                Value::UnOpKind(func) => {
                     opt_ensure!(args.len() == 1, format!("Expected 1 arg for {:?}", func));
                     let arg = self.interpret_expr(&args[0].get(), ctx)?;
                     self.interpret_invoke_unop(func.clone(), arg, ctx)
                 }
-                AstValue::Function(func) => {
+                Value::Function(func) => {
                     // Invoke a user-defined function
                     let args = self.interpret_args(args, ctx)?;
                     self.interpret_invoke_function_value(func, &args, ctx)
@@ -325,7 +321,7 @@ impl InterpretationOrchestrator {
                     value
                 )),
             },
-            AstExpr::Any(any) => {
+            Expr::Any(any) => {
                 if let Some(exp) = any.downcast_ref::<BuiltinFn>() {
                     let args = self.interpret_args(args, ctx)?;
                     Ok(exp.invoke(&args, ctx)?)
@@ -340,9 +336,9 @@ impl InterpretationOrchestrator {
     fn interpret_invoke_function_value(
         &self,
         func: &ValueFunction,
-        args: &[AstValue],
+        args: &[Value],
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         // Create a new context for the function call
         let func_ctx = ctx.child(Ident::new("__function_call__"), Visibility::Private, true);
 
@@ -381,7 +377,7 @@ impl InterpretationOrchestrator {
     pub fn interpret_impl(&self, node: &ItemImpl, ctx: &SharedScopedContext) -> Result<()> {
         // Get the type name that this impl block is for
         let type_name = match &node.self_ty {
-            AstExpr::Locator(Locator::Ident(ident)) => ident.clone(),
+            Expr::Locator(Locator::Ident(ident)) => ident.clone(),
             _ => {
                 #[allow(unreachable_code)]
                 return opt_bail!("Only simple type names are supported in impl blocks for now");
@@ -390,7 +386,7 @@ impl InterpretationOrchestrator {
 
         // For each function in the impl block, register it as a method for the type
         for item in &node.items {
-            if let AstItem::DefFunction(func_def) = item {
+            if let Item::DefFunction(func_def) = item {
                 // Store the method in context with a special naming scheme: TypeName::method_name
                 let method_key = Ident::new(&format!(
                     "{}::{}",
@@ -398,13 +394,13 @@ impl InterpretationOrchestrator {
                     func_def.name.as_str()
                 ));
                 let func_value = func_def._to_value();
-                ctx.insert_value(method_key, AstValue::Function(func_value));
+                ctx.insert_value(method_key, Value::Function(func_value));
             }
         }
 
         Ok(())
     }
-    pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_block(&self, node: &ExprBlock, ctx: &SharedScopedContext) -> Result<Value> {
         let ctx = ctx.child(Ident::new("__block__"), Visibility::Private, true);
 
         // FIRST PASS: Process all items (const declarations, structs, functions)
@@ -426,15 +422,15 @@ impl InterpretationOrchestrator {
         if let Some(expr) = node.last_expr() {
             self.interpret_expr(&expr, &ctx)
         } else {
-            Ok(AstValue::unit())
+            Ok(Value::unit())
         }
     }
 
-    pub fn interpret_cond(&self, node: &ExprMatch, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_cond(&self, node: &ExprMatch, ctx: &SharedScopedContext) -> Result<Value> {
         for case in &node.cases {
             let interpret = self.interpret_expr(&case.cond, ctx)?;
             match interpret {
-                AstValue::Bool(x) => {
+                Value::Bool(x) => {
                     if x.value {
                         return self.interpret_expr(&case.body, ctx);
                     } else {
@@ -449,11 +445,11 @@ impl InterpretationOrchestrator {
                 }
             }
         }
-        Ok(AstValue::unit())
+        Ok(Value::unit())
     }
     pub fn interpret_print(
         se: &dyn AstSerializer,
-        args: &[AstExpr],
+        args: &[Expr],
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         let formatted: Vec<_> = args
@@ -468,52 +464,52 @@ impl InterpretationOrchestrator {
         ident: &Ident,
         ctx: &SharedScopedContext,
         resolve: bool,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         match ident.as_str() {
             // TODO: can we remove these?
-            "+" if resolve => Ok(AstValue::any(builtin_add())),
-            "-" if resolve => Ok(AstValue::any(builtin_sub())),
-            "*" if resolve => Ok(AstValue::any(builtin_mul())),
-            ">" if resolve => Ok(AstValue::any(builtin_gt())),
-            ">=" if resolve => Ok(AstValue::any(builtin_ge())),
-            "==" if resolve => Ok(AstValue::any(builtin_eq())),
-            "<=" if resolve => Ok(AstValue::any(builtin_le())),
-            "<" if resolve => Ok(AstValue::any(builtin_lt())),
-            "print" if resolve => Ok(AstValue::any(builtin_print(self.serializer.clone()))),
-            "println!" if resolve => Ok(AstValue::any(builtin_println(self.serializer.clone()))),
-            "println" if resolve => Ok(AstValue::any(builtin_println(self.serializer.clone()))),
-            "true" => Ok(AstValue::bool(true)),
-            "false" => Ok(AstValue::bool(false)),
-            "None" => Ok(AstValue::None(ValueNone)),
-            "null" => Ok(AstValue::Null(ValueNull)),
-            "unit" => Ok(AstValue::Unit(ValueUnit)),
-            "undefined" => Ok(AstValue::Undefined(ValueUndefined)),
-            "Some" => Ok(AstValue::any(builtin_some())),
+            "+" if resolve => Ok(Value::any(builtin_add())),
+            "-" if resolve => Ok(Value::any(builtin_sub())),
+            "*" if resolve => Ok(Value::any(builtin_mul())),
+            ">" if resolve => Ok(Value::any(builtin_gt())),
+            ">=" if resolve => Ok(Value::any(builtin_ge())),
+            "==" if resolve => Ok(Value::any(builtin_eq())),
+            "<=" if resolve => Ok(Value::any(builtin_le())),
+            "<" if resolve => Ok(Value::any(builtin_lt())),
+            "print" if resolve => Ok(Value::any(builtin_print(self.serializer.clone()))),
+            "println!" if resolve => Ok(Value::any(builtin_println(self.serializer.clone()))),
+            "println" if resolve => Ok(Value::any(builtin_println(self.serializer.clone()))),
+            "true" => Ok(Value::bool(true)),
+            "false" => Ok(Value::bool(false)),
+            "None" => Ok(Value::None(ValueNone)),
+            "null" => Ok(Value::Null(ValueNull)),
+            "unit" => Ok(Value::Unit(ValueUnit)),
+            "undefined" => Ok(Value::Undefined(ValueUndefined)),
+            "Some" => Ok(Value::any(builtin_some())),
             // Metaprogramming intrinsics
             // Core introspection intrinsics
-            "sizeof!" if resolve => Ok(AstValue::any(builtin_sizeof())),
-            "reflect_fields!" if resolve => Ok(AstValue::any(builtin_reflect_fields())),
-            "hasmethod!" if resolve => Ok(AstValue::any(builtin_hasmethod())),
-            "type_name!" if resolve => Ok(AstValue::any(builtin_type_name())),
+            "sizeof!" if resolve => Ok(Value::any(builtin_sizeof())),
+            "reflect_fields!" if resolve => Ok(Value::any(builtin_reflect_fields())),
+            "hasmethod!" if resolve => Ok(Value::any(builtin_hasmethod())),
+            "type_name!" if resolve => Ok(Value::any(builtin_type_name())),
 
             // Struct creation and manipulation intrinsics
-            "create_struct!" if resolve => Ok(AstValue::any(builtin_create_struct())),
-            "clone_struct!" if resolve => Ok(AstValue::any(builtin_clone_struct())),
-            "addfield!" if resolve => Ok(AstValue::any(builtin_addfield())),
+            "create_struct!" if resolve => Ok(Value::any(builtin_create_struct())),
+            "clone_struct!" if resolve => Ok(Value::any(builtin_clone_struct())),
+            "addfield!" if resolve => Ok(Value::any(builtin_addfield())),
 
             // Struct querying intrinsics
-            "hasfield!" if resolve => Ok(AstValue::any(builtin_hasfield())),
-            "field_count!" if resolve => Ok(AstValue::any(builtin_field_count())),
-            "method_count!" if resolve => Ok(AstValue::any(builtin_method_count())),
-            "field_type!" if resolve => Ok(AstValue::any(builtin_field_type())),
-            "struct_size!" if resolve => Ok(AstValue::any(builtin_struct_size())),
+            "hasfield!" if resolve => Ok(Value::any(builtin_hasfield())),
+            "field_count!" if resolve => Ok(Value::any(builtin_field_count())),
+            "method_count!" if resolve => Ok(Value::any(builtin_method_count())),
+            "field_type!" if resolve => Ok(Value::any(builtin_field_type())),
+            "struct_size!" if resolve => Ok(Value::any(builtin_struct_size())),
 
             // Code generation intrinsics
-            "generate_method!" if resolve => Ok(AstValue::any(builtin_generate_method())),
+            "generate_method!" if resolve => Ok(Value::any(builtin_generate_method())),
 
             // Compile-time validation intrinsics
-            "compile_error!" if resolve => Ok(AstValue::any(builtin_compile_error())),
-            "compile_warning!" if resolve => Ok(AstValue::any(builtin_compile_warning())),
+            "compile_error!" if resolve => Ok(Value::any(builtin_compile_error())),
+            "compile_warning!" if resolve => Ok(Value::any(builtin_compile_warning())),
             _ => {
                 debug!("Get value recursive {:?}", ident);
                 ctx.get_value_recursive(ident).ok_or_else(|| {
@@ -533,7 +529,7 @@ impl InterpretationOrchestrator {
             }
 
             match (&args[0], &args[1]) {
-                (AstValue::Int(a), AstValue::Int(b)) => Ok(AstValue::int(a.value & b.value)),
+                (Value::Int(a), Value::Int(b)) => Ok(Value::int(a.value & b.value)),
                 _ => Err(optimization_error(format!(
                     "BitAnd operation not supported for types: {:?} & {:?}",
                     args[0], args[1]
@@ -553,7 +549,7 @@ impl InterpretationOrchestrator {
             }
 
             match (&args[0], &args[1]) {
-                (AstValue::Bool(a), AstValue::Bool(b)) => Ok(AstValue::bool(a.value && b.value)),
+                (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value && b.value)),
                 _ => Err(optimization_error(format!(
                     "LogicalAnd operation not supported for types: {:?} && {:?}",
                     args[0], args[1]
@@ -573,7 +569,7 @@ impl InterpretationOrchestrator {
             }
 
             match (&args[0], &args[1]) {
-                (AstValue::Bool(a), AstValue::Bool(b)) => Ok(AstValue::bool(a.value || b.value)),
+                (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value || b.value)),
                 _ => Err(optimization_error(format!(
                     "LogicalOr operation not supported for types: {:?} || {:?}",
                     args[0], args[1]
@@ -593,11 +589,11 @@ impl InterpretationOrchestrator {
             }
 
             match (&args[0], &args[1]) {
-                (AstValue::Int(a), AstValue::Int(b)) => {
+                (Value::Int(a), Value::Int(b)) => {
                     if b.value == 0 {
                         return Err(optimization_error("Division by zero".to_string()));
                     }
-                    Ok(AstValue::int(a.value / b.value))
+                    Ok(Value::int(a.value / b.value))
                 }
                 _ => Err(optimization_error(format!(
                     "Division operation not supported for types: {:?} / {:?}",
@@ -612,7 +608,7 @@ impl InterpretationOrchestrator {
         &self,
         format_str: &fp_core::ast::ExprFormatString,
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         tracing::debug!(
             "Interpreting structured format string with {} parts and {} args",
             format_str.parts.len(),
@@ -689,19 +685,17 @@ impl InterpretationOrchestrator {
         }
 
         tracing::debug!("Final structured format string result: '{}'", result);
-        Ok(AstValue::String(fp_core::ast::ValueString::new_owned(
-            result,
-        )))
+        Ok(Value::String(fp_core::ast::ValueString::new_owned(result)))
     }
 
-    // Helper method to convert AstValue to string representation
-    fn value_to_string(&self, value: &AstValue) -> Result<String> {
+    // Helper method to convert Value to string representation
+    fn value_to_string(&self, value: &Value) -> Result<String> {
         match value {
-            AstValue::String(s) => Ok(s.value.clone()),
-            AstValue::Int(i) => Ok(i.value.to_string()),
-            AstValue::Decimal(d) => Ok(d.value.to_string()),
-            AstValue::Bool(b) => Ok(b.value.to_string()),
-            AstValue::Unit(_) => Ok("()".to_string()),
+            Value::String(s) => Ok(s.value.clone()),
+            Value::Int(i) => Ok(i.value.to_string()),
+            Value::Decimal(d) => Ok(d.value.to_string()),
+            Value::Bool(b) => Ok(b.value.to_string()),
+            Value::Unit(_) => Ok("()".to_string()),
             _ => Ok(format!("{:?}", value)),
         }
     }
@@ -711,13 +705,13 @@ impl InterpretationOrchestrator {
         &self,
         if_expr: &fp_core::ast::ExprIf,
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         // Evaluate the condition
         let condition = self.interpret_expr(&if_expr.cond, ctx)?;
 
         // Check if condition is a boolean
         match condition {
-            AstValue::Bool(b) => {
+            Value::Bool(b) => {
                 if b.value {
                     // Execute then branch
                     self.interpret_expr(&if_expr.then, ctx)
@@ -726,11 +720,11 @@ impl InterpretationOrchestrator {
                     if let Some(else_expr) = &if_expr.elze {
                         self.interpret_expr(else_expr, ctx)
                     } else {
-                        Ok(AstValue::unit()) // No else branch, return unit
+                        Ok(Value::unit()) // No else branch, return unit
                     }
                 }
             }
-            AstValue::Any(_) => {
+            Value::Any(_) => {
                 // Handle the case where condition contains unsupported expressions (like cfg! macro)
                 Err(optimization_error(
                     "Cannot evaluate if condition: contains unsupported cfg! macro. The cfg!(debug_assertions) macro is not supported in const evaluation. Use a literal boolean instead.".to_string()
@@ -747,13 +741,13 @@ impl InterpretationOrchestrator {
         &self,
         assign: &fp_core::ast::ExprAssign,
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         // Evaluate the right-hand side first
         let value = self.interpret_expr(&assign.value, ctx)?;
 
         // Now handle the assignment target
         match &*assign.target {
-            AstExpr::Locator(locator) => {
+            Expr::Locator(locator) => {
                 // Simple variable assignment: x = value
                 if let Some(ident) = locator.as_ident() {
                     ctx.insert_value(ident.as_str(), value.clone());
@@ -764,15 +758,15 @@ impl InterpretationOrchestrator {
                     ))
                 }
             }
-            AstExpr::Select(select) => {
+            Expr::Select(select) => {
                 // Field assignment: obj.field = value
                 match &*select.obj {
-                    AstExpr::Locator(locator) => {
+                    Expr::Locator(locator) => {
                         if let Some(var_name) = locator.as_ident() {
                             // Get the current struct value
                             if let Some(current_value) = ctx.get_value(var_name.clone()) {
                                 match current_value {
-                                    AstValue::Struct(mut struct_val) => {
+                                    Value::Struct(mut struct_val) => {
                                         // Find and update the field
                                         for field in &mut struct_val.structural.fields {
                                             if field.name == select.field {
@@ -780,7 +774,7 @@ impl InterpretationOrchestrator {
                                                 // Update the struct in context
                                                 ctx.insert_value(
                                                     var_name.clone(),
-                                                    AstValue::Struct(struct_val),
+                                                    Value::Struct(struct_val),
                                                 );
                                                 return Ok(value);
                                             }
@@ -830,12 +824,12 @@ impl InterpretationOrchestrator {
                         .map(|x| {
                             let value = this.interpret_value(x, value, true)?;
                             match value {
-                                AstValue::Type(AstType::ImplTraits(impls)) => Ok(impls.bounds),
+                                Value::Type(Ty::ImplTraits(impls)) => Ok(impls.bounds),
                                 _ => opt_bail!(format!("Expected impl Traits, got {:?}", value)),
                             }
                         })
                         .try_collect()?;
-                    Ok(AstType::ImplTraits(ImplTraits {
+                    Ok(Ty::ImplTraits(ImplTraits {
                         bounds: TypeBounds {
                             bounds: args.into_iter().flat_map(|x| x.bounds).collect(),
                         },
@@ -869,7 +863,7 @@ impl InterpretationOrchestrator {
         ctx: &SharedScopedContext,
     ) -> Result<()> {
         let name = &def.name;
-        ctx.insert_value_with_ctx(name.clone(), AstValue::Function(def._to_value()));
+        ctx.insert_value_with_ctx(name.clone(), Value::Function(def._to_value()));
         Ok(())
     }
     pub fn interpret_def_struct(
@@ -877,15 +871,15 @@ impl InterpretationOrchestrator {
         def: &ItemDefStruct,
         ctx: &SharedScopedContext,
     ) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), AstType::Struct(def.value.clone()).into());
+        ctx.insert_value_with_ctx(def.name.clone(), Ty::Struct(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_enum(&self, def: &ItemDefEnum, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), AstType::Enum(def.value.clone()).into());
+        ctx.insert_value_with_ctx(def.name.clone(), Ty::Enum(def.value.clone()).into());
         Ok(())
     }
     pub fn interpret_def_type(&self, def: &ItemDefType, ctx: &SharedScopedContext) -> Result<()> {
-        ctx.insert_value_with_ctx(def.name.clone(), AstValue::Type(def.value.clone()));
+        ctx.insert_value_with_ctx(def.name.clone(), Value::Type(def.value.clone()));
         Ok(())
     }
     pub fn interpret_def_const(&self, def: &ItemDefConst, ctx: &SharedScopedContext) -> Result<()> {
@@ -894,11 +888,7 @@ impl InterpretationOrchestrator {
         ctx.insert_value_with_ctx(def.name.clone(), value);
         Ok(())
     }
-    pub fn interpret_args(
-        &self,
-        node: &[AstExpr],
-        ctx: &SharedScopedContext,
-    ) -> Result<Vec<AstValue>> {
+    pub fn interpret_args(&self, node: &[Expr], ctx: &SharedScopedContext) -> Result<Vec<Value>> {
         // Evaluate each argument to a concrete value so builtins like println!
         // receive consts/literals rather than locals/expr wrappers in comptime mode.
         node.iter()
@@ -910,8 +900,8 @@ impl InterpretationOrchestrator {
         node: &ExprStruct,
         ctx: &SharedScopedContext,
     ) -> Result<ValueStruct> {
-        let value: AstValue = self.interpret_expr(&node.name.get(), ctx)?.try_conv()?;
-        let ty: AstType = value.try_conv()?;
+        let value: Value = self.interpret_expr(&node.name.get(), ctx)?.try_conv()?;
+        let ty: Ty = value.try_conv()?;
         let struct_ = ty.try_conv()?;
         let fields: Vec<_> = node
             .fields
@@ -922,7 +912,7 @@ impl InterpretationOrchestrator {
 
                     value: match &x.value {
                         Some(value) => self.interpret_expr(value, ctx)?,
-                        None => self.interpret_expr(&AstExpr::ident(x.name.clone()), ctx)?,
+                        None => self.interpret_expr(&Expr::ident(x.name.clone()), ctx)?,
                     },
                 })
             })
@@ -953,7 +943,7 @@ impl InterpretationOrchestrator {
             structural: ValueStructural { fields },
         })
     }
-    pub fn interpret_select(&self, s: &ExprSelect, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_select(&self, s: &ExprSelect, ctx: &SharedScopedContext) -> Result<Value> {
         tracing::debug!(
             "Interpreting field access: {}.{}",
             self.serializer
@@ -995,7 +985,7 @@ impl InterpretationOrchestrator {
             values: values.into_iter().map(|x| x.into()).collect(),
         })
     }
-    pub fn interpret_type(&self, node: &AstType, ctx: &SharedScopedContext) -> Result<AstType> {
+    pub fn interpret_type(&self, node: &Ty, ctx: &SharedScopedContext) -> Result<Ty> {
         // TODO: handle closure
         self.evaluate_type_value(node, ctx)
     }
@@ -1048,47 +1038,41 @@ impl InterpretationOrchestrator {
     }
     pub fn interpret_value(
         &self,
-        val: &AstValue,
+        val: &Value,
         ctx: &SharedScopedContext,
         resolve: bool,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         match val {
-            AstValue::Type(n) => self.interpret_type(n, ctx).map(AstValue::Type),
-            AstValue::Struct(n) => self.interpret_struct_value(n, ctx).map(AstValue::Struct),
-            AstValue::Structural(_) => opt_bail!(format!("Failed to interpret {:?}", val)),
-            AstValue::Function(n) => self
-                .interpret_function_value(n, ctx)
-                .map(AstValue::Function),
-            AstValue::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(AstValue::Tuple),
-            AstValue::Expr(n) => self.interpret_expr(&n.get(), ctx),
-            AstValue::Any(_n) => {
+            Value::Type(n) => self.interpret_type(n, ctx).map(Value::Type),
+            Value::Struct(n) => self.interpret_struct_value(n, ctx).map(Value::Struct),
+            Value::Structural(_) => opt_bail!(format!("Failed to interpret {:?}", val)),
+            Value::Function(n) => self.interpret_function_value(n, ctx).map(Value::Function),
+            Value::Tuple(n) => self.interpret_tuple(n, ctx, resolve).map(Value::Tuple),
+            Value::Expr(n) => self.interpret_expr(&n.get(), ctx),
+            Value::Any(_n) => {
                 if self.ignore_missing_items {
                     return Ok(val.clone());
                 }
 
                 opt_bail!(format!("Failed to interpret {:?}", val))
             }
-            AstValue::Some(val) => Ok(AstValue::Some(ValueSome::new(
+            Value::Some(val) => Ok(Value::Some(ValueSome::new(
                 self.interpret_value(&val.value, ctx, resolve)?.into(),
             ))),
-            AstValue::Option(value) => Ok(AstValue::Option(ValueOption::new(
+            Value::Option(value) => Ok(Value::Option(ValueOption::new(
                 value
                     .value
                     .as_ref()
                     .map(|x| self.interpret_value(&x, ctx, resolve))
                     .transpose()?,
             ))),
-            AstValue::BinOpKind(x) if resolve => {
-                self.lookup_bin_op_kind(x.clone()).map(|x| AstValue::any(x))
+            Value::BinOpKind(x) if resolve => {
+                self.lookup_bin_op_kind(x.clone()).map(|x| Value::any(x))
             }
             _ => Ok(val.clone()),
         }
     }
-    pub fn interpret_binop(
-        &self,
-        binop: &ExprBinOp,
-        ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    pub fn interpret_binop(&self, binop: &ExprBinOp, ctx: &SharedScopedContext) -> Result<Value> {
         let builtin_fn = self.lookup_bin_op_kind(binop.kind.clone())?;
         let lhs = self.interpret_expr(&binop.lhs.get(), ctx)?;
         let rhs = self.interpret_expr(&binop.rhs.get(), ctx)?;
@@ -1097,9 +1081,9 @@ impl InterpretationOrchestrator {
     pub fn interpret_invoke_binop(
         &self,
         op: BinOpKind,
-        args: &[AstExpr],
+        args: &[Expr],
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         let builtin_fn = self.lookup_bin_op_kind(op)?;
         let args = self.interpret_args(args, ctx)?;
         Ok(builtin_fn.invoke(&args, ctx)?)
@@ -1107,17 +1091,17 @@ impl InterpretationOrchestrator {
     pub fn interpret_invoke_unop(
         &self,
         op: UnOpKind,
-        arg: AstValue,
+        arg: Value,
         _ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         match op {
             UnOpKind::Neg => match arg {
-                AstValue::Int(val) => Ok(AstValue::Int(ValueInt::new(-val.value))),
-                AstValue::Decimal(val) => Ok(AstValue::Decimal(ValueDecimal::new(-val.value))),
+                Value::Int(val) => Ok(Value::Int(ValueInt::new(-val.value))),
+                Value::Decimal(val) => Ok(Value::Decimal(ValueDecimal::new(-val.value))),
                 _ => opt_bail!(format!("Failed to interpret {:?}", op)),
             },
             UnOpKind::Not => match arg {
-                AstValue::Bool(val) => Ok(AstValue::Bool(ValueBool::new(!val.value))),
+                Value::Bool(val) => Ok(Value::Bool(ValueBool::new(!val.value))),
                 _ => opt_bail!(format!("Failed to interpret {:?}", op)),
             },
             _ => opt_bail!(format!("Could not process {:?}", op)),
@@ -1125,31 +1109,31 @@ impl InterpretationOrchestrator {
     }
     pub fn interpret_expr_common(
         &self,
-        node: &AstExpr,
+        node: &Expr,
         ctx: &SharedScopedContext,
         resolve: bool,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         match node {
-            AstExpr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
-            AstExpr::Locator(n) => ctx
+            Expr::Locator(Locator::Ident(n)) => self.interpret_ident(n, ctx, resolve),
+            Expr::Locator(n) => ctx
                 .get_value_recursive(n.to_path())
                 .ok_or_else(|| optimization_error(format!("could not find {:?} in context", n))),
-            AstExpr::Value(n) => self.interpret_value(n, ctx, resolve),
-            AstExpr::Block(n) => self.interpret_block(n, ctx),
-            AstExpr::Match(c) => self.interpret_cond(c, ctx),
-            AstExpr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
-            AstExpr::BinOp(op) => self.interpret_binop(op, ctx),
-            AstExpr::UnOp(op) => {
+            Expr::Value(n) => self.interpret_value(n, ctx, resolve),
+            Expr::Block(n) => self.interpret_block(n, ctx),
+            Expr::Match(c) => self.interpret_cond(c, ctx),
+            Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),
+            Expr::BinOp(op) => self.interpret_binop(op, ctx),
+            Expr::UnOp(op) => {
                 let arg = self.interpret_expr(&op.val, ctx)?;
                 self.interpret_invoke_unop(op.op.clone(), arg, ctx)
             }
-            AstExpr::Any(n) => {
+            Expr::Any(n) => {
                 // Handle macros specially
                 if let Some(raw_macro) = n.downcast_ref::<fp_rust::RawExprMacro>() {
                     // Check if this is a cfg! macro by looking at the macro path
                     if raw_macro.raw.mac.path.is_ident("cfg") {
                         // cfg! macro - for now, assume debug mode is disabled in const evaluation
-                        return Ok(AstValue::bool(false));
+                        return Ok(Value::bool(false));
                     }
 
                     // Handle strlen! macro
@@ -1165,9 +1149,7 @@ impl InterpretationOrchestrator {
                         let ident = fp_core::id::Ident::new(arg_name);
                         if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
                             match value {
-                                AstValue::String(s) => {
-                                    return Ok(AstValue::int(s.value.len() as i64))
-                                }
+                                Value::String(s) => return Ok(Value::int(s.value.len() as i64)),
                                 _ => opt_bail!(format!(
                                     "strlen! expects string argument, got {:?}",
                                     value
@@ -1200,9 +1182,9 @@ impl InterpretationOrchestrator {
                                 let ident = fp_core::id::Ident::new(arg);
                                 if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
                                     match value {
-                                        AstValue::String(s) => result.push_str(&s.value),
-                                        AstValue::Int(i) => result.push_str(&i.value.to_string()),
-                                        AstValue::Bool(b) => result.push_str(&b.value.to_string()),
+                                        Value::String(s) => result.push_str(&s.value),
+                                        Value::Int(i) => result.push_str(&i.value.to_string()),
+                                        Value::Bool(b) => result.push_str(&b.value.to_string()),
                                         _ => opt_bail!(format!(
                                             "concat! cannot convert {:?} to string",
                                             value
@@ -1214,7 +1196,7 @@ impl InterpretationOrchestrator {
                             }
                         }
 
-                        return Ok(AstValue::string(result));
+                        return Ok(Value::string(result));
                     }
 
                     // Handle introspection macros
@@ -1232,14 +1214,14 @@ impl InterpretationOrchestrator {
                             ctx.get_type(fp_core::id::Path::from(ident.clone()))
                         {
                             let sizeof_builtin = builtin_sizeof();
-                            return sizeof_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                            return sizeof_builtin.invoke(&[Value::Type(type_value)], ctx);
                         }
 
                         // Then try as a value (which might be a struct definition)
                         if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
-                            if let AstValue::Type(type_value) = value {
+                            if let Value::Type(type_value) = value {
                                 let sizeof_builtin = builtin_sizeof();
-                                return sizeof_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                                return sizeof_builtin.invoke(&[Value::Type(type_value)], ctx);
                             }
                         }
 
@@ -1258,15 +1240,14 @@ impl InterpretationOrchestrator {
                             ctx.get_type(fp_core::id::Path::from(ident.clone()))
                         {
                             let field_count_builtin = builtin_field_count();
-                            return field_count_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                            return field_count_builtin.invoke(&[Value::Type(type_value)], ctx);
                         }
 
                         // Then try as a value (which might be a struct definition)
                         if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
-                            if let AstValue::Type(type_value) = value {
+                            if let Value::Type(type_value) = value {
                                 let field_count_builtin = builtin_field_count();
-                                return field_count_builtin
-                                    .invoke(&[AstValue::Type(type_value)], ctx);
+                                return field_count_builtin.invoke(&[Value::Type(type_value)], ctx);
                             }
                         }
 
@@ -1285,15 +1266,15 @@ impl InterpretationOrchestrator {
                             ctx.get_type(fp_core::id::Path::from(ident.clone()))
                         {
                             let method_count_builtin = builtin_method_count();
-                            return method_count_builtin.invoke(&[AstValue::Type(type_value)], ctx);
+                            return method_count_builtin.invoke(&[Value::Type(type_value)], ctx);
                         }
 
                         // Then try as a value (which might be a struct definition)
                         if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
-                            if let AstValue::Type(type_value) = value {
+                            if let Value::Type(type_value) = value {
                                 let method_count_builtin = builtin_method_count();
                                 return method_count_builtin
-                                    .invoke(&[AstValue::Type(type_value)], ctx);
+                                    .invoke(&[Value::Type(type_value)], ctx);
                             }
                         }
 
@@ -1326,8 +1307,8 @@ impl InterpretationOrchestrator {
                                 let hasfield_builtin = builtin_hasfield();
                                 return hasfield_builtin.invoke(
                                     &[
-                                        AstValue::Type(type_value),
-                                        AstValue::string(field_name.to_string()),
+                                        Value::Type(type_value),
+                                        Value::string(field_name.to_string()),
                                     ],
                                     ctx,
                                 );
@@ -1335,12 +1316,12 @@ impl InterpretationOrchestrator {
 
                             // Then try as a value (which might be a struct definition)
                             if let Some(value) = ctx.get_value(fp_core::id::Path::from(ident)) {
-                                if let AstValue::Type(type_value) = value {
+                                if let Value::Type(type_value) = value {
                                     let hasfield_builtin = builtin_hasfield();
                                     return hasfield_builtin.invoke(
                                         &[
-                                            AstValue::Type(type_value),
-                                            AstValue::string(field_name.to_string()),
+                                            Value::Type(type_value),
+                                            Value::string(field_name.to_string()),
                                         ],
                                         ctx,
                                     );
@@ -1355,50 +1336,48 @@ impl InterpretationOrchestrator {
                         }
                     }
                 }
-                Ok(AstValue::Any(n.clone()))
+                Ok(Value::Any(n.clone()))
             }
-            AstExpr::Select(s) => self.interpret_select(s, ctx),
-            AstExpr::Struct(s) => self.interpret_struct_expr(s, ctx).map(AstValue::Struct),
-            AstExpr::Paren(p) => self.interpret_expr(&p.expr, ctx),
-            AstExpr::If(if_expr) => self.interpret_if_expr(if_expr, ctx),
-            AstExpr::Assign(assign) => self.interpret_assign(assign, ctx),
-            AstExpr::FormatString(format_str) => self.interpret_format_string(format_str, ctx),
+            Expr::Select(s) => self.interpret_select(s, ctx),
+            Expr::Struct(s) => self.interpret_struct_expr(s, ctx).map(Value::Struct),
+            Expr::Paren(p) => self.interpret_expr(&p.expr, ctx),
+            Expr::If(if_expr) => self.interpret_if_expr(if_expr, ctx),
+            Expr::Assign(assign) => self.interpret_assign(assign, ctx),
+            Expr::FormatString(format_str) => self.interpret_format_string(format_str, ctx),
             _ => opt_bail!(format!(
                 "Unsupported expression type in interpreter: {:?}",
                 node
             )),
         }
     }
-    pub fn interpret_expr(&self, node: &AstExpr, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_expr(&self, node: &Expr, ctx: &SharedScopedContext) -> Result<Value> {
         self.interpret_expr_common(node, ctx, true)
     }
     pub fn interpret_expr_no_resolve(
         &self,
-        node: &AstExpr,
+        node: &Expr,
         ctx: &SharedScopedContext,
-    ) -> Result<AstValue> {
+    ) -> Result<Value> {
         self.interpret_expr_common(node, ctx, false)
     }
-    pub fn interpret_item(&self, node: &AstItem, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_item(&self, node: &Item, ctx: &SharedScopedContext) -> Result<Value> {
         debug!("Interpreting {}", self.serializer.serialize_item(&node)?);
         match node {
-            AstItem::Module(n) => self.interpret_items(&n.items, ctx),
-            AstItem::DefFunction(n) => self
-                .interpret_def_function(n, ctx)
-                .map(|_| AstValue::unit()),
-            AstItem::DefStruct(n) => self.interpret_def_struct(n, ctx).map(|_| AstValue::unit()),
-            AstItem::DefEnum(n) => self.interpret_def_enum(n, ctx).map(|_| AstValue::unit()),
-            AstItem::DefType(n) => self.interpret_def_type(n, ctx).map(|_| AstValue::unit()),
-            AstItem::DefConst(n) => self.interpret_def_const(n, ctx).map(|_| AstValue::unit()),
-            AstItem::Import(n) => self.interpret_import(n, ctx).map(|_| AstValue::unit()),
-            AstItem::Impl(n) => self.interpret_impl(n, ctx).map(|_| AstValue::unit()),
+            Item::Module(n) => self.interpret_items(&n.items, ctx),
+            Item::DefFunction(n) => self.interpret_def_function(n, ctx).map(|_| Value::unit()),
+            Item::DefStruct(n) => self.interpret_def_struct(n, ctx).map(|_| Value::unit()),
+            Item::DefEnum(n) => self.interpret_def_enum(n, ctx).map(|_| Value::unit()),
+            Item::DefType(n) => self.interpret_def_type(n, ctx).map(|_| Value::unit()),
+            Item::DefConst(n) => self.interpret_def_const(n, ctx).map(|_| Value::unit()),
+            Item::Import(n) => self.interpret_import(n, ctx).map(|_| Value::unit()),
+            Item::Impl(n) => self.interpret_impl(n, ctx).map(|_| Value::unit()),
 
-            AstItem::Any(n) => Ok(AstValue::Any(n.clone())),
+            Item::Any(n) => Ok(Value::Any(n.clone())),
             _ => opt_bail!(format!("Failed to interpret {:?}", node)),
         }
     }
 
-    pub fn interpret_let(&self, node: &StmtLet, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_let(&self, node: &StmtLet, ctx: &SharedScopedContext) -> Result<Value> {
         if let Some(init) = &node.init {
             let value = self.interpret_expr(&init, ctx)?;
             ctx.insert_value(
@@ -1415,9 +1394,9 @@ impl InterpretationOrchestrator {
                     .as_ident()
                     .ok_or_else(|| optimization_error("Only supports ident"))?
                     .as_str(),
-                AstValue::undefined(),
+                Value::undefined(),
             );
-            Ok(AstValue::unit())
+            Ok(Value::unit())
         }
     }
 
@@ -1425,7 +1404,7 @@ impl InterpretationOrchestrator {
         &self,
         node: &BlockStmt,
         ctx: &SharedScopedContext,
-    ) -> Result<Option<AstValue>> {
+    ) -> Result<Option<Value>> {
         debug!("Interpreting {}", self.serializer.serialize_stmt(&node)?);
         // eprintln!("DEBUG: interpret_stmt called with: {:?}", node);
         match node {
@@ -1456,11 +1435,11 @@ impl InterpretationOrchestrator {
         }
     }
 
-    pub fn interpret_tree(&self, node: &AstNode, ctx: &SharedScopedContext) -> Result<AstValue> {
+    pub fn interpret_tree(&self, node: &Node, ctx: &SharedScopedContext) -> Result<Value> {
         match node {
-            AstNode::Item(item) => self.interpret_item(item, ctx),
-            AstNode::Expr(expr) => self.interpret_expr(expr, ctx),
-            AstNode::File(file) => self.interpret_items(&file.items, ctx),
+            Node::Item(item) => self.interpret_item(item, ctx),
+            Node::Expr(expr) => self.interpret_expr(expr, ctx),
+            Node::File(file) => self.interpret_items(&file.items, ctx),
         }
     }
 
@@ -1468,10 +1447,10 @@ impl InterpretationOrchestrator {
     /// This is the main method for const evaluation
     pub fn evaluate_const_expression(
         &self,
-        expr: &AstExpr,
+        expr: &Expr,
         ctx: &SharedScopedContext,
         _intrinsic_context: &crate::utils::IntrinsicEvaluationContext,
-    ) -> fp_core::error::Result<AstValue> {
+    ) -> fp_core::error::Result<Value> {
         // For now, delegate to the existing interpreter
         // TODO: Integrate with side-effect-aware intrinsics
         self.interpret_expr_no_resolve(expr, ctx)
@@ -1482,19 +1461,19 @@ impl OptimizePass for InterpretationOrchestrator {
     fn name(&self) -> &str {
         "interpretation"
     }
-    fn optimize_expr(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
+    fn optimize_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
-        Ok(AstExpr::value(value))
+        Ok(Expr::value(value))
     }
 
-    fn optimize_item(&self, _item: AstItem, _ctx: &SharedScopedContext) -> Result<AstItem> {
-        Ok(AstItem::unit())
+    fn optimize_item(&self, _item: Item, _ctx: &SharedScopedContext) -> Result<Item> {
+        Ok(Item::unit())
     }
 
-    fn evaluate_condition(&self, expr: AstExpr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
+    fn evaluate_condition(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<ControlFlow> {
         let value = self.interpret_expr_no_resolve(&expr, ctx)?;
         match value {
-            AstValue::Bool(b) => {
+            Value::Bool(b) => {
                 if b.value {
                     Ok(ControlFlow::IntoAndBreak(None))
                 } else {
@@ -1514,47 +1493,45 @@ impl OptimizePass for InterpretationOrchestrator {
     fn optimize_invoke(
         &self,
         invoke: ExprInvoke,
-        func: &AstValue,
+        func: &Value,
         ctx: &SharedScopedContext,
-    ) -> Result<AstExpr> {
+    ) -> Result<Expr> {
         match func {
-            AstValue::Function(func) => self
-                .interpret_expr(&func.body.get(), ctx)
-                .map(AstExpr::value),
-            AstValue::BinOpKind(kind) => self
+            Value::Function(func) => self.interpret_expr(&func.body.get(), ctx).map(Expr::value),
+            Value::BinOpKind(kind) => self
                 .interpret_invoke_binop(kind.clone(), &invoke.args, ctx)
-                .map(AstExpr::value),
-            AstValue::UnOpKind(func) => {
+                .map(Expr::value),
+            Value::UnOpKind(func) => {
                 opt_ensure!(
                     invoke.args.len() == 1,
                     format!("Expected 1 arg for {:?}", func)
                 );
                 let arg = self.interpret_expr(&invoke.args[0].get(), ctx)?;
                 self.interpret_invoke_unop(func.clone(), arg, ctx)
-                    .map(AstExpr::value)
+                    .map(Expr::value)
             }
             _ => opt_bail!(format!("Could not invoke {:?}", func)),
         }
     }
 
-    fn try_evaluate_expr(&self, pat: &AstExpr, ctx: &SharedScopedContext) -> Result<AstExpr> {
+    fn try_evaluate_expr(&self, pat: &Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         // First try the simple approach for basic expressions
         if let Some(value) = ctx.try_get_value_from_expr(pat) {
-            return Ok(AstExpr::value(value));
+            return Ok(Expr::value(value));
         }
 
         // If simple approach fails, use full interpretation for complex expressions
         let value = self.interpret_expr(pat, ctx)?;
-        Ok(AstExpr::value(value))
+        Ok(Expr::value(value))
     }
 }
 
 impl ValueSystem for InterpretationOrchestrator {
-    fn get_value_from_expr(&self, ctx: &Context, expr: &AstExpr) -> Result<AstValue> {
+    fn get_value_from_expr(&self, ctx: &Context, expr: &Expr) -> Result<Value> {
         let fold = FoldOptimizer::new(self.serializer.clone(), Box::new(self.clone()));
         let expr = fold.optimize_expr(expr.clone(), &ctx.values)?;
         match expr {
-            AstExpr::Value(value) => Ok(*value),
+            Expr::Value(value) => Ok(*value),
             _ => opt_bail!(format!("Expected value, got {:?}", expr)),
         }
     }

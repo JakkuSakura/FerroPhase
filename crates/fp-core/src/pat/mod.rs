@@ -1,5 +1,5 @@
-use crate::ast::AstExpr;
-use crate::ast::AstType;
+use crate::ast::Expr;
+use crate::ast::Ty;
 use crate::id::{Ident, Locator};
 use crate::{common_enum, common_struct};
 pub type BPattern = Box<Pattern>;
@@ -72,7 +72,7 @@ common_struct! {
 }
 common_struct! {
     pub struct PatternVariant {
-        pub name: AstExpr, // TypeExpr
+        pub name: Expr, // TypeExpr
         pub pattern: Option<Box<Pattern>>,
     }
 
@@ -82,11 +82,11 @@ common_struct! {
     /// where x: T is PatternType
     pub struct PatternType {
         pub pat: BPattern,
-        pub ty: AstType,
+        pub ty: Ty,
     }
 }
 impl PatternType {
-    pub fn new(pat: Pattern, ty: AstType) -> Self {
+    pub fn new(pat: Pattern, ty: Ty) -> Self {
         Self {
             pat: pat.into(),
             ty,

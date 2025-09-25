@@ -191,7 +191,7 @@ impl RustPrinter {
     pub fn print_function(
         &self,
         sig: &FunctionSignature,
-        body: &AstExpr,
+        body: &Expr,
         vis: Visibility,
     ) -> Result<TokenStream> {
         let name = if let Some(name) = &sig.name {
@@ -256,7 +256,7 @@ impl RustPrinter {
         let ty = self.print_type(&param.ty)?;
         Ok(quote!(#name: #ty))
     }
-    pub fn print_return_type(&self, node: Option<&AstType>) -> Result<TokenStream> {
+    pub fn print_return_type(&self, node: Option<&Ty>) -> Result<TokenStream> {
         if let Some(node) = node {
             let ty = self.print_type(node)?;
             Ok(quote!(-> #ty))
@@ -278,7 +278,7 @@ impl RustPrinter {
             fn(#(#args), *) #ret
         ))
     }
-    pub fn print_module(&self, m: &AstModule) -> Result<TokenStream> {
+    pub fn print_module(&self, m: &Module) -> Result<TokenStream> {
         let stmts = self.print_items_chunk(&m.items)?;
 
         let mod_name = format_ident!("{}", m.name.as_str());
@@ -368,26 +368,26 @@ impl RustPrinter {
         })
     }
 
-    pub fn print_file(&self, file: &AstFile) -> Result<TokenStream> {
+    pub fn print_file(&self, file: &File) -> Result<TokenStream> {
         let items = self.print_items_chunk(&file.items)?;
         Ok(quote!(#items))
     }
-    pub fn print_node(&self, node: &AstNode) -> fp_core::Result<TokenStream> {
+    pub fn print_node(&self, node: &Node) -> fp_core::Result<TokenStream> {
         match node {
-            AstNode::Item(n) => self.print_item(n),
-            AstNode::Expr(n) => self.print_expr(n),
-            AstNode::File(n) => self.print_file(n),
+            Node::Item(n) => self.print_item(n),
+            Node::Expr(n) => self.print_expr(n),
+            Node::File(n) => self.print_file(n),
         }
     }
 }
 
 impl AstSerializer for RustPrinter {
-    fn serialize_node(&self, node: &AstNode) -> fp_core::error::Result<String> {
+    fn serialize_node(&self, node: &Node) -> fp_core::error::Result<String> {
         self.print_node(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_expr(&self, node: &AstExpr) -> fp_core::error::Result<String> {
+    fn serialize_expr(&self, node: &Expr) -> fp_core::error::Result<String> {
         Ok(self
             .print_expr(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
@@ -399,7 +399,7 @@ impl AstSerializer for RustPrinter {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_item(&self, node: &AstItem) -> fp_core::error::Result<String> {
+    fn serialize_item(&self, node: &Item) -> fp_core::error::Result<String> {
         Ok(self
             .print_item(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
@@ -411,23 +411,23 @@ impl AstSerializer for RustPrinter {
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_file(&self, node: &AstFile) -> fp_core::error::Result<String> {
+    fn serialize_file(&self, node: &File) -> fp_core::error::Result<String> {
         Ok(self
             .print_file(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
-    fn serialize_module(&self, node: &AstModule) -> fp_core::error::Result<String> {
+    fn serialize_module(&self, node: &Module) -> fp_core::error::Result<String> {
         Ok(self
             .print_module(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))?)
     }
 
-    fn serialize_value(&self, node: &AstValue) -> fp_core::error::Result<String> {
+    fn serialize_value(&self, node: &Value) -> fp_core::error::Result<String> {
         self.print_value(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
 
-    fn serialize_type(&self, node: &AstType) -> fp_core::error::Result<String> {
+    fn serialize_type(&self, node: &Ty) -> fp_core::error::Result<String> {
         self.print_type(node)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }

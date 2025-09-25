@@ -1,6 +1,6 @@
 //! C# code printer and generator
 
-use fp_core::ast::{AstSerializer, AstType, TypeEnum, TypeStruct};
+use fp_core::ast::{AstSerializer, Ty, TypeEnum, TypeStruct};
 use fp_core::printer::AstSerializerConfig;
 use fp_core::{bail, Result};
 use itertools::Itertools;
@@ -41,13 +41,13 @@ impl CSharpPrinter {
     }
 
     /// Map AST types to C# types using proper pattern matching
-    fn ast_type_to_csharp(&self, ast_type: &AstType) -> String {
+    fn ast_type_to_csharp(&self, ast_type: &Ty) -> String {
         match ast_type {
-            AstType::Vec(type_vec) => {
+            Ty::Vec(type_vec) => {
                 let inner_csharp = self.ast_type_to_csharp(&type_vec.ty);
                 format!("List<{}>", inner_csharp)
             }
-            AstType::Primitive(prim) => {
+            Ty::Primitive(prim) => {
                 match prim {
                     fp_core::ast::TypePrimitive::Decimal(decimal_type) => match decimal_type {
                         fp_core::ast::DecimalType::F64 => "double".to_string(),
@@ -71,7 +71,7 @@ impl CSharpPrinter {
                     _ => format!("{:?}", prim), // fallback for other primitives
                 }
             }
-            AstType::Expr(expr) => {
+            Ty::Expr(expr) => {
                 // Handle expressions like paths/identifiers
                 let expr_str = format!("{}", expr);
                 // Apply simple type mapping for consistency
@@ -446,10 +446,10 @@ impl CSharpPrinter {
 }
 
 impl AstSerializer for CSharpPrinter {
-    fn serialize_type(&self, node: &AstType) -> Result<String> {
+    fn serialize_type(&self, node: &Ty) -> Result<String> {
         match node {
-            AstType::Enum(enum_def) => self.generate_enum(enum_def),
-            AstType::Struct(struct_def) => self.generate_class(struct_def),
+            Ty::Enum(enum_def) => self.generate_enum(enum_def),
+            Ty::Struct(struct_def) => self.generate_class(struct_def),
             _ => bail!("Type serialization not implemented for: {:?}", node),
         }
     }

@@ -46,17 +46,17 @@ pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
             .into_iter()
             .map(|x| {
                 let args = match x.arguments {
-                    syn::PathArguments::AngleBracketed(a) => {
-                        a.args
-                            .into_iter()
-                            .map(|x| match x {
-                                syn::GenericArgument::Type(t) => ty::parse_type(t),
-                                syn::GenericArgument::Const(c) => expr::parse_expr(c)
-                                    .map(|x| AstType::value(AstValue::expr(x.get()))),
-                                _ => bail!("Does not support path arguments: {:?}", x),
-                            })
-                            .try_collect()?
-                    }
+                    syn::PathArguments::AngleBracketed(a) => a
+                        .args
+                        .into_iter()
+                        .map(|x| match x {
+                            syn::GenericArgument::Type(t) => ty::parse_type(t),
+                            syn::GenericArgument::Const(c) => {
+                                expr::parse_expr(c).map(|x| Ty::value(Value::expr(x.get())))
+                            }
+                            _ => bail!("Does not support path arguments: {:?}", x),
+                        })
+                        .try_collect()?,
                     _ => bail!("Does not support path arguments: {:?}", x),
                 };
                 let ident = parse_ident(x.ident);
@@ -80,12 +80,12 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-pub fn parse_file(path: PathBuf, file: syn::File) -> Result<AstFile> {
+pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
     let items = file.items.into_iter().map(item::parse_item).try_collect()?;
-    Ok(AstFile { path, items })
+    Ok(File { path, items })
 }
-pub fn parse_module(m: syn::ItemMod) -> Result<AstModule> {
-    Ok(AstModule {
+pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
+    Ok(Module {
         name: parse_ident(m.ident),
         items: m
             .content
@@ -102,7 +102,7 @@ pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
     let body = parse_block(*f.block)?;
     Ok(ValueFunction {
         sig,
-        body: AstExpr::block(body).into(),
+        body: Expr::block(body).into(),
     })
 }
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]
@@ -112,7 +112,7 @@ impl RustParser {
     pub fn new() -> Self {
         RustParser {}
     }
-    pub fn parse_file_recursively(&self, path: PathBuf) -> Result<AstFile> {
+    pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
         let builder = InlinerBuilder::new();
         let path = path
             .canonicalize()
@@ -132,25 +132,25 @@ impl RustParser {
         let file = self.parse_file_content(path, outputs)?;
         Ok(file)
     }
-    pub fn parse_value(&self, code: syn::Expr) -> Result<AstValue> {
-        expr::parse_expr(code).map(|x| AstValue::expr(x.get()))
+    pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
+        expr::parse_expr(code).map(|x| Value::expr(x.get()))
     }
-    pub fn parse_expr(&self, code: syn::Expr) -> Result<AstExpr> {
+    pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
         expr::parse_expr(code).map(|x| x.get())
     }
-    pub fn parse_item(&self, code: syn::Item) -> Result<AstItem> {
+    pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
         item::parse_item(code)
     }
-    pub fn parse_items(&self, code: Vec<syn::Item>) -> Result<Vec<AstItem>> {
+    pub fn parse_items(&self, code: Vec<syn::Item>) -> Result<Vec<Item>> {
         code.into_iter().map(|x| self.parse_item(x)).try_collect()
     }
-    pub fn parse_file_content(&self, path: PathBuf, code: syn::File) -> Result<AstFile> {
+    pub fn parse_file_content(&self, path: PathBuf, code: syn::File) -> Result<File> {
         parse_file(path, code)
     }
-    pub fn parse_module(&self, code: syn::ItemMod) -> Result<AstModule> {
+    pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
     }
-    pub fn parse_type(&self, code: syn::Type) -> Result<AstType> {
+    pub fn parse_type(&self, code: syn::Type) -> Result<Ty> {
         ty::parse_type(code)
     }
 
@@ -185,15 +185,15 @@ impl RustParser {
                         semicolon: None,
                     }));
 
-                    Ok(Box::new(AstExpr::Block(ExprBlock { stmts: const_items })))
+                    Ok(Box::new(Expr::Block(ExprBlock { stmts: const_items })))
                 } else {
                     // No main function, create a minimal structure for transpilation
                     if const_items.is_empty() {
                         // Create an empty block for transpilation purposes
-                        Ok(Box::new(AstExpr::Block(ExprBlock { stmts: vec![] })))
+                        Ok(Box::new(Expr::Block(ExprBlock { stmts: vec![] })))
                     } else {
                         // Just use all parsed items
-                        Ok(Box::new(AstExpr::Block(ExprBlock { stmts: const_items })))
+                        Ok(Box::new(Expr::Block(ExprBlock { stmts: const_items })))
                     }
                 }
             }
@@ -248,33 +248,33 @@ impl RustParser {
             }
         }
 
-        Ok(Box::new(AstExpr::Block(ExprBlock {
+        Ok(Box::new(Expr::Block(ExprBlock {
             stmts: parsed_items,
         })))
     }
 }
 
 impl AstDeserializer for RustParser {
-    fn deserialize_node(&self, code: &str) -> fp_core::error::Result<AstNode> {
+    fn deserialize_node(&self, code: &str) -> fp_core::error::Result<Node> {
         let code: syn::File = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         let path = PathBuf::from("__file__");
-        Ok(self.parse_file_content(path, code).map(AstNode::File)?)
+        Ok(self.parse_file_content(path, code).map(Node::File)?)
     }
 
-    fn deserialize_expr(&self, code: &str) -> fp_core::error::Result<AstExpr> {
+    fn deserialize_expr(&self, code: &str) -> fp_core::error::Result<Expr> {
         let code: syn::Expr = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         Ok(self.parse_expr(code)?)
     }
 
-    fn deserialize_item(&self, code: &str) -> fp_core::error::Result<AstItem> {
+    fn deserialize_item(&self, code: &str) -> fp_core::error::Result<Item> {
         let code: syn::Item = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         Ok(self.parse_item(code)?)
     }
 
-    fn deserialize_file_load(&self, path: &std::path::Path) -> fp_core::error::Result<AstFile> {
+    fn deserialize_file_load(&self, path: &std::path::Path) -> fp_core::error::Result<File> {
         Ok(self.parse_file_recursively(path.to_owned())?)
     }
-    fn deserialize_type(&self, code: &str) -> fp_core::error::Result<AstType> {
+    fn deserialize_type(&self, code: &str) -> fp_core::error::Result<Ty> {
         let code: syn::Type = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         Ok(self.parse_type(code)?)
     }

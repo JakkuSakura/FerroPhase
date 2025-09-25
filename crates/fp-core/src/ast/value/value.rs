@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ast::{get_threadlocal_serializer, BExpr};
-use crate::ast::{AstType, AstValue, TypeBounds, TypeStruct};
+use crate::ast::{Ty, TypeBounds, TypeStruct, Value};
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
@@ -141,11 +141,11 @@ impl Display for ValueString {
 }
 common_struct! {
     pub struct ValueList {
-        pub values: Vec<AstValue>,
+        pub values: Vec<Value>,
     }
 }
 impl ValueList {
-    pub fn new(values: Vec<AstValue>) -> Self {
+    pub fn new(values: Vec<Value>) -> Self {
         Self { values }
     }
 }
@@ -395,11 +395,11 @@ impl ToJson for ValueNone {
 
 common_struct! {
     pub struct ValueSome {
-        pub value: Box<AstValue>,
+        pub value: Box<Value>,
     }
 }
 impl ValueSome {
-    pub fn new(value: AstValue) -> Self {
+    pub fn new(value: Value) -> Self {
         Self {
             value: value.into(),
         }
@@ -412,12 +412,12 @@ impl ToJson for ValueSome {
 }
 common_struct! {
     pub struct ValueOption {
-        pub value: Option<Box<AstValue >>,
+        pub value: Option<Box<Value >>,
     }
 }
 
 impl ValueOption {
-    pub fn new(value: Option<AstValue>) -> Self {
+    pub fn new(value: Option<Value>) -> Self {
         Self {
             value: value.map(|x| x.into()),
         }
@@ -434,10 +434,10 @@ impl ToJson for ValueOption {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]
 pub struct ValueField {
     pub name: Ident,
-    pub value: AstValue,
+    pub value: Value,
 }
 impl ValueField {
-    pub fn new(name: Ident, value: AstValue) -> Self {
+    pub fn new(name: Ident, value: Value) -> Self {
         Self { name, value }
     }
 }
@@ -531,8 +531,8 @@ common_enum! {
 common_struct! {
     pub struct FunctionParam {
         pub name: Ident,
-        pub ty: AstType,
-        pub default: Option<AstValue>,
+        pub ty: Ty,
+        pub default: Option<Value>,
         /// in Python, *args
         pub as_tuple: bool,
         /// in Python, **kwargs
@@ -544,7 +544,7 @@ common_struct! {
     }
 }
 impl FunctionParam {
-    pub fn new(name: Ident, ty: AstType) -> Self {
+    pub fn new(name: Ident, ty: Ty) -> Self {
         Self {
             name,
             ty,
@@ -571,7 +571,7 @@ common_struct! {
         pub receiver: Option<FunctionParamReceiver>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
-        pub ret_ty: Option<AstType>,
+        pub ret_ty: Option<Ty>,
     }
 }
 impl FunctionSignature {
@@ -619,11 +619,11 @@ impl Display for ValueFunction {
 }
 common_struct! {
     pub struct ValueTuple {
-        pub values: Vec<AstValue>,
+        pub values: Vec<Value>,
     }
 }
 impl ValueTuple {
-    pub fn new(values: Vec<AstValue>) -> Self {
+    pub fn new(values: Vec<Value>) -> Self {
         Self { values }
     }
 }

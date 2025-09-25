@@ -5,7 +5,7 @@ use super::LirGenerator;
 
 impl LirGenerator {
     /// Analyze MIR body to extract const values assigned to locals
-    pub(crate) fn analyze_const_values(&mut self, mir_body: &mir::MirBody) -> Result<()> {
+    pub(crate) fn analyze_const_values(&mut self, mir_body: &mir::Body) -> Result<()> {
         // Iterate to propagate simple aliases like x = y where y is const-evaluated
         let mut changed = true;
         while changed {
@@ -19,7 +19,7 @@ impl LirGenerator {
                             }
                         } else if let mir::Rvalue::Use(op) = rvalue {
                             match op {
-                                mir::MirOperand::Move(from) | mir::MirOperand::Copy(from) => {
+                                mir::Operand::Move(from) | mir::Operand::Copy(from) => {
                                     if let Some(cv) = self.const_values.get(&from.local).cloned() {
                                         if self.const_values.insert(place.local, cv).is_none() {
                                             changed = true;
@@ -43,7 +43,7 @@ impl LirGenerator {
     ) -> Result<Option<lir::LirConstant>> {
         match rvalue {
             mir::Rvalue::Use(operand) => {
-                if let mir::MirOperand::Constant(constant) = operand {
+                if let mir::Operand::Constant(constant) = operand {
                     match &constant.literal {
                         mir::ConstantKind::Int(value) => {
                             Ok(Some(lir::LirConstant::Int(*value, lir::LirType::I32)))
@@ -64,10 +64,8 @@ impl LirGenerator {
             }
             // Handle binary operations that can be const-folded (simple ints)
             mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {
-                if let (
-                    mir::MirOperand::Constant(lhs_const),
-                    mir::MirOperand::Constant(rhs_const),
-                ) = (lhs, rhs)
+                if let (mir::Operand::Constant(lhs_const), mir::Operand::Constant(rhs_const)) =
+                    (lhs, rhs)
                 {
                     if let (mir::ConstantKind::Int(lhs_val), mir::ConstantKind::Int(rhs_val)) =
                         (&lhs_const.literal, &rhs_const.literal)

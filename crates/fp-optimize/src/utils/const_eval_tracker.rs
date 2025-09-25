@@ -12,24 +12,18 @@ pub enum ConstEval {
     GenerateField {
         target_type: String,
         field_name: String,
-        field_type: AstType,
+        field_type: Ty,
     },
     /// Add method to struct - corresponds to addmethod! intrinsic
     GenerateMethod {
         target_type: String,
         method_name: String,
-        method_body: AstExpr,
-    },
-    /// Add trait implementation - corresponds to addimpl! intrinsic
-    GenerateImpl {
-        target_type: String,
-        trait_name: String,
-        methods: Vec<(String, AstExpr)>,
+        method_body: Expr,
     },
     /// Create new struct type - corresponds to create_struct! intrinsic
     GenerateType {
         type_name: String,
-        type_definition: AstType,
+        type_definition: Ty,
     },
     /// Create new struct builder for dynamic construction
     CreateStructBuilder {
@@ -43,7 +37,7 @@ pub enum ConstEval {
     /// Generate runtime function call - for functions like printf
     GenerateFunctionCall {
         function_name: String,
-        args: Vec<AstValue>,
+        args: Vec<Value>,
     },
 }
 
@@ -75,7 +69,7 @@ impl ConstEvalTracker {
     }
 
     /// Apply all queued const-eval operations to the AST
-    pub fn apply(&mut self, ast: &mut AstNode) -> Result<bool> {
+    pub fn apply(&mut self, ast: &mut Node) -> Result<bool> {
         let mut changes_made = false;
 
         for op in &self.pending {
@@ -94,14 +88,6 @@ impl ConstEvalTracker {
                     method_body,
                 } => {
                     self.apply_method_generation(ast, target_type, method_name, method_body)?;
-                    changes_made = true;
-                }
-                ConstEval::GenerateImpl {
-                    target_type,
-                    trait_name,
-                    methods,
-                } => {
-                    self.apply_impl_generation(ast, target_type, trait_name, methods)?;
                     changes_made = true;
                 }
                 ConstEval::GenerateType {
@@ -148,9 +134,9 @@ impl ConstEvalTracker {
     /// A future implementation can inject an explicit call node into the AST.
     fn apply_function_call_generation(
         &self,
-        _ast: &mut AstNode,
+        _ast: &mut Node,
         _function_name: &str,
-        _args: &Vec<AstValue>,
+        _args: &Vec<Value>,
     ) -> Result<()> {
         // Intentionally a no-op for now. This ensures const-eval operations are accounted for
         // without causing compilation failures until full lowering is implemented.
@@ -160,10 +146,10 @@ impl ConstEvalTracker {
     /// Apply field generation request
     fn apply_field_generation(
         &self,
-        ast: &mut AstNode,
+        ast: &mut Node,
         target_type: &str,
         field_name: &str,
-        field_type: &AstType,
+        field_type: &Ty,
     ) -> Result<()> {
         if let Some(struct_def) = find_struct_mut(ast, target_type) {
             if struct_def
@@ -192,10 +178,10 @@ impl ConstEvalTracker {
     /// Apply method generation request
     fn apply_method_generation(
         &self,
-        ast: &mut AstNode,
+        ast: &mut Node,
         target_type: &str,
         method_name: &str,
-        method_body: &AstExpr,
+        method_body: &Expr,
     ) -> Result<()> {
         let function = create_method_function(method_name, method_body);
 
@@ -203,64 +189,27 @@ impl ConstEvalTracker {
             if method_exists(impl_block, method_name) {
                 return Ok(());
             }
-            impl_block.items.push(AstItem::DefFunction(function));
+            impl_block.items.push(Item::DefFunction(function));
             Ok(())
         } else {
-            let impl_item = ItemImpl::new_ident(
-                Ident::new(target_type),
-                vec![AstItem::DefFunction(function)],
-            );
-            push_item(ast, AstItem::Impl(impl_item))
+            let impl_item =
+                ItemImpl::new_ident(Ident::new(target_type), vec![Item::DefFunction(function)]);
+            push_item(ast, Item::Impl(impl_item))
         }
-    }
-
-    /// Apply impl generation request
-    fn apply_impl_generation(
-        &self,
-        ast: &mut AstNode,
-        target_type: &str,
-        trait_name: &str,
-        methods: &[(String, AstExpr)],
-    ) -> Result<()> {
-        let trait_locator = Locator::Ident(Ident::new(trait_name));
-
-        if let Some(impl_block) = find_impl_mut(ast, target_type, Some(trait_name)) {
-            for (name, body) in methods {
-                if method_exists(impl_block, name) {
-                    continue;
-                }
-                impl_block
-                    .items
-                    .push(AstItem::DefFunction(create_method_function(name, body)));
-            }
-            return Ok(());
-        }
-
-        let mut method_items = Vec::new();
-        for (name, body) in methods {
-            method_items.push(AstItem::DefFunction(create_method_function(name, body)));
-        }
-
-        let impl_item = ItemImpl::new(
-            Some(trait_locator),
-            AstExpr::ident(Ident::new(target_type)),
-            method_items,
-        );
-        push_item(ast, AstItem::Impl(impl_item))
     }
 
     /// Apply type generation request
     fn apply_type_generation(
         &self,
-        ast: &mut AstNode,
+        ast: &mut Node,
         type_name: &str,
-        type_definition: &AstType,
+        type_definition: &Ty,
     ) -> Result<()> {
         if find_struct_mut(ast, type_name).is_some() {
             return Ok(());
         }
 
-        if let AstType::Struct(struct_ty) = type_definition {
+        if let Ty::Struct(struct_ty) = type_definition {
             let mut struct_ty_clone = struct_ty.clone();
             struct_ty_clone.name = Ident::new(type_name);
 
@@ -270,7 +219,7 @@ impl ConstEvalTracker {
                 value: struct_ty_clone,
             };
 
-            push_item(ast, AstItem::DefStruct(struct_item))?;
+            push_item(ast, Item::DefStruct(struct_item))?;
         }
 
         Ok(())
@@ -279,7 +228,7 @@ impl ConstEvalTracker {
     /// Apply struct builder creation request
     fn apply_struct_builder_creation(
         &self,
-        _ast: &mut AstNode,
+        _ast: &mut Node,
         _builder_name: &str,
         _struct_name: &str,
     ) -> Result<bool> {
@@ -305,18 +254,6 @@ impl ConstEval {
                 ..
             } => {
                 format!("Add method {} to {}", method_name, target_type)
-            }
-            ConstEval::GenerateImpl {
-                target_type,
-                trait_name,
-                methods,
-            } => {
-                format!(
-                    "Implement {} for {} with {} methods",
-                    trait_name,
-                    target_type,
-                    methods.len()
-                )
             }
             ConstEval::GenerateType { type_name, .. } => {
                 format!("Generate type {}", type_name)
@@ -347,26 +284,26 @@ impl ConstEval {
     }
 }
 
-fn find_struct_mut<'a>(node: &'a mut AstNode, target: &str) -> Option<&'a mut ItemDefStruct> {
+fn find_struct_mut<'a>(node: &'a mut Node, target: &str) -> Option<&'a mut ItemDefStruct> {
     match node {
-        AstNode::File(file) => find_struct_in_items_mut(&mut file.items, target),
-        AstNode::Item(item) => match item {
-            AstItem::DefStruct(def) if def.name.as_str() == target => Some(def),
-            AstItem::Module(module) => find_struct_in_items_mut(&mut module.items, target),
+        Node::File(file) => find_struct_in_items_mut(&mut file.items, target),
+        Node::Item(item) => match item {
+            Item::DefStruct(def) if def.name.as_str() == target => Some(def),
+            Item::Module(module) => find_struct_in_items_mut(&mut module.items, target),
             _ => None,
         },
-        AstNode::Expr(_) => None,
+        Node::Expr(_) => None,
     }
 }
 
 fn find_struct_in_items_mut<'a>(
-    items: &'a mut [AstItem],
+    items: &'a mut [Item],
     target: &str,
 ) -> Option<&'a mut ItemDefStruct> {
     for item in items.iter_mut() {
         match item {
-            AstItem::DefStruct(def) if def.name.as_str() == target => return Some(def),
-            AstItem::Module(module) => {
+            Item::DefStruct(def) if def.name.as_str() == target => return Some(def),
+            Item::Module(module) => {
                 if let Some(found) = find_struct_in_items_mut(&mut module.items, target) {
                     return Some(found);
                 }
@@ -378,42 +315,40 @@ fn find_struct_in_items_mut<'a>(
 }
 
 fn find_impl_mut<'a>(
-    node: &'a mut AstNode,
+    node: &'a mut Node,
     target: &str,
     trait_name: Option<&str>,
 ) -> Option<&'a mut ItemImpl> {
     match node {
-        AstNode::File(file) => find_impl_in_items_mut(&mut file.items, target, trait_name),
-        AstNode::Item(item) => match item {
-            AstItem::Impl(item_impl) => {
+        Node::File(file) => find_impl_in_items_mut(&mut file.items, target, trait_name),
+        Node::Item(item) => match item {
+            Item::Impl(item_impl) => {
                 if impl_matches(item_impl, target, trait_name) {
                     Some(item_impl)
                 } else {
                     None
                 }
             }
-            AstItem::Module(module) => {
-                find_impl_in_items_mut(&mut module.items, target, trait_name)
-            }
+            Item::Module(module) => find_impl_in_items_mut(&mut module.items, target, trait_name),
             _ => None,
         },
-        AstNode::Expr(_) => None,
+        Node::Expr(_) => None,
     }
 }
 
 fn find_impl_in_items_mut<'a>(
-    items: &'a mut [AstItem],
+    items: &'a mut [Item],
     target: &str,
     trait_name: Option<&str>,
 ) -> Option<&'a mut ItemImpl> {
     for item in items.iter_mut() {
         match item {
-            AstItem::Impl(item_impl) => {
+            Item::Impl(item_impl) => {
                 if impl_matches(item_impl, target, trait_name) {
                     return Some(item_impl);
                 }
             }
-            AstItem::Module(module) => {
+            Item::Module(module) => {
                 if let Some(found) = find_impl_in_items_mut(&mut module.items, target, trait_name) {
                     return Some(found);
                 }
@@ -427,7 +362,7 @@ fn find_impl_in_items_mut<'a>(
 fn impl_matches(impl_block: &ItemImpl, target: &str, trait_name: Option<&str>) -> bool {
     let self_matches = matches!(
         &impl_block.self_ty,
-        AstExpr::Locator(Locator::Ident(ident)) if ident.as_str() == target
+        Expr::Locator(Locator::Ident(ident)) if ident.as_str() == target
     );
 
     if !self_matches {
@@ -446,23 +381,23 @@ fn impl_matches(impl_block: &ItemImpl, target: &str, trait_name: Option<&str>) -
 
 fn method_exists(impl_block: &ItemImpl, method_name: &str) -> bool {
     impl_block.items.iter().any(|item| match item {
-        AstItem::DefFunction(func) => func.name.as_str() == method_name,
+        Item::DefFunction(func) => func.name.as_str() == method_name,
         _ => false,
     })
 }
 
-fn create_method_function(method_name: &str, method_body: &AstExpr) -> ItemDefFunction {
+fn create_method_function(method_name: &str, method_body: &Expr) -> ItemDefFunction {
     ItemDefFunction::new_simple(Ident::new(method_name), method_body.clone().into())
         .with_receiver(FunctionParamReceiver::Ref)
 }
 
-fn push_item(ast: &mut AstNode, item: AstItem) -> Result<()> {
+fn push_item(ast: &mut Node, item: Item) -> Result<()> {
     match ast {
-        AstNode::File(file) => {
+        Node::File(file) => {
             file.items.push(item);
             Ok(())
         }
-        AstNode::Item(AstItem::Module(module)) => {
+        Node::Item(Item::Module(module)) => {
             module.items.push(item);
             Ok(())
         }
