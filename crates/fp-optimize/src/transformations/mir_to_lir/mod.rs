@@ -1,13 +1,9 @@
 use fp_core::error::Result;
-use fp_core::types::{
-    ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy,
-};
+use fp_core::types::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
 use fp_core::{lir, mir};
 use std::collections::HashMap;
 
 mod const_eval;
-mod println;
-
 // Internal submodules; items are used via inherent methods
 
 use super::IrTransform;
@@ -19,8 +15,9 @@ pub struct LirGenerator {
     register_map: HashMap<mir::LocalId, lir::LirValue>,
     current_function: Option<lir::LirFunction>,
     pub(crate) const_values: HashMap<mir::LocalId, lir::LirConstant>,
-    format_string_map: HashMap<mir::LocalId, (String, Vec<lir::LirValue>)>,
     local_types: Vec<Ty>,
+    current_return_type: Option<lir::LirType>,
+    return_local: Option<mir::LocalId>,
 }
 
 impl LirGenerator {
@@ -32,8 +29,9 @@ impl LirGenerator {
             register_map: HashMap::new(),
             current_function: None,
             const_values: HashMap::new(),
-            format_string_map: HashMap::new(),
             local_types: Vec::new(),
+            current_return_type: None,
+            return_local: None,
         }
     }
 
@@ -67,11 +65,21 @@ impl LirGenerator {
         // Reset generator state for new function
         self.reset_for_new_function();
 
+        let function_name = format!("func_{}", mir_func.body_id.0);
+        let param_types: Vec<lir::LirType> = mir_func
+            .sig
+            .inputs
+            .iter()
+            .map(|ty| self.lir_type_from_ty(ty))
+            .collect();
+        let return_type = self.lir_type_from_ty(&mir_func.sig.output);
+        self.current_return_type = Some(return_type.clone());
+
         let mut lir_func = lir::LirFunction {
-            name: format!("func_{}", self.next_lir_id),
+            name: function_name,
             signature: lir::LirFunctionSignature {
-                params: Vec::new(),
-                return_type: lir::LirType::Void,
+                params: param_types,
+                return_type: return_type.clone(),
                 is_variadic: false,
             },
             basic_blocks: Vec::new(),
@@ -86,6 +94,9 @@ impl LirGenerator {
             // First pass: analyze const values
             self.analyze_const_values(mir_body)?;
             self.local_types = mir_body.locals.iter().map(|decl| decl.ty.clone()).collect();
+            self.return_local = Some(mir_body.return_local);
+            lir_func.locals = self.build_lir_locals(mir_body);
+            self.seed_argument_registers(mir_body);
 
             for (bb_idx, bb) in mir_body.basic_blocks.iter().enumerate() {
                 let lir_block = self.transform_basic_block(bb_idx as u32, bb)?;
@@ -113,6 +124,8 @@ impl LirGenerator {
                 successors: Vec::new(),
             });
         }
+
+        self.populate_block_edges(&mut lir_func.basic_blocks);
 
         self.current_function = Some(lir_func.clone());
         Ok(lir_func)
@@ -199,7 +212,8 @@ impl LirGenerator {
                 let rhs_value = self.transform_operand(rhs)?;
 
                 let instr_id = self.next_id();
-                let lir_kind = self.lower_binary_op(bin_op.clone(), lhs_value.clone(), rhs_value.clone());
+                let lir_kind =
+                    self.lower_binary_op(bin_op.clone(), lhs_value.clone(), rhs_value.clone());
                 let type_hint = self
                     .lookup_place_type(place)
                     .map(|ty| self.lir_type_from_ty(ty))
@@ -215,9 +229,7 @@ impl LirGenerator {
                     debug_info: None,
                 }])
             }
-            mir::Rvalue::Aggregate(kind, fields) => {
-                self.handle_aggregate(place, kind, fields)
-            }
+            mir::Rvalue::Aggregate(kind, fields) => self.handle_aggregate(place, kind, fields),
             mir::Rvalue::Ref(_, _, borrowed_place) => {
                 let pointer = lir::LirValue::Local(borrowed_place.local);
                 self.register_map.insert(place.local, pointer);
@@ -278,69 +290,16 @@ impl LirGenerator {
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
         match &terminator.kind {
-            mir::TerminatorKind::Return => Ok(lir::LirTerminator::Return(None)),
+            mir::TerminatorKind::Return => {
+                Ok(lir::LirTerminator::Return(self.prepare_return_value()))
+            }
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
             mir::TerminatorKind::Call {
                 func,
                 args,
                 destination,
                 ..
-            } => {
-                // Map MIR func operand; if it is a Constant(Fn(name)) and equals "println",
-                // emit a call to printf with a naive format string.
-                let mut term = lir::LirTerminator::Return(None);
-
-                if let mir::Operand::Constant(mir::Constant {
-                    literal: mir::ConstantKind::Fn(name, _ty),
-                    ..
-                }) = func
-                {
-                    if name == "println" {
-                        // Basic lowering supporting optional format string + args
-                        let mut fmt = "\n".to_string();
-                        let mut call_args: Vec<lir::LirValue> = Vec::new();
-
-                        if args.len() == 1 {
-                            // Transform single argument println
-                            self.transform_println_single_arg(&args[0], &mut fmt, &mut call_args)?;
-                        } else if args.len() >= 2 {
-                            // Transform multi-argument println
-                            self.transform_println_multi_arg(args, &mut fmt, &mut call_args)?;
-                        }
-                        // Push printf(fmt, ...)
-                        let call_id = self.next_id();
-                        let call = lir::LirInstruction {
-                            id: call_id,
-                            kind: lir::LirInstructionKind::Call {
-                                // FIXME: fill in the proper type here
-                                function: lir::LirValue::Global(
-                                    "printf".to_string(),
-                                    Ty::int(IntTy::I32),
-                                ),
-                                args: {
-                                    let mut v = vec![lir::LirValue::Constant(
-                                        lir::LirConstant::String(fmt),
-                                    )];
-                                    v.append(&mut call_args);
-                                    v
-                                },
-                                calling_convention: lir::CallingConvention::C,
-                                tail_call: false,
-                            },
-                            type_hint: Some(lir::LirType::I32),
-                            debug_info: None,
-                        };
-                        block.instructions.push(call);
-                        // Continue to destination if present
-                        if let Some((dest_place, dest_bb)) = destination {
-                            self.register_map
-                                .insert(dest_place.local, lir::LirValue::Register(call_id));
-                            term = lir::LirTerminator::Br(*dest_bb);
-                        }
-                    }
-                }
-                Ok(term)
-            }
+            } => self.transform_call_terminator(func, args, destination, block),
             mir::TerminatorKind::SwitchInt {
                 discr,
                 switch_ty: _,
@@ -420,8 +379,9 @@ impl LirGenerator {
         self.register_map.clear();
         self.current_function = None;
         self.const_values.clear();
-        self.format_string_map.clear();
         self.local_types.clear();
+        self.current_return_type = None;
+        self.return_local = None;
     }
 
     fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> lir::LirValue {
@@ -466,7 +426,8 @@ impl LirGenerator {
         if fields.is_empty() {
             if let Some(place_ty) = self.lookup_place_type(place) {
                 let lir_ty = self.lir_type_from_ty(place_ty);
-                let value = lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty.clone()));
+                let value =
+                    lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty.clone()));
                 self.register_map.insert(place.local, value);
                 return Ok(Vec::new());
             }
@@ -514,6 +475,138 @@ impl LirGenerator {
         Ok(Vec::new())
     }
 
+    fn build_lir_locals(&self, mir_body: &mir::Body) -> Vec<lir::LirLocal> {
+        let arg_count = mir_body.arg_count;
+        mir_body
+            .locals
+            .iter()
+            .enumerate()
+            .map(|(idx, decl)| lir::LirLocal {
+                id: idx as u32,
+                ty: self.lir_type_from_ty(&decl.ty),
+                name: None,
+                is_argument: idx > 0 && idx <= arg_count,
+            })
+            .collect()
+    }
+
+    fn seed_argument_registers(&mut self, mir_body: &mir::Body) {
+        for arg_index in 0..mir_body.arg_count {
+            let local_id = (arg_index as mir::LocalId) + 1;
+            self.register_map
+                .entry(local_id)
+                .or_insert_with(|| lir::LirValue::Local(local_id));
+        }
+    }
+
+    fn populate_block_edges(&self, blocks: &mut Vec<lir::LirBasicBlock>) {
+        let mut predecessors: HashMap<lir::BasicBlockId, Vec<lir::BasicBlockId>> = HashMap::new();
+
+        for block in blocks.iter_mut() {
+            let successors = Self::successors_from_terminator(&block.terminator);
+            block.successors = successors.clone();
+            for succ in successors {
+                predecessors.entry(succ).or_default().push(block.id);
+            }
+        }
+
+        for block in blocks.iter_mut() {
+            if let Some(preds) = predecessors.remove(&block.id) {
+                block.predecessors = preds;
+            }
+        }
+    }
+
+    fn successors_from_terminator(terminator: &lir::LirTerminator) -> Vec<lir::BasicBlockId> {
+        match terminator {
+            lir::LirTerminator::Br(target) => vec![*target],
+            lir::LirTerminator::CondBr {
+                if_true, if_false, ..
+            } => vec![*if_true, *if_false],
+            lir::LirTerminator::Switch { default, cases, .. } => {
+                let mut targets: Vec<lir::BasicBlockId> = cases.iter().map(|(_, bb)| *bb).collect();
+                targets.push(*default);
+                targets.sort_unstable();
+                targets.dedup();
+                targets
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn transform_call_terminator(
+        &mut self,
+        func: &mir::Operand,
+        args: &[mir::Operand],
+        destination: &Option<(mir::Place, mir::BasicBlockId)>,
+        block: &mut lir::LirBasicBlock,
+    ) -> Result<lir::LirTerminator> {
+        let function_value = self.transform_operand(func)?;
+        let mut lowered_args = Vec::with_capacity(args.len());
+        for arg in args {
+            lowered_args.push(self.transform_operand(arg)?);
+        }
+
+        let call_id = self.next_id();
+        let result_type = destination
+            .as_ref()
+            .and_then(|(place, _)| self.lookup_place_type(place))
+            .map(|ty| self.lir_type_from_ty(ty));
+
+        block.instructions.push(lir::LirInstruction {
+            id: call_id,
+            kind: lir::LirInstructionKind::Call {
+                function: function_value,
+                args: lowered_args,
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: result_type
+                .clone()
+                .filter(|ty| !matches!(ty, lir::LirType::Void)),
+            debug_info: None,
+        });
+
+        if let Some((dest_place, dest_bb)) = destination.as_ref() {
+            match result_type {
+                Some(ref ty) if !matches!(ty, lir::LirType::Void) => {
+                    self.register_map
+                        .insert(dest_place.local, lir::LirValue::Register(call_id));
+                }
+                Some(ref ty) => {
+                    self.register_map.insert(
+                        dest_place.local,
+                        lir::LirValue::Constant(lir::LirConstant::Undef(ty.clone())),
+                    );
+                }
+                None => {
+                    self.register_map.insert(
+                        dest_place.local,
+                        lir::LirValue::Constant(lir::LirConstant::Undef(lir::LirType::Void)),
+                    );
+                }
+            }
+            return Ok(lir::LirTerminator::Br(*dest_bb));
+        }
+
+        Ok(lir::LirTerminator::Return(None))
+    }
+
+    fn prepare_return_value(&self) -> Option<lir::LirValue> {
+        let return_ty = self.current_return_type.clone()?;
+        if matches!(return_ty, lir::LirType::Void) {
+            return None;
+        }
+
+        if let Some(local) = self.return_local {
+            if let Some(value) = self.register_map.get(&local) {
+                return Some(value.clone());
+            }
+        }
+
+        Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)))
+    }
+
     fn constant_from_aggregate(
         &self,
         kind: &mir::AggregateKind,
@@ -538,10 +631,7 @@ impl LirGenerator {
                     }
                     Some(lir::LirConstant::Array(constants, lir_elem_ty))
                 } else {
-                    Some(lir::LirConstant::Array(
-                        constants,
-                        lir::LirType::I64,
-                    ))
+                    Some(lir::LirConstant::Array(constants, lir::LirType::I64))
                 }
             }
             _ => None,
@@ -675,7 +765,10 @@ impl LirGenerator {
         match len {
             ConstKind::Value(ConstValue::Scalar(Scalar::Int(int))) => int.data as u64,
             other => {
-                tracing::warn!("MIR→LIR: array length {:?} not evaluated; defaulting to 0", other);
+                tracing::warn!(
+                    "MIR→LIR: array length {:?} not evaluated; defaulting to 0",
+                    other
+                );
                 0
             }
         }
@@ -683,15 +776,16 @@ impl LirGenerator {
 
     fn type_of_operand(&self, operand: &mir::Operand) -> Option<lir::LirType> {
         match operand {
-            mir::Operand::Move(place) | mir::Operand::Copy(place) => {
-                self.lookup_place_type(place)
-                    .map(|ty| self.lir_type_from_ty(ty))
-            }
+            mir::Operand::Move(place) | mir::Operand::Copy(place) => self
+                .lookup_place_type(place)
+                .map(|ty| self.lir_type_from_ty(ty)),
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::Bool(_) => Some(lir::LirType::I1),
                 mir::ConstantKind::Int(_) | mir::ConstantKind::UInt(_) => Some(lir::LirType::I64),
                 mir::ConstantKind::Float(_) => Some(lir::LirType::F64),
-                mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
+                mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => {
+                    Some(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                }
                 _ => None,
             },
         }
@@ -724,6 +818,176 @@ impl LirGenerator {
             lir::LirType::F32 => Some(32),
             lir::LirType::F64 => Some(64),
             _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::span::Span;
+    use std::collections::HashMap;
+
+    fn local_decl(ty: Ty) -> mir::LocalDecl {
+        mir::LocalDecl {
+            mutability: mir::Mutability::Not,
+            local_info: mir::LocalInfo::Other,
+            internal: false,
+            is_block_tail: None,
+            ty,
+            user_ty: None,
+            source_info: Span::new(0, 0, 0),
+        }
+    }
+
+    fn int_constant(value: i64) -> mir::Constant {
+        mir::Constant {
+            span: Span::new(0, 0, 0),
+            user_ty: None,
+            literal: mir::ConstantKind::Int(value),
+        }
+    }
+
+    #[test]
+    fn builds_function_signature_and_locals() {
+        let mut bodies = HashMap::new();
+
+        let return_ty = Ty::int(IntTy::I32);
+        let param_ty = Ty::int(IntTy::I32);
+
+        let mut body = mir::Body::new(
+            vec![mir::BasicBlockData::new(Some(mir::Terminator {
+                source_info: Span::new(0, 0, 0),
+                kind: mir::TerminatorKind::Return,
+            }))],
+            vec![local_decl(return_ty.clone()), local_decl(param_ty.clone())],
+            1,
+            Span::new(0, 0, 0),
+        );
+        body.return_local = 0;
+
+        bodies.insert(mir::BodyId::new(0), body);
+
+        let mir_program = mir::Program {
+            items: vec![mir::Item {
+                mir_id: 0,
+                kind: mir::ItemKind::Function(mir::Function {
+                    sig: mir::FunctionSig {
+                        inputs: vec![param_ty.clone()],
+                        output: return_ty.clone(),
+                    },
+                    body_id: mir::BodyId::new(0),
+                }),
+            }],
+            bodies,
+        };
+
+        let mut generator = LirGenerator::new();
+        let lir_program = generator
+            .transform(mir_program)
+            .expect("lowering should succeed");
+
+        assert_eq!(lir_program.functions.len(), 1);
+        let lir_func = &lir_program.functions[0];
+
+        assert_eq!(lir_func.signature.params, vec![lir::LirType::I32]);
+        assert_eq!(lir_func.signature.return_type, lir::LirType::I32);
+        assert_eq!(lir_func.locals.len(), 2);
+        assert!(!lir_func.locals[0].is_argument);
+        assert!(lir_func.locals[1].is_argument);
+    }
+
+    #[test]
+    fn lowers_general_call_and_branches() {
+        let mut bodies = HashMap::new();
+
+        let return_ty = Ty::int(IntTy::I32);
+        let param_ty = Ty::int(IntTy::I32);
+        let temp_ty = Ty::int(IntTy::I32);
+
+        let mut block0 = mir::BasicBlockData::new(None);
+        block0.terminator = Some(mir::Terminator {
+            source_info: Span::new(0, 0, 0),
+            kind: mir::TerminatorKind::Call {
+                func: mir::Operand::Constant(mir::Constant {
+                    span: Span::new(0, 0, 0),
+                    user_ty: None,
+                    literal: mir::ConstantKind::Fn("foo".to_string(), return_ty.clone()),
+                }),
+                args: vec![mir::Operand::Constant(int_constant(1))],
+                destination: Some((mir::Place::from_local(2), 1)),
+                cleanup: None,
+                from_hir_call: false,
+                fn_span: Span::new(0, 0, 0),
+            },
+        });
+
+        let mut block1 = mir::BasicBlockData::new(None);
+        block1.statements.push(mir::Statement {
+            source_info: Span::new(0, 0, 0),
+            kind: mir::StatementKind::Assign(
+                mir::Place::from_local(0),
+                mir::Rvalue::Use(mir::Operand::Move(mir::Place::from_local(2))),
+            ),
+        });
+        block1.terminator = Some(mir::Terminator {
+            source_info: Span::new(0, 0, 0),
+            kind: mir::TerminatorKind::Return,
+        });
+
+        let mut body = mir::Body::new(
+            vec![block0, block1],
+            vec![
+                local_decl(return_ty.clone()),
+                local_decl(param_ty.clone()),
+                local_decl(temp_ty),
+            ],
+            1,
+            Span::new(0, 0, 0),
+        );
+        body.return_local = 0;
+
+        bodies.insert(mir::BodyId::new(0), body);
+
+        let mir_program = mir::Program {
+            items: vec![mir::Item {
+                mir_id: 0,
+                kind: mir::ItemKind::Function(mir::Function {
+                    sig: mir::FunctionSig {
+                        inputs: vec![param_ty.clone()],
+                        output: return_ty.clone(),
+                    },
+                    body_id: mir::BodyId::new(0),
+                }),
+            }],
+            bodies,
+        };
+
+        let mut generator = LirGenerator::new();
+        let lir_program = generator
+            .transform(mir_program)
+            .expect("lowering should succeed");
+
+        let lir_func = &lir_program.functions[0];
+        assert_eq!(lir_func.basic_blocks.len(), 2);
+
+        let entry_block = &lir_func.basic_blocks[0];
+        assert_eq!(entry_block.successors, vec![1]);
+        assert_eq!(entry_block.instructions.len(), 1);
+        match &entry_block.instructions[0].kind {
+            lir::LirInstructionKind::Call { function, .. } => match function {
+                lir::LirValue::Global(name, _) => assert_eq!(name, "foo"),
+                other => panic!("expected global call, got {:?}", other),
+            },
+            other => panic!("expected call instruction, got {:?}", other),
+        }
+        assert!(matches!(entry_block.terminator, lir::LirTerminator::Br(1)));
+
+        let successor_block = &lir_func.basic_blocks[1];
+        assert_eq!(successor_block.predecessors, vec![0]);
+        match &successor_block.terminator {
+            lir::LirTerminator::Return(Some(lir::LirValue::Register(_))) => {}
+            other => panic!("expected return with register value, got {:?}", other),
         }
     }
 }
