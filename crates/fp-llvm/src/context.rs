@@ -760,7 +760,7 @@ fn format_type(typ: &Type) -> String {
                 varargs_str
             )
         }
-        _ => "i32".to_string(), // fallback
+        other => panic!("Unsupported LLVM type in formatter: {:?}", other),
     }
 }
 
@@ -769,7 +769,9 @@ fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
         llvm_ir::Constant::Int { value, .. } => value.to_string(),
         llvm_ir::Constant::Float(Float::Single(v)) => format!("{}", v),
         llvm_ir::Constant::Float(Float::Double(v)) => format!("{}", v),
-        llvm_ir::Constant::Float(_) => "0.0".to_string(),
+        other @ llvm_ir::Constant::Float(_) => {
+            panic!("Unsupported floating-point constant encountered: {:?}", other)
+        }
         llvm_ir::Constant::Null(_) => "null".to_string(),
         llvm_ir::Constant::Undef(_) => "undef".to_string(),
         llvm_ir::Constant::GlobalReference { name, .. } => format!("@{}", format_name(name)),
@@ -781,18 +783,25 @@ fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
                             element_type: _,
                             num_elements,
                         } => format!("[{} x i8]", num_elements),
-                        _ => "[0 x i8]".to_string(),
+                        other => {
+                            panic!(
+                                "Unsupported array base type for GEP formatting: {:?}",
+                                other
+                            )
+                        }
                     };
                     (format!("@{}", format_name(name)), type_str)
                 }
-                _ => ("@.str.0".to_string(), "[0 x i8]".to_string()),
+                other => {
+                    panic!("Unsupported GEP address for formatting: {:?}", other)
+                }
             };
             format!(
                 "getelementptr inbounds ({}, ptr {}, i32 0, i32 0)",
                 array_type, base_name
             )
         }
-        _ => "0".to_string(),
+        other => panic!("Unsupported LLVM constant in formatter: {:?}", other),
     }
 }
 
@@ -934,7 +943,7 @@ fn format_operand(operand: &llvm_ir::Operand) -> String {
     match operand {
         llvm_ir::Operand::LocalOperand { name, .. } => format!("%{}", format_name(name)),
         llvm_ir::Operand::ConstantOperand(const_ref) => format_constant_ref(const_ref),
-        _ => "unknown_operand".to_string(),
+        other => panic!("Unsupported operand in formatter: {:?}", other),
     }
 }
 
@@ -959,7 +968,7 @@ fn format_value_name(name: &llvm_ir::Name) -> String {
 
 fn get_operand_type(operand: &llvm_ir::Operand) -> Type {
     match operand {
-        llvm_ir::Operand::LocalOperand { .. } => Type::IntegerType { bits: 32 }, // fallback
+        llvm_ir::Operand::LocalOperand { ty, .. } => ty.as_ref().clone(),
         llvm_ir::Operand::ConstantOperand(const_ref) => match const_ref.as_ref() {
             llvm_ir::Constant::Int { bits, .. } => Type::IntegerType { bits: *bits },
             llvm_ir::Constant::Float(Float::Half) => Type::FPType(FPType::Half),

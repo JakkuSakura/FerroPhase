@@ -1,0 +1,272 @@
+File(
+    File {
+        path: "examples/tmp_mut.rs",
+        items: [
+            DefFunction(
+                ItemDefFunction {
+                    attrs: [],
+                    name: #main,
+                    ty: None,
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: None,
+                    },
+                    body: Block(
+                        ExprBlock {
+                            stmts: [
+                                Let(
+                                    StmtLet {
+                                        pat: Type(
+                                            PatternType {
+                                                pat: Ident(
+                                                    PatternIdent {
+                                                        ident: #value,
+                                                        mutability: Some(
+                                                            true,
+                                                        ),
+                                                    },
+                                                ),
+                                                ty: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        init: Some(
+                                            Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 1,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        diverge: None,
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "initial: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #value,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: Assign(
+                                            ExprAssign {
+                                                target: Locator(
+                                                    #value,
+                                                ),
+                                                value: BinOp(
+                                                    ExprBinOp {
+                                                        kind: Add,
+                                                        lhs: Locator(
+                                                            #value,
+                                                        ),
+                                                        rhs: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 41,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "after first add: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #value,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: Assign(
+                                            ExprAssign {
+                                                target: Locator(
+                                                    #value,
+                                                ),
+                                                value: BinOp(
+                                                    ExprBinOp {
+                                                        kind: Sub,
+                                                        lhs: Locator(
+                                                            #value,
+                                                        ),
+                                                        rhs: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 2,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "after second step: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #value,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: Assign(
+                                            ExprAssign {
+                                                target: Locator(
+                                                    #value,
+                                                ),
+                                                value: BinOp(
+                                                    ExprBinOp {
+                                                        kind: Mul,
+                                                        lhs: Locator(
+                                                            #value,
+                                                        ),
+                                                        rhs: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 3,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "final: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #value,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                    visibility: Private,
+                },
+            ),
+        ],
+    },
+)

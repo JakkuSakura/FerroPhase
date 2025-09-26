@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::optimization_error;
 
 impl MirGenerator {
     pub(super) fn transform_expr(
@@ -757,6 +758,90 @@ impl MirGenerator {
                     block: current_block,
                 })
             }
+            thir::ExprKind::Assign { lhs, rhs } => {
+                let lhs_expr = *lhs;
+                let rhs_expr = *rhs;
+
+                let (target_place, block_after_lhs) =
+                    self.lower_place_expression(lhs_expr, current_bb)?;
+                let ExprOutcome {
+                    place: rhs_place,
+                    block: block_after_rhs,
+                } = self.transform_expr(rhs_expr, block_after_lhs)?;
+
+                self.add_statement_to_block(
+                    block_after_rhs,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(
+                            target_place,
+                            mir::Rvalue::Use(mir::Operand::Move(rhs_place)),
+                        ),
+                        source_info: expr.span,
+                    },
+                );
+
+                let result_local = self.create_local_from_thir(&expr.ty);
+                let result_place = mir::Place::from_local(result_local);
+                self.add_statement_to_block(
+                    block_after_rhs,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(result_place.clone(), self.unit_rvalue()),
+                        source_info: expr.span,
+                    },
+                );
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: block_after_rhs,
+                })
+            }
+            thir::ExprKind::AssignOp { op, lhs, rhs } => {
+                let lhs_expr = *lhs;
+                let rhs_expr = *rhs;
+
+                let (lhs_place, block_after_lhs) =
+                    self.lower_place_expression(lhs_expr.clone(), current_bb)?;
+                let ExprOutcome {
+                    place: rhs_place,
+                    block: block_after_rhs,
+                } = self.transform_expr(rhs_expr, block_after_lhs)?;
+
+                let binop_kind = self.convert_thir_binop_to_kind(op);
+                let mir_binop = self.transform_binary_op(binop_kind)?;
+
+                let target_place = lhs_place.clone();
+                let lhs_value_place = lhs_place;
+
+                self.add_statement_to_block(
+                    block_after_rhs,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(
+                            target_place,
+                            mir::Rvalue::BinaryOp(
+                                mir_binop,
+                                mir::Operand::Move(lhs_value_place),
+                                mir::Operand::Move(rhs_place),
+                            ),
+                        ),
+                        source_info: expr.span,
+                    },
+                );
+
+                let result_local = self.create_local_from_thir(&expr.ty);
+                let result_place = mir::Place::from_local(result_local);
+                self.add_statement_to_block(
+                    block_after_rhs,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(result_place.clone(), self.unit_rvalue()),
+                        source_info: expr.span,
+                    },
+                );
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: block_after_rhs,
+                })
+            }
             thir::ExprKind::VarRef { id } => {
                 let local = self.get_or_create_local_from_thir(id, &expr.ty);
                 Ok(ExprOutcome {
@@ -816,6 +901,27 @@ impl MirGenerator {
             user_ty: None,
             literal: mir::ConstantKind::Bool(value),
         })
+    }
+
+    pub(super) fn lower_place_expression(
+        &mut self,
+        expr: thir::Expr,
+        current_bb: mir::BasicBlockId,
+    ) -> Result<(mir::Place, mir::BasicBlockId)> {
+        match expr.kind {
+            thir::ExprKind::VarRef { id } => {
+                let local = self.get_or_create_local_from_thir(id, &expr.ty);
+                Ok((mir::Place::from_local(local), current_bb))
+            }
+            thir::ExprKind::Local(local_id) => {
+                let local = self.get_or_create_local_from_thir(local_id, &expr.ty);
+                Ok((mir::Place::from_local(local), current_bb))
+            }
+            other => Err(optimization_error(format!(
+                "Unsupported assignment target: {:?}",
+                other
+            ))),
+        }
     }
 
     pub(super) fn default_rvalue_for_type(&self, ty: &Ty, span: Span) -> mir::Rvalue {
