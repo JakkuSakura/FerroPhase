@@ -1,18 +1,12 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 use std::fmt;
 
+pub mod hir;
+pub mod lir;
+
 pub type DefId = u32;
 pub type LocalDefId = u32;
 pub type InternedTy = u32;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Ty {
-    pub kind: TyKind,
-    pub flags: TypeFlags,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum TyKind {
     /// The primitive boolean type. Written as `bool`.
     Bool,
 
@@ -122,7 +116,7 @@ pub enum FloatTy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeAndMut {
-    pub ty: Box<Ty>,
+    pub ty: Box<hir::Ty>,
     pub mutbl: Mutability,
 }
 
@@ -139,8 +133,8 @@ pub struct PolyFnSig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnSig {
-    pub inputs: Vec<Box<Ty>>,
-    pub output: Box<Ty>,
+    pub inputs: Vec<Box<hir::Ty>>,
+    pub output: Box<hir::Ty>,
     pub c_variadic: bool,
     pub unsafety: Unsafety,
     pub abi: Abi,

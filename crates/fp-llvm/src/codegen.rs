@@ -420,6 +420,14 @@ impl<'ctx> LirCodegen<'ctx> {
                         runtime_fn_name = "printf".to_string();
                         append_newline = true;
                     }
+                } else if matches!(fn_name.as_str(), "print" | "std::io::print") {
+                    // Python-like print: add newline like println
+                    if arg_count == 1 && first_arg_is_string {
+                        runtime_fn_name = "puts".to_string();
+                    } else {
+                        runtime_fn_name = "printf".to_string();
+                        append_newline = true;
+                    }
                 }
 
                 // Ensure runtime function declaration exists
