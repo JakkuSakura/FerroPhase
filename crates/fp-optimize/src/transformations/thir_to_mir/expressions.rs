@@ -16,7 +16,7 @@ impl MirGenerator {
                     block,
                 } = self.transform_expr(*base, current_bb)?;
                 // Without a real aggregate model, emit a move of base and rely on earlier inlining to have simplified this.
-                let temp_local = self.create_local(expr.ty);
+                let temp_local = self.create_local_from_thir(&expr.ty);
                 let place = mir::Place::from_local(temp_local);
                 self.add_statement_to_block(
                     block,
@@ -31,7 +31,7 @@ impl MirGenerator {
                 Ok(ExprOutcome { place, block })
             }
             thir::ExprKind::Literal(lit) => {
-                let temp_local = self.create_local(expr.ty);
+                let temp_local = self.create_local_from_thir(&expr.ty);
                 let place = mir::Place::from_local(temp_local);
 
                 self.add_statement_to_block(
@@ -53,7 +53,7 @@ impl MirGenerator {
             thir::ExprKind::Path(item_ref) => {
                 let mir_ty = self.transform_type(&expr.ty);
                 // Use type information to distinguish between function references and global constants
-                let constant_kind = if self.is_function_type(&expr.ty) {
+                let constant_kind = if self.is_function_type(&self.transform_type(&expr.ty)) {
                     mir::ConstantKind::Fn(item_ref.name.clone(), mir_ty)
                 } else {
                     // If it's not a function type, treat it as a global constant
@@ -61,7 +61,7 @@ impl MirGenerator {
                     mir::ConstantKind::Global(item_ref.name.clone(), mir_ty)
                 };
 
-                let temp_local = self.create_local(expr.ty);
+                let temp_local = self.create_local_from_thir(&expr.ty);
                 let place = mir::Place::from_local(temp_local);
                 self.add_statement_to_block(
                     current_bb,
@@ -91,7 +91,7 @@ impl MirGenerator {
                     place: rhs_place,
                     block: after_rhs,
                 } = self.transform_expr(*rhs, after_lhs)?;
-                let result_local = self.create_local(expr.ty);
+                let result_local = self.create_local_from_thir(&expr.ty);
                 let result_place = mir::Place::from_local(result_local);
 
                 // Convert THIR BinOp to BinOpKind
@@ -142,7 +142,7 @@ impl MirGenerator {
                     }
                 }
 
-                let result_local = self.create_local(expr.ty);
+                let result_local = self.create_local_from_thir(&expr.ty);
                 let result_place = mir::Place::from_local(result_local);
                 let cont_bb = self.create_basic_block();
 
@@ -183,7 +183,7 @@ impl MirGenerator {
                 let short_block = self.create_basic_block();
                 let join_block = self.create_basic_block();
 
-                let result_local = self.create_local(expr.ty.clone());
+                let result_local = self.create_local_from_thir(&expr.ty);
                 let result_place = mir::Place::from_local(result_local);
 
                 let (switch_values, switch_targets, short_value) = match op {
@@ -259,7 +259,7 @@ impl MirGenerator {
                 let else_block = self.create_basic_block();
                 let join_block = self.create_basic_block();
 
-                let result_local = self.create_local(expr.ty.clone());
+                let result_local = self.create_local_from_thir(&expr.ty);
                 let result_place = mir::Place::from_local(result_local);
 
                 self.set_block_terminator(
@@ -315,7 +315,9 @@ impl MirGenerator {
                         self.ensure_goto(end_else_block, join_block, expr.span);
                     }
                 } else {
-                    if !self.block_has_terminator(else_block) && self.is_unit_type(&expr.ty) {
+                    if !self.block_has_terminator(else_block)
+                        && self.is_unit_type(&self.transform_type(&expr.ty))
+                    {
                         self.add_statement_to_block(
                             else_block,
                             mir::Statement {
@@ -339,8 +341,8 @@ impl MirGenerator {
                 let loop_body_block = self.create_basic_block();
                 let exit_block = self.create_basic_block();
 
-                let result_local = self.create_local(expr.ty.clone());
-                let break_result = if self.is_never_type(&expr.ty) {
+                let result_local = self.create_local_from_thir(&expr.ty);
+                let break_result = if self.is_never_type(&self.transform_type(&expr.ty)) {
                     None
                 } else {
                     Some(result_local)
@@ -410,12 +412,12 @@ impl MirGenerator {
                             .break_result
                             .map(mir::Place::from_local)
                             .unwrap_or_else(|| {
-                                mir::Place::from_local(self.create_local(expr.ty.clone()))
+                                mir::Place::from_local(self.create_local_from_thir(&expr.ty))
                             }),
                         block: loop_ctx.break_block,
                     })
                 } else {
-                    let temp_local = self.create_local(expr.ty);
+                    let temp_local = self.create_local_from_thir(&expr.ty);
                     Ok(ExprOutcome {
                         place: mir::Place::from_local(temp_local),
                         block: current_bb,
@@ -431,7 +433,7 @@ impl MirGenerator {
 
                     let place = match break_result {
                         Some(local) => mir::Place::from_local(local),
-                        None => mir::Place::from_local(self.create_local(expr.ty.clone())),
+                        None => mir::Place::from_local(self.create_local_from_thir(&expr.ty)),
                     };
 
                     Ok(ExprOutcome {
@@ -439,7 +441,7 @@ impl MirGenerator {
                         block: continue_block,
                     })
                 } else {
-                    let temp_local = self.create_local(expr.ty);
+                    let temp_local = self.create_local_from_thir(&expr.ty);
                     Ok(ExprOutcome {
                         place: mir::Place::from_local(temp_local),
                         block: current_bb,
@@ -480,7 +482,9 @@ impl MirGenerator {
                 let return_place = self
                     .current_return_local
                     .map(mir::Place::from_local)
-                    .unwrap_or_else(|| mir::Place::from_local(self.create_local(expr.ty.clone())));
+                    .unwrap_or_else(|| {
+                        mir::Place::from_local(self.create_local_from_thir(&expr.ty))
+                    });
 
                 Ok(ExprOutcome {
                     place: return_place,
@@ -493,7 +497,7 @@ impl MirGenerator {
                     block: mut current_block,
                 } = self.transform_expr(*scrutinee, current_bb)?;
 
-                let result_local = self.create_local(expr.ty.clone());
+                let result_local = self.create_local_from_thir(&expr.ty);
                 let result_place = mir::Place::from_local(result_local);
                 let join_block = self.create_basic_block();
 
@@ -566,7 +570,10 @@ impl MirGenerator {
                                 mir::Statement {
                                     kind: mir::StatementKind::Assign(
                                         result_place.clone(),
-                                        self.default_rvalue_for_type(&expr.ty, arm.span),
+                                        self.default_rvalue_for_type(
+                                            &self.transform_type(&expr.ty),
+                                            arm.span,
+                                        ),
                                     ),
                                     source_info: arm.span,
                                 },
@@ -611,7 +618,8 @@ impl MirGenerator {
                         }
                         thir::PatKind::Binding { var, .. } => {
                             // Bind scrutinee into the pattern local before evaluating the body.
-                            let bound_local = self.get_or_create_local(var, arm.pattern.ty.clone());
+                            let bound_local =
+                                self.get_or_create_local_from_thir(var, &arm.pattern.ty);
                             self.add_statement_to_block(
                                 current_block,
                                 mir::Statement {
@@ -685,7 +693,10 @@ impl MirGenerator {
                         mir::Statement {
                             kind: mir::StatementKind::Assign(
                                 result_place.clone(),
-                                self.default_rvalue_for_type(&expr.ty, expr.span),
+                                self.default_rvalue_for_type(
+                                    &self.transform_type(&expr.ty),
+                                    expr.span,
+                                ),
                             ),
                             source_info: expr.span,
                         },
@@ -710,7 +721,7 @@ impl MirGenerator {
                 } = self.transform_expr(*value_expr, current_bb)?;
 
                 if let Some(local_id) = self.binding_local_from_pattern(&pat) {
-                    let local = self.get_or_create_local(local_id, pat.ty.clone());
+                    let local = self.get_or_create_local_from_thir(local_id, &pat.ty);
                     self.add_statement_to_block(
                         current_block,
                         mir::Statement {
@@ -723,10 +734,11 @@ impl MirGenerator {
                     );
                 }
 
-                let result_local = self.create_local(expr.ty.clone());
+                let result_local = self.create_local_from_thir(&expr.ty);
                 let result_place = mir::Place::from_local(result_local);
 
-                let assign_rvalue = match expr.ty.kind {
+                let mir_expr_ty = self.transform_type(&expr.ty);
+                let assign_rvalue = match mir_expr_ty.kind {
                     TyKind::Bool => mir::Rvalue::Use(self.bool_operand(true, expr.span)),
                     TyKind::Tuple(ref elems) if elems.is_empty() => self.unit_rvalue(),
                     _ => mir::Rvalue::Use(self.bool_operand(true, expr.span)),
@@ -746,7 +758,7 @@ impl MirGenerator {
                 })
             }
             thir::ExprKind::VarRef { id } => {
-                let local = self.get_or_create_local(id, expr.ty.clone());
+                let local = self.get_or_create_local_from_thir(id, &expr.ty);
                 Ok(ExprOutcome {
                     place: mir::Place::from_local(local),
                     block: current_bb,
@@ -776,7 +788,7 @@ impl MirGenerator {
                 if let Some(final_expr) = tail_expr {
                     self.transform_expr(*final_expr, current_block)
                 } else {
-                    let temp_local = self.create_local(expr.ty);
+                    let temp_local = self.create_local_from_thir(&expr.ty);
                     Ok(ExprOutcome {
                         place: mir::Place::from_local(temp_local),
                         block: current_block,
@@ -785,7 +797,7 @@ impl MirGenerator {
             }
             _ => {
                 // Default case for unhandled expressions
-                let temp_local = self.create_local(expr.ty);
+                let temp_local = self.create_local_from_thir(&expr.ty);
                 Ok(ExprOutcome {
                     place: mir::Place::from_local(temp_local),
                     block: current_bb,

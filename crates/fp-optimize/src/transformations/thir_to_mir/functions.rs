@@ -10,11 +10,11 @@ impl MirGenerator {
         self.reset_for_new_function();
 
         // Create locals for parameters and return value
-        let return_local = self.create_local(func.sig.output.clone());
+        let return_local = self.create_local(self.transform_type(&func.sig.output));
         let mut param_locals = Vec::new();
 
         for param in &func.sig.inputs {
-            let local_id = self.create_local(param.clone());
+            let local_id = self.create_local(self.transform_type(param));
             param_locals.push(local_id);
         }
 
@@ -73,7 +73,7 @@ impl MirGenerator {
 
         let base_thir_local = param_locals.len() as thir::ThirId;
         for (offset, local_decl) in thir_body.locals.iter().enumerate() {
-            let mir_local = self.create_local(local_decl.ty.clone());
+            let mir_local = self.create_local(self.transform_type(&local_decl.ty));
             self.current_locals
                 .insert(base_thir_local + offset as thir::ThirId, mir_local);
         }
@@ -161,7 +161,8 @@ impl MirGenerator {
                     block = after_init;
 
                     if let Some(local_id) = self.binding_local_from_pattern(&pattern) {
-                        let mir_local = self.get_or_create_local(local_id, pattern.ty.clone());
+                        let mir_local =
+                            self.get_or_create_local(local_id, self.transform_type(&pattern.ty));
                         self.add_statement_to_block(
                             block,
                             mir::Statement {
