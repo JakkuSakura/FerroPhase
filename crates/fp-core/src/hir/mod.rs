@@ -138,9 +138,40 @@ pub struct StructExprField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StdIoPrintln {
-    pub template: String,
+pub struct FormatString {
+    pub parts: Vec<FormatTemplatePart>,
     pub args: Vec<Expr>,
+    pub kwargs: Vec<FormatKwArg>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormatTemplatePart {
+    Literal(String),
+    Placeholder(FormatPlaceholder),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormatPlaceholder {
+    pub arg_ref: FormatArgRef,
+    pub format_spec: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormatArgRef {
+    Implicit,
+    Positional(usize),
+    Named(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormatKwArg {
+    pub name: String,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StdIoPrintln {
+    pub format: FormatString,
     pub newline: bool,
 }
 

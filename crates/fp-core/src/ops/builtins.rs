@@ -4,7 +4,6 @@ use crate::bail;
 use crate::context::SharedScopedContext;
 use crate::id::Ident;
 use crate::ops::BinOpKind;
-use itertools::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
@@ -249,13 +248,42 @@ pub fn builtin_ne() -> BuiltinFn {
     binary_comparison_on_literals(BinOpKind::Ne, |x, y| x != y, |x, y| x != y)
 }
 
-pub fn builtin_print(se: Arc<dyn AstSerializer>) -> BuiltinFn {
+pub fn builtin_print(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("print".into(), move |args, ctx| {
-        let formatted: Vec<_> = args
-            .into_iter()
-            .map(|x| se.serialize_value(x))
-            .try_collect()?;
-        ctx.root().print_str(formatted.join(" "));
+        use crate::context::ExecutionMode;
+
+        // Format all arguments and join with spaces (Python-like behavior)
+        let formatted: Vec<String> = args
+            .iter()
+            .map(|value| format_value_for_print(value))
+            .collect();
+
+        let output = if formatted.is_empty() {
+            String::new()
+        } else {
+            formatted.join(" ")
+        };
+
+        tracing::debug!(
+            "builtin_print called with mode: {:?}",
+            ctx.root().execution_mode()
+        );
+        match ctx.root().execution_mode() {
+            ExecutionMode::CompileTime => {
+                // Execute immediately during const evaluation
+                tracing::debug!("Executing print at compile-time: {}", output);
+                // Python-like print: add newline
+                ctx.root().print_str(format!("{}\n", output));
+            }
+            ExecutionMode::Runtime => {
+                // TODO: Generate side effect for runtime print call
+                // For now, create a runtime value that represents a print call
+                // This should be handled by the pipeline to generate actual LLVM calls
+                tracing::debug!("Runtime print call: {}", output);
+                // The call should be preserved in the AST for later compilation phases
+            }
+        }
+
         Ok(Value::unit())
     })
 }
@@ -306,6 +334,11 @@ fn format_value(value: &Value) -> String {
         Value::Unit(_) => "()".to_string(),
         _ => format!("{:?}", value), // Fallback for complex types
     }
+}
+
+/// Format a value for the `print!` helpers. Currently reuses the default formatting logic.
+fn format_value_for_print(value: &Value) -> String {
+    format_value(value)
 }
 
 fn builtin_strlen_named(name: &str) -> BuiltinFn {
