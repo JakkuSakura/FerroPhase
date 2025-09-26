@@ -90,7 +90,7 @@ fn lowers_impl_items() -> Result<()> {
     assert_eq!(idx, 0);
     assert!(matches!(
         field_ty.kind,
-        types::TyKind::Int(types::IntTy::I64)
+        hir_types::TyKind::Int(hir_types::IntTy::I64)
     ));
 
     let method_sig = thir_gen
@@ -99,7 +99,7 @@ fn lowers_impl_items() -> Result<()> {
         .expect("method signature");
     assert!(matches!(
         method_sig.output.kind,
-        types::TyKind::Int(types::IntTy::I64)
+        hir_types::TyKind::Int(hir_types::IntTy::I64)
     ));
 
     Ok(())

@@ -10,9 +10,10 @@ use crate::languages::detect_source_language;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
+use fp_core::hir::typed as thir;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_optimize::ConstEvaluationOrchestrator;
-use fp_optimize::ir::{hir, lir, mir, thir};
+use fp_optimize::ir::{hir, lir, mir};
 use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_optimize::transformations::{
     HirGenerator, IrTransform, LirGenerator, MirGenerator, ThirGenerator,

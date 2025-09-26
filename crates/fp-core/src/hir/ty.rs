@@ -1,12 +1,17 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 use std::fmt;
 
-pub mod hir;
-pub mod lir;
-
 pub type DefId = u32;
 pub type LocalDefId = u32;
 pub type InternedTy = u32;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Ty {
+    pub kind: TyKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TyKind {
     /// The primitive boolean type. Written as `bool`.
     Bool,
 
@@ -116,7 +121,7 @@ pub enum FloatTy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeAndMut {
-    pub ty: Box<hir::Ty>,
+    pub ty: Box<Ty>,
     pub mutbl: Mutability,
 }
 
@@ -133,8 +138,8 @@ pub struct PolyFnSig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FnSig {
-    pub inputs: Vec<Box<hir::Ty>>,
-    pub output: Box<hir::Ty>,
+    pub inputs: Vec<Box<Ty>>,
+    pub output: Box<Ty>,
     pub c_variadic: bool,
     pub unsafety: Unsafety,
     pub abi: Abi,
@@ -450,33 +455,6 @@ bitflags::bitflags! {
     }
 }
 
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct TypeFlags: u32 {
-        const HAS_PARAMS                 = 1 << 0;
-        const HAS_TY_INFER               = 1 << 1;
-        const HAS_RE_INFER               = 1 << 2;
-        const HAS_CT_INFER               = 1 << 3;
-        const HAS_TY_PLACEHOLDER         = 1 << 4;
-        const HAS_RE_PLACEHOLDER         = 1 << 5;
-        const HAS_CT_PLACEHOLDER         = 1 << 6;
-        const HAS_TY_BOUND               = 1 << 7;
-        const HAS_RE_BOUND               = 1 << 8;
-        const HAS_CT_BOUND               = 1 << 9;
-        const HAS_FREE_LOCAL_REGIONS     = 1 << 10;
-        const HAS_TY_ERR                 = 1 << 11;
-        const HAS_PROJECTION             = 1 << 12;
-        const HAS_CT_PROJECTION          = 1 << 13;
-        const STILL_FURTHER_SPECIALIZABLE = 1 << 14;
-        const HAS_RE_LATE_BOUND          = 1 << 15;
-        const HAS_FREE_REGIONS           = 1 << 16;
-        const HAS_RE_ERASED              = 1 << 17;
-        const NEEDS_DROP                 = 1 << 18;
-        const NEEDS_SUBST                = 1 << 19;
-        const HAS_NORMALIZABLE_PROJECTION = 1 << 20;
-    }
-}
-
 // Substitutions and generics
 pub type SubstsRef = Vec<GenericArg>;
 
@@ -588,33 +566,28 @@ pub type SimplifiedType = String; // Simplified for now
 
 // Implementation helpers
 impl Ty {
-    pub fn new(kind: TyKind) -> Self {
-        let flags = TypeFlags::from_ty_kind(&kind);
-        Self { kind, flags }
-    }
-
     pub fn bool() -> Self {
-        Self::new(TyKind::Bool)
+        Self { kind: TyKind::Bool }
     }
 
     pub fn char() -> Self {
-        Self::new(TyKind::Char)
+        Self { kind: TyKind::Char }
     }
 
     pub fn int(int_ty: IntTy) -> Self {
-        Self::new(TyKind::Int(int_ty))
+        Self { kind: TyKind::Int(int_ty) }
     }
 
     pub fn uint(uint_ty: UintTy) -> Self {
-        Self::new(TyKind::Uint(uint_ty))
+        Self { kind: TyKind::Uint(uint_ty) }
     }
 
     pub fn float(float_ty: FloatTy) -> Self {
-        Self::new(TyKind::Float(float_ty))
+        Self { kind: TyKind::Float(float_ty) }
     }
 
     pub fn never() -> Self {
-        Self::new(TyKind::Never)
+        Self { kind: TyKind::Never }
     }
 
     pub fn is_primitive(&self) -> bool {
@@ -648,37 +621,6 @@ impl Ty {
             self.kind,
             TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
         )
-    }
-}
-
-impl TypeFlags {
-    pub fn from_ty_kind(kind: &TyKind) -> Self {
-        let mut flags = TypeFlags::empty();
-
-        match kind {
-            TyKind::Param(_) => {
-                flags |= TypeFlags::HAS_PARAMS;
-                flags |= TypeFlags::NEEDS_SUBST;
-            }
-            TyKind::Infer(_) => {
-                flags |= TypeFlags::HAS_TY_INFER;
-            }
-            TyKind::Error(_) => {
-                flags |= TypeFlags::HAS_TY_ERR;
-            }
-            TyKind::Projection(_) => {
-                flags |= TypeFlags::HAS_PROJECTION;
-            }
-            TyKind::Placeholder(_) => {
-                flags |= TypeFlags::HAS_TY_PLACEHOLDER;
-            }
-            TyKind::Bound(_, _) => {
-                flags |= TypeFlags::HAS_TY_BOUND;
-            }
-            _ => {}
-        }
-
-        flags
     }
 }
 

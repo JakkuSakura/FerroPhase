@@ -36,7 +36,7 @@ fn test_simple_type_creation() -> Result<()> {
     let ty = generator.create_simple_type("i32");
 
     match ty.kind {
-        hir::TyKind::Path(path) => {
+        hir::TypeExprKind::Path(path) => {
             assert_eq!(path.segments[0].name, "i32");
         }
         _ => {
@@ -127,7 +127,7 @@ fn transform_generic_function_and_method() -> Result<()> {
         })
         .expect("identity function present");
     assert_eq!(identity.sig.generics.params.len(), 1);
-    if let hir::TyKind::Path(path) = &identity.sig.output.kind {
+    if let hir::TypeExprKind::Path(path) = &identity.sig.output.kind {
         assert!(
             matches!(path.res, Some(hir::Res::Local(_))),
             "generic return type should resolve to local generic param"
@@ -136,7 +136,7 @@ fn transform_generic_function_and_method() -> Result<()> {
         panic!("expected path return type for identity function");
     }
     let param_ty = &identity.sig.inputs[0].ty;
-    if let hir::TyKind::Path(path) = &param_ty.kind {
+    if let hir::TypeExprKind::Path(path) = &param_ty.kind {
         assert!(
             matches!(path.res, Some(hir::Res::Local(_))),
             "generic parameter type should resolve to local generic param"
