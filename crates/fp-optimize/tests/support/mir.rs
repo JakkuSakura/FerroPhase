@@ -1,10 +1,10 @@
+use fp_core::hir::ty::IntTy;
 use fp_core::hir::ty::Ty;
 use fp_core::mir::{
     self, BasicBlockData, Body, BodyId, Function, FunctionSig, Item, ItemKind, Program, Statement,
     StatementKind, Terminator, TerminatorKind,
 };
 use fp_core::span::Span;
-use fp_core::hir::ty::IntTy;
 
 fn int_ty() -> Ty {
     Ty::int(IntTy::I32)

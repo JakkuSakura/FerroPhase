@@ -26,11 +26,30 @@ impl MirGenerator {
         local_id
     }
 
+    pub(super) fn create_local_from_thir(&mut self, ty: &hir_types::Ty) -> mir::LocalId {
+        let mir_ty = self.transform_type(ty);
+        self.create_local(mir_ty)
+    }
+
     pub(super) fn get_or_create_local(&mut self, thir_id: thir::ThirId, ty: Ty) -> mir::LocalId {
         if let Some(&local) = self.current_locals.get(&thir_id) {
             local
         } else {
             let local = self.create_local(ty);
+            self.current_locals.insert(thir_id, local);
+            local
+        }
+    }
+
+    pub(super) fn get_or_create_local_from_thir(
+        &mut self,
+        thir_id: thir::ThirId,
+        ty: &hir_types::Ty,
+    ) -> mir::LocalId {
+        if let Some(&local) = self.current_locals.get(&thir_id) {
+            local
+        } else {
+            let local = self.create_local_from_thir(ty);
             self.current_locals.insert(thir_id, local);
             local
         }
