@@ -3,7 +3,6 @@
 use fp_core::ast::{AstSerializer, Ty, TypeEnum, TypeStruct};
 use fp_core::printer::AstSerializerConfig;
 use fp_core::{bail, Result};
-use itertools::Itertools;
 
 #[derive(Debug, Clone)]
 pub struct CSharpPrinter {
@@ -41,18 +40,20 @@ impl CSharpPrinter {
     }
 
     /// Map AST types to C# types using proper pattern matching
-    fn ast_type_to_csharp(&self, ast_type: &Ty) -> String {
+    fn ast_type_to_csharp(&self, ast_type: &Ty) -> Result<String> {
         match ast_type {
             Ty::Vec(type_vec) => {
-                let inner_csharp = self.ast_type_to_csharp(&type_vec.ty);
-                format!("List<{}>", inner_csharp)
+                let inner_csharp = self.ast_type_to_csharp(&type_vec.ty)?;
+                Ok(format!("List<{}>", inner_csharp))
             }
             Ty::Primitive(prim) => {
-                match prim {
+                let mapped = match prim {
                     fp_core::ast::TypePrimitive::Decimal(decimal_type) => match decimal_type {
                         fp_core::ast::DecimalType::F64 => "double".to_string(),
                         fp_core::ast::DecimalType::F32 => "float".to_string(),
-                        _ => format!("{:?}", decimal_type),
+                        other => {
+                            bail!("Unsupported decimal type {:?} for C# printer", other)
+                        }
                     },
                     fp_core::ast::TypePrimitive::Int(int_type) => match int_type {
                         fp_core::ast::TypeInt::I64 => "long".to_string(),
@@ -63,25 +64,28 @@ impl CSharpPrinter {
                         fp_core::ast::TypeInt::U32 => "uint".to_string(),
                         fp_core::ast::TypeInt::U16 => "ushort".to_string(),
                         fp_core::ast::TypeInt::U8 => "byte".to_string(),
-                        _ => format!("{:?}", int_type),
+                        other => {
+                            bail!("Unsupported integer type {:?} for C# printer", other)
+                        }
                     },
                     fp_core::ast::TypePrimitive::Bool => "bool".to_string(),
                     fp_core::ast::TypePrimitive::String => "string".to_string(),
-                    fp_core::ast::TypePrimitive::List => "List<object>".to_string(), // Generic list
-                    _ => format!("{:?}", prim), // fallback for other primitives
-                }
+                    fp_core::ast::TypePrimitive::List => "List<object>".to_string(),
+                    other => bail!("Unsupported primitive {:?} for C# printer", other),
+                };
+                Ok(mapped)
             }
             Ty::Expr(expr) => {
                 // Handle expressions like paths/identifiers
                 let expr_str = format!("{}", expr);
                 // Apply simple type mapping for consistency
-                self.map_simple_type_to_csharp(&expr_str)
+                Ok(self.map_simple_type_to_csharp(&expr_str))
             }
             _ => {
-                // Fallback to string representation for other types
-                let type_str = format!("{}", ast_type);
-                // Apply simple type mapping for consistency
-                self.map_simple_type_to_csharp(&type_str)
+                bail!(
+                    "C# printer does not support AST type '{}'; add explicit handling",
+                    ast_type
+                )
             }
         }
     }
@@ -110,9 +114,9 @@ impl CSharpPrinter {
         type_str.to_string()
     }
 
-    /// Map simple type strings to C# (for fallback cases)
+    /// Map simple type strings to C#
     fn map_simple_type_to_csharp(&self, type_str: &str) -> String {
-        // First check for Vec patterns as fallback (should be handled by AST pattern matching primarily)
+        // First check for Vec patterns that weren't handled earlier
         if type_str.contains("Vec") {
             return self.handle_vec_like_string(type_str);
         }
@@ -132,7 +136,7 @@ impl CSharpPrinter {
             "isize" => "nint".to_string(),
             "bool" => "bool".to_string(),
             "String" | "str" => "string".to_string(),
-            _ => type_str.to_string(), // Keep custom types as-is
+            _ => type_str.to_string(),
         }
     }
 
@@ -144,7 +148,7 @@ impl CSharpPrinter {
         output.push_str("{\n");
 
         for field in &struct_def.fields {
-            let csharp_type = self.ast_type_to_csharp(&field.value);
+            let csharp_type = self.ast_type_to_csharp(&field.value)?;
             output.push_str(&format!(
                 "{}    {} {} {{ get; set; }}\n",
                 self.indent(1),
@@ -167,7 +171,7 @@ impl CSharpPrinter {
 
         // Generate properties
         for field in &struct_def.fields {
-            let csharp_type = self.ast_type_to_csharp(&field.value);
+            let csharp_type = self.ast_type_to_csharp(&field.value)?;
 
             // Add JSON property name attribute if JSON support is enabled
             if self.enable_json {
@@ -207,9 +211,14 @@ impl CSharpPrinter {
                 .fields
                 .iter()
                 .map(|field| {
-                    let csharp_type = self.ast_type_to_csharp(&field.value);
-                    format!("{} {}", csharp_type, field.name.name.to_lowercase())
+                    let csharp_type = self.ast_type_to_csharp(&field.value)?;
+                    Ok(format!(
+                        "{} {}",
+                        csharp_type,
+                        field.name.name.to_lowercase()
+                    ))
                 })
+                .collect::<Result<Vec<_>>>()?
                 .join(", ");
 
             output.push_str(&format!(
@@ -408,7 +417,7 @@ impl CSharpPrinter {
             output.push_str(&format!("{}{{\n", self.indent(2)));
 
             for field in &struct_def.fields {
-                let csharp_type = self.ast_type_to_csharp(&field.value);
+                let csharp_type = self.ast_type_to_csharp(&field.value)?;
                 let default_val = self.default_value_for_type(&csharp_type);
                 output.push_str(&format!(
                     "{}{} = {},\n",

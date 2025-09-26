@@ -136,7 +136,10 @@ impl HirGenerator {
                 let ty = self.transform_type_to_hir(&param.ty)?;
                 let pat = hir::Pat {
                     hir_id: self.next_id(),
-                    kind: hir::PatKind::Binding(param.name.name.clone()),
+                    kind: hir::PatKind::Binding {
+                        name: param.name.name.clone(),
+                        mutable: false,
+                    },
                 };
 
                 let hir_param = hir::Param {
@@ -195,7 +198,10 @@ impl HirGenerator {
             hir_id: self.next_id(),
             pat: hir::Pat {
                 hir_id: self.next_id(),
-                kind: hir::PatKind::Binding("self".to_string()),
+                kind: hir::PatKind::Binding {
+                    name: "self".to_string(),
+                    mutable: false,
+                },
             },
             ty,
         })
@@ -498,7 +504,7 @@ impl HirGenerator {
                 hir::StmtKind::Expr(self.transform_expr_to_hir(&expr_stmt.expr)?)
             }
             ast::BlockStmt::Let(let_stmt) => {
-                let pat = self.transform_pattern(&let_stmt.pat)?;
+                let (pat, explicit_ty, _) = self.transform_pattern_with_metadata(&let_stmt.pat)?;
                 let init = let_stmt
                     .init
                     .as_ref()
@@ -508,7 +514,7 @@ impl HirGenerator {
                 let local = hir::Local {
                     hir_id: self.next_id(),
                     pat,
-                    ty: None, // Type inference will fill this in later
+                    ty: explicit_ty,
                     init,
                 };
 
@@ -785,27 +791,61 @@ impl HirGenerator {
         )
     }
 
-    pub(super) fn transform_pattern(&mut self, pat: &Pattern) -> Result<hir::Pat> {
+    pub(super) fn transform_pattern_with_metadata(
+        &mut self,
+        pat: &Pattern,
+    ) -> Result<(hir::Pat, Option<hir::TypeExpr>, bool)> {
         match pat {
-            Pattern::Ident(ident) => Ok(hir::Pat {
-                hir_id: self.next_id(),
-                kind: hir::PatKind::Binding(ident.ident.name.clone()),
-            }),
-            Pattern::Wildcard(_) => Ok(hir::Pat {
-                hir_id: self.next_id(),
-                kind: hir::PatKind::Wild,
-            }),
-            Pattern::Type(pattern_type) => self.transform_pattern(&pattern_type.pat),
-            _ => Ok(hir::Pat {
-                hir_id: self.next_id(),
-                kind: hir::PatKind::Binding("_".to_string()),
-            }),
+            Pattern::Ident(ident) => {
+                let mutable = ident.mutability.unwrap_or(false);
+                Ok((
+                    hir::Pat {
+                        hir_id: self.next_id(),
+                        kind: hir::PatKind::Binding {
+                            name: ident.ident.name.clone(),
+                            mutable,
+                        },
+                    },
+                    None,
+                    mutable,
+                ))
+            }
+            Pattern::Wildcard(_) => Ok((
+                hir::Pat {
+                    hir_id: self.next_id(),
+                    kind: hir::PatKind::Wild,
+                },
+                None,
+                false,
+            )),
+            Pattern::Type(pattern_type) => {
+                let ty_expr = self.transform_type_to_hir(&pattern_type.ty)?;
+                let (inner_pat, _inner_ty, mutable) =
+                    self.transform_pattern_with_metadata(&pattern_type.pat)?;
+                Ok((inner_pat, Some(ty_expr), mutable))
+            }
+            _ => Ok((
+                hir::Pat {
+                    hir_id: self.next_id(),
+                    kind: hir::PatKind::Binding {
+                        name: "_".to_string(),
+                        mutable: false,
+                    },
+                },
+                None,
+                false,
+            )),
         }
+    }
+
+    pub(super) fn transform_pattern(&mut self, pat: &Pattern) -> Result<hir::Pat> {
+        self.transform_pattern_with_metadata(pat)
+            .map(|(pattern, _, _)| pattern)
     }
 
     pub(super) fn register_pattern_bindings(&mut self, pat: &hir::Pat) {
         match &pat.kind {
-            hir::PatKind::Binding(name) => {
+            hir::PatKind::Binding { name, .. } => {
                 self.register_value_local(name, pat.hir_id);
             }
             hir::PatKind::Struct(_, fields) => {
