@@ -1,3 +1,4 @@
+use super::runtime_format::{format_runtime_string, format_value_with_spec};
 use crate::ast::*;
 use crate::bail;
 use crate::context::SharedScopedContext;
@@ -267,24 +268,10 @@ pub fn builtin_println(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
         let output = if args.is_empty() {
             String::new()
         } else if args.len() == 1 {
-            // Single argument - just format it directly
-            format_value(&args[0])
+            format_value_with_spec(&args[0], None)?
         } else {
-            // First argument is format string, rest are values to interpolate
-            let format_str = format_value(&args[0]);
-            let values: Vec<_> = args[1..].iter().map(format_value).collect();
-
-            // Sequential {} placeholder replacement
-            let mut result = format_str;
-            for value in values {
-                if let Some(pos) = result.find("{}") {
-                    result.replace_range(pos..pos + 2, &value);
-                } else {
-                    // No more placeholders, append remaining values
-                    break;
-                }
-            }
-            result
+            let format_str = format_value_with_spec(&args[0], None)?;
+            format_runtime_string(&format_str, &args[1..])?
         };
 
         tracing::debug!(

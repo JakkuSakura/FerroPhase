@@ -2,7 +2,7 @@ use fp_core::ast::Value;
 use fp_core::error::Result;
 use fp_core::types::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
 use fp_core::{lir, mir};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 mod const_eval;
 #[cfg(test)]
@@ -20,6 +20,17 @@ pub struct LirGenerator {
     current_return_type: Option<lir::LirType>,
     return_local: Option<mir::LocalId>,
     const_globals: HashMap<String, Value>,
+    mutable_locals: HashSet<mir::LocalId>,
+    local_storage: HashMap<mir::LocalId, LocalStorage>,
+    entry_allocas: Vec<lir::LirInstruction>,
+    queued_instructions: Vec<lir::LirInstruction>,
+}
+
+#[derive(Clone)]
+struct LocalStorage {
+    ptr_value: lir::LirValue,
+    element_type: lir::LirType,
+    alignment: u32,
 }
 
 impl LirGenerator {
@@ -35,6 +46,10 @@ impl LirGenerator {
             current_return_type: None,
             return_local: None,
             const_globals,
+            mutable_locals: HashSet::new(),
+            local_storage: HashMap::new(),
+            entry_allocas: Vec::new(),
+            queued_instructions: Vec::new(),
         }
     }
 
@@ -98,6 +113,8 @@ impl LirGenerator {
             self.analyze_const_values(mir_body)?;
             self.local_types = mir_body.locals.iter().map(|decl| decl.ty.clone()).collect();
             self.return_local = Some(mir_body.return_local);
+            self.mutable_locals = self.compute_mutable_locals(mir_body);
+            self.initialize_local_storage();
             lir_func.locals = self.build_lir_locals(mir_body);
             self.seed_argument_registers(mir_body);
 
@@ -165,6 +182,11 @@ impl LirGenerator {
             successors: Vec::new(),
         };
 
+        if bb_id == 0 && !self.entry_allocas.is_empty() {
+            lir_block.instructions.extend(self.entry_allocas.clone());
+            self.entry_allocas.clear();
+        }
+
         // Transform all MIR statements into LIR instructions
         for stmt in &bb_data.statements {
             let lir_insts = self.transform_statement(stmt)?;
@@ -206,15 +228,39 @@ impl LirGenerator {
         place: &mir::Place,
         rvalue: &mir::Rvalue,
     ) -> Result<Vec<lir::LirInstruction>> {
+        let mut instructions = Vec::new();
+        let has_storage = self.local_storage.contains_key(&place.local);
+
         match rvalue {
             mir::Rvalue::Use(operand) => {
-                let source_value = self.transform_operand(operand)?;
-                self.register_map.insert(place.local, source_value);
-                Ok(Vec::new())
+                let value = self.transform_operand(operand)?;
+                instructions.extend(self.take_queued_instructions());
+
+                if has_storage {
+                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                        let store_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: store_id,
+                            kind: lir::LirInstructionKind::Store {
+                                value: value.clone(),
+                                address: storage.ptr_value.clone(),
+                                alignment: Some(storage.alignment),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        });
+                    }
+                }
+
+                self.register_map.insert(place.local, value);
+                Ok(instructions)
             }
             mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {
                 let lhs_value = self.transform_operand(lhs)?;
+                instructions.extend(self.take_queued_instructions());
                 let rhs_value = self.transform_operand(rhs)?;
+                instructions.extend(self.take_queued_instructions());
 
                 let instr_id = self.next_id();
                 let lir_kind =
@@ -224,15 +270,33 @@ impl LirGenerator {
                     .map(|ty| self.lir_type_from_ty(ty))
                     .or_else(|| Some(lir::LirType::I32));
 
-                self.register_map
-                    .insert(place.local, lir::LirValue::Register(instr_id));
-
-                Ok(vec![lir::LirInstruction {
+                instructions.push(lir::LirInstruction {
                     id: instr_id,
                     kind: lir_kind,
                     type_hint,
                     debug_info: None,
-                }])
+                });
+
+                let result_value = lir::LirValue::Register(instr_id);
+                if has_storage {
+                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                        let store_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: store_id,
+                            kind: lir::LirInstructionKind::Store {
+                                value: result_value.clone(),
+                                address: storage.ptr_value.clone(),
+                                alignment: Some(storage.alignment),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        });
+                    }
+                }
+
+                self.register_map.insert(place.local, result_value);
+                Ok(instructions)
             }
             mir::Rvalue::Aggregate(kind, fields) => self.handle_aggregate(place, kind, fields),
             mir::Rvalue::Ref(_, _, borrowed_place) => {
@@ -246,7 +310,6 @@ impl LirGenerator {
                 Ok(Vec::new())
             }
             mir::Rvalue::Len(_place) => {
-                // TODO: compute length when len(place) metadata is available
                 self.register_map.insert(
                     place.local,
                     lir::LirValue::Constant(lir::LirConstant::Int(0, lir::LirType::I64)),
@@ -255,6 +318,7 @@ impl LirGenerator {
             }
             mir::Rvalue::Cast(cast_kind, operand, _ty) => {
                 let operand_value = self.transform_operand(operand)?;
+                instructions.extend(self.take_queued_instructions());
                 let source_ty = self.type_of_operand(operand);
                 let target_ty = self
                     .lookup_place_type(place)
@@ -269,15 +333,33 @@ impl LirGenerator {
                     target_ty.clone(),
                 );
 
-                self.register_map
-                    .insert(place.local, lir::LirValue::Register(instr_id));
-
-                Ok(vec![lir::LirInstruction {
+                instructions.push(lir::LirInstruction {
                     id: instr_id,
                     kind: instr_kind,
-                    type_hint: Some(target_ty),
+                    type_hint: Some(target_ty.clone()),
                     debug_info: None,
-                }])
+                });
+
+                let result_value = lir::LirValue::Register(instr_id);
+                if has_storage {
+                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                        let store_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: store_id,
+                            kind: lir::LirInstructionKind::Store {
+                                value: result_value.clone(),
+                                address: storage.ptr_value.clone(),
+                                alignment: Some(storage.alignment),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        });
+                    }
+                }
+
+                self.register_map.insert(place.local, result_value);
+                Ok(instructions)
             }
             _ => Ok(vec![lir::LirInstruction {
                 id: self.next_id(),
@@ -311,6 +393,7 @@ impl LirGenerator {
                 targets,
             } => {
                 let discr_value = self.transform_operand(discr)?;
+                block.instructions.extend(self.take_queued_instructions());
                 if targets.values.len() == 1 {
                     let true_target = targets.targets[0];
                     let false_target = targets.otherwise;
@@ -340,8 +423,27 @@ impl LirGenerator {
     /// Transform a MIR operand to LIR value
     fn transform_operand(&mut self, operand: &mir::Operand) -> Result<lir::LirValue> {
         match operand {
-            mir::Operand::Move(place) => self.get_or_create_register_for_place(place),
-            mir::Operand::Copy(place) => self.get_or_create_register_for_place(place),
+            mir::Operand::Move(place) | mir::Operand::Copy(place) => {
+                if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                    let load_id = self.next_id();
+                    let load_instruction = lir::LirInstruction {
+                        id: load_id,
+                        kind: lir::LirInstructionKind::Load {
+                            address: storage.ptr_value.clone(),
+                            alignment: Some(storage.alignment),
+                            volatile: false,
+                        },
+                        type_hint: Some(storage.element_type.clone()),
+                        debug_info: None,
+                    };
+                    self.queued_instructions.push(load_instruction);
+                    let value = lir::LirValue::Register(load_id);
+                    self.register_map.insert(place.local, value.clone());
+                    Ok(value)
+                } else {
+                    self.get_or_create_register_for_place(place)
+                }
+            }
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::Fn(name, ty) => {
                     Ok(lir::LirValue::Global(name.clone(), ty.clone()))
@@ -414,9 +516,88 @@ impl LirGenerator {
         self.local_types.clear();
         self.current_return_type = None;
         self.return_local = None;
+        self.mutable_locals.clear();
+        self.local_storage.clear();
+        self.entry_allocas.clear();
+        self.queued_instructions.clear();
+    }
+
+    fn compute_mutable_locals(&self, mir_body: &mir::Body) -> HashSet<mir::LocalId> {
+        let mut assignment_counts: HashMap<mir::LocalId, usize> = HashMap::new();
+        for basic_block in &mir_body.basic_blocks {
+            for stmt in &basic_block.statements {
+                if let mir::StatementKind::Assign(place, _) = &stmt.kind {
+                    *assignment_counts.entry(place.local).or_insert(0) += 1;
+                }
+            }
+        }
+
+        assignment_counts
+            .into_iter()
+            .filter_map(|(local, count)| if count > 1 { Some(local) } else { None })
+            .collect()
+    }
+
+    fn initialize_local_storage(&mut self) {
+        self.entry_allocas.clear();
+        self.local_storage.clear();
+
+        let locals: Vec<_> = self.mutable_locals.clone().into_iter().collect();
+        for local in locals {
+            if let Some(return_local) = self.return_local {
+                if local == return_local {
+                    continue;
+                }
+            }
+            let local_index = local as usize;
+            if local_index >= self.local_types.len() {
+                continue;
+            }
+
+            let ty = &self.local_types[local_index];
+            if Self::is_zero_sized(ty) {
+                continue;
+            }
+
+            let lir_ty = self.lir_type_from_ty(ty);
+            let alignment = Self::alignment_for_lir_type(&lir_ty);
+            if alignment == 0 {
+                continue;
+            }
+
+            let alloca_id = self.next_id();
+            let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+            let size_value = lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+            self.entry_allocas.push(lir::LirInstruction {
+                id: alloca_id,
+                kind: lir::LirInstructionKind::Alloca {
+                    size: size_value,
+                    alignment,
+                },
+                type_hint: Some(pointer_type.clone()),
+                debug_info: None,
+            });
+
+            self.local_storage.insert(
+                local,
+                LocalStorage {
+                    ptr_value: lir::LirValue::Register(alloca_id),
+                    element_type: lir_ty,
+                    alignment,
+                },
+            );
+        }
+
+        // Ensure entry allocas appear once at the top of the entry block
+        if self.entry_allocas.is_empty() {
+            return;
+        }
     }
 
     fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> Result<lir::LirValue> {
+        if let Some(storage) = self.local_storage.get(&place.local) {
+            return Ok(storage.ptr_value.clone());
+        }
         if let Some(existing_reg) = self.register_map.get(&place.local) {
             Ok(existing_reg.clone())
         } else {
@@ -436,6 +617,31 @@ impl LirGenerator {
         }
     }
 
+    fn alignment_for_lir_type(ty: &lir::LirType) -> u32 {
+        match ty {
+            lir::LirType::I1 => 1,
+            lir::LirType::I8 => 1,
+            lir::LirType::I16 => 2,
+            lir::LirType::I32 => 4,
+            lir::LirType::I64 => 8,
+            lir::LirType::I128 => 16,
+            lir::LirType::F32 => 4,
+            lir::LirType::F64 => 8,
+            lir::LirType::Ptr(_) => 8,
+            lir::LirType::Array(element_type, _) => Self::alignment_for_lir_type(element_type),
+            lir::LirType::Struct { fields, .. } => fields
+                .iter()
+                .map(Self::alignment_for_lir_type)
+                .max()
+                .unwrap_or(1),
+            _ => 8,
+        }
+    }
+
+    fn take_queued_instructions(&mut self) -> Vec<lir::LirInstruction> {
+        std::mem::take(&mut self.queued_instructions)
+    }
+
     fn next_id(&mut self) -> lir::LirId {
         let id = self.next_lir_id;
         self.next_lir_id += 1;
@@ -448,12 +654,14 @@ impl LirGenerator {
         kind: &mir::AggregateKind,
         fields: &[mir::Operand],
     ) -> Result<Vec<lir::LirInstruction>> {
+        let mut instructions = Vec::new();
         let mut lir_values = Vec::with_capacity(fields.len());
         let mut constants = Vec::with_capacity(fields.len());
         let mut all_constants = true;
 
         for operand in fields {
             let value = self.transform_operand(operand)?;
+            instructions.extend(self.take_queued_instructions());
             all_constants &= matches!(value, lir::LirValue::Constant(_));
             if let lir::LirValue::Constant(ref c) = value {
                 constants.push(c.clone());
@@ -467,7 +675,7 @@ impl LirGenerator {
                 let value =
                     lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty.clone()));
                 self.register_map.insert(place.local, value);
-                return Ok(Vec::new());
+                return Ok(instructions);
             }
         }
 
@@ -476,14 +684,13 @@ impl LirGenerator {
                 if let Some(constant) = self.constant_from_aggregate(kind, constants, place_ty) {
                     self.register_map
                         .insert(place.local, lir::LirValue::Constant(constant));
-                    return Ok(Vec::new());
+                    return Ok(instructions);
                 }
             }
         }
 
         if let Some(place_ty) = self.lookup_place_type(place) {
             let aggregate_ty = self.lir_type_from_ty(place_ty);
-            let mut instructions = Vec::new();
             let mut current_value =
                 lir::LirValue::Constant(lir::LirConstant::Undef(aggregate_ty.clone()));
 
@@ -510,7 +717,7 @@ impl LirGenerator {
             place.local,
             lir::LirValue::Constant(lir::LirConstant::Undef(lir::LirType::Void)),
         );
-        Ok(Vec::new())
+        Ok(instructions)
     }
 
     fn build_lir_locals(&self, mir_body: &mir::Body) -> Vec<lir::LirLocal> {
@@ -580,9 +787,11 @@ impl LirGenerator {
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
         let function_value = self.transform_operand(func)?;
+        block.instructions.extend(self.take_queued_instructions());
         let mut lowered_args = Vec::with_capacity(args.len());
         for arg in args {
             lowered_args.push(self.transform_operand(arg)?);
+            block.instructions.extend(self.take_queued_instructions());
         }
 
         let call_id = self.next_id();

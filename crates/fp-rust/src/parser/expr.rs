@@ -464,6 +464,43 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
                 // '{' at the end of string
                 current_literal.push(ch);
             }
+        } else if ch == '%' {
+            if let Some(&next_ch) = chars.peek() {
+                if next_ch == '%' {
+                    // Escaped percent literal "%%"
+                    chars.next();
+                    current_literal.push('%');
+                    continue;
+                }
+            }
+
+            // Flush current literal before processing placeholder
+            if !current_literal.is_empty() {
+                parts.push(fp_core::ast::FormatTemplatePart::Literal(
+                    current_literal.clone(),
+                ));
+                current_literal.clear();
+            }
+
+            let mut spec = String::new();
+            while let Some(&next) = chars.peek() {
+                spec.push(next);
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+
+            if spec.is_empty() {
+                spec.push('s');
+            }
+
+            parts.push(fp_core::ast::FormatTemplatePart::Placeholder(
+                fp_core::ast::FormatPlaceholder {
+                    arg_ref: fp_core::ast::FormatArgRef::Implicit,
+                    format_spec: Some(format!("%{}", spec)),
+                },
+            ));
         } else {
             current_literal.push(ch);
         }
