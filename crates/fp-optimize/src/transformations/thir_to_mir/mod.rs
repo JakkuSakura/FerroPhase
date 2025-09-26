@@ -2,9 +2,10 @@ use fp_core::error::Result;
 use fp_core::hir::ty as hir_types;
 use fp_core::hir::typed as thir;
 use fp_core::mir;
+use fp_core::mir::ty as mir_types;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
-use hir_types::{Ty, TyKind};
+use mir_types::{Ty, TyKind};
 // use fp_core::ast::Visibility; // not used here
 use std::collections::HashMap;
 

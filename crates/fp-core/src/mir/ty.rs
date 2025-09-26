@@ -575,19 +575,27 @@ impl Ty {
     }
 
     pub fn int(int_ty: IntTy) -> Self {
-        Self { kind: TyKind::Int(int_ty) }
+        Self {
+            kind: TyKind::Int(int_ty),
+        }
     }
 
     pub fn uint(uint_ty: UintTy) -> Self {
-        Self { kind: TyKind::Uint(uint_ty) }
+        Self {
+            kind: TyKind::Uint(uint_ty),
+        }
     }
 
     pub fn float(float_ty: FloatTy) -> Self {
-        Self { kind: TyKind::Float(float_ty) }
+        Self {
+            kind: TyKind::Float(float_ty),
+        }
     }
 
     pub fn never() -> Self {
-        Self { kind: TyKind::Never }
+        Self {
+            kind: TyKind::Never,
+        }
     }
 
     pub fn is_primitive(&self) -> bool {
