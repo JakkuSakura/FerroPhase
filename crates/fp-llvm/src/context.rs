@@ -1,8 +1,9 @@
 use llvm_ir::constant::Float;
 use llvm_ir::function::{CallingConvention, Parameter};
-use llvm_ir::instruction::{Add, Mul, Sub, UDiv};
+use llvm_ir::instruction::{Add, ICmp, Mul, Sub, UDiv, ZExt};
 use llvm_ir::module::{DLLStorageClass, DataLayout, Linkage, Visibility};
-use llvm_ir::terminator::Ret;
+use llvm_ir::predicates::IntPredicate;
+use llvm_ir::terminator::{CondBr, Ret};
 use llvm_ir::types::FPType;
 use llvm_ir::*;
 use std::collections::HashMap;
@@ -334,6 +335,46 @@ impl LlvmContext {
         Ok(name)
     }
 
+    /// Create an integer comparison instruction
+    pub fn build_icmp(
+        &mut self,
+        predicate: IntPredicate,
+        lhs: Operand,
+        rhs: Operand,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::ICmp(ICmp {
+            predicate,
+            operand0: lhs,
+            operand1: rhs,
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    /// Zero-extend a value to a wider integer type
+    pub fn build_zext(
+        &mut self,
+        operand: Operand,
+        to_type: Type,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::ZExt(ZExt {
+            operand,
+            to_type: self.module.types.get_for_type(&to_type),
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
     /// Create a return instruction
     pub fn build_return(&mut self, value: Option<Operand>) -> Result<(), String> {
         let func_name = self
@@ -381,6 +422,39 @@ impl LlvmContext {
         let last_block_idx = function.basic_blocks.len() - 1;
         function.basic_blocks[last_block_idx].term = Terminator::Br(llvm_ir::terminator::Br {
             dest: Name::Name(Box::new(target_label.to_string())),
+            debugloc: None,
+        });
+
+        Ok(())
+    }
+
+    pub fn build_conditional_branch(
+        &mut self,
+        condition: Operand,
+        true_label: &str,
+        false_label: &str,
+    ) -> Result<(), String> {
+        let func_name = self
+            .current_function
+            .clone()
+            .ok_or("No current function set")?;
+
+        let function = self
+            .module
+            .functions
+            .iter_mut()
+            .find(|f| f.name == func_name)
+            .ok_or("Current function not found")?;
+
+        if function.basic_blocks.is_empty() {
+            return Err("Function has no basic blocks".to_string());
+        }
+
+        let last_block_idx = function.basic_blocks.len() - 1;
+        function.basic_blocks[last_block_idx].term = Terminator::CondBr(CondBr {
+            condition,
+            true_dest: Name::Name(Box::new(true_label.to_string())),
+            false_dest: Name::Name(Box::new(false_label.to_string())),
             debugloc: None,
         });
 
@@ -632,11 +706,33 @@ fn format_type(typ: &Type) -> String {
 
 fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
     match constant_ref.as_ref() {
-        llvm_ir::Constant::Int { value, .. } => format!("i32 {}", value),
-        llvm_ir::Constant::Float { .. } => "float 0.0".to_string(),
+        llvm_ir::Constant::Int { value, .. } => value.to_string(),
+        llvm_ir::Constant::Float(Float::Single(v)) => format!("{}", v),
+        llvm_ir::Constant::Float(Float::Double(v)) => format!("{}", v),
+        llvm_ir::Constant::Float(_) => "0.0".to_string(),
         llvm_ir::Constant::Null(_) => "null".to_string(),
         llvm_ir::Constant::Undef(_) => "undef".to_string(),
-        _ => "i32 0".to_string(), // fallback
+        llvm_ir::Constant::GlobalReference { name, .. } => format!("@{}", format_name(name)),
+        llvm_ir::Constant::GetElementPtr(gep) => {
+            let (base_name, array_type) = match gep.address.as_ref() {
+                llvm_ir::Constant::GlobalReference { name, ty } => {
+                    let type_str = match ty.as_ref() {
+                        llvm_ir::Type::ArrayType {
+                            element_type: _,
+                            num_elements,
+                        } => format!("[{} x i8]", num_elements),
+                        _ => "[0 x i8]".to_string(),
+                    };
+                    (format!("@{}", format_name(name)), type_str)
+                }
+                _ => ("@.str.0".to_string(), "[0 x i8]".to_string()),
+            };
+            format!(
+                "getelementptr inbounds ({}, ptr {}, i32 0, i32 0)",
+                array_type, base_name
+            )
+        }
+        _ => "0".to_string(),
     }
 }
 
@@ -645,8 +741,7 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
         llvm_ir::Instruction::Add(add) => {
             format!(
                 "{} = add {} {}, {}",
-                format_name(&add.dest),
-                // FIXME: it feels wrong
+                format_value_name(&add.dest),
                 format_type(&get_operand_type(&add.operand0)),
                 format_operand(&add.operand0),
                 format_operand(&add.operand1)
@@ -655,55 +750,68 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
         llvm_ir::Instruction::Sub(sub) => {
             format!(
                 "{} = sub {} {}, {}",
-                format_name(&sub.dest),
+                format_value_name(&sub.dest),
                 format_type(&get_operand_type(&sub.operand0)),
                 format_operand(&sub.operand0),
                 format_operand(&sub.operand1)
             )
         }
+        llvm_ir::Instruction::Mul(mul) => {
+            format!(
+                "{} = mul {} {}, {}",
+                format_value_name(&mul.dest),
+                format_type(&get_operand_type(&mul.operand0)),
+                format_operand(&mul.operand0),
+                format_operand(&mul.operand1)
+            )
+        }
+        llvm_ir::Instruction::UDiv(div) => {
+            format!(
+                "{} = udiv {} {}, {}",
+                format_value_name(&div.dest),
+                format_type(&get_operand_type(&div.operand0)),
+                format_operand(&div.operand0),
+                format_operand(&div.operand1)
+            )
+        }
+        llvm_ir::Instruction::ZExt(zext) => {
+            format!(
+                "{} = zext {} {} to {}",
+                format_value_name(&zext.dest),
+                format_type(&get_operand_type(&zext.operand)),
+                format_operand(&zext.operand),
+                format_type(zext.to_type.as_ref())
+            )
+        }
         llvm_ir::Instruction::Store(store) => {
             format!(
-                "store {} {}, {} {}",
+                "store {} {}, ptr {}",
                 format_type(&get_operand_type(&store.value)),
                 format_operand(&store.value),
-                format_type(&get_operand_type(&store.address)),
                 format_operand(&store.address)
             )
         }
         llvm_ir::Instruction::Load(load) => {
             format!(
-                "{} = load {} {}",
-                format_name(&load.dest),
+                "{} = load {}, ptr {}",
+                format_value_name(&load.dest),
                 format_type(&load.loaded_ty),
                 format_operand(&load.address)
             )
         }
         llvm_ir::Instruction::Call(call) => {
-            // Format call instruction with proper return type and typed arguments
             let args_str = call
                 .arguments
                 .iter()
-                .map(|(op, _attrs)| {
-                    // For call arguments, we need to include the type prefix
-                    match op {
-                        llvm_ir::Operand::ConstantOperand(const_ref) => match const_ref.as_ref() {
-                            llvm_ir::Constant::GetElementPtr(_) => {
-                                format!("ptr {}", format_operand(op))
-                            }
-                            _ => format_operand(op),
-                        },
-                        _ => format_operand(op),
-                    }
-                })
+                .map(|(op, _attrs)| format_operand_with_type(op))
                 .collect::<Vec<_>>()
                 .join(", ");
 
             let function_operand = match &call.function {
-                either::Either::Left(_inline_asm) => "@unknown_function".to_string(), // Handle inline assembly case
+                either::Either::Left(_inline_asm) => "@unknown_function".to_string(),
                 either::Either::Right(operand) => format_operand(operand),
             };
 
-            // Get the return type from the function type
             let return_type = match &call.function_ty.as_ref() {
                 llvm_ir::Type::FuncType { result_type, .. } => format_type(result_type),
                 _ => "i32".to_string(),
@@ -712,7 +820,7 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
             if let Some(dest) = &call.dest {
                 format!(
                     "{} = call {} {}({})",
-                    format_name(dest),
+                    format_value_name(dest),
                     return_type,
                     function_operand,
                     args_str
@@ -721,7 +829,17 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 format!("call {} {}({})", return_type, function_operand, args_str)
             }
         }
-        // Delegate to llvm-ir's Display for instructions we didn't custom-format
+        llvm_ir::Instruction::ICmp(icmp) => {
+            let predicate = format!("{}", icmp.predicate).to_lowercase();
+            format!(
+                "{} = icmp {} {} {}, {}",
+                format_value_name(&icmp.dest),
+                predicate,
+                format_type(&get_operand_type(&icmp.operand0)),
+                format_operand(&icmp.operand0),
+                format_operand(&icmp.operand1)
+            )
+        }
         _ => format!("{}", instr),
     }
 }
@@ -730,14 +848,7 @@ fn format_terminator(term: &llvm_ir::Terminator) -> String {
     match term {
         llvm_ir::Terminator::Ret(ret) => {
             if let Some(operand) = &ret.return_operand {
-                // For return statements, we need just the value, not the full typed operand
-                let value = match operand {
-                    llvm_ir::Operand::ConstantOperand(const_ref) => match const_ref.as_ref() {
-                        llvm_ir::Constant::Int { value, .. } => value.to_string(),
-                        _ => "0".to_string(),
-                    },
-                    _ => format_operand(operand),
-                };
+                let value = format_operand(operand);
                 format!("ret {} {}", format_type(&get_operand_type(operand)), value)
             } else {
                 "ret void".to_string()
@@ -746,50 +857,33 @@ fn format_terminator(term: &llvm_ir::Terminator) -> String {
         llvm_ir::Terminator::Br(br) => {
             format!("br label %{}", format_name(&br.dest))
         }
-        _ => "ret void".to_string(), // fallback
+        llvm_ir::Terminator::CondBr(cond_br) => {
+            format!(
+                "br i1 {}, label %{}, label %{}",
+                format_operand(&cond_br.condition),
+                format_name(&cond_br.true_dest),
+                format_name(&cond_br.false_dest)
+            )
+        }
+        llvm_ir::Terminator::Unreachable(_) => "unreachable".to_string(),
+        other => format!("{}", other),
     }
 }
 
 fn format_operand(operand: &llvm_ir::Operand) -> String {
     match operand {
         llvm_ir::Operand::LocalOperand { name, .. } => format!("%{}", format_name(name)),
-        llvm_ir::Operand::ConstantOperand(const_ref) => {
-            // Handle different constant types properly
-            match const_ref.as_ref() {
-                llvm_ir::Constant::GlobalReference { name, ty } => {
-                    // Functions don't need ptr prefix, only data globals do
-                    match ty.as_ref() {
-                        Type::FuncType { .. } => format!("@{}", format_name(name)),
-                        _ => format!("ptr @{}", format_name(name)), // data globals need ptr prefix
-                    }
-                }
-                llvm_ir::Constant::GetElementPtr(gep) => {
-                    // Extract the base address from the GEP and format properly with correct LLVM syntax
-                    let (base_name, array_type) = match gep.address.as_ref() {
-                        llvm_ir::Constant::GlobalReference { name, ty } => {
-                            let type_str = match ty.as_ref() {
-                                llvm_ir::Type::ArrayType {
-                                    element_type: _,
-                                    num_elements,
-                                } => {
-                                    format!("[{} x i8]", num_elements)
-                                }
-                                _ => "[0 x i8]".to_string(), // fallback
-                            };
-                            (format!("@{}", format_name(name)), type_str)
-                        }
-                        _ => ("@.str.0".to_string(), "[4 x i8]".to_string()), // fallback
-                    };
-                    format!(
-                        "getelementptr inbounds ({}, ptr {}, i32 0, i32 0)",
-                        array_type, base_name
-                    )
-                }
-                _ => format_constant_ref(const_ref),
-            }
-        }
+        llvm_ir::Operand::ConstantOperand(const_ref) => format_constant_ref(const_ref),
         _ => "unknown_operand".to_string(),
     }
+}
+
+fn format_operand_with_type(operand: &llvm_ir::Operand) -> String {
+    format!(
+        "{} {}",
+        format_type(&get_operand_type(operand)),
+        format_operand(operand)
+    )
 }
 
 fn format_name(name: &llvm_ir::Name) -> String {
@@ -797,6 +891,10 @@ fn format_name(name: &llvm_ir::Name) -> String {
         llvm_ir::Name::Name(boxed_str) => boxed_str.to_string(),
         llvm_ir::Name::Number(num) => num.to_string(),
     }
+}
+
+fn format_value_name(name: &llvm_ir::Name) -> String {
+    format!("%{}", format_name(name))
 }
 
 fn get_operand_type(operand: &llvm_ir::Operand) -> Type {
@@ -810,6 +908,7 @@ fn get_operand_type(operand: &llvm_ir::Operand) -> Type {
             llvm_ir::Constant::GlobalReference { ty, .. }
             | llvm_ir::Constant::Null(ty)
             | llvm_ir::Constant::Undef(ty) => ty.as_ref().clone(),
+            llvm_ir::Constant::GetElementPtr(_) => Type::PointerType { addr_space: 0 },
             _ => Type::IntegerType { bits: 32 },
         },
         _ => Type::IntegerType { bits: 32 }, // fallback
@@ -860,7 +959,11 @@ fn format_global_variable(global: &llvm_ir::module::GlobalVariable) -> String {
                                 "[{}]",
                                 elements
                                     .iter()
-                                    .map(|e| format_constant_ref(e))
+                                    .map(|e| {
+                                        format_operand_with_type(
+                                            &llvm_ir::Operand::ConstantOperand(e.clone()),
+                                        )
+                                    })
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             )

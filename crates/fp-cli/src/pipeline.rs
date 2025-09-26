@@ -323,6 +323,13 @@ impl Pipeline {
                     "Binary compilation completed".to_string(),
                 )))
             }
+            PipelineTarget::Bytecode => {
+                let bytecode_span = info_span!("pipeline.bytecode");
+                let _enter_bytecode = bytecode_span.enter();
+                Err(CliError::Compilation(
+                    "Bytecode target is not implemented yet".to_string(),
+                ))
+            }
         }
     }
 

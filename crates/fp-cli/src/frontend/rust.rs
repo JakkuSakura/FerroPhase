@@ -2,10 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fp_core::ast::{BExpr, File, Node};
+use fp_core::{Error as CoreError, Result as CoreResult};
+use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
-
-use crate::CliError;
 
 use super::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 
@@ -28,39 +28,27 @@ impl RustFrontend {
         }
     }
 
-    fn parse_expression(&self, source: &str) -> Result<BExpr, CliError> {
+    fn parse_expression(&self, source: &str) -> CoreResult<BExpr> {
         // Try parsing as file, block expression, and finally simple expression.
-        if let Ok(expr) = self
-            .parser
-            .try_parse_as_file(source)
-            .map_err(|e| CliError::Compilation(e.to_string()))
-        {
+        if let Ok(expr) = self.parser.try_parse_as_file(source) {
             return Ok(expr);
         }
 
-        if let Ok(expr) = self
-            .parser
-            .try_parse_block_expression(source)
-            .map_err(|e| CliError::Compilation(e.to_string()))
-        {
+        if let Ok(expr) = self.parser.try_parse_block_expression(source) {
             return Ok(expr);
         }
 
-        self.parser
-            .try_parse_simple_expression(source)
-            .map_err(|e| CliError::Compilation(e.to_string()))
+        self.parser.try_parse_simple_expression(source)
     }
 
-    fn parse_file(&self, source: &str, path: &Path) -> Result<File, CliError> {
+    fn parse_file(&self, source: &str, path: &Path) -> CoreResult<File> {
         let syn_file: syn::File = syn::parse_file(source).map_err(|e| {
-            CliError::Compilation(format!("Failed to parse {} as file: {}", path.display(), e))
+            CoreError::from(format!("Failed to parse {} as file: {}", path.display(), e))
         })?;
 
         self.parser
             .parse_file_content(path.to_path_buf(), syn_file)
-            .map_err(|e| {
-                CliError::Compilation(format!("Failed to lower file {}: {}", path.display(), e))
-            })
+            .map_err(|e| CoreError::from(format!("Failed to lower file {}: {}", path.display(), e)))
     }
 }
 
@@ -73,12 +61,13 @@ impl LanguageFrontend for RustFrontend {
         &["fp", "ferro", "rs", "rust", "ferrophase"]
     }
 
-    fn parse(&self, source: &str, path: Option<&Path>) -> Result<FrontendResult, CliError> {
+    fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
         let serializer = Arc::new(RustPrinter::new());
 
         if let Some(path) = path {
-            let file = self.parse_file(&cleaned, path)?;
+            let mut ast = Node::File(self.parse_file(&cleaned, path)?);
+            normalize_last_to_ast(&mut ast);
             let snapshot = FrontendSnapshot {
                 language: self.language().to_string(),
                 description: format!("Rust LAST for {}", path.display()),
@@ -86,17 +75,18 @@ impl LanguageFrontend for RustFrontend {
             };
 
             return Ok(FrontendResult {
-                ast: Node::File(file),
+                ast,
                 serializer,
                 snapshot: Some(snapshot),
             });
         }
 
         // Fall back to expression parsing when no explicit path is provided.
-        let expr = self.parse_expression(&cleaned)?;
+        let mut ast = Node::Expr(*self.parse_expression(&cleaned)?);
+        normalize_last_to_ast(&mut ast);
 
         Ok(FrontendResult {
-            ast: Node::Expr(*expr),
+            ast,
             serializer,
             snapshot: None,
         })
