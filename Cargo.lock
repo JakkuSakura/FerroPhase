@@ -814,6 +814,7 @@ dependencies = [
  "fp-rust",
  "globset",
  "indicatif",
+ "libc",
  "miette 5.10.0",
  "pathdiff",
  "predicates",

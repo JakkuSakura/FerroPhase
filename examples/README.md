@@ -36,31 +36,32 @@ fp eval examples/01_basic_const_evaluation.fp
 
 | Example | Focus | Demonstrates |
 |---------|-------|-------------|
-| `01_basic_const_evaluation.fp` | Basic const computation | Arithmetic, conditionals, struct defaults |
-| `02_string_processing.fp` | String operations | Concatenation, length calculations |
-| `03_struct_introspection.fp` | Type analysis | Size calculation, field enumeration |
-| `04_dynamic_struct_creation.fp` | Configuration-driven structs | Feature flags, conditional fields |
-| `05_parametric_structs.fp` | Template-like generation | Dimension-based vectors |
-| `06_config_driven_generation.fp` | Platform-specific code | Target platform adaptation |
-| `07_compile_time_validation.fp` | Static assertions | Size limits, constraint checking |
-| `08_generic_specialization.fp` | Type-based optimization | Container specialization |
+| `01_basic_const_evaluation.fp` | Const evaluation essentials | Arithmetic, branching, struct defaults |
+| `02_string_processing.fp` | Compile-time strings | Concatenation, search, formatting |
+| `03_control_flow.fp` | Control flow tour | Nested `if`, boolean logic, numeric guards |
+| `04_struct_introspection.fp` | Type analysis | `sizeof!`, `field_count!`, `hasfield!` |
+| `05_struct_generation.fp` | Config-driven types | `t!` macro, feature toggles, vector specialisation |
+| `06_compile_time_validation.fp` | Static validation | Custom diagnostics, constraint checking |
+| `07_metaprogramming_patterns.fp` | Code generation patterns | Schema driven structs, protocol enums |
+| `08_struct_methods.fp` | Struct behaviour | `impl` blocks, method receivers, runtime math |
 
 ## Const Evaluation Features
 
-### Current Capabilities
-- ✅ Basic arithmetic and boolean operations
-- ✅ Conditional compilation with `if`/`else`
-- ✅ String concatenation with `concat!()`
-- ✅ Struct creation and field access
-- ✅ Configuration-driven struct generation
+### Highlights covered in the examples
+- ✅ Const arithmetic, branching, and aggregation (01)
+- ✅ Compile-time string processing and templating (02)
+- ✅ Control-flow analysis and boolean logic (03)
+- ✅ Introspection macros such as `sizeof!`, `field_count!`, `hasfield!` (04)
+- ✅ `t!` macro for configuration-driven struct generation (05)
+- ✅ Custom compile-time diagnostics with `compile_error!` / `compile_warning!` (06)
+- ✅ Schema- and protocol-driven code generation patterns (07)
+- ✅ `impl` blocks, method receivers, and runtime struct usage (08)
 
-### Future Capabilities (Pending Implementation)
-- 🔄 `sizeof!(Type)` - type size introspection
-- 🔄 `field_count!(Type)` - field enumeration
-- 🔄 `hasfield!(Type, "name")` - field existence checks
-- 🔄 `type Name = { ... }` - declarative struct creation
-- 🔄 `compile_error!("message")` - compile-time errors
-- 🔄 `type T = { ...Base, extra: Type }` - type inheritance
+### Longer-term roadmap
+- 🔄 Ergonomic declarative type syntax
+- 🔄 Trait-style constraints for generated implementations
+- 🔄 Richer metaprogramming intrinsics with side-effect tracking
+- 🔄 Tooling to surface example output in documentation builds
 
 ## Running All Examples
 
