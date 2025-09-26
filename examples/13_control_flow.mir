@@ -1,0 +1,4449 @@
+Program {
+    items: [
+        Item {
+            mir_id: 0,
+            kind: Function(
+                Function {
+                    sig: FunctionSig {
+                        inputs: [],
+                        output: Ty {
+                            kind: Tuple(
+                                [],
+                            ),
+                            flags: TypeFlags(
+                                0x0,
+                            ),
+                        },
+                    },
+                    body_id: BodyId(
+                        0,
+                    ),
+                },
+            ),
+        },
+    ],
+    bodies: {
+        BodyId(
+            0,
+        ): Body {
+            basic_blocks: [
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 1,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 4,
+                                hi: 5,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 2,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 4,
+                                                hi: 5,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 3,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 5,
+                                hi: 6,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 3,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "=== While Loop ===",
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 4,
+                                            projection: [],
+                                        },
+                                        1,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 5,
+                                    hi: 6,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 6,
+                                hi: 7,
+                            },
+                            kind: Goto {
+                                target: 2,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 8,
+                                hi: 9,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 6,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 8,
+                                                hi: 9,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 9,
+                                hi: 10,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 7,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 9,
+                                                hi: 10,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "MAX_COUNT",
+                                                Ty {
+                                                    kind: Int(
+                                                        I32,
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 7,
+                                hi: 8,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 8,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Lt,
+                                    Move(
+                                        Place {
+                                            local: 6,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 7,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: SwitchInt {
+                                discr: Move(
+                                    Place {
+                                        local: 8,
+                                        projection: [],
+                                    },
+                                ),
+                                switch_ty: Ty {
+                                    kind: Int(
+                                        I32,
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                targets: SwitchTargets {
+                                    values: [
+                                        1,
+                                    ],
+                                    targets: [
+                                        4,
+                                    ],
+                                    otherwise: 5,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 9,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 5,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 6,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 10,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 11,
+                                hi: 12,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 10,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "Counter: {}",
+                                            ),
+                                        },
+                                    ),
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 12,
+                                                hi: 13,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 11,
+                                            projection: [],
+                                        },
+                                        7,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 11,
+                                    hi: 12,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 7,
+                                hi: 8,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 5,
+                                    projection: [],
+                                },
+                                Aggregate(
+                                    Tuple,
+                                    [],
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 7,
+                                hi: 8,
+                            },
+                            kind: Goto {
+                                target: 3,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 6,
+                                hi: 7,
+                            },
+                            kind: Goto {
+                                target: 2,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 9,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 13,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 6,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 15,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 18,
+                                hi: 19,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 15,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "Final counter: {}",
+                                            ),
+                                        },
+                                    ),
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 19,
+                                                hi: 20,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 16,
+                                            projection: [],
+                                        },
+                                        9,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 18,
+                                    hi: 19,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 17,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 20,
+                                hi: 21,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 17,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "\n=== Infinite Loop with Break ===",
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 18,
+                                            projection: [],
+                                        },
+                                        10,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 20,
+                                    hi: 21,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 21,
+                                hi: 22,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 19,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 21,
+                                                hi: 22,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 22,
+                                hi: 23,
+                            },
+                            kind: Goto {
+                                target: 11,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 26,
+                                hi: 27,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 21,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 26,
+                                                hi: 27,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 27,
+                                hi: 28,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 22,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 27,
+                                                hi: 28,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                3,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 25,
+                                hi: 26,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 23,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Ge,
+                                    Move(
+                                        Place {
+                                            local: 21,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 22,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 24,
+                                hi: 25,
+                            },
+                            kind: SwitchInt {
+                                discr: Move(
+                                    Place {
+                                        local: 23,
+                                        projection: [],
+                                    },
+                                ),
+                                switch_ty: Ty {
+                                    kind: Int(
+                                        I32,
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                targets: SwitchTargets {
+                                    values: [
+                                        1,
+                                    ],
+                                    targets: [
+                                        13,
+                                    ],
+                                    otherwise: 14,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 31,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 37,
+                                hi: 38,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 31,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "\n=== Loop with Continue ===",
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 32,
+                                            projection: [],
+                                        },
+                                        17,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 37,
+                                    hi: 38,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 29,
+                                hi: 30,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 25,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 29,
+                                                hi: 30,
+                                            },
+                                            user_ty: None,
+                                            literal: Bool(
+                                                false,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 24,
+                                hi: 25,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 24,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 26,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 24,
+                                hi: 25,
+                            },
+                            kind: Goto {
+                                target: 15,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 24,
+                                hi: 25,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 24,
+                                    projection: [],
+                                },
+                                Aggregate(
+                                    Tuple,
+                                    [],
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 24,
+                                hi: 25,
+                            },
+                            kind: Goto {
+                                target: 15,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 27,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 30,
+                                hi: 31,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 27,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "Loop iteration: {}",
+                                            ),
+                                        },
+                                    ),
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 31,
+                                                hi: 32,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 28,
+                                            projection: [],
+                                        },
+                                        16,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 30,
+                                    hi: 31,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 22,
+                                hi: 23,
+                            },
+                            kind: Goto {
+                                target: 11,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 38,
+                                hi: 39,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 33,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 38,
+                                                hi: 39,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 39,
+                                hi: 40,
+                            },
+                            kind: Goto {
+                                target: 18,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 41,
+                                hi: 42,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 35,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 41,
+                                                hi: 42,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 42,
+                                hi: 43,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 36,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 42,
+                                                hi: 43,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                6,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 40,
+                                hi: 41,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 37,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Lt,
+                                    Move(
+                                        Place {
+                                            local: 35,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 36,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: SwitchInt {
+                                discr: Move(
+                                    Place {
+                                        local: 37,
+                                        projection: [],
+                                    },
+                                ),
+                                switch_ty: Ty {
+                                    kind: Int(
+                                        I32,
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                targets: SwitchTargets {
+                                    values: [
+                                        1,
+                                    ],
+                                    targets: [
+                                        20,
+                                    ],
+                                    otherwise: 21,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 38,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 34,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 22,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 52,
+                                hi: 53,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 40,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 52,
+                                                hi: 53,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 53,
+                                hi: 54,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 41,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 53,
+                                                hi: 54,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                2,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 51,
+                                hi: 52,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 42,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Eq,
+                                    Move(
+                                        Place {
+                                            local: 40,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 41,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 55,
+                                hi: 56,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 43,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 55,
+                                                hi: 56,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 56,
+                                hi: 57,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 44,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 56,
+                                                hi: 57,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                4,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 54,
+                                hi: 55,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 45,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Eq,
+                                    Move(
+                                        Place {
+                                            local: 43,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 44,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 50,
+                                hi: 51,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 46,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Add,
+                                    Move(
+                                        Place {
+                                            local: 42,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 45,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 49,
+                                hi: 50,
+                            },
+                            kind: SwitchInt {
+                                discr: Move(
+                                    Place {
+                                        local: 46,
+                                        projection: [],
+                                    },
+                                ),
+                                switch_ty: Ty {
+                                    kind: Int(
+                                        I32,
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                targets: SwitchTargets {
+                                    values: [
+                                        1,
+                                    ],
+                                    targets: [
+                                        23,
+                                    ],
+                                    otherwise: 24,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 40,
+                                hi: 41,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 34,
+                                    projection: [],
+                                },
+                                Aggregate(
+                                    Tuple,
+                                    [],
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 40,
+                                hi: 41,
+                            },
+                            kind: Goto {
+                                target: 19,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 39,
+                                hi: 40,
+                            },
+                            kind: Goto {
+                                target: 18,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 58,
+                                hi: 59,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 48,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 58,
+                                                hi: 59,
+                                            },
+                                            user_ty: None,
+                                            literal: Bool(
+                                                false,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 49,
+                                hi: 50,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 47,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 49,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 49,
+                                hi: 50,
+                            },
+                            kind: Goto {
+                                target: 25,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 49,
+                                hi: 50,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 47,
+                                    projection: [],
+                                },
+                                Aggregate(
+                                    Tuple,
+                                    [],
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 49,
+                                hi: 50,
+                            },
+                            kind: Goto {
+                                target: 25,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 50,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 59,
+                                hi: 60,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 50,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "Not 2 or 4: {}",
+                                            ),
+                                        },
+                                    ),
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 60,
+                                                hi: 61,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 51,
+                                            projection: [],
+                                        },
+                                        26,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 59,
+                                    hi: 60,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 38,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 52,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 22,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 54,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 61,
+                                hi: 62,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 54,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "\n=== Nested Loops ===",
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 55,
+                                            projection: [],
+                                        },
+                                        28,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 61,
+                                    hi: 62,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 62,
+                                hi: 63,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 56,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 62,
+                                                hi: 63,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 63,
+                                hi: 64,
+                            },
+                            kind: Goto {
+                                target: 29,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 65,
+                                hi: 66,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 58,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 65,
+                                                hi: 66,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 66,
+                                hi: 67,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 59,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 66,
+                                                hi: 67,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                3,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 64,
+                                hi: 65,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 60,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Lt,
+                                    Move(
+                                        Place {
+                                            local: 58,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 59,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: SwitchInt {
+                                discr: Move(
+                                    Place {
+                                        local: 60,
+                                        projection: [],
+                                    },
+                                ),
+                                switch_ty: Ty {
+                                    kind: Int(
+                                        I32,
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                targets: SwitchTargets {
+                                    values: [
+                                        1,
+                                    ],
+                                    targets: [
+                                        31,
+                                    ],
+                                    otherwise: 32,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 61,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 57,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 33,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 68,
+                                hi: 69,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 62,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 68,
+                                                hi: 69,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 69,
+                                hi: 70,
+                            },
+                            kind: Goto {
+                                target: 34,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 64,
+                                hi: 65,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 57,
+                                    projection: [],
+                                },
+                                Aggregate(
+                                    Tuple,
+                                    [],
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 64,
+                                hi: 65,
+                            },
+                            kind: Goto {
+                                target: 30,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 63,
+                                hi: 64,
+                            },
+                            kind: Goto {
+                                target: 29,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 71,
+                                hi: 72,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 64,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 71,
+                                                hi: 72,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 72,
+                                hi: 73,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 65,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 72,
+                                                hi: 73,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                2,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 70,
+                                hi: 71,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 66,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Lt,
+                                    Move(
+                                        Place {
+                                            local: 64,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 65,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: SwitchInt {
+                                discr: Move(
+                                    Place {
+                                        local: 66,
+                                        projection: [],
+                                    },
+                                ),
+                                switch_ty: Ty {
+                                    kind: Int(
+                                        I32,
+                                    ),
+                                    flags: TypeFlags(
+                                        0x0,
+                                    ),
+                                },
+                                targets: SwitchTargets {
+                                    values: [
+                                        1,
+                                    ],
+                                    targets: [
+                                        36,
+                                    ],
+                                    otherwise: 37,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 67,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 63,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 38,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 68,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 74,
+                                hi: 75,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 68,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "x={}, y={}",
+                                            ),
+                                        },
+                                    ),
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 75,
+                                                hi: 76,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 892663091459321903,
+                                                lo: 76,
+                                                hi: 77,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 69,
+                                            projection: [],
+                                        },
+                                        39,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 74,
+                                    hi: 75,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 70,
+                                hi: 71,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 63,
+                                    projection: [],
+                                },
+                                Aggregate(
+                                    Tuple,
+                                    [],
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 70,
+                                hi: 71,
+                            },
+                            kind: Goto {
+                                target: 35,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 69,
+                                hi: 70,
+                            },
+                            kind: Goto {
+                                target: 34,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 67,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 71,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 38,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 61,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 74,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Goto {
+                                target: 33,
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 76,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Global(
+                                                "std::io::println",
+                                                Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                    flags: TypeFlags(
+                                                        0x0,
+                                                    ),
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 892663091459321903,
+                                lo: 87,
+                                hi: 88,
+                            },
+                            kind: Call {
+                                func: Move(
+                                    Place {
+                                        local: 76,
+                                        projection: [],
+                                    },
+                                ),
+                                args: [
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 0,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                            user_ty: None,
+                                            literal: Str(
+                                                "\nControl flow demo completed!",
+                                            ),
+                                        },
+                                    ),
+                                ],
+                                destination: Some(
+                                    (
+                                        Place {
+                                            local: 77,
+                                            projection: [],
+                                        },
+                                        42,
+                                    ),
+                                ),
+                                cleanup: None,
+                                from_hir_call: true,
+                                fn_span: Span {
+                                    file: 892663091459321903,
+                                    lo: 87,
+                                    hi: 88,
+                                },
+                            },
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 0,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 78,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Return,
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+            ],
+            locals: [
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Never,
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Bool,
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Never,
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Bool,
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I32,
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                        flags: TypeFlags(
+                            0x0,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+            ],
+            arg_count: 0,
+            return_local: 0,
+            var_debug_info: [],
+            span: Span {
+                file: 0,
+                lo: 0,
+                hi: 0,
+            },
+        },
+    },
+}

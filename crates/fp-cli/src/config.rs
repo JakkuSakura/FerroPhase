@@ -33,6 +33,8 @@ pub enum PipelineTarget {
     Llvm,
     /// Generate binary executable
     Binary,
+    /// Generate bytecode for the virtual machine backend
+    Bytecode,
 }
 
 /// Runtime configuration
@@ -117,6 +119,7 @@ impl From<&PipelineConfig> for PipelineOptions {
             "rust" => PipelineTarget::Rust,
             "llvm" => PipelineTarget::Llvm,
             "binary" => PipelineTarget::Binary,
+            "bytecode" => PipelineTarget::Bytecode,
             _ => PipelineTarget::Interpret,
         };
 

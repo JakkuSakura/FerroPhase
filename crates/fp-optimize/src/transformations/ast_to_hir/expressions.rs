@@ -20,6 +20,8 @@ impl HirGenerator {
             Expr::Struct(struct_expr) => self.transform_struct_to_hir(struct_expr)?,
             Expr::Block(block) => self.transform_block_to_hir(block)?,
             Expr::If(if_expr) => self.transform_if_to_hir(if_expr)?,
+            Expr::Loop(loop_expr) => self.transform_loop_to_hir(loop_expr)?,
+            Expr::While(while_expr) => self.transform_while_to_hir(while_expr)?,
             Expr::Assign(assign) => self.transform_assign_to_hir(assign)?,
             Expr::Paren(paren) => self.transform_paren_to_hir(paren)?,
             Expr::Let(let_expr) => self.transform_let_to_hir(let_expr)?,
@@ -432,6 +434,47 @@ impl HirGenerator {
         };
 
         Ok(hir::ExprKind::If(cond, then_branch, else_branch))
+    }
+
+    /// Transform loop to HIR
+    pub(super) fn transform_loop_to_hir(
+        &mut self,
+        loop_expr: &ast::ExprLoop,
+    ) -> Result<hir::ExprKind> {
+        let body_expr = self.transform_expr_to_hir(&loop_expr.body.get())?;
+        let body_block = if let hir::ExprKind::Block(block) = body_expr.kind {
+            block
+        } else {
+            // If the body is not a block, wrap it in one
+            hir::Block {
+                hir_id: self.next_id(),
+                stmts: Vec::new(),
+                expr: Some(Box::new(body_expr)),
+            }
+        };
+
+        Ok(hir::ExprKind::Loop(body_block))
+    }
+
+    /// Transform while loop to HIR
+    pub(super) fn transform_while_to_hir(
+        &mut self,
+        while_expr: &ast::ExprWhile,
+    ) -> Result<hir::ExprKind> {
+        let cond = Box::new(self.transform_expr_to_hir(&while_expr.cond.get())?);
+        let body_expr = self.transform_expr_to_hir(&while_expr.body.get())?;
+        let body_block = if let hir::ExprKind::Block(block) = body_expr.kind {
+            block
+        } else {
+            // If the body is not a block, wrap it in one
+            hir::Block {
+                hir_id: self.next_id(),
+                stmts: Vec::new(),
+                expr: Some(Box::new(body_expr)),
+            }
+        };
+
+        Ok(hir::ExprKind::While(cond, body_block))
     }
 
     /// Transform assignment to HIR
