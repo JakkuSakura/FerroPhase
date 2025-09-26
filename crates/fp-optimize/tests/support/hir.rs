@@ -13,7 +13,9 @@ pub fn literal_expr(value: i64) -> Expr {
 }
 
 pub fn unit_type() -> Ty {
-    Ty { kind: TyKind::Tuple(Vec::new()) }
+    Ty {
+        kind: TyKind::Tuple(Vec::new()),
+    }
 }
 
 pub fn function_item(name: &str, body: Expr) -> Item {
