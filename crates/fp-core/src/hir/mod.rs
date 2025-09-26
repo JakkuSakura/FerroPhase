@@ -218,7 +218,7 @@ pub struct Pat {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PatKind {
     Wild,
-    Binding(Symbol),
+    Binding { name: Symbol, mutable: bool },
     Struct(Path, Vec<PatField>),
     Tuple(Vec<Pat>),
     Lit(Lit),

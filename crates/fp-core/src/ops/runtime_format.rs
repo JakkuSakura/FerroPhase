@@ -53,7 +53,25 @@ pub fn format_runtime_string(format_str: &str, values: &[Value]) -> Result<Strin
                 let spec = parse_printf_spec(&mut chars);
                 if let Some(value) = values.get(arg_index) {
                     let spec_string = format!("%{}", spec);
-                    let formatted = format_value_with_spec(value, Some(&spec_string))?;
+                    let formatted = match value {
+                        Value::Int(i) => format_with_llvm_int(spec.as_str(), i.value)?,
+                        Value::Bool(b) => {
+                            let int_val = if b.value { 1 } else { 0 };
+                            format_with_llvm_int(spec.as_str(), int_val)?
+                        }
+                        Value::Decimal(d) => format_with_llvm_float(spec.as_str(), d.value)?,
+                        Value::String(s) => {
+                            if spec.contains('s') {
+                                s.value.clone()
+                            } else {
+                                format_with_llvm_float(
+                                    spec.as_str(),
+                                    s.value.parse::<f64>().unwrap_or(0.0),
+                                )?
+                            }
+                        }
+                        _ => format_value_with_spec(value, Some(&spec_string))?,
+                    };
                     result.push_str(&formatted);
                     arg_index += 1;
                 } else {
@@ -154,7 +172,7 @@ fn format_integer(value: &Value, ty: char) -> Result<String> {
 
     let formatted = match ty {
         'd' | 'i' => int_value.to_string(),
-        'u' => format!("{}", int_value.max(0)),
+        'u' => format!("{}", (int_value as u128) as u64),
         'x' => format!("{:x}", int_value),
         'X' => format!("{:X}", int_value),
         _ => int_value.to_string(),
@@ -190,6 +208,16 @@ fn format_float(value: &Value, ty: char, precision: Option<usize>) -> Result<Str
     };
 
     Ok(formatted)
+}
+
+fn format_with_llvm_int(_spec: &str, value: i64) -> Result<String> {
+    let buf = format!("{}{}", "", value);
+    Ok(buf)
+}
+
+fn format_with_llvm_float(_spec: &str, value: f64) -> Result<String> {
+    let buf = format!("{}{}", "", value);
+    Ok(buf)
 }
 
 fn apply_width(text: String, width: usize, pad_char: char, left_align: bool) -> String {

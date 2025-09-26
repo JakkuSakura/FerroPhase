@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 impl ThirGenerator {
     pub(super) fn transform_item(&mut self, hir_item: hir::Item) -> Result<thir::Item> {
@@ -151,7 +152,14 @@ impl ThirGenerator {
 
     /// Transform HIR body to THIR
     pub(super) fn transform_body(&mut self, hir_body: hir::Body) -> Result<thir::Body> {
-        let saved_bindings = mem::take(&mut self.binding_inits);
+        let saved_scopes = mem::take(&mut self.local_scopes);
+        let saved_locals = mem::take(&mut self.current_locals);
+        let saved_next_local_id = self.next_local_id;
+
+        self.local_scopes.push(HashMap::new());
+        self.current_locals = Vec::new();
+        self.next_local_id = 0;
+
         let value = self.transform_expr(hir_body.value)?;
 
         let params = hir_body
@@ -159,22 +167,22 @@ impl ThirGenerator {
             .into_iter()
             .map(|param| {
                 let ty = self.hir_ty_to_ty(&param.ty)?;
-                Ok(thir::Param {
-                    ty,
-                    pat: None, // Simplified for now
-                })
+                Ok(thir::Param { ty, pat: None })
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let body = thir::Body {
+        let locals = mem::take(&mut self.current_locals);
+
+        // Restore generator state for surrounding bodies
+        self.local_scopes = saved_scopes;
+        self.current_locals = saved_locals;
+        self.next_local_id = saved_next_local_id;
+
+        Ok(thir::Body {
             params,
             value,
-            locals: Vec::new(), // Will be populated during MIR generation
-        };
-
-        self.binding_inits = saved_bindings;
-
-        Ok(body)
+            locals,
+        })
     }
 
     /// Transform HIR expression to THIR with type checking
@@ -187,43 +195,48 @@ impl ThirGenerator {
                 (thir::ExprKind::Literal(thir_lit), ty)
             }
             hir::ExprKind::Path(path) => {
-                let ty = self.infer_path_type(&path)?;
-                let (def_id_opt, qualified_name, base_name, _substs) =
-                    self.path_to_type_info(&path)?;
-                let resolved_def_id = def_id_opt
-                    .or_else(|| self.type_context.lookup_value_def_id(&qualified_name))
-                    .or_else(|| self.type_context.lookup_value_def_id(&base_name));
-                let display_name = qualified_name.clone();
+                let base_name = path
+                    .segments
+                    .last()
+                    .map(|seg| seg.name.clone())
+                    .unwrap_or_default();
 
-                if let Some(def_id) = resolved_def_id {
-                    if let Some(init_expr) = self.const_init_map.get(&def_id) {
-                        let inlined = self.transform_expr(init_expr.clone())?;
-                        (inlined.kind, inlined.ty)
+                if let Some((local_id, local_ty)) = self.lookup_local_binding(&base_name) {
+                    (thir::ExprKind::VarRef { id: local_id }, local_ty)
+                } else {
+                    let ty = self.infer_path_type(&path)?;
+                    let (def_id_opt, qualified_name, _, _substs) = self.path_to_type_info(&path)?;
+                    let resolved_def_id = def_id_opt
+                        .or_else(|| self.type_context.lookup_value_def_id(&qualified_name));
+                    let display_name = qualified_name.clone();
+
+                    if let Some(def_id) = resolved_def_id {
+                        if let Some(init_expr) = self.const_init_map.get(&def_id) {
+                            let inlined = self.transform_expr(init_expr.clone())?;
+                            (inlined.kind, inlined.ty)
+                        } else {
+                            (
+                                thir::ExprKind::Path(thir::ItemRef {
+                                    name: display_name,
+                                    def_id: Some(def_id),
+                                }),
+                                ty,
+                            )
+                        }
                     } else {
                         (
                             thir::ExprKind::Path(thir::ItemRef {
                                 name: display_name,
-                                def_id: Some(def_id),
+                                def_id: None,
                             }),
                             ty,
                         )
                     }
-                } else if let Some(init_expr) = self.binding_inits.get(&base_name) {
-                    let inlined = self.transform_expr(init_expr.clone())?;
-                    (inlined.kind, inlined.ty)
-                } else {
-                    (
-                        thir::ExprKind::Path(thir::ItemRef {
-                            name: display_name,
-                            def_id: None,
-                        }),
-                        ty,
-                    )
                 }
             }
             hir::ExprKind::Binary(op, left, right) => {
-                let left_thir = self.transform_expr(*left)?;
-                let right_thir = self.transform_expr(*right)?;
+                let mut left_thir = self.transform_expr(*left)?;
+                let mut right_thir = self.transform_expr(*right)?;
                 let op_thir = self.transform_binary_op(op);
 
                 // Constant folding for simple integer ops when both sides are literals
@@ -255,6 +268,10 @@ impl ThirGenerator {
                         // Type checking: ensure operands are compatible
                         let result_ty =
                             self.check_binary_op_types(&left_thir.ty, &right_thir.ty, &op_thir)?;
+                        Self::retarget_literal_expr(&mut left_thir, &result_ty);
+                        left_thir.ty = result_ty.clone();
+                        Self::retarget_literal_expr(&mut right_thir, &result_ty);
+                        right_thir.ty = result_ty.clone();
                         (
                             thir::ExprKind::Binary(
                                 op_thir,
@@ -386,8 +403,7 @@ impl ThirGenerator {
                     let init_expr = base_def_id_opt
                         .or_else(|| self.type_context.lookup_value_def_id(&qualified_name))
                         .or_else(|| self.type_context.lookup_value_def_id(&base_name))
-                        .and_then(|id| self.const_init_map.get(&id))
-                        .or_else(|| self.binding_inits.get(&base_name));
+                        .and_then(|id| self.const_init_map.get(&id));
 
                     if let Some(init) = init_expr {
                         if let hir::ExprKind::Struct(_path, fields) = &init.kind {
@@ -455,29 +471,58 @@ impl ThirGenerator {
                     result_ty,
                 )
             }
-            hir::ExprKind::Let(pat, _ty, init) => {
-                let init_thir = init.map(|e| self.transform_expr(*e)).transpose()?;
-                let unit_ty = self.create_unit_type();
-                if let Some(init_expr) = init_thir {
-                    (
-                        thir::ExprKind::Let {
-                            expr: Box::new(init_expr),
-                            pat: self.transform_pattern(pat)?,
-                        },
-                        unit_ty,
-                    )
+            hir::ExprKind::Let(pat, ty_expr, init) => {
+                let mut init_thir = init.map(|e| self.transform_expr(*e)).transpose()?;
+                let explicit_ty_opt = if matches!(&ty_expr.kind, hir::TypeExprKind::Infer) {
+                    None
                 } else {
-                    // No initializer, return unit literal
-                    (
-                        thir::ExprKind::Literal(thir::Lit::Int(0, thir::IntTy::I32)),
-                        unit_ty,
-                    )
+                    Some(self.hir_ty_to_ty(&ty_expr)?)
+                };
+                let binding_ty = if let Some(explicit_ty) = explicit_ty_opt {
+                    explicit_ty
+                } else if let Some(expr) = init_thir.as_ref() {
+                    expr.ty.clone()
+                } else {
+                    self.create_unit_type()
+                };
+
+                if let Some(init_expr) = init_thir.as_mut() {
+                    Self::retarget_literal_expr(init_expr, &binding_ty);
+                    init_expr.ty = binding_ty.clone();
                 }
+
+                let pattern = match pat.kind {
+                    hir::PatKind::Binding { name, mutable } => {
+                        self.create_binding_pattern(name.clone(), binding_ty.clone(), mutable)
+                    }
+                    _ => self.create_wildcard_pattern(),
+                };
+
+                let expr_value = init_thir.map(Box::new).unwrap_or_else(|| {
+                    Box::new(thir::Expr {
+                        thir_id: self.next_id(),
+                        kind: thir::ExprKind::Literal(thir::Lit::Int(0, thir::IntTy::I32)),
+                        ty: self.create_i32_type(),
+                        span: Span::new(0, 0, 0),
+                    })
+                });
+
+                (
+                    thir::ExprKind::Let {
+                        expr: expr_value,
+                        pat: pattern,
+                    },
+                    self.create_unit_type(),
+                )
             }
             hir::ExprKind::Assign(lhs, rhs) => {
                 let lhs_thir = self.transform_expr(*lhs)?;
-                let rhs_thir = self.transform_expr(*rhs)?;
+                let mut rhs_thir = self.transform_expr(*rhs)?;
                 let unit_ty = self.create_unit_type();
+
+                Self::retarget_literal_expr(&mut rhs_thir, &lhs_thir.ty);
+                rhs_thir.ty = lhs_thir.ty.clone();
+
                 (
                     thir::ExprKind::Assign {
                         lhs: Box::new(lhs_thir),
@@ -586,16 +631,27 @@ impl ThirGenerator {
 
     /// Transform HIR block to THIR
     pub(super) fn transform_block(&mut self, hir_block: hir::Block) -> Result<thir::Block> {
-        let stmts = hir_block
+        self.local_scopes.push(HashMap::new());
+
+        let stmts = match hir_block
             .stmts
             .into_iter()
             .map(|stmt| self.transform_stmt(stmt))
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()
+        {
+            Ok(stmts) => stmts,
+            Err(err) => {
+                self.local_scopes.pop();
+                return Err(err);
+            }
+        };
 
         let expr = hir_block
             .expr
             .map(|e| self.transform_expr(*e))
             .transpose()?;
+
+        self.local_scopes.pop();
 
         Ok(thir::Block {
             targeted_by_break: false,
@@ -619,22 +675,40 @@ impl ThirGenerator {
                 thir::StmtKind::Expr(thir_expr)
             }
             hir::StmtKind::Local(local) => {
-                // Record initializer for inlining when encountering Path(name)
-                if let hir::PatKind::Binding(name) = &local.pat.kind {
-                    if let Some(init) = &local.init {
-                        self.binding_inits.insert(name.to_string(), init.clone());
-                    }
-                }
-                // Lower to THIR Let with transformed initializer, so evaluation order is preserved
-                let init_expr = match &local.init {
+                let mut initializer = match &local.init {
                     Some(init) => Some(self.transform_expr(init.clone())?),
                     None => None,
                 };
+
+                let pattern = match &local.pat.kind {
+                    hir::PatKind::Binding { name, mutable } => {
+                        let ty = if let Some(explicit_ty) = &local.ty {
+                            self.hir_ty_to_ty(explicit_ty)?
+                        } else if let Some(expr) = &initializer {
+                            expr.ty.clone()
+                        } else {
+                            self.create_unit_type()
+                        };
+                        if let Some(init_expr) = initializer.as_mut() {
+                            Self::retarget_literal_expr(init_expr, &ty);
+                            init_expr.ty = ty.clone();
+                        }
+                        let pat = self.create_binding_pattern(name.clone(), ty, *mutable);
+                        println!("transform_stmt binding pattern created for {}", name);
+                        match &pat.kind {
+                            thir::PatKind::Binding { .. } => println!("pattern kind Binding"),
+                            other => println!("pattern kind: {:?}", other),
+                        }
+                        pat
+                    }
+                    _ => self.create_wildcard_pattern(),
+                };
+
                 thir::StmtKind::Let {
                     remainder_scope: 0,
                     init_scope: 0,
-                    pattern: self.create_wildcard_pattern(),
-                    initializer: init_expr,
+                    pattern,
+                    initializer,
                     lint_level: 0,
                 }
             }
@@ -910,6 +984,80 @@ impl ThirGenerator {
         Ok(self.create_unit_type())
     }
 
+    fn retarget_literal_expr(expr: &mut thir::Expr, target_ty: &hir_types::Ty) {
+        match &mut expr.kind {
+            thir::ExprKind::Literal(lit) => Self::retarget_literal(lit, target_ty),
+            thir::ExprKind::Use(inner) => Self::retarget_literal_expr(inner, target_ty),
+            _ => {}
+        }
+
+        expr.ty = target_ty.clone();
+    }
+
+    fn retarget_literal(lit: &mut thir::Lit, target_ty: &hir_types::Ty) {
+        match (&mut *lit, &target_ty.kind) {
+            (thir::Lit::Int(value, int_ty), hir_types::TyKind::Int(target_int)) => {
+                let mapped = Self::map_int_ty(target_int);
+                *value = Self::truncate_int(*value, &mapped);
+                *int_ty = mapped;
+            }
+            (thir::Lit::Int(value, _), hir_types::TyKind::Uint(target_uint)) => {
+                let coerced = if *value < 0 { 0 } else { *value as u128 };
+                *lit = thir::Lit::Uint(coerced, Self::map_uint_ty(target_uint));
+            }
+            (thir::Lit::Uint(_, uint_ty), hir_types::TyKind::Uint(target_uint)) => {
+                *uint_ty = Self::map_uint_ty(target_uint);
+            }
+            (thir::Lit::Uint(value, _), hir_types::TyKind::Int(target_int)) => {
+                *lit = thir::Lit::Int(*value as i128, Self::map_int_ty(target_int));
+            }
+            (thir::Lit::Float(val, float_ty), hir_types::TyKind::Float(target_float)) => {
+                *float_ty = Self::map_float_ty(target_float);
+                *val = *val;
+            }
+            _ => {}
+        }
+    }
+
+    fn map_int_ty(ty: &hir_types::IntTy) -> thir::IntTy {
+        match ty {
+            hir_types::IntTy::Isize => thir::IntTy::Isize,
+            hir_types::IntTy::I8 => thir::IntTy::I8,
+            hir_types::IntTy::I16 => thir::IntTy::I16,
+            hir_types::IntTy::I32 => thir::IntTy::I32,
+            hir_types::IntTy::I64 => thir::IntTy::I64,
+            hir_types::IntTy::I128 => thir::IntTy::I128,
+        }
+    }
+
+    fn map_uint_ty(ty: &hir_types::UintTy) -> thir::UintTy {
+        match ty {
+            hir_types::UintTy::Usize => thir::UintTy::Usize,
+            hir_types::UintTy::U8 => thir::UintTy::U8,
+            hir_types::UintTy::U16 => thir::UintTy::U16,
+            hir_types::UintTy::U32 => thir::UintTy::U32,
+            hir_types::UintTy::U64 => thir::UintTy::U64,
+            hir_types::UintTy::U128 => thir::UintTy::U128,
+        }
+    }
+
+    fn map_float_ty(ty: &hir_types::FloatTy) -> thir::FloatTy {
+        match ty {
+            hir_types::FloatTy::F32 => thir::FloatTy::F32,
+            hir_types::FloatTy::F64 => thir::FloatTy::F64,
+        }
+    }
+
+    fn truncate_int(value: i128, int_ty: &thir::IntTy) -> i128 {
+        match int_ty {
+            thir::IntTy::I8 => value as i8 as i128,
+            thir::IntTy::I16 => value as i16 as i128,
+            thir::IntTy::I32 => value as i32 as i128,
+            thir::IntTy::I64 => value as i64 as i128,
+            thir::IntTy::I128 | thir::IntTy::Isize => value,
+        }
+    }
+
     /// Infer type of block expression
     pub(super) fn infer_block_type(&self, block: &thir::Block) -> Result<hir_types::Ty> {
         if let Some(expr) = &block.expr {
@@ -1127,13 +1275,60 @@ impl ThirGenerator {
         }
     }
 
-    /// Transform pattern
-    pub(super) fn transform_pattern(&mut self, _pat: hir::Pat) -> Result<thir::Pat> {
-        Ok(thir::Pat {
+    fn create_binding_pattern(
+        &mut self,
+        name: String,
+        ty: hir_types::Ty,
+        mutable: bool,
+    ) -> thir::Pat {
+        println!("create_binding_pattern: {}", name);
+        let local_id = self.allocate_local(&name, ty.clone());
+        thir::Pat {
             thir_id: self.next_id(),
-            kind: thir::PatKind::Wild, // Simplified
-            ty: self.create_unit_type(),
+            kind: thir::PatKind::Binding {
+                mutability: if mutable {
+                    thir::Mutability::Mut
+                } else {
+                    thir::Mutability::Not
+                },
+                name,
+                mode: thir::BindingMode::ByValue,
+                var: local_id,
+                ty: ty.clone(),
+            },
+            ty,
             span: Span::new(0, 0, 0),
-        })
+        }
+    }
+
+    fn allocate_local(&mut self, name: &str, ty: hir_types::Ty) -> thir::LocalId {
+        let local_id = self.next_local_id;
+        self.next_local_id += 1;
+
+        self.current_locals.push(thir::LocalDecl {
+            ty: ty.clone(),
+            source_info: Span::new(0, 0, 0),
+            internal: false,
+        });
+
+        if self.local_scopes.is_empty() {
+            self.local_scopes.push(HashMap::new());
+        }
+
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.insert(name.to_string(), (local_id, ty));
+        }
+
+        local_id
+    }
+
+    fn lookup_local_binding(&self, name: &str) -> Option<(thir::LocalId, hir_types::Ty)> {
+        for scope in self.local_scopes.iter().rev() {
+            if let Some((local_id, ty)) = scope.get(name) {
+                println!("lookup_local_binding hit: {} -> {}", name, local_id);
+                return Some((*local_id, ty.clone()));
+            }
+        }
+        None
     }
 }

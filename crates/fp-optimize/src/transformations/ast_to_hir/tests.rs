@@ -165,7 +165,7 @@ fn transform_generic_function_and_method() -> Result<()> {
         .expect("method present");
     assert_eq!(method.sig.inputs.len(), 1);
     match &method.sig.inputs[0].pat.kind {
-        hir::PatKind::Binding(name) => assert_eq!(name, "self"),
+        hir::PatKind::Binding { name, .. } => assert_eq!(name, "self"),
         other => panic!("expected self binding, got {other:?}"),
     }
 
