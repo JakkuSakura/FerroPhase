@@ -109,6 +109,7 @@ impl LirGenerator {
 
         // Transform MIR body if present
         if let Some(mir_body) = bodies.get(&mir_func.body_id) {
+            println!("MIR body: {:#?}", mir_body);
             // First pass: analyze const values
             self.analyze_const_values(mir_body)?;
             self.local_types = mir_body.locals.iter().map(|decl| decl.ty.clone()).collect();

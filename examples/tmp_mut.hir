@@ -1,0 +1,1175 @@
+Program {
+    items: [
+        Item {
+            hir_id: 0,
+            def_id: 0,
+            visibility: Private,
+            kind: Function(
+                Function {
+                    sig: FunctionSig {
+                        name: "main",
+                        inputs: [],
+                        output: TypeExpr {
+                            hir_id: 1,
+                            kind: Tuple(
+                                [],
+                            ),
+                            span: Span {
+                                file: 9343047845617253085,
+                                lo: 0,
+                                hi: 0,
+                            },
+                        },
+                        generics: Generics {
+                            params: [],
+                            where_clause: None,
+                        },
+                    },
+                    body: Some(
+                        Body {
+                            hir_id: 39,
+                            params: [],
+                            value: Expr {
+                                hir_id: 2,
+                                kind: Block(
+                                    Block {
+                                        hir_id: 38,
+                                        stmts: [
+                                            Stmt {
+                                                hir_id: 7,
+                                                kind: Local(
+                                                    Local {
+                                                        hir_id: 6,
+                                                        pat: Pat {
+                                                            hir_id: 4,
+                                                            kind: Binding {
+                                                                name: "value",
+                                                                mutable: true,
+                                                            },
+                                                        },
+                                                        ty: Some(
+                                                            TypeExpr {
+                                                                hir_id: 3,
+                                                                kind: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                        init: Some(
+                                                            Expr {
+                                                                hir_id: 5,
+                                                                kind: Literal(
+                                                                    Integer(
+                                                                        1,
+                                                                    ),
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 2,
+                                                                    hi: 3,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 10,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 8,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "initial: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 9,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 4,
+                                                                                hi: 5,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 3,
+                                                            hi: 4,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 16,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 11,
+                                                        kind: Assign(
+                                                            Expr {
+                                                                hir_id: 12,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "value",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                4,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 6,
+                                                                    hi: 7,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 13,
+                                                                kind: Binary(
+                                                                    Add,
+                                                                    Expr {
+                                                                        hir_id: 14,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "value",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        4,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 8,
+                                                                            hi: 9,
+                                                                        },
+                                                                    },
+                                                                    Expr {
+                                                                        hir_id: 15,
+                                                                        kind: Literal(
+                                                                            Integer(
+                                                                                41,
+                                                                            ),
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 9,
+                                                                            hi: 10,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 7,
+                                                                    hi: 8,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 5,
+                                                            hi: 6,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 19,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 17,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "after first add: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 18,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 11,
+                                                                                hi: 12,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 10,
+                                                            hi: 11,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 25,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 20,
+                                                        kind: Assign(
+                                                            Expr {
+                                                                hir_id: 21,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "value",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                4,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 13,
+                                                                    hi: 14,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 22,
+                                                                kind: Binary(
+                                                                    Sub,
+                                                                    Expr {
+                                                                        hir_id: 23,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "value",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        4,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 15,
+                                                                            hi: 16,
+                                                                        },
+                                                                    },
+                                                                    Expr {
+                                                                        hir_id: 24,
+                                                                        kind: Literal(
+                                                                            Integer(
+                                                                                2,
+                                                                            ),
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 16,
+                                                                            hi: 17,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 14,
+                                                                    hi: 15,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 12,
+                                                            hi: 13,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 28,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 26,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "after second step: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 27,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 18,
+                                                                                hi: 19,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 17,
+                                                            hi: 18,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 34,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 29,
+                                                        kind: Assign(
+                                                            Expr {
+                                                                hir_id: 30,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "value",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                4,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 20,
+                                                                    hi: 21,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 31,
+                                                                kind: Binary(
+                                                                    Mul,
+                                                                    Expr {
+                                                                        hir_id: 32,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "value",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        4,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 22,
+                                                                            hi: 23,
+                                                                        },
+                                                                    },
+                                                                    Expr {
+                                                                        hir_id: 33,
+                                                                        kind: Literal(
+                                                                            Integer(
+                                                                                3,
+                                                                            ),
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 23,
+                                                                            hi: 24,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 21,
+                                                                    hi: 22,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 19,
+                                                            hi: 20,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 37,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 35,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "final: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 36,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 25,
+                                                                                hi: 26,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 24,
+                                                            hi: 25,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                        ],
+                                        expr: None,
+                                    },
+                                ),
+                                span: Span {
+                                    file: 9343047845617253085,
+                                    lo: 1,
+                                    hi: 2,
+                                },
+                            },
+                        },
+                    ),
+                    is_const: false,
+                },
+            ),
+            span: Span {
+                file: 9343047845617253085,
+                lo: 0,
+                hi: 1,
+            },
+        },
+    ],
+    def_map: {
+        0: Item {
+            hir_id: 0,
+            def_id: 0,
+            visibility: Private,
+            kind: Function(
+                Function {
+                    sig: FunctionSig {
+                        name: "main",
+                        inputs: [],
+                        output: TypeExpr {
+                            hir_id: 1,
+                            kind: Tuple(
+                                [],
+                            ),
+                            span: Span {
+                                file: 9343047845617253085,
+                                lo: 0,
+                                hi: 0,
+                            },
+                        },
+                        generics: Generics {
+                            params: [],
+                            where_clause: None,
+                        },
+                    },
+                    body: Some(
+                        Body {
+                            hir_id: 39,
+                            params: [],
+                            value: Expr {
+                                hir_id: 2,
+                                kind: Block(
+                                    Block {
+                                        hir_id: 38,
+                                        stmts: [
+                                            Stmt {
+                                                hir_id: 7,
+                                                kind: Local(
+                                                    Local {
+                                                        hir_id: 6,
+                                                        pat: Pat {
+                                                            hir_id: 4,
+                                                            kind: Binding {
+                                                                name: "value",
+                                                                mutable: true,
+                                                            },
+                                                        },
+                                                        ty: Some(
+                                                            TypeExpr {
+                                                                hir_id: 3,
+                                                                kind: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                        init: Some(
+                                                            Expr {
+                                                                hir_id: 5,
+                                                                kind: Literal(
+                                                                    Integer(
+                                                                        1,
+                                                                    ),
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 2,
+                                                                    hi: 3,
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 10,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 8,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "initial: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 9,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 4,
+                                                                                hi: 5,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 3,
+                                                            hi: 4,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 16,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 11,
+                                                        kind: Assign(
+                                                            Expr {
+                                                                hir_id: 12,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "value",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                4,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 6,
+                                                                    hi: 7,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 13,
+                                                                kind: Binary(
+                                                                    Add,
+                                                                    Expr {
+                                                                        hir_id: 14,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "value",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        4,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 8,
+                                                                            hi: 9,
+                                                                        },
+                                                                    },
+                                                                    Expr {
+                                                                        hir_id: 15,
+                                                                        kind: Literal(
+                                                                            Integer(
+                                                                                41,
+                                                                            ),
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 9,
+                                                                            hi: 10,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 7,
+                                                                    hi: 8,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 5,
+                                                            hi: 6,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 19,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 17,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "after first add: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 18,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 11,
+                                                                                hi: 12,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 10,
+                                                            hi: 11,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 25,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 20,
+                                                        kind: Assign(
+                                                            Expr {
+                                                                hir_id: 21,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "value",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                4,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 13,
+                                                                    hi: 14,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 22,
+                                                                kind: Binary(
+                                                                    Sub,
+                                                                    Expr {
+                                                                        hir_id: 23,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "value",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        4,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 15,
+                                                                            hi: 16,
+                                                                        },
+                                                                    },
+                                                                    Expr {
+                                                                        hir_id: 24,
+                                                                        kind: Literal(
+                                                                            Integer(
+                                                                                2,
+                                                                            ),
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 16,
+                                                                            hi: 17,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 14,
+                                                                    hi: 15,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 12,
+                                                            hi: 13,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 28,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 26,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "after second step: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 27,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 18,
+                                                                                hi: 19,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 17,
+                                                            hi: 18,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 34,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 29,
+                                                        kind: Assign(
+                                                            Expr {
+                                                                hir_id: 30,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "value",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                4,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 20,
+                                                                    hi: 21,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 31,
+                                                                kind: Binary(
+                                                                    Mul,
+                                                                    Expr {
+                                                                        hir_id: 32,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "value",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        4,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 22,
+                                                                            hi: 23,
+                                                                        },
+                                                                    },
+                                                                    Expr {
+                                                                        hir_id: 33,
+                                                                        kind: Literal(
+                                                                            Integer(
+                                                                                3,
+                                                                            ),
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 9343047845617253085,
+                                                                            lo: 23,
+                                                                            hi: 24,
+                                                                        },
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 9343047845617253085,
+                                                                    lo: 21,
+                                                                    hi: 22,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 19,
+                                                            hi: 20,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            Stmt {
+                                                hir_id: 37,
+                                                kind: Expr(
+                                                    Expr {
+                                                        hir_id: 35,
+                                                        kind: StdIoPrintln(
+                                                            StdIoPrintln {
+                                                                format: FormatString {
+                                                                    parts: [
+                                                                        Literal(
+                                                                            "final: ",
+                                                                        ),
+                                                                        Placeholder(
+                                                                            FormatPlaceholder {
+                                                                                arg_ref: Implicit,
+                                                                                format_spec: None,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    args: [
+                                                                        Expr {
+                                                                            hir_id: 36,
+                                                                            kind: Path(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        PathSegment {
+                                                                                            name: "value",
+                                                                                            args: None,
+                                                                                        },
+                                                                                    ],
+                                                                                    res: Some(
+                                                                                        Local(
+                                                                                            4,
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            span: Span {
+                                                                                file: 9343047845617253085,
+                                                                                lo: 25,
+                                                                                hi: 26,
+                                                                            },
+                                                                        },
+                                                                    ],
+                                                                    kwargs: [],
+                                                                },
+                                                                newline: true,
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 9343047845617253085,
+                                                            lo: 24,
+                                                            hi: 25,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                        ],
+                                        expr: None,
+                                    },
+                                ),
+                                span: Span {
+                                    file: 9343047845617253085,
+                                    lo: 1,
+                                    hi: 2,
+                                },
+                            },
+                        },
+                    ),
+                    is_const: false,
+                },
+            ),
+            span: Span {
+                file: 9343047845617253085,
+                lo: 0,
+                hi: 1,
+            },
+        },
+    },
+    next_hir_id: 0,
+}

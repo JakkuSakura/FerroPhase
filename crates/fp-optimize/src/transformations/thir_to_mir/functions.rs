@@ -183,7 +183,10 @@ impl MirGenerator {
 
     pub(super) fn binding_local_from_pattern(&self, pattern: &thir::Pat) -> Option<thir::LocalId> {
         match &pattern.kind {
-            thir::PatKind::Binding { var, .. } => Some(*var),
+            thir::PatKind::Binding { var, .. } => {
+                println!("binding_local_from_pattern found local {}", var);
+                Some(*var)
+            }
             thir::PatKind::Deref { subpattern } => self.binding_local_from_pattern(subpattern),
             _ => None,
         }

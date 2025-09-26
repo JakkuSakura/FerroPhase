@@ -27,8 +27,12 @@ pub struct ThirGenerator {
     const_symbols: HashMap<hir_types::DefId, thir::BodyId>,
     /// Map constant names to their original HIR initializer expression for inlining
     const_init_map: HashMap<hir_types::DefId, hir::Expr>,
-    /// Track simple local bindings we can inline by name.
-    binding_inits: HashMap<String, hir::Expr>,
+    /// Track local variable bindings within nested scopes.
+    local_scopes: Vec<HashMap<String, (thir::LocalId, thir::Ty)>>,
+    /// Accumulated THIR local declarations for the current body being lowered.
+    current_locals: Vec<thir::LocalDecl>,
+    /// Counter for allocating fresh THIR local identifiers.
+    next_local_id: thir::LocalId,
 }
 
 impl ThirGenerator {
@@ -41,7 +45,9 @@ impl ThirGenerator {
             next_body_id: 0,
             const_symbols: HashMap::new(),
             const_init_map: HashMap::new(),
-            binding_inits: HashMap::new(),
+            local_scopes: Vec::new(),
+            current_locals: Vec::new(),
+            next_local_id: 0,
         }
     }
 
