@@ -1,6 +1,6 @@
 use llvm_ir::constant::Float;
 use llvm_ir::function::{CallingConvention, Parameter};
-use llvm_ir::instruction::{Add, ICmp, Mul, Sub, UDiv, ZExt};
+use llvm_ir::instruction::{Add, Alloca, ICmp, Load, Mul, Store, Sub, UDiv, ZExt};
 use llvm_ir::module::{DLLStorageClass, DataLayout, Linkage, Visibility};
 use llvm_ir::predicates::IntPredicate;
 use llvm_ir::terminator::{CondBr, Ret};
@@ -373,6 +373,66 @@ impl LlvmContext {
 
         self.add_instruction(instruction)?;
         Ok(name)
+    }
+
+    pub fn build_alloca(
+        &mut self,
+        allocated_type: TypeRef,
+        num_elements: Operand,
+        result_name: &str,
+        alignment: u32,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::Alloca(Alloca {
+            allocated_type,
+            num_elements,
+            dest: name.clone(),
+            alignment,
+            debugloc: None,
+        });
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    pub fn build_load(
+        &mut self,
+        address: Operand,
+        loaded_type: Type,
+        result_name: &str,
+        alignment: u32,
+        volatile: bool,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::Load(Load {
+            address,
+            dest: name.clone(),
+            loaded_ty: self.module.types.get_for_type(&loaded_type),
+            volatile,
+            atomicity: None,
+            alignment,
+            debugloc: None,
+        });
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    pub fn build_store(
+        &mut self,
+        value: Operand,
+        address: Operand,
+        alignment: u32,
+        volatile: bool,
+    ) -> Result<(), String> {
+        let instruction = Instruction::Store(Store {
+            address,
+            value,
+            volatile,
+            atomicity: None,
+            alignment,
+            debugloc: None,
+        });
+        self.add_instruction(instruction)?;
+        Ok(())
     }
 
     /// Create a return instruction

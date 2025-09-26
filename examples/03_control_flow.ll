@@ -15,10 +15,10 @@ target triple = "arm64-apple-macosx12.0.0"
 @.str.10 = constant [33 x i8] c"Scores: 85, 92, 78 (Average: 85)\00", align 1
 @.str.11 = constant [29 x i8] c"Assessment: Good Performance\00", align 1
 @.str.12 = constant [28 x i8] [i8 10, i8 54, i8 46, i8 32, i8 82, i8 117, i8 110, i8 116, i8 105, i8 109, i8 101, i8 32, i8 73, i8 102, i8 32, i8 69, i8 120, i8 112, i8 114, i8 101, i8 115, i8 115, i8 105, i8 111, i8 110, i8 115, i8 58, i8 0], align 1
-@.str.13 = constant [25 x i8] c"Runtime value {} is high\00", align 1
-@.str.14 = constant [38 x i8] [i8 10, i8 61, i8 61, i8 61, i8 32, i8 67, i8 111, i8 110, i8 116, i8 114, i8 111, i8 108, i8 32, i8 70, i8 108, i8 111, i8 119, i8 32, i8 70, i8 101, i8 97, i8 116, i8 117, i8 114, i8 101, i8 32, i8 83, i8 117, i8 109, i8 109, i8 97, i8 114, i8 121, i8 32, i8 61, i8 61, i8 61, i8 0], align 1
-@.str.15 = constant [27 x i8] c"Runtime value {} is medium\00", align 1
-@.str.16 = constant [24 x i8] c"Runtime value {} is low\00", align 1
+@.str.13 = constant [26 x i8] [i8 82, i8 117, i8 110, i8 116, i8 105, i8 109, i8 101, i8 32, i8 118, i8 97, i8 108, i8 117, i8 101, i8 32, i8 123, i8 125, i8 32, i8 105, i8 115, i8 32, i8 104, i8 105, i8 103, i8 104, i8 10, i8 0], align 1
+@.str.14 = constant [28 x i8] [i8 82, i8 117, i8 110, i8 116, i8 105, i8 109, i8 101, i8 32, i8 118, i8 97, i8 108, i8 117, i8 101, i8 32, i8 123, i8 125, i8 32, i8 105, i8 115, i8 32, i8 109, i8 101, i8 100, i8 105, i8 117, i8 109, i8 10, i8 0], align 1
+@.str.15 = constant [25 x i8] [i8 82, i8 117, i8 110, i8 116, i8 105, i8 109, i8 101, i8 32, i8 118, i8 97, i8 108, i8 117, i8 101, i8 32, i8 123, i8 125, i8 32, i8 105, i8 115, i8 32, i8 108, i8 111, i8 119, i8 10, i8 0], align 1
+@.str.16 = constant [38 x i8] [i8 10, i8 61, i8 61, i8 61, i8 32, i8 67, i8 111, i8 110, i8 116, i8 114, i8 111, i8 108, i8 32, i8 70, i8 108, i8 111, i8 119, i8 32, i8 70, i8 101, i8 97, i8 116, i8 117, i8 114, i8 101, i8 32, i8 83, i8 117, i8 109, i8 109, i8 97, i8 114, i8 121, i8 32, i8 61, i8 61, i8 61, i8 0], align 1
 @.str.17 = constant [30 x i8] [i8 226, i8 156, i8 147, i8 32, i8 66, i8 97, i8 115, i8 105, i8 99, i8 32, i8 105, i8 102, i8 45, i8 101, i8 108, i8 115, i8 101, i8 32, i8 101, i8 120, i8 112, i8 114, i8 101, i8 115, i8 115, i8 105, i8 111, i8 110, i8 115, i8 0], align 1
 @.str.18 = constant [26 x i8] [i8 226, i8 156, i8 147, i8 32, i8 78, i8 101, i8 115, i8 116, i8 101, i8 100, i8 32, i8 105, i8 102, i8 45, i8 101, i8 108, i8 115, i8 101, i8 32, i8 99, i8 104, i8 97, i8 105, i8 110, i8 115, i8 0], align 1
 @.str.19 = constant [37 x i8] [i8 226, i8 156, i8 147, i8 32, i8 66, i8 111, i8 111, i8 108, i8 101, i8 97, i8 110, i8 32, i8 108, i8 111, i8 103, i8 105, i8 99, i8 32, i8 111, i8 112, i8 101, i8 114, i8 97, i8 116, i8 111, i8 114, i8 115, i8 32, i8 40, i8 38, i8 38, i8 44, i8 32, i8 124, i8 124, i8 41, i8 0], align 1
@@ -31,6 +31,7 @@ target triple = "arm64-apple-macosx12.0.0"
 @.str.26 = constant [50 x i8] [i8 10, i8 70, i8 101, i8 114, i8 114, i8 111, i8 80, i8 104, i8 97, i8 115, i8 101, i8 32, i8 99, i8 111, i8 110, i8 116, i8 114, i8 111, i8 108, i8 32, i8 102, i8 108, i8 111, i8 119, i8 32, i8 115, i8 121, i8 115, i8 116, i8 101, i8 109, i8 32, i8 111, i8 112, i8 101, i8 114, i8 97, i8 116, i8 105, i8 111, i8 110, i8 97, i8 108, i8 33, i8 32, i8 240, i8 159, i8 154, i8 128, i8 0], align 1
 declare void @func_0()
 declare i32 @puts(ptr)
+declare i32 @printf(ptr, ...)
 define i32 @main() {
 bb0:
   call i32 @puts(ptr getelementptr inbounds ([41 x i8], ptr @.str.0, i32 0, i32 0))
@@ -72,25 +73,23 @@ bb12:
   call i32 @puts(ptr getelementptr inbounds ([28 x i8], ptr @.str.12, i32 0, i32 0))
   br label %bb13
 bb13:
-  ret i32 0
+  br i1 0, label %bb14, label %bb15
 bb14:
-  call i32 @puts(ptr getelementptr inbounds ([25 x i8], ptr @.str.13, i32 0, i32 0), i32 42)
+  call i32 @printf(ptr getelementptr inbounds ([26 x i8], ptr @.str.13, i32 0, i32 0), i64 42)
   br label %bb17
 bb15:
-  ret i32 0
-bb16:
-  call i32 @puts(ptr getelementptr inbounds ([38 x i8], ptr @.str.14, i32 0, i32 0))
-  br label %bb23
+  br i1 1, label %bb18, label %bb19
 bb17:
   br label %bb16
 bb18:
-  call i32 @puts(ptr getelementptr inbounds ([27 x i8], ptr @.str.15, i32 0, i32 0), i32 42)
+  call i32 @printf(ptr getelementptr inbounds ([28 x i8], ptr @.str.14, i32 0, i32 0), i64 42)
   br label %bb21
 bb19:
-  call i32 @puts(ptr getelementptr inbounds ([24 x i8], ptr @.str.16, i32 0, i32 0), i32 42)
+  call i32 @printf(ptr getelementptr inbounds ([25 x i8], ptr @.str.15, i32 0, i32 0), i64 42)
   br label %bb22
-bb20:
-  br label %bb16
+bb16:
+  call i32 @puts(ptr getelementptr inbounds ([38 x i8], ptr @.str.16, i32 0, i32 0))
+  br label %bb23
 bb21:
   br label %bb20
 bb22:
@@ -98,6 +97,8 @@ bb22:
 bb23:
   call i32 @puts(ptr getelementptr inbounds ([30 x i8], ptr @.str.17, i32 0, i32 0))
   br label %bb24
+bb20:
+  br label %bb16
 bb24:
   call i32 @puts(ptr getelementptr inbounds ([26 x i8], ptr @.str.18, i32 0, i32 0))
   br label %bb25

@@ -125,9 +125,9 @@ struct CompileArgs {
     #[arg(short = 'D', long)]
     define: Vec<String>,
 
-    /// Run the compiled output
+    /// Execute the compiled binary using exec clib function
     #[arg(short, long)]
-    run: bool,
+    exec: bool,
 
     /// Watch for file changes and recompile
     #[arg(short, long)]
@@ -333,7 +333,7 @@ async fn main() -> Result<()> {
                 debug: args.debug,
                 include: args.include,
                 define: args.define,
-                run: args.run,
+                exec: args.exec,
                 watch: args.watch,
                 error_tolerance: args.error_tolerance,
                 max_errors: args.max_errors,

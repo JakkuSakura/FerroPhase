@@ -336,31 +336,59 @@ impl<'ctx> LirCodegen<'ctx> {
             }
             lir::LirInstructionKind::Load {
                 address,
-                alignment: _alignment,
-                volatile: _volatile,
+                alignment,
+                volatile,
             } => {
-                // Skip for now; loader not used by println lowering
-                let _ = self.convert_lir_value_to_operand(address)?;
+                let address_operand = self.convert_lir_value_to_operand(address)?;
+                let loaded_lir_type = ty_hint.clone().unwrap_or(lir::LirType::I32);
+                let loaded_llvm_type = self.convert_lir_type_to_llvm(loaded_lir_type.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_load(
+                        address_operand,
+                        loaded_llvm_type,
+                        &format!("load_{}", instr_id),
+                        alignment.unwrap_or(0),
+                        volatile,
+                    )
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(loaded_lir_type), result_name);
             }
             lir::LirInstructionKind::Store {
                 value,
                 address,
-                alignment: _alignment,
-                volatile: _volatile,
+                alignment,
+                volatile,
             } => {
-                // Skip; not used for println path
-                let _ = self.convert_lir_value_to_operand(value)?;
-                let _ = self.convert_lir_value_to_operand(address)?;
+                let value_operand = self.convert_lir_value_to_operand(value)?;
+                let address_operand = self.convert_lir_value_to_operand(address)?;
+                self.llvm_ctx
+                    .build_store(
+                        value_operand,
+                        address_operand,
+                        alignment.unwrap_or(0),
+                        volatile,
+                    )
+                    .map_err(fp_core::error::Error::from)?;
             }
-            lir::LirInstructionKind::Alloca {
-                size,
-                alignment: _alignment,
-            } => {
-                // For now, create a placeholder alloca instruction
-                let _size_operand = self.convert_lir_value_to_operand(size)?;
-                // TODO: Implement proper alloca instruction
-                let placeholder_name = Name::Name(Box::new(format!("alloca_{}", lir_instr.id)));
-                self.record_result(instr_id, ty_hint.clone(), placeholder_name);
+            lir::LirInstructionKind::Alloca { size, alignment } => {
+                let size_operand = self.convert_lir_value_to_operand(size)?;
+                let element_lir_type = match ty_hint.clone() {
+                    Some(lir::LirType::Ptr(inner)) => *inner,
+                    _ => lir::LirType::I8,
+                };
+                let llvm_element_type = self.convert_lir_type_to_llvm(element_lir_type.clone())?;
+                let allocated_type = self.llvm_ctx.module.types.get_for_type(&llvm_element_type);
+                let result_name = self
+                    .llvm_ctx
+                    .build_alloca(
+                        allocated_type,
+                        size_operand,
+                        &format!("alloca_{}", instr_id),
+                        alignment,
+                    )
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, ty_hint.clone(), result_name);
             }
             lir::LirInstructionKind::Call {
                 function,
@@ -869,14 +897,10 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .operand_from_name_and_type(name.clone(), &llvm_ty))
                 } else {
-                    // Relax: tolerate unknown registers by substituting i32 0 and warning
-                    tracing::warn!(
-                        "LLVM: Unknown register {} used in printf; substituting i32 0",
+                    Err(fp_core::error::Error::Generic(eyre!(
+                        "Unknown register {} encountered during codegen",
                         reg_id
-                    );
-                    Ok(self
-                        .llvm_ctx
-                        .operand_from_constant(self.llvm_ctx.const_i32(0)))
+                    )))
                 }
             }
             lir::LirValue::Constant(constant) => {
@@ -1103,7 +1127,7 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirType::I64 => Ok(self.llvm_ctx.i64_type()),
             lir::LirType::F32 => Ok(self.llvm_ctx.f32_type()),
             lir::LirType::F64 => Ok(self.llvm_ctx.f64_type()),
-            // lir::LirType::Ptr => Ok(self.llvm_ctx.ptr_type()),
+            lir::LirType::Ptr(_) => Ok(Type::PointerType { addr_space: 0 }),
             lir::LirType::Array(element_type, _size) => {
                 // For now, just return the element type to avoid TODO crash
                 // TODO: Properly implement array type conversion

@@ -115,13 +115,12 @@ impl InterpretationOrchestrator {
         );
 
         // Evaluate all arguments
-        let mut evaluated_args = Vec::new();
+        let mut evaluated_args: Vec<Value> = Vec::new();
         for (i, arg) in format_str.args.iter().enumerate() {
             tracing::debug!("Evaluating format arg {}: {:?}", i, arg);
             let value = self.interpret_expr(arg, ctx)?;
-            let value_str = self.value_to_string(&value)?;
-            tracing::debug!("Arg {} evaluated to: '{}'", i, value_str);
-            evaluated_args.push(value_str);
+            tracing::debug!("Arg {} evaluated to value: {:?}", i, value);
+            evaluated_args.push(value);
         }
 
         // TODO: Evaluate kwargs when we support named arguments
@@ -144,41 +143,42 @@ impl InterpretationOrchestrator {
                     );
 
                     // Determine which argument to use
-                    let arg_value = match &placeholder.arg_ref {
+                    let selected_value = match &placeholder.arg_ref {
                         fp_core::ast::FormatArgRef::Implicit => {
-                            if implicit_arg_index < evaluated_args.len() {
-                                let value = &evaluated_args[implicit_arg_index];
+                            if let Some(value) = evaluated_args.get(implicit_arg_index) {
                                 implicit_arg_index += 1;
-                                value.clone()
+                                Some(value)
                             } else {
                                 tracing::warn!("Not enough arguments for implicit placeholder");
-                                "{}".to_string() // Keep placeholder if no arg available
+                                None
                             }
                         }
                         fp_core::ast::FormatArgRef::Positional(index) => {
-                            if *index < evaluated_args.len() {
-                                evaluated_args[*index].clone()
+                            if let Some(value) = evaluated_args.get(*index) {
+                                Some(value)
                             } else {
                                 tracing::warn!("Positional argument {} out of range", index);
-                                format!("{{{}}}", index) // Keep placeholder if no arg available
+                                None
                             }
                         }
                         fp_core::ast::FormatArgRef::Named(name) => {
-                            // TODO: Handle named arguments from kwargs
                             tracing::warn!("Named argument '{}' not yet supported", name);
-                            format!("{{{}}}", name) // Keep placeholder for now
+                            None
                         }
                     };
 
-                    // TODO: Apply format specification if present
-                    if let Some(_format_spec) = &placeholder.format_spec {
+                    if let Some(value) = selected_value {
+                        let spec = placeholder.format_spec.as_deref();
+                        let formatted = format_value_with_spec(value, spec)?;
                         tracing::debug!(
-                            "Format specification not yet implemented, using raw value"
+                            "Part {}: Substituting placeholder with '{}'",
+                            i,
+                            formatted
                         );
+                        result.push_str(&formatted);
+                    } else {
+                        result.push_str("{}");
                     }
-
-                    tracing::debug!("Part {}: Substituting placeholder with '{}'", i, arg_value);
-                    result.push_str(&arg_value);
                 }
             }
         }
@@ -190,14 +190,7 @@ impl InterpretationOrchestrator {
     // Helper method to convert Value to string representation
 
     fn value_to_string(&self, value: &Value) -> Result<String> {
-        match value {
-            Value::String(s) => Ok(s.value.clone()),
-            Value::Int(i) => Ok(i.value.to_string()),
-            Value::Decimal(d) => Ok(d.value.to_string()),
-            Value::Bool(b) => Ok(b.value.to_string()),
-            Value::Unit(_) => Ok("()".to_string()),
-            _ => Ok(format!("{:?}", value)),
-        }
+        format_value_with_spec(value, None)
     }
 
     // If expression handler

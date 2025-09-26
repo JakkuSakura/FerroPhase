@@ -21,7 +21,7 @@ pub struct CompileArgs {
     pub debug: bool,
     pub include: Vec<PathBuf>,
     pub define: Vec<String>,
-    pub run: bool,
+    pub exec: bool,
     pub watch: bool,
     /// Enable error tolerance (collect multiple errors instead of early exit)
     pub error_tolerance: bool,
@@ -70,9 +70,9 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         args.input.len()
     ));
 
-    // Run if requested
-    if args.run {
-        run_compiled_output(&compiled_files, &args.target).await?;
+    // Execute if requested
+    if args.exec {
+        exec_compiled_output(&compiled_files, &args.target).await?;
     }
 
     Ok(())
@@ -118,7 +118,7 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     debug: args.debug,
                     include: args.include.clone(),
                     define: args.define.clone(),
-                    run: args.run,
+                    exec: args.exec,
                     watch: false, // Prevent recursion
                     error_tolerance: args.error_tolerance,
                     max_errors: args.max_errors,
@@ -218,7 +218,18 @@ async fn compile_file(
     Ok(())
 }
 
-async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
+async fn exec_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    unsafe extern "C" {
+        fn execve(
+            pathname: *const c_char,
+            argv: *const *const c_char,
+            envp: *const *const c_char,
+        ) -> i32;
+    }
+
     match target {
         "binary" => {
             for file in files {
@@ -230,44 +241,91 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
 
                 if is_executable {
                     println!(
-                        "{} Running compiled binary: {}",
+                        "{} Executing compiled binary: {}",
                         style("🚀").cyan(),
                         file.display()
                     );
 
-                    // Run the executable directly
-                    let run_output =
-                        tokio::process::Command::new(file)
+                    // Use fork and exec on Unix systems for proper process replacement
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            let pid = libc::fork();
+
+                            if pid == 0 {
+                                // Child process - exec the binary
+                                let path_cstring = CString::new(file.to_string_lossy().as_bytes())
+                                    .map_err(|e| {
+                                        CliError::Compilation(format!("Invalid path: {}", e))
+                                    })?;
+
+                                let argv = vec![path_cstring.as_ptr(), std::ptr::null()];
+                                let envp = vec![std::ptr::null()]; // Use current environment
+
+                                execve(path_cstring.as_ptr(), argv.as_ptr(), envp.as_ptr());
+
+                                // If exec returns, there was an error
+                                std::process::exit(1);
+                            } else if pid > 0 {
+                                // Parent process - wait for child
+                                let mut status: i32 = 0;
+                                libc::waitpid(pid, &mut status, 0);
+
+                                if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
+                                    let exit_code = if libc::WIFEXITED(status) {
+                                        libc::WEXITSTATUS(status)
+                                    } else {
+                                        -1
+                                    };
+                                    println!(
+                                        "{} Process exited with code: {}",
+                                        style("⚠").yellow(),
+                                        exit_code
+                                    );
+                                }
+                            } else {
+                                return Err(CliError::Compilation(
+                                    "Failed to fork process".to_string(),
+                                ));
+                            }
+                        }
+                    }
+
+                    // Fallback for non-Unix systems or if fork is not available
+                    #[cfg(not(unix))]
+                    {
+                        let run_output = tokio::process::Command::new(file)
                             .output()
                             .await
                             .map_err(|e| {
                                 CliError::Compilation(format!(
-                                    "Failed to run executable '{}': {}",
+                                    "Failed to execute binary '{}': {}",
                                     file.display(),
                                     e
                                 ))
                             })?;
 
-                    // Print stdout
-                    let stdout = String::from_utf8_lossy(&run_output.stdout);
-                    if !stdout.is_empty() {
-                        println!("{}", stdout.trim_end());
-                    }
+                        // Print stdout
+                        let stdout = String::from_utf8_lossy(&run_output.stdout);
+                        if !stdout.is_empty() {
+                            println!("{}", stdout.trim_end());
+                        }
 
-                    // Print stderr if present
-                    if !run_output.stderr.is_empty() {
-                        let stderr = String::from_utf8_lossy(&run_output.stderr);
-                        eprintln!("{}", stderr.trim_end());
-                    }
+                        // Print stderr if present
+                        if !run_output.stderr.is_empty() {
+                            let stderr = String::from_utf8_lossy(&run_output.stderr);
+                            eprintln!("{}", stderr.trim_end());
+                        }
 
-                    // Check exit status
-                    if !run_output.status.success() {
-                        let exit_code = run_output.status.code().unwrap_or(-1);
-                        println!(
-                            "{} Process exited with code: {}",
-                            style("⚠").yellow(),
-                            exit_code
-                        );
+                        // Check exit status
+                        if !run_output.status.success() {
+                            let exit_code = run_output.status.code().unwrap_or(-1);
+                            println!(
+                                "{} Process exited with code: {}",
+                                style("⚠").yellow(),
+                                exit_code
+                            );
+                        }
                     }
                 }
             }
@@ -275,9 +333,12 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
         "rust" => {
             for file in files {
                 if file.extension().map_or(false, |ext| ext == "rs") {
-                    println!("{} Running compiled Rust code...", style("🚀").cyan());
+                    println!(
+                        "{} Compiling and executing Rust code...",
+                        style("🚀").cyan()
+                    );
 
-                    // Compile with rustc and run
+                    // Compile with rustc
                     let output = tokio::process::Command::new("rustc")
                         .arg(file)
                         .arg("-o")
@@ -293,24 +354,55 @@ async fn run_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
                         return Err(CliError::Compilation(format!("rustc failed: {}", stderr)));
                     }
 
-                    // Run the executable
+                    // Execute the compiled binary
                     let exe_path = file.with_extension("");
-                    let run_output = tokio::process::Command::new(&exe_path)
-                        .output()
-                        .await
-                        .map_err(|e| {
-                            CliError::Compilation(format!("Failed to run executable: {}", e))
-                        })?;
 
-                    println!("{}", String::from_utf8_lossy(&run_output.stdout));
-                    if !run_output.stderr.is_empty() {
-                        eprintln!("{}", String::from_utf8_lossy(&run_output.stderr));
+                    #[cfg(unix)]
+                    {
+                        unsafe {
+                            let pid = libc::fork();
+
+                            if pid == 0 {
+                                let path_cstring =
+                                    CString::new(exe_path.to_string_lossy().as_bytes()).map_err(
+                                        |e| CliError::Compilation(format!("Invalid path: {}", e)),
+                                    )?;
+
+                                let argv = vec![path_cstring.as_ptr(), std::ptr::null()];
+                                let envp = vec![std::ptr::null()];
+
+                                execve(path_cstring.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                                std::process::exit(1);
+                            } else if pid > 0 {
+                                let mut status: i32 = 0;
+                                libc::waitpid(pid, &mut status, 0);
+                            } else {
+                                return Err(CliError::Compilation(
+                                    "Failed to fork process".to_string(),
+                                ));
+                            }
+                        }
+                    }
+
+                    #[cfg(not(unix))]
+                    {
+                        let run_output = tokio::process::Command::new(&exe_path)
+                            .output()
+                            .await
+                            .map_err(|e| {
+                                CliError::Compilation(format!("Failed to execute: {}", e))
+                            })?;
+
+                        println!("{}", String::from_utf8_lossy(&run_output.stdout));
+                        if !run_output.stderr.is_empty() {
+                            eprintln!("{}", String::from_utf8_lossy(&run_output.stderr));
+                        }
                     }
                 }
             }
         }
         _ => {
-            warn!("Running {} output not yet supported", target);
+            warn!("Executing {} output not yet supported", target);
         }
     }
 
