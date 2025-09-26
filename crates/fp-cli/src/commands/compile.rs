@@ -27,6 +27,10 @@ pub struct CompileArgs {
     pub error_tolerance: bool,
     /// Maximum number of errors to collect (0 = unlimited)
     pub max_errors: usize,
+    /// Persist intermediate representations to disk
+    pub save_intermediates: bool,
+    /// Override source language detection
+    pub source_language: Option<String>,
 }
 
 /// Execute the compile command
@@ -118,6 +122,8 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     watch: false, // Prevent recursion
                     error_tolerance: args.error_tolerance,
                     max_errors: args.max_errors,
+                    save_intermediates: args.save_intermediates,
+                    source_language: args.source_language.clone(),
                 },
                 config,
             )
@@ -145,6 +151,7 @@ async fn compile_file(
         "rust" => PipelineTarget::Rust,
         "llvm" => PipelineTarget::Llvm,
         "binary" => PipelineTarget::Binary,
+        "bytecode" => PipelineTarget::Bytecode,
         _ => PipelineTarget::Interpret,
     };
 
@@ -154,9 +161,9 @@ async fn compile_file(
             runtime_type: "literal".to_string(),
             options: std::collections::HashMap::new(),
         },
-        source_language: None,
+        source_language: args.source_language.clone(),
         optimization_level: args.opt_level,
-        save_intermediates: false,
+        save_intermediates: args.save_intermediates,
         base_path: Some(output.with_extension("")),
         debug: DebugOptions {
             print_ast: false,
