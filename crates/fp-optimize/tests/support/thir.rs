@@ -1,9 +1,8 @@
-use fp_core::span::Span;
-use fp_core::thir::{
-    self, Body, BodyId, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Lit,
+use fp_core::hir::typed::{
+    self as thir, Body, BodyId, Expr, ExprKind, Function, FunctionSig, Item, ItemKind, Lit, Ty,
 };
-use fp_core::types::hir::Ty;
-use fp_core::types::IntTy;
+use fp_core::span::Span;
+use fp_core::hir::ty::IntTy;
 
 fn int_ty() -> Ty {
     Ty::int(IntTy::I32)

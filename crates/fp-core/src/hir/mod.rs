@@ -1,6 +1,11 @@
 use crate::ast::TypePrimitive;
 use std::collections::HashMap;
 
+pub mod ty;
+pub mod typed;
+
+pub use ty::Ty;
+
 pub type HirId = u32;
 pub type DefId = u32;
 pub type NodeId = u32;
@@ -40,7 +45,7 @@ pub struct Function {
 pub struct FunctionSig {
     pub name: Symbol,
     pub inputs: Vec<Param>,
-    pub output: Ty,
+    pub output: TypeExpr,
     pub generics: Generics,
 }
 
@@ -48,7 +53,7 @@ pub struct FunctionSig {
 pub struct Param {
     pub hir_id: HirId,
     pub pat: Pat,
-    pub ty: Ty,
+    pub ty: TypeExpr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,22 +67,22 @@ pub struct Struct {
 pub struct StructField {
     pub hir_id: HirId,
     pub name: Symbol,
-    pub ty: Ty,
+    pub ty: TypeExpr,
     pub vis: Visibility,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Const {
     pub name: Symbol,
-    pub ty: Ty,
+    pub ty: TypeExpr,
     pub body: Body,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Impl {
     pub generics: Generics,
-    pub trait_ty: Option<Ty>,
-    pub self_ty: Ty,
+    pub trait_ty: Option<TypeExpr>,
+    pub self_ty: TypeExpr,
     pub items: Vec<ImplItem>,
 }
 
@@ -121,7 +126,7 @@ pub enum ExprKind {
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Block(Block),
     StdIoPrintln(StdIoPrintln),
-    Let(Pat, Box<Ty>, Option<Box<Expr>>),
+    Let(Pat, Box<TypeExpr>, Option<Box<Expr>>),
     Assign(Box<Expr>, Box<Expr>),
     Return(Option<Box<Expr>>),
     Break(Option<Box<Expr>>),
@@ -200,7 +205,7 @@ pub enum StmtKind {
 pub struct Local {
     pub hir_id: HirId,
     pub pat: Pat,
-    pub ty: Option<Ty>,
+    pub ty: Option<TypeExpr>,
     pub init: Option<Expr>,
 }
 
@@ -227,20 +232,20 @@ pub struct PatField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Ty {
+pub struct TypeExpr {
     pub hir_id: HirId,
-    pub kind: TyKind,
+    pub kind: TypeExprKind,
     pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TyKind {
+pub enum TypeExprKind {
     Primitive(TypePrimitive),
     Path(Path),
-    Tuple(Vec<Box<Ty>>),
-    Array(Box<Ty>, Option<Box<Expr>>),
-    Ptr(Box<Ty>),
-    Ref(Box<Ty>),
+    Tuple(Vec<Box<TypeExpr>>),
+    Array(Box<TypeExpr>, Option<Box<Expr>>),
+    Ptr(Box<TypeExpr>),
+    Ref(Box<TypeExpr>),
     Never,
     Infer,
 }
@@ -264,7 +269,7 @@ pub struct GenericArgs {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericArg {
-    Type(Box<Ty>),
+    Type(Box<TypeExpr>),
     Const(Box<Expr>),
 }
 
@@ -283,8 +288,8 @@ pub struct GenericParam {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenericParamKind {
-    Type { default: Option<Box<Ty>> },
-    Const { ty: Box<Ty> },
+    Type { default: Option<Box<TypeExpr>> },
+    Const { ty: Box<TypeExpr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -295,7 +300,7 @@ pub struct WhereClause {
 #[derive(Debug, Clone, PartialEq)]
 pub enum WherePredicate {
     BoundPredicate {
-        bounded_ty: Box<Ty>,
+        bounded_ty: Box<TypeExpr>,
         bounds: Vec<TypeBound>,
     },
 }
@@ -402,8 +407,8 @@ impl Expr {
     }
 }
 
-impl Ty {
-    pub fn new(hir_id: HirId, kind: TyKind, span: Span) -> Self {
+impl TypeExpr {
+    pub fn new(hir_id: HirId, kind: TypeExprKind, span: Span) -> Self {
         Self { hir_id, kind, span }
     }
 }

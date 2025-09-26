@@ -12,7 +12,9 @@ fn test_mir_generator_creation() {
 #[test]
 fn test_local_creation() {
     let mut generator = MirGenerator::new();
-    let ty = Ty::new(TyKind::Tuple(Vec::new()));
+    let ty = Ty {
+        kind: TyKind::Tuple(Vec::new()),
+    };
 
     let local1 = generator.create_local(ty.clone());
     let local2 = generator.create_local(ty.clone());

@@ -1,7 +1,8 @@
 use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use fp_core::error::Result;
+use fp_core::hir::typed as thir;
+use fp_core::hir::{self, ty as hir_types};
 use fp_core::span::Span;
-use fp_core::{hir, thir, types};
 use std::collections::HashMap;
 use std::mem;
 
@@ -23,9 +24,9 @@ pub struct ThirGenerator {
     body_map: HashMap<thir::BodyId, thir::Body>,
     next_body_id: u32,
     /// Map constant names to their THIR body IDs for resolution
-    const_symbols: HashMap<types::DefId, thir::BodyId>,
+    const_symbols: HashMap<hir_types::DefId, thir::BodyId>,
     /// Map constant names to their original HIR initializer expression for inlining
-    const_init_map: HashMap<types::DefId, hir::Expr>,
+    const_init_map: HashMap<hir_types::DefId, hir::Expr>,
     /// Track simple local bindings we can inline by name.
     binding_inits: HashMap<String, hir::Expr>,
 }
@@ -54,7 +55,7 @@ impl ThirGenerator {
         // Pass 1: transform and register consts first so paths can resolve to them
         for hir_item in &hir_program.items {
             if let hir::ItemKind::Const(const_def) = &hir_item.kind {
-                let def_id = hir_item.def_id as types::DefId;
+                let def_id = hir_item.def_id as hir_types::DefId;
                 self.const_init_map
                     .insert(def_id, const_def.body.value.clone());
                 let thir_const = self.transform_const(Some(def_id), const_def.clone())?;
@@ -103,7 +104,7 @@ impl ThirGenerator {
         for item in &hir_program.items {
             if let hir::ItemKind::Struct(struct_def) = &item.kind {
                 self.type_context
-                    .declare_struct(item.def_id as types::DefId, &struct_def.name);
+                    .declare_struct(item.def_id as hir_types::DefId, &struct_def.name);
             }
         }
 
@@ -112,7 +113,7 @@ impl ThirGenerator {
                 hir::ItemKind::Function(func) => {
                     let fn_sig = self.build_fn_sig(&func.sig)?;
                     self.type_context.register_function(
-                        item.def_id as types::DefId,
+                        item.def_id as hir_types::DefId,
                         &func.sig.name,
                         fn_sig,
                     );
@@ -127,12 +128,12 @@ impl ThirGenerator {
                         })
                         .collect::<Result<Vec<_>>>()?;
                     self.type_context
-                        .init_struct_fields(item.def_id as types::DefId, fields);
+                        .init_struct_fields(item.def_id as hir_types::DefId, fields);
                 }
                 hir::ItemKind::Const(const_def) => {
                     let ty = self.hir_ty_to_ty(&const_def.ty)?;
                     self.type_context.register_const(
-                        item.def_id as types::DefId,
+                        item.def_id as hir_types::DefId,
                         &const_def.name,
                         ty,
                     );
@@ -156,7 +157,7 @@ impl ThirGenerator {
         Ok(())
     }
 
-    fn build_fn_sig(&mut self, sig: &hir::FunctionSig) -> Result<types::FnSig> {
+    fn build_fn_sig(&mut self, sig: &hir::FunctionSig) -> Result<hir_types::FnSig> {
         let input_types = sig
             .inputs
             .iter()
@@ -165,64 +166,66 @@ impl ThirGenerator {
 
         let output_type = self.hir_ty_to_ty(&sig.output)?;
 
-        Ok(types::FnSig {
+        Ok(hir_types::FnSig {
             inputs: input_types.into_iter().map(Box::new).collect(),
             output: Box::new(output_type),
             c_variadic: false,
-            unsafety: types::Unsafety::Normal,
-            abi: types::Abi::Rust,
+            unsafety: hir_types::Unsafety::Normal,
+            abi: hir_types::Abi::Rust,
         })
     }
 
-    fn resolve_ty_def_id(&mut self, hir_ty: &hir::Ty) -> Result<Option<types::DefId>> {
+    fn resolve_ty_def_id(&mut self, hir_ty: &hir::TypeExpr) -> Result<Option<hir_types::DefId>> {
         let ty = self.hir_ty_to_ty(hir_ty)?;
         Ok(Self::type_def_id(&ty))
     }
 
-    fn type_def_id(ty: &types::Ty) -> Option<types::DefId> {
+    fn type_def_id(ty: &hir_types::Ty) -> Option<hir_types::DefId> {
         match &ty.kind {
-            types::TyKind::Adt(adt_def, _) => Some(adt_def.did),
-            types::TyKind::Ref(_, inner, _) => Self::type_def_id(inner),
+            hir_types::TyKind::Adt(adt_def, _) => Some(adt_def.did),
+            hir_types::TyKind::Ref(_, inner, _) => Self::type_def_id(inner),
             _ => None,
         }
     }
 
-    fn make_primitive_ty(&self, name: &str) -> Option<types::Ty> {
+    fn make_primitive_ty(&self, name: &str) -> Option<hir_types::Ty> {
         match name {
-            "bool" => Some(types::Ty::bool()),
-            "char" => Some(types::Ty::char()),
-            "str" => Some(types::Ty::new(types::TyKind::Slice(Box::new(
-                types::Ty::char(),
-            )))),
-            "String" => Some(types::Ty::new(types::TyKind::Adt(
-                types::AdtDef {
-                    did: 0,
-                    variants: Vec::new(),
-                    flags: types::AdtFlags::IS_STRUCT,
-                    repr: types::ReprOptions {
-                        int: None,
-                        align: None,
-                        pack: None,
-                        flags: types::ReprFlags::empty(),
-                        field_shuffle_seed: 0,
+            "bool" => Some(hir_types::Ty::bool()),
+            "char" => Some(hir_types::Ty::char()),
+            "str" => Some(hir_types::Ty {
+                kind: hir_types::TyKind::Slice(Box::new(hir_types::Ty::char())),
+            }),
+            "String" => Some(hir_types::Ty {
+                kind: hir_types::TyKind::Adt(
+                    hir_types::AdtDef {
+                        did: 0,
+                        variants: Vec::new(),
+                        flags: hir_types::AdtFlags::IS_STRUCT,
+                        repr: hir_types::ReprOptions {
+                            int: None,
+                            align: None,
+                            pack: None,
+                            flags: hir_types::ReprFlags::empty(),
+                            field_shuffle_seed: 0,
+                        },
                     },
-                },
-                Vec::new(),
-            ))),
-            "i8" => Some(types::Ty::int(types::IntTy::I8)),
-            "i16" => Some(types::Ty::int(types::IntTy::I16)),
-            "i32" => Some(types::Ty::int(types::IntTy::I32)),
-            "i64" => Some(types::Ty::int(types::IntTy::I64)),
-            "i128" => Some(types::Ty::int(types::IntTy::I128)),
-            "isize" => Some(types::Ty::int(types::IntTy::Isize)),
-            "u8" => Some(types::Ty::uint(types::UintTy::U8)),
-            "u16" => Some(types::Ty::uint(types::UintTy::U16)),
-            "u32" => Some(types::Ty::uint(types::UintTy::U32)),
-            "u64" => Some(types::Ty::uint(types::UintTy::U64)),
-            "u128" => Some(types::Ty::uint(types::UintTy::U128)),
-            "usize" => Some(types::Ty::uint(types::UintTy::Usize)),
-            "f32" => Some(types::Ty::float(types::FloatTy::F32)),
-            "f64" => Some(types::Ty::float(types::FloatTy::F64)),
+                    Vec::new(),
+                ),
+            }),
+            "i8" => Some(hir_types::Ty::int(hir_types::IntTy::I8)),
+            "i16" => Some(hir_types::Ty::int(hir_types::IntTy::I16)),
+            "i32" => Some(hir_types::Ty::int(hir_types::IntTy::I32)),
+            "i64" => Some(hir_types::Ty::int(hir_types::IntTy::I64)),
+            "i128" => Some(hir_types::Ty::int(hir_types::IntTy::I128)),
+            "isize" => Some(hir_types::Ty::int(hir_types::IntTy::Isize)),
+            "u8" => Some(hir_types::Ty::uint(hir_types::UintTy::U8)),
+            "u16" => Some(hir_types::Ty::uint(hir_types::UintTy::U16)),
+            "u32" => Some(hir_types::Ty::uint(hir_types::UintTy::U32)),
+            "u64" => Some(hir_types::Ty::uint(hir_types::UintTy::U64)),
+            "u128" => Some(hir_types::Ty::uint(hir_types::UintTy::U128)),
+            "usize" => Some(hir_types::Ty::uint(hir_types::UintTy::Usize)),
+            "f32" => Some(hir_types::Ty::float(hir_types::FloatTy::F32)),
+            "f64" => Some(hir_types::Ty::float(hir_types::FloatTy::F64)),
             _ => None,
         }
     }
@@ -230,7 +233,12 @@ impl ThirGenerator {
     fn path_to_type_info(
         &mut self,
         path: &hir::Path,
-    ) -> Result<(Option<types::DefId>, String, String, types::SubstsRef)> {
+    ) -> Result<(
+        Option<hir_types::DefId>,
+        String,
+        String,
+        hir_types::SubstsRef,
+    )> {
         if let Some(segment) = path.segments.last() {
             let base_name = segment.name.clone();
             let qualified = path
@@ -245,7 +253,7 @@ impl ThirGenerator {
                 Vec::new()
             };
             let def_id = match path.res {
-                Some(hir::Res::Def(id)) => Some(id as types::DefId),
+                Some(hir::Res::Def(id)) => Some(id as hir_types::DefId),
                 _ => None,
             };
             Ok((def_id, qualified, base_name, substs))
@@ -256,16 +264,19 @@ impl ThirGenerator {
         }
     }
 
-    fn convert_hir_generic_args(&mut self, args: &hir::GenericArgs) -> Result<types::SubstsRef> {
+    fn convert_hir_generic_args(
+        &mut self,
+        args: &hir::GenericArgs,
+    ) -> Result<hir_types::SubstsRef> {
         let mut substs = Vec::new();
         for arg in &args.args {
             match arg {
                 hir::GenericArg::Type(ty) => {
-                    substs.push(types::GenericArg::Type(self.hir_ty_to_ty(ty)?));
+                    substs.push(hir_types::GenericArg::Type(self.hir_ty_to_ty(ty)?));
                 }
                 hir::GenericArg::Const(_) => {
-                    substs.push(types::GenericArg::Const(types::ConstKind::Value(
-                        types::ConstValue::ZeroSized,
+                    substs.push(hir_types::GenericArg::Const(hir_types::ConstKind::Value(
+                        hir_types::ConstValue::ZeroSized,
                     )));
                 }
             }
