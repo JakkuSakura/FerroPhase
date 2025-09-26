@@ -3,6 +3,7 @@ use crate::stdlib::CStdLib;
 use fp_core::{error::Result, lir, Error};
 use llvm_ir::constant::Float;
 use llvm_ir::module::{DLLStorageClass, GlobalVariable, Linkage, ThreadLocalMode, Visibility};
+use llvm_ir::predicates::IntPredicate;
 use llvm_ir::types::FPType;
 use llvm_ir::*;
 // use llvm_ir::instruction::Call; // Not needed currently
@@ -22,6 +23,8 @@ pub struct LirCodegen<'ctx> {
     referenced_globals: std::collections::HashSet<String>,
     // Global constants map from MIR->LIR transformation
     global_const_map: HashMap<String, lir::LirConstant>,
+    constant_results: HashMap<u32, lir::LirConstant>,
+    current_return_type: Option<lir::LirType>,
 }
 
 impl<'ctx> LirCodegen<'ctx> {
@@ -41,6 +44,8 @@ impl<'ctx> LirCodegen<'ctx> {
             next_string_id: 0,
             referenced_globals: std::collections::HashSet::new(),
             global_const_map,
+            constant_results: HashMap::new(),
+            current_return_type: None,
         }
     }
 
@@ -178,8 +183,12 @@ impl<'ctx> LirCodegen<'ctx> {
             "LLVM: Converting return type: {:?}",
             lir_func.signature.return_type
         );
+        let mut return_lir_type = lir_func.signature.return_type.clone();
+        if lir_func.name == "main" && matches!(return_lir_type, lir::LirType::Void) {
+            return_lir_type = lir::LirType::I32;
+        }
         let return_type = self
-            .convert_lir_type_to_llvm(lir_func.signature.return_type)
+            .convert_lir_type_to_llvm(return_lir_type.clone())
             .map_err(|e| {
                 fp_core::error::Error::Generic(eyre!("Failed to convert return type: {}", e))
             })?;
@@ -193,10 +202,12 @@ impl<'ctx> LirCodegen<'ctx> {
         debug!("LLVM: Created function declaration: {}", function_name);
 
         self.current_function = Some(function_name.clone());
+        self.current_return_type = Some(return_lir_type);
 
         // Clear value map for new function
         self.value_map.clear();
         self.block_map.clear();
+        self.constant_results.clear();
 
         for (i, basic_block) in lir_func.basic_blocks.into_iter().enumerate() {
             debug!(
@@ -209,6 +220,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
 
         debug!("LLVM: Function {} generation completed", lir_func.name);
+        self.current_return_type = None;
         Ok(())
     }
 
@@ -277,6 +289,24 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
                 self.record_result(instr_id, ty_hint.clone(), result_name);
             }
+            lir::LirInstructionKind::Eq(lhs, rhs) => {
+                self.lower_int_cmp(IntPredicate::EQ, lhs, rhs, instr_id, ty_hint.clone())?;
+            }
+            lir::LirInstructionKind::Ne(lhs, rhs) => {
+                self.lower_int_cmp(IntPredicate::NE, lhs, rhs, instr_id, ty_hint.clone())?;
+            }
+            lir::LirInstructionKind::Lt(lhs, rhs) => {
+                self.lower_int_cmp(IntPredicate::SLT, lhs, rhs, instr_id, ty_hint.clone())?;
+            }
+            lir::LirInstructionKind::Le(lhs, rhs) => {
+                self.lower_int_cmp(IntPredicate::SLE, lhs, rhs, instr_id, ty_hint.clone())?;
+            }
+            lir::LirInstructionKind::Gt(lhs, rhs) => {
+                self.lower_int_cmp(IntPredicate::SGT, lhs, rhs, instr_id, ty_hint.clone())?;
+            }
+            lir::LirInstructionKind::Ge(lhs, rhs) => {
+                self.lower_int_cmp(IntPredicate::SGE, lhs, rhs, instr_id, ty_hint.clone())?;
+            }
             lir::LirInstructionKind::Sub(lhs, rhs) => {
                 let lhs_operand = self.convert_lir_value_to_operand(lhs)?;
                 let rhs_operand = self.convert_lir_value_to_operand(rhs)?;
@@ -344,19 +374,37 @@ impl<'ctx> LirCodegen<'ctx> {
                     _ => "".to_string(),
                 };
 
-                // Map std library functions to their runtime implementations
-                let runtime_fn_name = self.map_std_function_to_runtime(&fn_name);
+                let arg_count = args.len();
+                let first_arg_is_string = matches!(
+                    args.get(0),
+                    Some(lir::LirValue::Constant(lir::LirConstant::String(_)))
+                );
+
+                let mut runtime_fn_name = self.map_std_function_to_runtime(&fn_name);
+                let mut append_newline = false;
+                if matches!(
+                    fn_name.as_str(),
+                    "println" | "println!" | "std::io::println"
+                ) {
+                    if arg_count == 1 && first_arg_is_string {
+                        runtime_fn_name = "puts".to_string();
+                    } else {
+                        runtime_fn_name = "printf".to_string();
+                        append_newline = true;
+                    }
+                }
 
                 // Ensure runtime function declaration exists
                 self.ensure_runtime_function_decl(&runtime_fn_name)?;
 
                 let i32_ref = self.llvm_ctx.module.types.i32();
                 let ptr_ref = self.llvm_ctx.module.types.pointer();
-                let fn_ty =
-                    self.llvm_ctx
-                        .module
-                        .types
-                        .func_type(i32_ref, vec![ptr_ref.clone()], false);
+                let is_var_arg = matches!(runtime_fn_name.as_str(), "printf" | "fprintf");
+                let fn_ty = self.llvm_ctx.module.types.func_type(
+                    i32_ref,
+                    vec![ptr_ref.clone()],
+                    is_var_arg,
+                );
 
                 let callee = either::Either::Right(Operand::ConstantOperand(ConstantRef::new(
                     Constant::GlobalReference {
@@ -366,9 +414,12 @@ impl<'ctx> LirCodegen<'ctx> {
                 )));
 
                 let mut call_args: Vec<(Operand, Vec<function::ParameterAttribute>)> = Vec::new();
-                for arg in args.into_iter() {
+                for (index, arg) in args.into_iter().enumerate() {
                     let operand = match arg {
-                        lir::LirValue::Constant(lir::LirConstant::String(s)) => {
+                        lir::LirValue::Constant(lir::LirConstant::String(mut s)) => {
+                            if append_newline && index == 0 && !s.ends_with('\n') {
+                                s.push('\n');
+                            }
                             let const_ref =
                                 self.convert_lir_constant_to_llvm_mut(lir::LirConstant::String(s))?;
                             self.llvm_ctx.operand_from_constant(const_ref)
@@ -412,6 +463,263 @@ impl<'ctx> LirCodegen<'ctx> {
         }
 
         Ok(())
+    }
+
+    fn lower_int_cmp(
+        &mut self,
+        predicate: IntPredicate,
+        lhs: lir::LirValue,
+        rhs: lir::LirValue,
+        instr_id: u32,
+        ty_hint: Option<lir::LirType>,
+    ) -> Result<()> {
+        let hint = ty_hint.clone();
+        let (lhs_aligned, rhs_aligned) = self.align_cmp_operands(lhs, rhs);
+
+        if let (lir::LirValue::Constant(ref lhs_const), lir::LirValue::Constant(ref rhs_const)) =
+            (&lhs_aligned, &rhs_aligned)
+        {
+            if let Some(result) = Self::fold_int_cmp(predicate, lhs_const, rhs_const) {
+                let target_ty = hint.clone().unwrap_or(lir::LirType::I1);
+                let constant = match target_ty {
+                    lir::LirType::I1 => lir::LirConstant::Bool(result),
+                    lir::LirType::I8 => lir::LirConstant::Int(result as i64, lir::LirType::I8),
+                    lir::LirType::I16 => lir::LirConstant::Int(result as i64, lir::LirType::I16),
+                    lir::LirType::I32 => lir::LirConstant::Int(result as i64, lir::LirType::I32),
+                    lir::LirType::I64 => lir::LirConstant::Int(result as i64, lir::LirType::I64),
+                    lir::LirType::I128 => lir::LirConstant::Int(result as i64, lir::LirType::I128),
+                    _ => lir::LirConstant::Bool(result),
+                };
+                self.constant_results.insert(instr_id, constant);
+                return Ok(());
+            }
+        }
+
+        let lhs_operand = self.convert_lir_value_to_operand(lhs_aligned)?;
+        let rhs_operand = self.convert_lir_value_to_operand(rhs_aligned)?;
+        let cmp_name = self
+            .llvm_ctx
+            .build_icmp(
+                predicate,
+                lhs_operand,
+                rhs_operand,
+                &format!("icmp_{}", instr_id),
+            )
+            .map_err(fp_core::error::Error::from)?;
+
+        let bool_type = self.llvm_ctx.module.types.bool();
+        let cmp_operand = Operand::LocalOperand {
+            name: cmp_name.clone(),
+            ty: bool_type,
+        };
+
+        match hint.unwrap_or(lir::LirType::I1) {
+            lir::LirType::I1 => {
+                self.record_result(instr_id, Some(lir::LirType::I1), cmp_name);
+            }
+            wider_ty => {
+                let llvm_target_ty = self.convert_lir_type_to_llvm(wider_ty.clone())?;
+                let zext_name = self
+                    .llvm_ctx
+                    .build_zext(cmp_operand, llvm_target_ty, &format!("zext_{}", instr_id))
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(wider_ty), zext_name);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cast_condition_to_bool(
+        &mut self,
+        operand: Operand,
+        lir_ty: Option<lir::LirType>,
+        hint_name: &str,
+    ) -> Result<Operand> {
+        if matches!(lir_ty, Some(lir::LirType::I1)) {
+            return Ok(operand);
+        }
+
+        if let Operand::ConstantOperand(constant) = &operand {
+            let truthy = match constant.as_ref() {
+                llvm_ir::constant::Constant::Int { value, .. } => *value != 0,
+                llvm_ir::constant::Constant::Float(f) => match f {
+                    Float::Single(v) => *v != 0.0,
+                    Float::Double(v) => *v != 0.0,
+                    _ => true,
+                },
+                llvm_ir::constant::Constant::Null(_) => false,
+                _ => true,
+            };
+            let bool_constant = self.llvm_ctx.const_bool(truthy);
+            return Ok(self.llvm_ctx.operand_from_constant(bool_constant));
+        }
+
+        let zero_operand = match lir_ty.clone().unwrap_or(lir::LirType::I32) {
+            lir::LirType::I64 => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_i64(0)),
+            lir::LirType::I1 => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_bool(false)),
+            _ => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_i32(0)),
+        };
+
+        let cmp_name = self
+            .llvm_ctx
+            .build_icmp(
+                IntPredicate::NE,
+                operand,
+                zero_operand,
+                &format!("cond_bool_{}", hint_name),
+            )
+            .map_err(fp_core::error::Error::from)?;
+
+        Ok(Operand::LocalOperand {
+            name: cmp_name,
+            ty: self.llvm_ctx.module.types.bool(),
+        })
+    }
+
+    fn align_cmp_operands(
+        &self,
+        lhs: lir::LirValue,
+        rhs: lir::LirValue,
+    ) -> (lir::LirValue, lir::LirValue) {
+        let lhs_ty = self.lir_value_type(&lhs);
+        let rhs_ty = self.lir_value_type(&rhs);
+
+        if let (Some(ref lt), Some(ref rt)) = (&lhs_ty, &rhs_ty) {
+            if Self::is_integer_type(lt) && Self::is_integer_type(rt) && lt != rt {
+                let target = Self::max_int_type(lt.clone(), rt.clone());
+                let lhs_conv = Self::convert_constant_to_type(lhs, &target);
+                let rhs_conv = Self::convert_constant_to_type(rhs, &target);
+                return (lhs_conv, rhs_conv);
+            }
+        }
+
+        (lhs, rhs)
+    }
+
+    fn convert_constant_to_type(value: lir::LirValue, target: &lir::LirType) -> lir::LirValue {
+        match value {
+            lir::LirValue::Constant(lir::LirConstant::Int(v, _)) => {
+                lir::LirValue::Constant(lir::LirConstant::Int(v, target.clone()))
+            }
+            lir::LirValue::Constant(lir::LirConstant::UInt(v, _)) => {
+                lir::LirValue::Constant(lir::LirConstant::UInt(v, target.clone()))
+            }
+            other => other,
+        }
+    }
+
+    fn is_integer_type(ty: &lir::LirType) -> bool {
+        matches!(
+            ty,
+            lir::LirType::I1
+                | lir::LirType::I8
+                | lir::LirType::I16
+                | lir::LirType::I32
+                | lir::LirType::I64
+                | lir::LirType::I128
+        )
+    }
+
+    fn max_int_type(lhs: lir::LirType, rhs: lir::LirType) -> lir::LirType {
+        let lhs_rank = Self::int_type_rank(&lhs);
+        let rhs_rank = Self::int_type_rank(&rhs);
+        if lhs_rank >= rhs_rank {
+            lhs
+        } else {
+            rhs
+        }
+    }
+
+    fn int_type_rank(ty: &lir::LirType) -> u32 {
+        match ty {
+            lir::LirType::I1 => 1,
+            lir::LirType::I8 => 8,
+            lir::LirType::I16 => 16,
+            lir::LirType::I32 => 32,
+            lir::LirType::I64 => 64,
+            lir::LirType::I128 => 128,
+            _ => 32,
+        }
+    }
+
+    fn lir_value_type(&self, value: &lir::LirValue) -> Option<lir::LirType> {
+        match value {
+            lir::LirValue::Constant(lir::LirConstant::Int(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::UInt(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Float(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Struct(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Array(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Null(ty))
+            | lir::LirValue::Constant(lir::LirConstant::Undef(ty)) => Some(ty.clone()),
+            lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),
+            lir::LirValue::Register(reg_id) => self.value_map.get(reg_id).map(|(_, ty)| ty.clone()),
+            _ => None,
+        }
+    }
+
+    fn fold_int_cmp(
+        predicate: IntPredicate,
+        lhs: &lir::LirConstant,
+        rhs: &lir::LirConstant,
+    ) -> Option<bool> {
+        use IntPredicate::*;
+        match (lhs, rhs) {
+            (lir::LirConstant::Int(a, _), lir::LirConstant::Int(b, _)) => {
+                let (a, b) = (*a, *b);
+                Some(match predicate {
+                    EQ => a == b,
+                    NE => a != b,
+                    SLT => a < b,
+                    SLE => a <= b,
+                    SGT => a > b,
+                    SGE => a >= b,
+                    _ => return None,
+                })
+            }
+            (lir::LirConstant::UInt(a, _), lir::LirConstant::UInt(b, _)) => {
+                let (a, b) = (*a, *b);
+                Some(match predicate {
+                    EQ => a == b,
+                    NE => a != b,
+                    ULT => a < b,
+                    ULE => a <= b,
+                    UGT => a > b,
+                    UGE => a >= b,
+                    _ => return None,
+                })
+            }
+            (lir::LirConstant::Bool(a), lir::LirConstant::Bool(b)) => Some(match predicate {
+                EQ => a == b,
+                NE => a != b,
+                _ => return None,
+            }),
+            _ => None,
+        }
+    }
+
+    fn zero_operand_for_type(&self, ty: &lir::LirType) -> Result<Operand> {
+        let operand = match ty {
+            lir::LirType::I1 => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_bool(false)),
+            lir::LirType::I8 | lir::LirType::I16 | lir::LirType::I32 => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_i32(0)),
+            lir::LirType::I64 | lir::LirType::I128 => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_i64(0)),
+            _ => self
+                .llvm_ctx
+                .operand_from_constant(self.llvm_ctx.const_i32(0)),
+        };
+        Ok(operand)
     }
 
     /// Map std library functions to their runtime implementations
@@ -486,10 +794,20 @@ impl<'ctx> LirCodegen<'ctx> {
         tracing::debug!("Terminator type: {:?}", std::mem::discriminant(&lir_term));
         match lir_term {
             lir::LirTerminator::Return(value) => {
-                let return_operand = match value {
+                let mut return_operand = match value {
                     Some(val) => Some(self.convert_lir_value_to_operand(val)?),
                     None => None,
                 };
+
+                if return_operand.is_none() {
+                    if let Some(ref lir_ty) = self.current_return_type {
+                        if !matches!(lir_ty, lir::LirType::Void) {
+                            let zero = self.zero_operand_for_type(lir_ty)?;
+                            return_operand = Some(zero);
+                        }
+                    }
+                }
+
                 self.llvm_ctx
                     .build_return(return_operand)
                     .map_err(fp_core::error::Error::from)?;
@@ -502,14 +820,28 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
             }
             lir::LirTerminator::CondBr {
-                condition: _condition,
-                if_true: _then_block,
-                if_false: _else_block,
+                condition,
+                if_true,
+                if_false,
             } => {
-                // TODO: Implement conditional branch instruction
-                // For now, just create a return
+                let condition_clone = condition.clone();
+                let lir_type = match condition_clone {
+                    lir::LirValue::Register(reg_id) => {
+                        self.value_map.get(&reg_id).map(|(_, ty)| ty.clone())
+                    }
+                    _ => None,
+                };
+                let condition_operand = self.convert_lir_value_to_operand(condition)?;
+                let bool_operand = self.cast_condition_to_bool(
+                    condition_operand,
+                    lir_type,
+                    &format!("{}_{}", if_true, if_false),
+                )?;
+
+                let true_label = format!("bb{}", if_true);
+                let false_label = format!("bb{}", if_false);
                 self.llvm_ctx
-                    .build_return(None)
+                    .build_conditional_branch(bool_operand, &true_label, &false_label)
                     .map_err(fp_core::error::Error::from)?;
             }
             term => {
@@ -527,6 +859,10 @@ impl<'ctx> LirCodegen<'ctx> {
     fn convert_lir_value_to_operand(&mut self, lir_value: lir::LirValue) -> Result<Operand> {
         match lir_value {
             lir::LirValue::Register(reg_id) => {
+                if let Some(constant) = self.constant_results.get(&reg_id) {
+                    let llvm_constant = self.convert_lir_constant_to_llvm_mut(constant.clone())?;
+                    return Ok(self.llvm_ctx.operand_from_constant(llvm_constant));
+                }
                 if let Some((name, lir_ty)) = self.value_map.get(&reg_id) {
                     let llvm_ty = self.convert_lir_type_to_llvm(lir_ty.clone())?;
                     Ok(self

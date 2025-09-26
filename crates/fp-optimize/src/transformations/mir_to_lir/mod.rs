@@ -2,7 +2,7 @@ use fp_core::ast::Value;
 use fp_core::error::Result;
 use fp_core::types::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
 use fp_core::{lir, mir};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 mod const_eval;
 #[cfg(test)]
@@ -101,7 +101,9 @@ impl LirGenerator {
             lir_func.locals = self.build_lir_locals(mir_body);
             self.seed_argument_registers(mir_body);
 
-            for (bb_idx, bb) in mir_body.basic_blocks.iter().enumerate() {
+            let block_order = self.compute_block_order(mir_body);
+            for &bb_idx in &block_order {
+                let bb = &mir_body.basic_blocks[bb_idx];
                 let lir_block = self.transform_basic_block(bb_idx as u32, bb)?;
                 lir_func.basic_blocks.push(lir_block);
             }
@@ -338,8 +340,8 @@ impl LirGenerator {
     /// Transform a MIR operand to LIR value
     fn transform_operand(&mut self, operand: &mir::Operand) -> Result<lir::LirValue> {
         match operand {
-            mir::Operand::Move(place) => Ok(self.get_or_create_register_for_place(place)),
-            mir::Operand::Copy(place) => Ok(self.get_or_create_register_for_place(place)),
+            mir::Operand::Move(place) => self.get_or_create_register_for_place(place),
+            mir::Operand::Copy(place) => self.get_or_create_register_for_place(place),
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::Fn(name, ty) => {
                     Ok(lir::LirValue::Global(name.clone(), ty.clone()))
@@ -414,17 +416,23 @@ impl LirGenerator {
         self.return_local = None;
     }
 
-    fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> lir::LirValue {
+    fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> Result<lir::LirValue> {
         if let Some(existing_reg) = self.register_map.get(&place.local) {
-            existing_reg.clone()
+            Ok(existing_reg.clone())
         } else {
-            tracing::warn!(
-                "MIR→LIR: missing value for local {}; defaulting to zero",
-                place.local
-            );
-            let default = lir::LirValue::Constant(lir::LirConstant::Int(0, lir::LirType::I32));
-            self.register_map.insert(place.local, default.clone());
-            default
+            if let Some(place_ty) = self.lookup_place_type(place) {
+                if Self::is_zero_sized(&place_ty) {
+                    let lir_ty = self.lir_type_from_ty(&place_ty);
+                    let value =
+                        lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty));
+                    self.register_map.insert(place.local, value.clone());
+                    return Ok(value);
+                }
+            }
+            Err(crate::error::optimization_error(format!(
+                "MIR→LIR: missing value for local {} (place={:?}); cannot lower MIR",
+                place.local, place
+            )))
         }
     }
 
@@ -637,6 +645,119 @@ impl LirGenerator {
         Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)))
     }
 
+    fn compute_block_order(&self, mir_body: &mir::Body) -> Vec<usize> {
+        let mut order = Vec::new();
+        let block_count = mir_body.basic_blocks.len();
+        if block_count == 0 {
+            return order;
+        }
+
+        let mut visited = vec![false; block_count];
+        let mut queue = VecDeque::new();
+        queue.push_back(0usize);
+        visited[0] = true;
+
+        while let Some(bb_idx) = queue.pop_front() {
+            order.push(bb_idx);
+            let successors = Self::mir_successors(&mir_body.basic_blocks[bb_idx]);
+            for succ in successors {
+                let succ_idx = succ as usize;
+                if succ_idx < block_count && !visited[succ_idx] {
+                    visited[succ_idx] = true;
+                    queue.push_back(succ_idx);
+                }
+            }
+        }
+
+        // Append any unreachable blocks deterministically to maintain coverage
+        for idx in 0..block_count {
+            if !visited[idx] {
+                order.push(idx);
+            }
+        }
+
+        order
+    }
+
+    fn mir_successors(bb: &mir::BasicBlockData) -> Vec<mir::BasicBlockId> {
+        let mut successors = Vec::new();
+        if let Some(terminator) = &bb.terminator {
+            match &terminator.kind {
+                mir::TerminatorKind::Goto { target } => successors.push(*target),
+                mir::TerminatorKind::SwitchInt { targets, .. } => {
+                    successors.extend(targets.targets.iter().copied());
+                    successors.push(targets.otherwise);
+                }
+                mir::TerminatorKind::Call {
+                    destination,
+                    cleanup,
+                    ..
+                } => {
+                    if let Some((_, dest_bb)) = destination {
+                        successors.push(*dest_bb);
+                    }
+                    if let Some(cleanup_bb) = cleanup {
+                        successors.push(*cleanup_bb);
+                    }
+                }
+                mir::TerminatorKind::Drop { target, unwind, .. }
+                | mir::TerminatorKind::DropAndReplace { target, unwind, .. } => {
+                    successors.push(*target);
+                    if let Some(unwind_bb) = unwind {
+                        successors.push(*unwind_bb);
+                    }
+                }
+                mir::TerminatorKind::Assert {
+                    target, cleanup, ..
+                } => {
+                    successors.push(*target);
+                    if let Some(cleanup_bb) = cleanup {
+                        successors.push(*cleanup_bb);
+                    }
+                }
+                mir::TerminatorKind::Yield { resume, drop, .. } => {
+                    successors.push(*resume);
+                    if let Some(drop_bb) = drop {
+                        successors.push(*drop_bb);
+                    }
+                }
+                mir::TerminatorKind::FalseEdge {
+                    real_target,
+                    imaginary_target,
+                } => {
+                    successors.push(*real_target);
+                    successors.push(*imaginary_target);
+                }
+                mir::TerminatorKind::FalseUnwind {
+                    real_target,
+                    unwind,
+                } => {
+                    successors.push(*real_target);
+                    if let Some(unwind_bb) = unwind {
+                        successors.push(*unwind_bb);
+                    }
+                }
+                mir::TerminatorKind::InlineAsm {
+                    destination,
+                    cleanup,
+                    ..
+                } => {
+                    if let Some(dest_bb) = destination {
+                        successors.push(*dest_bb);
+                    }
+                    if let Some(cleanup_bb) = cleanup {
+                        successors.push(*cleanup_bb);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        successors.sort_unstable();
+        successors.dedup();
+        successors
+    }
+
     fn constant_from_aggregate(
         &self,
         kind: &mir::AggregateKind,
@@ -670,6 +791,10 @@ impl LirGenerator {
 
     fn lookup_place_type(&self, place: &mir::Place) -> Option<&Ty> {
         self.local_types.get(place.local as usize)
+    }
+
+    fn is_zero_sized(ty: &Ty) -> bool {
+        matches!(ty.kind, TyKind::Tuple(ref elements) if elements.is_empty())
     }
 
     fn lir_type_from_ty(&self, ty: &Ty) -> lir::LirType {

@@ -8,6 +8,7 @@ pub mod context;
 pub mod cst;
 pub mod ctx;
 pub mod error;
+pub mod frontend;
 pub mod hir;
 pub mod id;
 pub mod lir;
@@ -23,6 +24,8 @@ pub mod utils;
 
 // Re-export commonly used items for convenience
 pub use tracing;
+
+pub use frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 
 // Alias for error types
 pub type Error = crate::error::Error;

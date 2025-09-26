@@ -82,6 +82,15 @@ flags for informational entries but always surfaces warnings and errors.
   context so future tooling can persist or inspect it alongside canonical AST
   artefacts.
 
+### CLI integration
+
+- The `fp compile` command now accepts `--lang <identifier>` (alias `--language`)
+  to feed `PipelineOptions.source_language`. Use it when file extensions are
+  ambiguous (e.g., stdin or embedded expressions) or when forcing a particular
+  frontend during experiments.
+- `--save-intermediates` persists stage outputs (_including the LAST snapshot_
+  as part of the context hand-off) regardless of the selected language.
+
 ## Intermediates & Persistence
 
 When `save_intermediates` is enabled, each stage writes its artefact into the

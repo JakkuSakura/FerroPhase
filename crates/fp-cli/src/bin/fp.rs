@@ -133,6 +133,10 @@ struct CompileArgs {
     #[arg(short, long)]
     watch: bool,
 
+    /// Persist intermediate representations to disk
+    #[arg(long)]
+    save_intermediates: bool,
+
     /// Enable error tolerance during compilation
     #[arg(long)]
     error_tolerance: bool,
@@ -140,6 +144,10 @@ struct CompileArgs {
     /// Maximum number of errors to collect when tolerance is enabled (0 = unlimited)
     #[arg(long, default_value = "50")]
     max_errors: usize,
+
+    /// Override automatic source language detection (e.g. "typescript")
+    #[arg(long = "lang", alias = "language")]
+    language: Option<String>,
 }
 
 #[derive(Args)]
@@ -329,6 +337,8 @@ async fn main() -> Result<()> {
                 watch: args.watch,
                 error_tolerance: args.error_tolerance,
                 max_errors: args.max_errors,
+                save_intermediates: args.save_intermediates,
+                source_language: args.language,
             };
             commands::compile_command(compile_args, &config).await
         }

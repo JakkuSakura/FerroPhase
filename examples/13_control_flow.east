@@ -1,0 +1,872 @@
+File(
+    File {
+        path: "examples/13_control_flow.rs",
+        items: [
+            DefFunction(
+                ItemDefFunction {
+                    attrs: [],
+                    name: #main,
+                    ty: None,
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: None,
+                    },
+                    body: Block(
+                        ExprBlock {
+                            stmts: [
+                                Item(
+                                    DefConst(
+                                        ItemDefConst {
+                                            visibility: Private,
+                                            name: #MAX_COUNT,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            value: Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 5,
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                                Let(
+                                    StmtLet {
+                                        pat: Type(
+                                            PatternType {
+                                                pat: Ident(
+                                                    PatternIdent {
+                                                        ident: #counter,
+                                                        mutability: Some(
+                                                            true,
+                                                        ),
+                                                    },
+                                                ),
+                                                ty: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        init: Some(
+                                            Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 0,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        diverge: None,
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "=== While Loop ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: While(
+                                            ExprWhile {
+                                                cond: BinOp(
+                                                    ExprBinOp {
+                                                        kind: Lt,
+                                                        lhs: Locator(
+                                                            #counter,
+                                                        ),
+                                                        rhs: Locator(
+                                                            #MAX_COUNT,
+                                                        ),
+                                                    },
+                                                ),
+                                                body: Block(
+                                                    ExprBlock {
+                                                        stmts: [
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: StdIoPrintln(
+                                                                        ExprStdIoPrintln {
+                                                                            format: ExprFormatString {
+                                                                                parts: [
+                                                                                    Literal(
+                                                                                        "Counter: ",
+                                                                                    ),
+                                                                                    Placeholder(
+                                                                                        FormatPlaceholder {
+                                                                                            arg_ref: Implicit,
+                                                                                            format_spec: None,
+                                                                                        },
+                                                                                    ),
+                                                                                ],
+                                                                                args: [
+                                                                                    Locator(
+                                                                                        #counter,
+                                                                                    ),
+                                                                                ],
+                                                                                kwargs: [],
+                                                                            },
+                                                                            newline: true,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: Assign(
+                                                                        ExprAssign {
+                                                                            target: Locator(
+                                                                                #counter,
+                                                                            ),
+                                                                            value: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Add,
+                                                                                    lhs: Locator(
+                                                                                        #counter,
+                                                                                    ),
+                                                                                    rhs: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 1,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            false,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "Final counter: ",
+                                                        ),
+                                                        Placeholder(
+                                                            FormatPlaceholder {
+                                                                arg_ref: Implicit,
+                                                                format_spec: None,
+                                                            },
+                                                        ),
+                                                    ],
+                                                    args: [
+                                                        Locator(
+                                                            #counter,
+                                                        ),
+                                                    ],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Infinite Loop with Break ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Let(
+                                    StmtLet {
+                                        pat: Type(
+                                            PatternType {
+                                                pat: Ident(
+                                                    PatternIdent {
+                                                        ident: #i,
+                                                        mutability: Some(
+                                                            true,
+                                                        ),
+                                                    },
+                                                ),
+                                                ty: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        init: Some(
+                                            Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 0,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        diverge: None,
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: Loop(
+                                            ExprLoop {
+                                                label: None,
+                                                body: Block(
+                                                    ExprBlock {
+                                                        stmts: [
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: If(
+                                                                        ExprIf {
+                                                                            cond: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Ge,
+                                                                                    lhs: Locator(
+                                                                                        #i,
+                                                                                    ),
+                                                                                    rhs: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 3,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            then: Block(
+                                                                                ExprBlock {
+                                                                                    stmts: [
+                                                                                        Expr(
+                                                                                            BlockStmtExpr {
+                                                                                                expr: Any(
+                                                                                                    RawExpr { raw: Expr::Break { attrs: [], break_token: Break, label: None, expr: None } },
+                                                                                                ),
+                                                                                                semicolon: Some(
+                                                                                                    true,
+                                                                                                ),
+                                                                                            },
+                                                                                        ),
+                                                                                    ],
+                                                                                },
+                                                                            ),
+                                                                            elze: None,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        false,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: StdIoPrintln(
+                                                                        ExprStdIoPrintln {
+                                                                            format: ExprFormatString {
+                                                                                parts: [
+                                                                                    Literal(
+                                                                                        "Loop iteration: ",
+                                                                                    ),
+                                                                                    Placeholder(
+                                                                                        FormatPlaceholder {
+                                                                                            arg_ref: Implicit,
+                                                                                            format_spec: None,
+                                                                                        },
+                                                                                    ),
+                                                                                ],
+                                                                                args: [
+                                                                                    Locator(
+                                                                                        #i,
+                                                                                    ),
+                                                                                ],
+                                                                                kwargs: [],
+                                                                            },
+                                                                            newline: true,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: Assign(
+                                                                        ExprAssign {
+                                                                            target: Locator(
+                                                                                #i,
+                                                                            ),
+                                                                            value: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Add,
+                                                                                    lhs: Locator(
+                                                                                        #i,
+                                                                                    ),
+                                                                                    rhs: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 1,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            false,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Loop with Continue ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Let(
+                                    StmtLet {
+                                        pat: Type(
+                                            PatternType {
+                                                pat: Ident(
+                                                    PatternIdent {
+                                                        ident: #j,
+                                                        mutability: Some(
+                                                            true,
+                                                        ),
+                                                    },
+                                                ),
+                                                ty: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        init: Some(
+                                            Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 0,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        diverge: None,
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: While(
+                                            ExprWhile {
+                                                cond: BinOp(
+                                                    ExprBinOp {
+                                                        kind: Lt,
+                                                        lhs: Locator(
+                                                            #j,
+                                                        ),
+                                                        rhs: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 6,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                                body: Block(
+                                                    ExprBlock {
+                                                        stmts: [
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: Assign(
+                                                                        ExprAssign {
+                                                                            target: Locator(
+                                                                                #j,
+                                                                            ),
+                                                                            value: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Add,
+                                                                                    lhs: Locator(
+                                                                                        #j,
+                                                                                    ),
+                                                                                    rhs: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 1,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: If(
+                                                                        ExprIf {
+                                                                            cond: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Or,
+                                                                                    lhs: BinOp(
+                                                                                        ExprBinOp {
+                                                                                            kind: Eq,
+                                                                                            lhs: Locator(
+                                                                                                #j,
+                                                                                            ),
+                                                                                            rhs: Value(
+                                                                                                Int(
+                                                                                                    ValueInt {
+                                                                                                        value: 2,
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
+                                                                                        },
+                                                                                    ),
+                                                                                    rhs: BinOp(
+                                                                                        ExprBinOp {
+                                                                                            kind: Eq,
+                                                                                            lhs: Locator(
+                                                                                                #j,
+                                                                                            ),
+                                                                                            rhs: Value(
+                                                                                                Int(
+                                                                                                    ValueInt {
+                                                                                                        value: 4,
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
+                                                                                        },
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            then: Block(
+                                                                                ExprBlock {
+                                                                                    stmts: [
+                                                                                        Expr(
+                                                                                            BlockStmtExpr {
+                                                                                                expr: Any(
+                                                                                                    RawExpr { raw: Expr::Continue { attrs: [], continue_token: Continue, label: None } },
+                                                                                                ),
+                                                                                                semicolon: Some(
+                                                                                                    true,
+                                                                                                ),
+                                                                                            },
+                                                                                        ),
+                                                                                    ],
+                                                                                },
+                                                                            ),
+                                                                            elze: None,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        false,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: StdIoPrintln(
+                                                                        ExprStdIoPrintln {
+                                                                            format: ExprFormatString {
+                                                                                parts: [
+                                                                                    Literal(
+                                                                                        "Not 2 or 4: ",
+                                                                                    ),
+                                                                                    Placeholder(
+                                                                                        FormatPlaceholder {
+                                                                                            arg_ref: Implicit,
+                                                                                            format_spec: None,
+                                                                                        },
+                                                                                    ),
+                                                                                ],
+                                                                                args: [
+                                                                                    Locator(
+                                                                                        #j,
+                                                                                    ),
+                                                                                ],
+                                                                                kwargs: [],
+                                                                            },
+                                                                            newline: true,
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            false,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\n=== Nested Loops ===",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                                Let(
+                                    StmtLet {
+                                        pat: Type(
+                                            PatternType {
+                                                pat: Ident(
+                                                    PatternIdent {
+                                                        ident: #x,
+                                                        mutability: Some(
+                                                            true,
+                                                        ),
+                                                    },
+                                                ),
+                                                ty: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                        init: Some(
+                                            Value(
+                                                Int(
+                                                    ValueInt {
+                                                        value: 0,
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        diverge: None,
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: While(
+                                            ExprWhile {
+                                                cond: BinOp(
+                                                    ExprBinOp {
+                                                        kind: Lt,
+                                                        lhs: Locator(
+                                                            #x,
+                                                        ),
+                                                        rhs: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 3,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                                body: Block(
+                                                    ExprBlock {
+                                                        stmts: [
+                                                            Let(
+                                                                StmtLet {
+                                                                    pat: Type(
+                                                                        PatternType {
+                                                                            pat: Ident(
+                                                                                PatternIdent {
+                                                                                    ident: #y,
+                                                                                    mutability: Some(
+                                                                                        true,
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            ty: Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    init: Some(
+                                                                        Value(
+                                                                            Int(
+                                                                                ValueInt {
+                                                                                    value: 0,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                    ),
+                                                                    diverge: None,
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: While(
+                                                                        ExprWhile {
+                                                                            cond: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Lt,
+                                                                                    lhs: Locator(
+                                                                                        #y,
+                                                                                    ),
+                                                                                    rhs: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 2,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                            body: Block(
+                                                                                ExprBlock {
+                                                                                    stmts: [
+                                                                                        Expr(
+                                                                                            BlockStmtExpr {
+                                                                                                expr: StdIoPrintln(
+                                                                                                    ExprStdIoPrintln {
+                                                                                                        format: ExprFormatString {
+                                                                                                            parts: [
+                                                                                                                Literal(
+                                                                                                                    "x=",
+                                                                                                                ),
+                                                                                                                Placeholder(
+                                                                                                                    FormatPlaceholder {
+                                                                                                                        arg_ref: Implicit,
+                                                                                                                        format_spec: None,
+                                                                                                                    },
+                                                                                                                ),
+                                                                                                                Literal(
+                                                                                                                    ", y=",
+                                                                                                                ),
+                                                                                                                Placeholder(
+                                                                                                                    FormatPlaceholder {
+                                                                                                                        arg_ref: Implicit,
+                                                                                                                        format_spec: None,
+                                                                                                                    },
+                                                                                                                ),
+                                                                                                            ],
+                                                                                                            args: [
+                                                                                                                Locator(
+                                                                                                                    #x,
+                                                                                                                ),
+                                                                                                                Locator(
+                                                                                                                    #y,
+                                                                                                                ),
+                                                                                                            ],
+                                                                                                            kwargs: [],
+                                                                                                        },
+                                                                                                        newline: true,
+                                                                                                    },
+                                                                                                ),
+                                                                                                semicolon: Some(
+                                                                                                    true,
+                                                                                                ),
+                                                                                            },
+                                                                                        ),
+                                                                                        Expr(
+                                                                                            BlockStmtExpr {
+                                                                                                expr: Assign(
+                                                                                                    ExprAssign {
+                                                                                                        target: Locator(
+                                                                                                            #y,
+                                                                                                        ),
+                                                                                                        value: BinOp(
+                                                                                                            ExprBinOp {
+                                                                                                                kind: Add,
+                                                                                                                lhs: Locator(
+                                                                                                                    #y,
+                                                                                                                ),
+                                                                                                                rhs: Value(
+                                                                                                                    Int(
+                                                                                                                        ValueInt {
+                                                                                                                            value: 1,
+                                                                                                                        },
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ),
+                                                                                                semicolon: Some(
+                                                                                                    true,
+                                                                                                ),
+                                                                                            },
+                                                                                        ),
+                                                                                    ],
+                                                                                },
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        false,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            Expr(
+                                                                BlockStmtExpr {
+                                                                    expr: Assign(
+                                                                        ExprAssign {
+                                                                            target: Locator(
+                                                                                #x,
+                                                                            ),
+                                                                            value: BinOp(
+                                                                                ExprBinOp {
+                                                                                    kind: Add,
+                                                                                    lhs: Locator(
+                                                                                        #x,
+                                                                                    ),
+                                                                                    rhs: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 1,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    semicolon: Some(
+                                                                        true,
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            false,
+                                        ),
+                                    },
+                                ),
+                                Expr(
+                                    BlockStmtExpr {
+                                        expr: StdIoPrintln(
+                                            ExprStdIoPrintln {
+                                                format: ExprFormatString {
+                                                    parts: [
+                                                        Literal(
+                                                            "\nControl flow demo completed!",
+                                                        ),
+                                                    ],
+                                                    args: [],
+                                                    kwargs: [],
+                                                },
+                                                newline: true,
+                                            },
+                                        ),
+                                        semicolon: Some(
+                                            true,
+                                        ),
+                                    },
+                                ),
+                            ],
+                        },
+                    ),
+                    visibility: Private,
+                },
+            ),
+        ],
+    },
+)
