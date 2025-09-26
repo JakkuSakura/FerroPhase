@@ -526,25 +526,22 @@ impl Pipeline {
                 diag.suggestions = error.suggestions.clone();
                 diagnostics.push(diag);
             }
-
-            if !(options.error_tolerance.enabled && options.error_tolerance.continue_on_error) {
-                return Ok(StageReport::failure(context, diagnostics));
-            }
         }
 
-        let program = match result {
-            Ok(program) => program,
-            Err(_) => hir::Program::new(),
-        };
+        match result {
+            Ok(program) if errors.is_empty() => {
+                if options.save_intermediates {
+                    if let Err(err) =
+                        fs::write(base_path.with_extension("hir"), format!("{:#?}", program))
+                    {
+                        debug!(error = %err, "failed to persist HIR intermediate");
+                    }
+                }
 
-        if options.save_intermediates {
-            if let Err(err) = fs::write(base_path.with_extension("hir"), format!("{:#?}", program))
-            {
-                debug!(error = %err, "failed to persist HIR intermediate");
+                Ok(StageReport::success(program, context, diagnostics))
             }
+            _ => Ok(StageReport::failure(context, diagnostics)),
         }
-
-        Ok(StageReport::success(program, context, diagnostics))
     }
 
     fn run_thir_stage(
@@ -565,25 +562,20 @@ impl Pipeline {
             ));
         }
 
-        let program = match result {
-            Ok(program) => program,
-            Err(_) => {
-                if options.error_tolerance.enabled && options.error_tolerance.continue_on_error {
-                    thir::Program::new()
-                } else {
-                    return Ok(StageReport::failure(context, diagnostics));
+        match result {
+            Ok(program) => {
+                if options.save_intermediates {
+                    if let Err(err) =
+                        fs::write(base_path.with_extension("thir"), format!("{:#?}", program))
+                    {
+                        debug!(error = %err, "failed to persist THIR intermediate");
+                    }
                 }
-            }
-        };
 
-        if options.save_intermediates {
-            if let Err(err) = fs::write(base_path.with_extension("thir"), format!("{:#?}", program))
-            {
-                debug!(error = %err, "failed to persist THIR intermediate");
+                Ok(StageReport::success(program, context, diagnostics))
             }
+            Err(_) => Ok(StageReport::failure(context, diagnostics)),
         }
-
-        Ok(StageReport::success(program, context, diagnostics))
     }
 
     fn run_mir_stage(
@@ -604,25 +596,20 @@ impl Pipeline {
             ));
         }
 
-        let program = match result {
-            Ok(program) => program,
-            Err(_) => {
-                if options.error_tolerance.enabled && options.error_tolerance.continue_on_error {
-                    mir::Program::new()
-                } else {
-                    return Ok(StageReport::failure(context, diagnostics));
+        match result {
+            Ok(program) => {
+                if options.save_intermediates {
+                    if let Err(err) =
+                        fs::write(base_path.with_extension("mir"), format!("{:#?}", program))
+                    {
+                        debug!(error = %err, "failed to persist MIR intermediate");
+                    }
                 }
-            }
-        };
 
-        if options.save_intermediates {
-            if let Err(err) = fs::write(base_path.with_extension("mir"), format!("{:#?}", program))
-            {
-                debug!(error = %err, "failed to persist MIR intermediate");
+                Ok(StageReport::success(program, context, diagnostics))
             }
+            Err(_) => Ok(StageReport::failure(context, diagnostics)),
         }
-
-        Ok(StageReport::success(program, context, diagnostics))
     }
 
     fn run_lir_stage(
@@ -643,25 +630,20 @@ impl Pipeline {
             ));
         }
 
-        let program = match result {
-            Ok(program) => program,
-            Err(_) => {
-                if options.error_tolerance.enabled && options.error_tolerance.continue_on_error {
-                    lir::LirProgram::new()
-                } else {
-                    return Ok(StageReport::failure(context, diagnostics));
+        match result {
+            Ok(program) => {
+                if options.save_intermediates {
+                    if let Err(err) =
+                        fs::write(base_path.with_extension("lir"), format!("{:#?}", program))
+                    {
+                        debug!(error = %err, "failed to persist LIR intermediate");
+                    }
                 }
-            }
-        };
 
-        if options.save_intermediates {
-            if let Err(err) = fs::write(base_path.with_extension("lir"), format!("{:#?}", program))
-            {
-                debug!(error = %err, "failed to persist LIR intermediate");
+                Ok(StageReport::success(program, context, diagnostics))
             }
+            Err(_) => Ok(StageReport::failure(context, diagnostics)),
         }
-
-        Ok(StageReport::success(program, context, diagnostics))
     }
 
     fn run_llvm_stage(

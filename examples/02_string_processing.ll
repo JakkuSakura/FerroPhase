@@ -129,32 +129,32 @@ bb27:
   call i32 @puts(ptr getelementptr inbounds ([34 x i8], ptr @.str.27, i32 0, i32 0))
   br label %bb28
 bb28:
-  ret i32 0
+  br i1 1, label %bb29, label %bb30
 bb29:
   call i32 @puts(ptr getelementptr inbounds ([39 x i8], ptr @.str.28, i32 0, i32 0))
   br label %bb32
 bb30:
   call i32 @puts(ptr getelementptr inbounds ([43 x i8], ptr @.str.29, i32 0, i32 0))
   br label %bb33
-bb31:
-  ret i32 0
 bb32:
   br label %bb31
 bb33:
   br label %bb31
+bb31:
+  br i1 0, label %bb34, label %bb35
 bb34:
   call i32 @puts(ptr getelementptr inbounds ([37 x i8], ptr @.str.30, i32 0, i32 0))
   br label %bb37
 bb35:
   call i32 @puts(ptr getelementptr inbounds ([28 x i8], ptr @.str.31, i32 0, i32 0))
   br label %bb38
-bb36:
-  call i32 @puts(ptr getelementptr inbounds ([36 x i8], ptr @.str.32, i32 0, i32 0))
-  br label %bb39
 bb37:
   br label %bb36
 bb38:
   br label %bb36
+bb36:
+  call i32 @puts(ptr getelementptr inbounds ([36 x i8], ptr @.str.32, i32 0, i32 0))
+  br label %bb39
 bb39:
   call i32 @puts(ptr getelementptr inbounds ([19 x i8], ptr @.str.33, i32 0, i32 0))
   br label %bb40

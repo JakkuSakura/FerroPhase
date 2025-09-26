@@ -1,6 +1,6 @@
 File(
     File {
-        path: "examples/13_control_flow.rs",
+        path: "examples/tmp_loop.rs",
         items: [
             DefFunction(
                 ItemDefFunction {
