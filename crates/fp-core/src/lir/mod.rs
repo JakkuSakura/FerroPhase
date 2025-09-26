@@ -1,6 +1,7 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 
-pub type Ty = crate::types::Ty;
+pub type Ty = crate::types::hir::Ty;
+pub use crate::types::lir::Ty as LirType;
 pub type LirId = u32;
 pub type RegisterId = u32;
 pub type BasicBlockId = u32;
@@ -247,56 +248,6 @@ pub enum LirConstant {
     Struct(Vec<LirConstant>, LirType),
     Null(LirType),
     Undef(LirType),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum LirType {
-    // Integer types
-    I1,
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-
-    // Floating-point types
-    F32,
-    F64,
-
-    // Pointer type
-    Ptr(Box<LirType>),
-
-    // Array type
-    Array(Box<LirType>, u64),
-
-    // Structure type
-    Struct {
-        fields: Vec<LirType>,
-        packed: bool,
-        name: Option<String>,
-    },
-
-    // Function type
-    Function {
-        return_type: Box<LirType>,
-        param_types: Vec<LirType>,
-        is_variadic: bool,
-    },
-
-    // Vector type
-    Vector(Box<LirType>, u32),
-
-    // Void type
-    Void,
-
-    // Label type (for basic block addresses)
-    Label,
-
-    // Token type (for exception handling)
-    Token,
-
-    // Metadata type
-    Metadata,
 }
 
 #[derive(Debug, Clone, PartialEq)]

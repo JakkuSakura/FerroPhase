@@ -122,16 +122,19 @@ impl HirGenerator {
     }
 
     /// Add a warning to the collection
+    #[allow(dead_code)]
     fn add_warning(&mut self, warning: TransformationWarning) {
         self.warnings.push(warning);
     }
 
     /// Check if we should continue after an error (in tolerance mode)
+    #[allow(dead_code)]
     fn should_continue_after_error(&self) -> bool {
         self.error_tolerance && self.errors.len() < self.max_errors
     }
 
     /// Create an error HIR expression for recovery
+    #[allow(dead_code)]
     fn create_error_expr(&mut self) -> hir::Expr {
         // Create a literal placeholder expression for error recovery
         hir::Expr {
@@ -146,6 +149,7 @@ impl HirGenerator {
     }
 
     /// Create an error HIR item for recovery  
+    #[allow(dead_code)]
     fn create_error_item(&mut self) -> hir::Item {
         // For now, skip creating error recovery items since HIR structure is complex
         // In practice, error recovery at item level would handle this differently

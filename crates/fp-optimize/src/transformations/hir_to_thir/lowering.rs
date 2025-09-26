@@ -302,11 +302,30 @@ impl ThirGenerator {
             hir::ExprKind::StdIoPrintln(println) => {
                 let func_expr = self.make_std_io_println_path_expr();
 
-                let mut args = Vec::new();
-                args.push(self.make_string_literal_expr(println.template.clone()));
-                for arg in println.args {
-                    args.push(self.transform_expr(arg)?);
+                let hir::StdIoPrintln { format, newline } = println;
+                let hir::FormatString {
+                    parts,
+                    args: format_args,
+                    kwargs,
+                } = format;
+
+                if !kwargs.is_empty() {
+                    return Err(crate::error::optimization_error(
+                        "Named arguments for println! are not yet supported during lowering",
+                    ));
                 }
+
+                let mut transformed_args = Vec::new();
+                for arg in format_args {
+                    transformed_args.push(self.transform_expr(arg)?);
+                }
+
+                let format_literal =
+                    self.build_printf_format(&parts, &transformed_args, newline)?;
+
+                let mut args = Vec::new();
+                args.push(self.make_string_literal_expr(format_literal));
+                args.extend(transformed_args.into_iter());
 
                 (
                     thir::ExprKind::Call {
@@ -943,6 +962,92 @@ impl ThirGenerator {
             kind: thir::ExprKind::Path(thir::ItemRef { name, def_id }),
             ty: self.create_unit_type(),
             span: Span::new(0, 0, 0),
+        }
+    }
+
+    fn build_printf_format(
+        &self,
+        parts: &[hir::FormatTemplatePart],
+        args: &[thir::Expr],
+        newline: bool,
+    ) -> Result<String> {
+        let mut result = String::new();
+        let mut implicit_index = 0usize;
+
+        for part in parts {
+            match part {
+                hir::FormatTemplatePart::Literal(text) => result.push_str(text),
+                hir::FormatTemplatePart::Placeholder(placeholder) => {
+                    let arg_index = match &placeholder.arg_ref {
+                        hir::FormatArgRef::Implicit => {
+                            let current = implicit_index;
+                            implicit_index += 1;
+                            current
+                        }
+                        hir::FormatArgRef::Positional(index) => *index,
+                        hir::FormatArgRef::Named(name) => {
+                            return Err(crate::error::optimization_error(format!(
+                                "Named argument '{}' is not supported in println! lowering",
+                                name
+                            )));
+                        }
+                    };
+
+                    let arg_expr = args.get(arg_index).ok_or_else(|| {
+                        crate::error::optimization_error(format!(
+                            "Format placeholder references missing argument at index {}",
+                            arg_index
+                        ))
+                    })?;
+
+                    let spec = if let Some(spec) = &placeholder.format_spec {
+                        if spec.starts_with('%') {
+                            spec.clone()
+                        } else {
+                            return Err(crate::error::optimization_error(format!(
+                                "Unsupported format specification '{}'; expected printf-style spec",
+                                spec
+                            )));
+                        }
+                    } else {
+                        self.infer_printf_spec(&arg_expr.ty)
+                    };
+
+                    result.push_str(&spec);
+                }
+            }
+        }
+
+        let _ = newline; // Backend appends newline for println-style calls when needed.
+
+        Ok(result)
+    }
+
+    fn infer_printf_spec(&self, ty: &types::Ty) -> String {
+        match &ty.kind {
+            types::TyKind::Bool => "%d".to_string(),
+            types::TyKind::Char => "%c".to_string(),
+            types::TyKind::Int(int_ty) => match int_ty {
+                types::IntTy::I8 => "%hhd".to_string(),
+                types::IntTy::I16 => "%hd".to_string(),
+                types::IntTy::I32 => "%d".to_string(),
+                types::IntTy::I64 => "%lld".to_string(),
+                types::IntTy::I128 => "%lld".to_string(),
+                types::IntTy::Isize => "%ld".to_string(),
+            },
+            types::TyKind::Uint(uint_ty) => match uint_ty {
+                types::UintTy::U8 => "%hhu".to_string(),
+                types::UintTy::U16 => "%hu".to_string(),
+                types::UintTy::U32 => "%u".to_string(),
+                types::UintTy::U64 => "%llu".to_string(),
+                types::UintTy::U128 => "%llu".to_string(),
+                types::UintTy::Usize => "%lu".to_string(),
+            },
+            types::TyKind::Float(float_ty) => match float_ty {
+                types::FloatTy::F32 => "%f".to_string(),
+                types::FloatTy::F64 => "%f".to_string(),
+            },
+            _ => "%s".to_string(),
         }
     }
 
