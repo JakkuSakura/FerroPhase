@@ -3,13 +3,11 @@ use fp_core::mir::{
     StatementKind, Terminator, TerminatorKind,
 };
 use fp_core::span::Span;
-use fp_core::types::{IntTy, Ty, TyKind, TypeFlags};
+use fp_core::types::hir::Ty;
+use fp_core::types::IntTy;
 
 fn int_ty() -> Ty {
-    Ty {
-        kind: TyKind::Int(IntTy::I32),
-        flags: TypeFlags::empty(),
-    }
+    Ty::int(IntTy::I32)
 }
 
 pub fn empty_program() -> Program {

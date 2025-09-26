@@ -607,12 +607,26 @@ impl HirGenerator {
             ));
         }
 
-        let mut template = String::new();
+        let mut parts = Vec::new();
         for part in &println.format.parts {
-            match part {
-                ast::FormatTemplatePart::Literal(text) => template.push_str(text),
-                ast::FormatTemplatePart::Placeholder(_) => template.push_str("{}"),
-            }
+            let converted = match part {
+                ast::FormatTemplatePart::Literal(text) => {
+                    hir::FormatTemplatePart::Literal(text.clone())
+                }
+                ast::FormatTemplatePart::Placeholder(ph) => {
+                    let arg_ref = match &ph.arg_ref {
+                        ast::FormatArgRef::Implicit => hir::FormatArgRef::Implicit,
+                        ast::FormatArgRef::Positional(idx) => hir::FormatArgRef::Positional(*idx),
+                        ast::FormatArgRef::Named(name) => hir::FormatArgRef::Named(name.clone()),
+                    };
+
+                    hir::FormatTemplatePart::Placeholder(hir::FormatPlaceholder {
+                        arg_ref,
+                        format_spec: ph.format_spec.clone(),
+                    })
+                }
+            };
+            parts.push(converted);
         }
 
         let mut args = Vec::new();
@@ -620,9 +634,20 @@ impl HirGenerator {
             args.push(self.transform_expr_to_hir(arg)?);
         }
 
+        let mut kwargs = Vec::new();
+        for kwarg in &println.format.kwargs {
+            kwargs.push(hir::FormatKwArg {
+                name: kwarg.name.clone(),
+                value: self.transform_expr_to_hir(&kwarg.value)?,
+            });
+        }
+
         Ok(hir::ExprKind::StdIoPrintln(hir::StdIoPrintln {
-            template,
-            args,
+            format: hir::FormatString {
+                parts,
+                args,
+                kwargs,
+            },
             newline: println.newline,
         }))
     }

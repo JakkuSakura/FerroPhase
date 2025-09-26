@@ -1,6 +1,7 @@
 use fp_core::ast::Value;
 use fp_core::error::Result;
-use fp_core::types::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
+use fp_core::types::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, UintTy};
+use fp_core::types::hir::{self, Ty};
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
