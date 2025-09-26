@@ -1,7 +1,8 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 
-pub type Ty = crate::types::hir::Ty;
-pub use crate::types::lir::Ty as LirType;
+pub mod ty;
+pub use ty::Ty;
+pub type LirType = Ty;
 pub type LirId = u32;
 pub type RegisterId = u32;
 pub type BasicBlockId = u32;

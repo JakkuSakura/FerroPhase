@@ -1,7 +1,6 @@
 use fp_core::ast::Value;
 use fp_core::error::Result;
-use fp_core::types::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, UintTy};
-use fp_core::types::hir::{self, Ty};
+use fp_core::hir::ty::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -447,13 +446,19 @@ impl LirGenerator {
             }
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::Fn(name, ty) => {
-                    Ok(lir::LirValue::Global(name.clone(), ty.clone()))
+                    Ok(lir::LirValue::Global(
+                        name.clone(),
+                        self.lir_type_from_ty(ty),
+                    ))
                 }
                 mir::ConstantKind::Global(name, ty) => {
                     if let Some(constant) = self.const_global_to_lir_constant(name, ty) {
                         Ok(lir::LirValue::Constant(constant))
                     } else {
-                        Ok(lir::LirValue::Global(name.clone(), ty.clone()))
+                        Ok(lir::LirValue::Global(
+                            name.clone(),
+                            self.lir_type_from_ty(ty),
+                        ))
                     }
                 }
                 mir::ConstantKind::Str(s) => {

@@ -13,7 +13,7 @@ pub fn literal_expr(value: i64) -> Expr {
 }
 
 pub fn unit_type() -> Ty {
-    Ty::new(0, TyKind::Tuple(Vec::new()), Span::new(0, 0, 0))
+    Ty { kind: TyKind::Tuple(Vec::new()) }
 }
 
 pub fn function_item(name: &str, body: Expr) -> Item {

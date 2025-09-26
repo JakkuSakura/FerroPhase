@@ -1,8 +1,10 @@
 use fp_core::error::Result;
+use fp_core::hir::ty as hir_types;
+use fp_core::hir::typed as thir;
+use fp_core::mir;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
-use fp_core::types::{Ty, TyKind};
-use fp_core::{mir, thir};
+use hir_types::{Ty, TyKind};
 // use fp_core::ast::Visibility; // not used here
 use std::collections::HashMap;
 
@@ -12,7 +14,7 @@ mod expressions;
 mod functions;
 #[cfg(test)]
 mod tests;
-mod types;
+mod type_utils;
 
 /// Generator for transforming THIR to MIR (Mid-level IR)
 pub struct MirGenerator {

@@ -3,7 +3,7 @@ use super::*;
 impl ThirGenerator {
     pub(super) fn transform_item(&mut self, hir_item: hir::Item) -> Result<thir::Item> {
         let thir_id = self.next_id();
-        let def_id = hir_item.def_id as types::DefId;
+        let def_id = hir_item.def_id as hir_types::DefId;
         let span = hir_item.span;
 
         let (kind, ty) = match hir_item.kind {
@@ -135,7 +135,7 @@ impl ThirGenerator {
     /// Transform HIR const to THIR
     pub(super) fn transform_const(
         &mut self,
-        def_id: Option<types::DefId>,
+        def_id: Option<hir_types::DefId>,
         hir_const: hir::Const,
     ) -> Result<thir::Const> {
         let ty = self.hir_ty_to_ty(&hir_const.ty)?;
@@ -420,7 +420,7 @@ impl ThirGenerator {
                             base: Box::new(expr_thir),
                             field_idx: 0,
                         },
-                        types::Ty::int(types::IntTy::I32),
+                        hir_types::Ty::int(hir_types::IntTy::I32),
                     )
                 }
             }
@@ -653,19 +653,19 @@ impl ThirGenerator {
     pub(super) fn transform_literal(
         &mut self,
         hir_lit: hir::Lit,
-    ) -> Result<(thir::Lit, types::Ty)> {
+    ) -> Result<(thir::Lit, hir_types::Ty)> {
         let (thir_lit, ty) = match hir_lit {
-            hir::Lit::Bool(b) => (thir::Lit::Bool(b), types::Ty::bool()),
+            hir::Lit::Bool(b) => (thir::Lit::Bool(b), hir_types::Ty::bool()),
             hir::Lit::Integer(i) => (
                 thir::Lit::Int(i as i128, thir::IntTy::I32),
-                types::Ty::int(types::IntTy::I32),
+                hir_types::Ty::int(hir_types::IntTy::I32),
             ),
             hir::Lit::Float(f) => (
                 thir::Lit::Float(f, thir::FloatTy::F64),
-                types::Ty::float(types::FloatTy::F64),
+                hir_types::Ty::float(hir_types::FloatTy::F64),
             ),
             hir::Lit::Str(s) => (thir::Lit::Str(s), self.create_string_type()),
-            hir::Lit::Char(c) => (thir::Lit::Char(c), types::Ty::char()),
+            hir::Lit::Char(c) => (thir::Lit::Char(c), hir_types::Ty::char()),
         };
         Ok((thir_lit, ty))
     }
@@ -693,11 +693,11 @@ impl ThirGenerator {
         }
     }
 
-    /// Convert HIR type to types::Ty
-    pub(super) fn hir_ty_to_ty(&mut self, hir_ty: &hir::Ty) -> Result<types::Ty> {
+    /// Convert HIR type to hir_types::Ty
+    pub(super) fn hir_ty_to_ty(&mut self, hir_ty: &hir::TypeExpr) -> Result<hir_types::Ty> {
         match &hir_ty.kind {
-            hir::TyKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
-            hir::TyKind::Path(path) => {
+            hir::TypeExprKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
+            hir::TypeExprKind::Path(path) => {
                 let (def_id_opt, qualified_name, base_name, substs) =
                     self.path_to_type_info(path)?;
 
@@ -722,7 +722,9 @@ impl ThirGenerator {
                         .lookup_function_signature(def_id)
                         .is_some()
                     {
-                        return Ok(types::Ty::new(types::TyKind::FnDef(def_id, substs)));
+                        return Ok(hir_types::Ty {
+                            kind: hir_types::TyKind::FnDef(def_id, substs),
+                        });
                     }
                 }
 
@@ -746,62 +748,70 @@ impl ThirGenerator {
                     .make_struct_ty_by_id(stub_id, substs)
                     .unwrap_or_else(|| self.create_unit_type()))
             }
-            hir::TyKind::Tuple(elements) => {
+            hir::TypeExprKind::Tuple(elements) => {
                 let tys = elements
                     .iter()
                     .map(|ty| Ok(Box::new(self.hir_ty_to_ty(ty)?)))
                     .collect::<Result<Vec<_>>>()?;
-                Ok(types::Ty::new(types::TyKind::Tuple(tys)))
+                Ok(hir_types::Ty {
+                    kind: hir_types::TyKind::Tuple(tys),
+                })
             }
-            hir::TyKind::Ref(inner) => {
+            hir::TypeExprKind::Ref(inner) => {
                 let inner_ty = self.hir_ty_to_ty(inner)?;
-                Ok(types::Ty::new(types::TyKind::Ref(
-                    types::Region::ReStatic,
-                    Box::new(inner_ty),
-                    types::Mutability::Not,
-                )))
+                Ok(hir_types::Ty {
+                    kind: hir_types::TyKind::Ref(
+                        hir_types::Region::ReStatic,
+                        Box::new(inner_ty),
+                        hir_types::Mutability::Not,
+                    ),
+                })
             }
-            hir::TyKind::Array(inner, _) => {
+            hir::TypeExprKind::Array(inner, _) => {
                 let elem_ty = self.hir_ty_to_ty(inner)?;
-                Ok(types::Ty::new(types::TyKind::Array(
-                    Box::new(elem_ty),
-                    types::ConstKind::Value(types::ConstValue::ZeroSized),
-                )))
+                Ok(hir_types::Ty {
+                    kind: hir_types::TyKind::Array(
+                        Box::new(elem_ty),
+                        hir_types::ConstKind::Value(hir_types::ConstValue::ZeroSized),
+                    ),
+                })
             }
-            hir::TyKind::Ptr(inner) => {
+            hir::TypeExprKind::Ptr(inner) => {
                 let pointee = self.hir_ty_to_ty(inner)?;
-                Ok(types::Ty::new(types::TyKind::RawPtr(types::TypeAndMut {
-                    ty: Box::new(pointee),
-                    mutbl: types::Mutability::Not,
-                })))
+                Ok(hir_types::Ty {
+                    kind: hir_types::TyKind::RawPtr(hir_types::TypeAndMut {
+                        ty: Box::new(pointee),
+                        mutbl: hir_types::Mutability::Not,
+                    }),
+                })
             }
-            hir::TyKind::Never => Ok(types::Ty::never()),
-            hir::TyKind::Infer => Ok(types::Ty::new(types::TyKind::Infer(
-                types::InferTy::FreshTy(0),
-            ))),
+            hir::TypeExprKind::Never => Ok(hir_types::Ty::never()),
+            hir::TypeExprKind::Infer => Ok(hir_types::Ty {
+                kind: hir_types::TyKind::Infer(hir_types::InferTy::FreshTy(0)),
+            }),
         }
     }
 
-    pub(super) fn primitive_ty_to_ty(&mut self, prim: &TypePrimitive) -> types::Ty {
+    pub(super) fn primitive_ty_to_ty(&mut self, prim: &TypePrimitive) -> hir_types::Ty {
         match prim {
-            TypePrimitive::Bool => types::Ty::bool(),
-            TypePrimitive::Char => types::Ty::char(),
+            TypePrimitive::Bool => hir_types::Ty::bool(),
+            TypePrimitive::Char => hir_types::Ty::char(),
             TypePrimitive::Int(int_ty) => match int_ty {
-                TypeInt::I8 => types::Ty::int(types::IntTy::I8),
-                TypeInt::I16 => types::Ty::int(types::IntTy::I16),
-                TypeInt::I32 => types::Ty::int(types::IntTy::I32),
-                TypeInt::I64 => types::Ty::int(types::IntTy::I64),
-                TypeInt::U8 => types::Ty::uint(types::UintTy::U8),
-                TypeInt::U16 => types::Ty::uint(types::UintTy::U16),
-                TypeInt::U32 => types::Ty::uint(types::UintTy::U32),
-                TypeInt::U64 => types::Ty::uint(types::UintTy::U64),
-                TypeInt::BigInt => types::Ty::int(types::IntTy::I128),
+                TypeInt::I8 => hir_types::Ty::int(hir_types::IntTy::I8),
+                TypeInt::I16 => hir_types::Ty::int(hir_types::IntTy::I16),
+                TypeInt::I32 => hir_types::Ty::int(hir_types::IntTy::I32),
+                TypeInt::I64 => hir_types::Ty::int(hir_types::IntTy::I64),
+                TypeInt::U8 => hir_types::Ty::uint(hir_types::UintTy::U8),
+                TypeInt::U16 => hir_types::Ty::uint(hir_types::UintTy::U16),
+                TypeInt::U32 => hir_types::Ty::uint(hir_types::UintTy::U32),
+                TypeInt::U64 => hir_types::Ty::uint(hir_types::UintTy::U64),
+                TypeInt::BigInt => hir_types::Ty::int(hir_types::IntTy::I128),
             },
             TypePrimitive::Decimal(dec_ty) => match dec_ty {
-                DecimalType::F32 => types::Ty::float(types::FloatTy::F32),
-                DecimalType::F64 => types::Ty::float(types::FloatTy::F64),
+                DecimalType::F32 => hir_types::Ty::float(hir_types::FloatTy::F32),
+                DecimalType::F64 => hir_types::Ty::float(hir_types::FloatTy::F64),
                 DecimalType::BigDecimal | DecimalType::Decimal { .. } => {
-                    types::Ty::float(types::FloatTy::F64)
+                    hir_types::Ty::float(hir_types::FloatTy::F64)
                 }
             },
             TypePrimitive::String => {
@@ -822,10 +832,10 @@ impl ThirGenerator {
     /// Type checking for binary operations
     pub(super) fn check_binary_op_types(
         &self,
-        left_ty: &types::Ty,
-        right_ty: &types::Ty,
+        left_ty: &hir_types::Ty,
+        right_ty: &hir_types::Ty,
         _op: &thir::BinOp,
-    ) -> Result<types::Ty> {
+    ) -> Result<hir_types::Ty> {
         // Simplified type checking - assume same types for operands
         if left_ty == right_ty {
             Ok(left_ty.clone())
@@ -836,7 +846,7 @@ impl ThirGenerator {
     }
 
     /// Infer type from HIR path
-    pub(super) fn infer_path_type(&mut self, path: &hir::Path) -> Result<types::Ty> {
+    pub(super) fn infer_path_type(&mut self, path: &hir::Path) -> Result<hir_types::Ty> {
         let (def_id_opt, qualified_name, base_name, substs) = self.path_to_type_info(path)?;
 
         if let Some(def_id) = def_id_opt {
@@ -854,7 +864,9 @@ impl ThirGenerator {
                 .lookup_function_signature(def_id)
                 .is_some()
             {
-                return Ok(types::Ty::new(types::TyKind::FnDef(def_id, substs)));
+                return Ok(hir_types::Ty {
+                    kind: hir_types::TyKind::FnDef(def_id, substs),
+                });
             }
         }
 
@@ -875,7 +887,7 @@ impl ThirGenerator {
             }
         }
 
-        Ok(types::Ty::int(types::IntTy::I32))
+        Ok(hir_types::Ty::int(hir_types::IntTy::I32))
     }
 
     /// Infer return type of function call
@@ -883,7 +895,7 @@ impl ThirGenerator {
         &self,
         func: &thir::Expr,
         _args: &[thir::Expr],
-    ) -> Result<types::Ty> {
+    ) -> Result<hir_types::Ty> {
         if let thir::ExprKind::Path(item_ref) = &func.kind {
             if let Some(def_id) = item_ref.def_id {
                 if let Some(sig) = self.type_context.lookup_function_signature(def_id) {
@@ -899,7 +911,7 @@ impl ThirGenerator {
     }
 
     /// Infer type of block expression
-    pub(super) fn infer_block_type(&self, block: &thir::Block) -> Result<types::Ty> {
+    pub(super) fn infer_block_type(&self, block: &thir::Block) -> Result<hir_types::Ty> {
         if let Some(expr) = &block.expr {
             Ok(expr.ty.clone())
         } else {
@@ -910,10 +922,12 @@ impl ThirGenerator {
     /// Get function type
     pub(super) fn get_function_type(
         &self,
-        def_id: types::DefId,
+        def_id: hir_types::DefId,
         _func: &thir::Function,
-    ) -> Result<types::Ty> {
-        Ok(types::Ty::new(types::TyKind::FnDef(def_id, Vec::new())))
+    ) -> Result<hir_types::Ty> {
+        Ok(hir_types::Ty {
+            kind: hir_types::TyKind::FnDef(def_id, Vec::new()),
+        })
     }
 
     /// Transform visibility
@@ -925,24 +939,28 @@ impl ThirGenerator {
     }
 
     // Helper methods for creating common types
-    pub(super) fn create_unit_type(&self) -> types::Ty {
-        types::Ty::new(types::TyKind::Tuple(Vec::new()))
+    pub(super) fn create_unit_type(&self) -> hir_types::Ty {
+        hir_types::Ty {
+            kind: hir_types::TyKind::Tuple(Vec::new()),
+        }
     }
 
-    pub(super) fn create_never_type(&self) -> types::Ty {
-        types::Ty::never()
+    pub(super) fn create_never_type(&self) -> hir_types::Ty {
+        hir_types::Ty::never()
     }
 
-    pub(super) fn create_i32_type(&self) -> types::Ty {
-        types::Ty::int(types::IntTy::I32)
+    pub(super) fn create_i32_type(&self) -> hir_types::Ty {
+        hir_types::Ty::int(hir_types::IntTy::I32)
     }
 
-    pub(super) fn create_string_type(&self) -> types::Ty {
+    pub(super) fn create_string_type(&self) -> hir_types::Ty {
         // Simplified string type representation
-        types::Ty::new(types::TyKind::RawPtr(types::TypeAndMut {
-            ty: Box::new(types::Ty::int(types::IntTy::I8)),
-            mutbl: types::Mutability::Not,
-        }))
+        hir_types::Ty {
+            kind: hir_types::TyKind::RawPtr(hir_types::TypeAndMut {
+                ty: Box::new(hir_types::Ty::int(hir_types::IntTy::I8)),
+                mutbl: hir_types::Mutability::Not,
+            }),
+        }
     }
 
     fn make_string_literal_expr(&mut self, template: String) -> thir::Expr {
@@ -1023,29 +1041,29 @@ impl ThirGenerator {
         Ok(result)
     }
 
-    fn infer_printf_spec(&self, ty: &types::Ty) -> String {
+    fn infer_printf_spec(&self, ty: &hir_types::Ty) -> String {
         match &ty.kind {
-            types::TyKind::Bool => "%d".to_string(),
-            types::TyKind::Char => "%c".to_string(),
-            types::TyKind::Int(int_ty) => match int_ty {
-                types::IntTy::I8 => "%hhd".to_string(),
-                types::IntTy::I16 => "%hd".to_string(),
-                types::IntTy::I32 => "%d".to_string(),
-                types::IntTy::I64 => "%lld".to_string(),
-                types::IntTy::I128 => "%lld".to_string(),
-                types::IntTy::Isize => "%ld".to_string(),
+            hir_types::TyKind::Bool => "%d".to_string(),
+            hir_types::TyKind::Char => "%c".to_string(),
+            hir_types::TyKind::Int(int_ty) => match int_ty {
+                hir_types::IntTy::I8 => "%hhd".to_string(),
+                hir_types::IntTy::I16 => "%hd".to_string(),
+                hir_types::IntTy::I32 => "%d".to_string(),
+                hir_types::IntTy::I64 => "%lld".to_string(),
+                hir_types::IntTy::I128 => "%lld".to_string(),
+                hir_types::IntTy::Isize => "%ld".to_string(),
             },
-            types::TyKind::Uint(uint_ty) => match uint_ty {
-                types::UintTy::U8 => "%hhu".to_string(),
-                types::UintTy::U16 => "%hu".to_string(),
-                types::UintTy::U32 => "%u".to_string(),
-                types::UintTy::U64 => "%llu".to_string(),
-                types::UintTy::U128 => "%llu".to_string(),
-                types::UintTy::Usize => "%lu".to_string(),
+            hir_types::TyKind::Uint(uint_ty) => match uint_ty {
+                hir_types::UintTy::U8 => "%hhu".to_string(),
+                hir_types::UintTy::U16 => "%hu".to_string(),
+                hir_types::UintTy::U32 => "%u".to_string(),
+                hir_types::UintTy::U64 => "%llu".to_string(),
+                hir_types::UintTy::U128 => "%llu".to_string(),
+                hir_types::UintTy::Usize => "%lu".to_string(),
             },
-            types::TyKind::Float(float_ty) => match float_ty {
-                types::FloatTy::F32 => "%f".to_string(),
-                types::FloatTy::F64 => "%f".to_string(),
+            hir_types::TyKind::Float(float_ty) => match float_ty {
+                hir_types::FloatTy::F32 => "%f".to_string(),
+                hir_types::FloatTy::F64 => "%f".to_string(),
             },
             _ => "%s".to_string(),
         }
@@ -1072,9 +1090,9 @@ impl ThirGenerator {
     /// Check type for unary operations
     pub(super) fn check_unary_op_type(
         &self,
-        operand_ty: &types::Ty,
+        operand_ty: &hir_types::Ty,
         _op: &thir::UnOp,
-    ) -> Result<types::Ty> {
+    ) -> Result<hir_types::Ty> {
         // Simplified type checking - return the operand type
         Ok(operand_ty.clone())
     }
@@ -1085,7 +1103,7 @@ impl ThirGenerator {
         receiver: &thir::Expr,
         method_name: &str,
         _args: &[thir::Expr],
-    ) -> Result<types::Ty> {
+    ) -> Result<hir_types::Ty> {
         if let Some(sig) = self
             .type_context
             .lookup_method_signature(&receiver.ty, method_name)
@@ -1096,7 +1114,11 @@ impl ThirGenerator {
     }
 
     /// Unify two types
-    pub(super) fn unify_types(&self, ty1: &types::Ty, ty2: &types::Ty) -> Result<types::Ty> {
+    pub(super) fn unify_types(
+        &self,
+        ty1: &hir_types::Ty,
+        ty2: &hir_types::Ty,
+    ) -> Result<hir_types::Ty> {
         // Simplified type unification - return the first type
         if ty1 == ty2 {
             Ok(ty1.clone())

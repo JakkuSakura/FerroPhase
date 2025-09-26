@@ -18,14 +18,13 @@ pub mod passes;
 pub mod pat;
 pub mod printer;
 pub mod span;
-pub mod thir;
-pub mod types;
 pub mod utils;
 
 // Re-export commonly used items for convenience
 pub use tracing;
 
 pub use frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
+pub use hir::typed as thir;
 
 // Alias for error types
 pub type Error = crate::error::Error;
