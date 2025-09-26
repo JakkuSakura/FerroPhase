@@ -29,6 +29,19 @@ canonical AST, ensuring multi-language inputs flow through the same lowerings.
    - **MIR → LIR** (`LirGenerator`, seeded with const results)
    - **LIR → LLVM IR** (fp-llvm backend)
 
+   Each IR stage owns its own lightweight type module:
+
+   | Stage | Type Module | Purpose |
+   |-------|-------------|---------|
+   | HIR   | `fp_core::hir::ty` | Rich semantic types used during high-level analysis. |
+   | THIR  | `fp_core::hir::typed` | Re-exports HIR types alongside typed THIR nodes. |
+   | MIR   | `fp_core::mir::ty` | Mid-level view constrained to constructs the MIR builder needs. |
+   | LIR   | `fp_core::lir::ty` | LLVM-adjacent value types used by the backend. |
+
+   Sharing is now strictly top-down: lower stages never import higher-stage type
+   definitions, which keeps each lowering isolated and simplifies future stage
+   evolution.
+
    Each step returns a `StageReport<T>` containing the produced IR (or a
    placeholder in tolerant mode), an updated `CompilationContext`, and a list of
    `PipelineDiagnostic` entries. Diagnostics are printed stage-by-stage but also

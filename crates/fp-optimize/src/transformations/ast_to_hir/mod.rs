@@ -807,12 +807,12 @@ impl HirGenerator {
     }
 
     /// Transform an AST type into a HIR type
-    fn transform_type_to_hir(&mut self, ty: &ast::Ty) -> Result<hir::Ty> {
+    fn transform_type_to_hir(&mut self, ty: &ast::Ty) -> Result<hir::TypeExpr> {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
-            ast::Ty::Struct(struct_ty) => Ok(hir::Ty::new(
+            ast::Ty::Struct(struct_ty) => Ok(hir::TypeExpr::new(
                 self.next_id(),
-                hir::TyKind::Path(hir::Path {
+                hir::TypeExprKind::Path(hir::Path {
                     segments: vec![self.make_path_segment(&struct_ty.name.name, None)],
                     res: None,
                 }),
@@ -820,9 +820,9 @@ impl HirGenerator {
             )),
             ast::Ty::Reference(reference) => {
                 let inner = self.transform_type_to_hir(&reference.ty)?;
-                Ok(hir::Ty::new(
+                Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TyKind::Ref(Box::new(inner)),
+                    hir::TypeExprKind::Ref(Box::new(inner)),
                     Span::new(self.current_file, 0, 0),
                 ))
             }
@@ -832,17 +832,17 @@ impl HirGenerator {
                     .iter()
                     .map(|ty| Ok(Box::new(self.transform_type_to_hir(ty)?)))
                     .collect::<Result<Vec<_>>>()?;
-                Ok(hir::Ty::new(
+                Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TyKind::Tuple(elements),
+                    hir::TypeExprKind::Tuple(elements),
                     Span::new(self.current_file, 0, 0),
                 ))
             }
             ast::Ty::Vec(vec_ty) => {
                 let args = self.convert_generic_args(&[*vec_ty.ty.clone()])?;
-                Ok(hir::Ty::new(
+                Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TyKind::Path(hir::Path {
+                    hir::TypeExprKind::Path(hir::Path {
                         segments: vec![self.make_path_segment("Vec", Some(args))],
                         res: None,
                     }),
@@ -851,9 +851,9 @@ impl HirGenerator {
             }
             ast::Ty::Expr(expr) => {
                 let path = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)?;
-                Ok(hir::Ty::new(
+                Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TyKind::Path(path),
+                    hir::TypeExprKind::Path(path),
                     Span::new(self.current_file, 0, 0),
                 ))
             }
@@ -874,10 +874,10 @@ impl HirGenerator {
     }
 
     /// Create a simple HIR type
-    pub fn create_simple_type(&mut self, type_name: &str) -> hir::Ty {
-        hir::Ty::new(
+    pub fn create_simple_type(&mut self, type_name: &str) -> hir::TypeExpr {
+        hir::TypeExpr::new(
             self.next_id(),
-            hir::TyKind::Path(hir::Path {
+            hir::TypeExprKind::Path(hir::Path {
                 segments: vec![hir::PathSegment {
                     name: type_name.to_string(),
                     args: None,
@@ -888,10 +888,10 @@ impl HirGenerator {
         )
     }
 
-    fn create_unit_type(&mut self) -> hir::Ty {
-        hir::Ty::new(
+    fn create_unit_type(&mut self) -> hir::TypeExpr {
+        hir::TypeExpr::new(
             self.next_id(),
-            hir::TyKind::Tuple(Vec::new()),
+            hir::TypeExprKind::Tuple(Vec::new()),
             Span::new(self.current_file, 0, 0),
         )
     }

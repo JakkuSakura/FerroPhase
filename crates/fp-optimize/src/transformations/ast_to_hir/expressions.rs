@@ -54,9 +54,9 @@ impl HirGenerator {
         let sig = hir::FunctionSig {
             name: "main".to_string(),
             inputs: Vec::new(),
-            output: hir::Ty::new(
+            output: hir::TypeExpr::new(
                 self.next_id(),
-                hir::TyKind::Tuple(Vec::new()), // Unit type ()
+                hir::TypeExprKind::Tuple(Vec::new()), // Unit type ()
                 body.value.span,
             ),
             generics: hir::Generics::default(),
@@ -83,7 +83,7 @@ impl HirGenerator {
     pub fn transform_function(
         &mut self,
         func: &ast::ItemDefFunction,
-        self_ty: Option<hir::Ty>,
+        self_ty: Option<hir::TypeExpr>,
     ) -> Result<hir::Function> {
         self.push_type_scope();
         self.push_value_scope();
@@ -170,10 +170,10 @@ impl HirGenerator {
         }
     }
 
-    pub(super) fn wrap_ref_type(&mut self, ty: hir::Ty) -> hir::Ty {
-        hir::Ty::new(
+    pub(super) fn wrap_ref_type(&mut self, ty: hir::TypeExpr) -> hir::TypeExpr {
+        hir::TypeExpr::new(
             self.next_id(),
-            hir::TyKind::Ref(Box::new(ty)),
+            hir::TypeExprKind::Ref(Box::new(ty)),
             Span::new(self.current_file, 0, 0),
         )
     }
@@ -181,7 +181,7 @@ impl HirGenerator {
     pub(super) fn make_self_param(
         &mut self,
         receiver: &ast::FunctionParamReceiver,
-        self_ty: hir::Ty,
+        self_ty: hir::TypeExpr,
     ) -> Result<hir::Param> {
         let ty = match receiver {
             ast::FunctionParamReceiver::Ref
@@ -209,9 +209,9 @@ impl HirGenerator {
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
             let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
             let trait_ty = if let Some(trait_locator) = &impl_block.trait_ty {
-                Some(hir::Ty::new(
+                Some(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TyKind::Path(self.locator_to_hir_path_with_scope(
+                    hir::TypeExprKind::Path(self.locator_to_hir_path_with_scope(
                         trait_locator,
                         PathResolutionScope::Type,
                     )?),
@@ -777,10 +777,10 @@ impl HirGenerator {
         }
     }
 
-    pub(super) fn primitive_type_to_hir(&mut self, prim: ast::TypePrimitive) -> hir::Ty {
-        hir::Ty::new(
+    pub(super) fn primitive_type_to_hir(&mut self, prim: ast::TypePrimitive) -> hir::TypeExpr {
+        hir::TypeExpr::new(
             self.next_id(),
-            hir::TyKind::Primitive(prim),
+            hir::TypeExprKind::Primitive(prim),
             Span::new(self.current_file, 0, 0),
         )
     }
