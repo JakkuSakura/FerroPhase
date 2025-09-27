@@ -18,12 +18,12 @@ efficiency in later optimization and code generation.
   AST, e.g., Python or FerroPhase nodes) → AST (Unified, language-agnostic AST). The LAST → AST transition is where
   each language’s built-in library is rewritten into a canonical, language-agnostic `std` package so that everything
   downstream consumes the same primitives.
-- **Interpretation**: A shared evaluation phase, configurable for compile-time (Comptime) or runtime behavior, handling
-  tasks like constant folding, type querying, and execution.
-- **Desugaring and IR Lowering**: AST → HIR (High-level IR, structured for inference) → THIR (Typed HIR, with embedded
-  resolved types) → MIR (Mid-level Intermediate Representation, an SSA control-flow graph for dataflow and ownership
-  analysis) → LIR (Low-level IR, near-machine representation).
-- **Output Generation**: Mode-specific backends, such as WASM/LLVM IR, bytecode, Rust code, or direct execution.
+- **Desugaring & Typing**: AST → HIR (High-level IR, structured for inference) → THIR (Typed HIR built with Algorithm W
+  inference).
+- **Typed Interpretation**: Compile-time/runtime evaluation operates on THIR, producing an evaluated THIR′ that records
+  const-eval effects and intrinsic mutations.
+- **Resugaring & Emission**: THIR′ → TAST (Typed AST with source-like structure) → LAST′ (language-specific ASTs for
+  transpilers) and, for native targets, re-projection through HIR → THIR → MIR → LIR → LLVM/bytecode backends.
 
 ### Standard Library Normalisation
 
@@ -35,165 +35,37 @@ constructed:
    `__builtins__`, JavaScript host globals, or FerroPhase’s structural helpers) and tag them with canonical intents.
 2. **Rewrite** – while producing the unified AST, those intents are remapped onto the canonical `std` hierarchy. The
    AST therefore references only language-agnostic modules such as `std::string`, `std::iter`, or `std::intrinsics`.
-3. **Propagation** – EAST, HIR, THIR, MIR, and LIR simply reuse the canonical package; no later stage needs to know
+3. **Propagation** – HIR, THIR, TAST, MIR, and LIR simply reuse the canonical package; no later stage needs to know
    which frontend supplied the definitions.
 4. **Realisation** – emitters translate the canonical `std` back into the appropriate target form: high-level
    transpilers re-introduce surface imports, whereas low-level backends map calls to runtime helpers or LLVM intrinsics.
 
-Because the mapping is completed before const evaluation runs, every downstream optimisation and diagnostic treats
+Because the mapping is completed before typed interpretation runs, every downstream optimisation and diagnostic treats
 `std` like any other user-defined module. Adding a new frontend only requires defining the mapping from its native
 library surface into the shared `std` vocabulary.
 
 #### Execution Modes and Their Flows
 
-Here's a tabular overview for clarity:
-
 | Mode                             | Key Flow                                                                                                                                                                                                                             | Purpose and Characteristics                                                                                                                                                                                                                                                                                            |
 |----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Compile**                      | Frontend → Interpretation(Comptime) → Desugar to HIR → [Type Inference + Refinement (interleaved with remaining comptime)] → [High-Level Optimization] → THIR (embed types) → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR → WASM/LLVM IR              | Full compilation to native/web targets; emphasizes optimization and static analysis for performance. Inference on HIR allows structured type resolution, with interleaving ensuring comptime dependencies are handled iteratively.                                                                                     |
-| **Interpret**                    | Frontend → Interpretation(Runtime)                                                                                                                                                                                                   | Direct runtime execution on the AST; lightweight, dynamic, suitable for scripting or quick testing. No IR lowering, focusing on immediate evaluation.                                                                                                                                                                  |
-| **Bytecode**                     | Frontend → Interpretation(Comptime, lightweight) → Desugar to HIR → [Type Inference + Refinement (interleaved, minimal)] → THIR (embed types) → MIR (Mid-level Intermediate Representation; SSA CFG, optional) → LIR → Custom Bytecode Gen (pyc-like) → VM Execution | Generates portable, stack-based bytecode similar to Python's pyc format for VM execution; supports stepped debugging (e.g., opcode-by-opcode with inspection). Lightweight comptime enables initial folding and querying without full overhead. Bytecode generation starts post-LIR for optimized, low-level emission. |
-| **Transpile (Surface)**          | Frontend → Interpretation(Comptime) → Codegen to Rust/... (walk annotated AST/EAST)                                                                                                                                                  | Converts to higher-level targets with comptime-driven transformations; keeps everything at the AST/EAST layer for fast migration, light refactors, or prototype sharing without deep analysis.                                                                                                                         |
-| **Transpile (Static/Low-Level)** | Frontend → Interpretation(Comptime) → Desugar to HIR → [Algorithm W Inference + Type Projection + High-Level Optimization] → THIR (embed ConcreteType) → TAST Lift (with re-sugaring hints) → Codegen to Rust/C/...                     | Reuses the compile typing pipeline to obtain concrete layouts via a HIR→THIR projection, applies HIR-level optimizations, then lifts a Typed AST (TAST) that mirrors surface syntax (re-sugared) for emitters that require explicit types and ABI-aware code such as C.                                                |
+| **Compile**                      | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (comptime) → TAST → re-project (HIR → THIR) → MIR → LIR → LLVM/WASM                                                                                                      | Full native/web compilation. Typed interpretation folds consts and applies intrinsics on THIR before optimisation stages consume the evaluated program.                                                                                                                           |
+| **Interpret (Runtime)**          | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (runtime)                                                                                                                                                                | Direct execution with principal types and spans. No MIR/LIR lowering; ideal for REPLs and scripting tools.                                                                                                                                                                       |
+| **Bytecode / VM**                | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (comptime) → TAST → re-project (HIR → THIR) → MIR → LIR → Custom Bytecode → VM                                                                                            | Generates portable bytecode while reusing typed interpretation. Evaluated TAST feeds a second lowering, enabling debug metadata and stepped execution.                                                                                                                           |
+| **Transpile (Surface)**          | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (comptime) → TAST → Language-specific LAST′ → Codegen                                                                                                                      | Produces readable Rust/TypeScript/etc. outputs. Resugared TAST retains THIR types, so transpilers emit explicit signatures and folded constants without extra inference passes.                                                                                                   |
 
-#### Type Representations and Stage Mappings
-
-The system uses a phased type system with 2-3 sets to support evolution from flexible inference to concrete codegen.
-This is summarized below:
-
-- **Ty** (Flexible, used in AST/HIR): Supports inference placeholders (e.g., type variables, unknowns), queries for
-  comptime, and annotations. Stored in a type map (e.g., `HashMap<NodeId, Ty>`) for easy updates during
-  interleaving.
-- **ConcreteType** (Resolved, used in THIR/MIR/LIR): Immutable, machine-oriented (e.g., with sizes, layouts); embedded
-  directly into IR nodes for efficiency post-resolution.
-- **IntermediateType** (Optional third set, used in MIR/LIR if needed): Bridges Ty and ConcreteType for
-  optimization-specific details (e.g., polymorphic variants or VM abstractions); only added for complex backends like
-  diverse bytecode targets.
-
-> **Term Glossary**
-> - Core flow: **CST** → **LAST** → **AST** → **EAST** → **HIR** → **THIR**
->   - **CST**: Concrete Syntax Tree straight from parsing, preserving tokens and trivia.
->   - **LAST**: Language-specific AST normalized per frontend before unification.
->   - **AST**: Unified, language-agnostic tree prior to comptime.
->   - **EAST**: Evaluated AST snapshot after comptime interpretation/macro expansion.
->   - **HIR**: High-level IR with desugared control flow, suited for inference and high-level opts.
->   - **THIR**: Typed HIR produced via HIR→THIR projection; embeds `ConcreteType` data.
-- From **THIR**, the pipeline forks:
-  - **TAST** (static transpile branch): Typed AST lifted from THIR, reintroducing surface sugar for emitters like C.
-  - **MIR** → **LIR** (compile/bytecode branch): Mid-level Intermediate Representation forming an SSA control-flow graph,
-    followed by Low-level IR ahead of backend codegen.
-
-| Stage/IR                                 | Primary Type Set                   | Storage Method          | Key Usage                                     |
-|------------------------------------------|------------------------------------|-------------------------|-----------------------------------------------|
-| AST                                      | Ty                            | Type Map                | Initial parsing, comptime querying.           |
-| HIR                                      | Ty                            | Type Map                | Inference, interleaving with comptime.        |
-| THIR                                     | ConcreteType                       | Embedded in nodes       | Post-resolution opts, type sealing.           |
-| MIR/LIR                                  | ConcreteType (or IntermediateType) | Embedded in nodes       | MIR: SSA control-flow & ownership dataflow; LIR: low-level codegen prep. |
-| Non-IR Modes (e.g., Interpret/Transpile) | Ty                            | Type Map or Annotations | Dynamic eval or output gen.                   |
-
-This structure ensures consistency across modes while minimizing overhead—e.g., interpret mode relies solely on Ty
-for runtime flexibility.
-
-## Detailed Discussion: Execution Modes
-
-The compiler's multi-mode design is centered on modularity and reuse, allowing users to select execution paths based on
-needs like performance, debugging, or interoperability. By sharing the frontend and interpretation phases, the system
-avoids duplication while enabling specialized behaviors. Each mode builds on a unified AST, derived from
-language-specific parsing, to process inputs from diverse sources such as Python, FerroPhase, or custom languages. This
-frontend normalization—via optional CST for raw syntax, LAST for idiomatic representations, and final AST (later EAST
-after comptime evaluation) unification—ensures semantic consistency, making downstream stages language-agnostic.
-
-### Compile Mode: Optimized Native Execution
-
-Compile mode represents the most comprehensive path, transforming source code into efficient WASM or LLVM IR for native
-or web deployment. Starting from the frontend, it proceeds to full comptime interpretation, where compile-time
-evaluation handles advanced features like type querying and constant propagation via the shared `TypeQueryEngine`
-described in the const-eval pipeline. This is followed by desugaring into
-HIR, a structured intermediate representation ideal for type inference due to its explicit control flow and reduced
-syntactic sugar.
-
-Inference and refinement occur on HIR, interleaved with any remaining comptime operations to iteratively resolve
-dependencies— for instance, a comptime function might reveal new type information that refines inference in subsequent
-passes. This interleaving stabilizes the program state, preventing errors like incomplete constant folding by ensuring
-types are available when needed. High-level optimizations, such as dead code elimination or inlining, are applied
-post-inference, leveraging the resolved state. The pipeline then lowers to THIR, where types are embedded directly into
-nodes for a sealed, typed view. MIR then constructs a Rust-style Mid-level Intermediate Representation: an SSA
-control-flow graph with explicit drop sequencing and ownership-aware dataflow that underpins optimizations and static
-checks. Low-level adjustments in LIR (e.g., register allocation) prepare for final emission to WASM or LLVM IR. This mode excels in performance-critical
-scenarios, with the multi-IR approach allowing targeted optimizations at each level.
-
-### Interpret Mode: Immediate Runtime Execution
-
-For rapid prototyping or dynamic scripting, interpret mode offers a streamlined path: directly from the frontend to
-runtime interpretation. This involves a tree-walking evaluator on the AST, executing code in a runtime environment
-without IR lowering or static optimizations. Runtime interpretation shares the same evaluation logic as comptime but
-configured for dynamic behavior, supporting features like lazy evaluation or runtime type checks. It's particularly
-useful for languages with dynamic semantics, as it bypasses the need for full type resolution, relying instead on
-flexible Ty representations during execution. While less optimized than compile mode, it provides fast feedback
-loops, making it ideal for REPLs or embedded scripting.
-
-### Bytecode Mode: Portable VM Execution with Debugging
-
-Bytecode mode bridges interpretation and compilation by generating executable bytecode for a virtual machine, enabling
-portable deployment and enhanced debugging. Drawing inspiration from Python's pyc format, the bytecode is
-custom-designed as a stack-based, dynamic system with opcodes for operations like PUSH, POP, CALL, and conditional
-jumps. This format supports the least goal of stepped execution through VM hooks, allowing opcode-by-opcode advancement,
-state inspection (e.g., stack frames, locals), and breakpoints—facilitated by embedding debug metadata like source line
-mappings in the bytecode.
-
-The flow begins with the frontend, followed by a lightweight comptime interpretation to perform initial constant folding
-and type querying without full overhead. Desugaring to HIR enables minimal type inference and refinement, interleaved as
-needed but kept concise to prioritize speed. Lowering continues through THIR (embedding resolved types), the optional
-MIR Mid-level Intermediate Representation pass, and LIR for low-level refinements. Bytecode generation starts after LIR, mapping its
-operations directly to pyc-like instructions— for example, an LIR arithmetic op becomes a BINARY_ADD opcode, with
-dynamic type handling to mimic Python's flexibility. The resulting bytecode is executed in a custom VM, which can be
-toggled for stepped mode to support debugging workflows. This mode is versatile for environments requiring portability,
-such as mobile or embedded systems, and its custom nature allows tailoring to specific needs, like extended opcodes for
-language features.
-
-### Transpile Modes: Language Conversion and Typed Output
-
-Transpile mode focuses on code migration, converting the unified AST—after comptime interpretation—directly to targets
-like Rust via a syntax-walking code generator. Comptime here annotates the AST with transformations, such as resolving
-macros or folding expressions, ensuring the output is semantically equivalent without deep analysis.
-
-For higher-level targets that tolerate dynamic edges or leaf inference (e.g., Rust shims, JavaScript scaffolding), the
-surface transpiler stays entirely in the AST/EAST. It walks the comptime-annotated tree and prints source with optional
-hints, giving fast turnaround without IR lowering, high-level optimization, or a separate typing phase. This path is
-ideal when code shape needs to remain close to input or when turnaround speed overrides deep analysis.
-
-Low-level or strongly typed targets reuse the compile-time lowering pipeline to obtain precise layouts. After comptime
-expansion, the program lowers to HIR, runs constraint-based (Algorithm W) inference, and projects those results into
-THIR where ConcreteType data is sealed into the IR. High-level optimizations (inlining, DCE, loop transforms, etc.) run
-on HIR, taking advantage of its canonical control flow while attaching re-sugaring metadata so surface structure can be
-reconstructed later. The compiler then lifts a Typed AST (TAST) that mirrors the original surface structure, reintroduces
-desired sugar (e.g., `for` loops, match expressions), and carries THIR-resolved types on every node. C, bare-metal Rust,
-or other ABI-sensitive emitters consume this lifted TAST so code generation has explicit sizes, calling conventions, and
-qualifiers available without performing additional inference loops. This approach shares the heavy lifting with compile
-mode while keeping a polished, surface-shaped handoff for emitters.
-
-Const-evaluation transformations never mutate the unified AST in place. Each block records structural edits and, when
-new types are needed, allocates provisional `mut type` tokens (mirroring the language construct) through the shared
-`TypeQueryEngine`. Inline `struct`/`impl` syntax executed during const evaluation produces the same tokens, so surface
-syntax and builder intrinsics share a single pipeline. On success those tokens are frozen into concrete definitions,
-producing the EAST snapshot shared by
-every downstream mode.
-
-In practice, the unified AST becomes EAST after the comptime interpreter runs, encapsulating evaluated constants and
-macro expansions while keeping the shared structure. HIR then drops remaining sugar for analysis, and THIR seals
-ConcreteType data before the TAST lift resurfaces a typed, human-friendly tree for low-level emitters.
-
+Typed interpretation centralises const folding and intrinsic execution on THIR. The resulting typed effects are recorded
+and replayed during resugaring and re-projection so every downstream stage observes the same evaluated program.
 ## Cross-Mode and Cross-Stage Guarantees
 
-- **Canonical EAST**: Every downstream stage (HIR, THIR, TAST, MIR, LIR) and every mode (compile, bytecode, transpile,
-  interpret) consumes the same EAST snapshot produced by const evaluation. Differences manifest only in performance or
-  final emission format, never in user-visible semantics.
-- **Stage Preservation**: Transformations performed during lowering (AST→HIR→THIR→TAST/MIR/LIR) are semantics-preserving;
-  no stage is permitted to alter the behaviour observable at the EAST level.
-- **Deterministic Transformations**: Structural transformations scheduled during comptime apply in a deterministic order
-  so that repeated builds produce identical EAST snapshots and downstream outputs.
-- **Shared Diagnostics**: All diagnostics map back to EAST spans, ensuring consistent user feedback regardless of stage
-  or mode.
+- **Canonical TAST**: Every downstream stage (re-projected HIR/THIR, MIR, LIR) and every mode (compile, bytecode, transpile,
+  interpret) consumes the same evaluated TAST snapshot produced after typed interpretation. Differences manifest only in
+  performance or final emission format, never in user-visible semantics.
+- **Stage Preservation**: Transformations performed during lowering (HIR→THIR→TAST→HIR→THIR→MIR/LIR) are
+  semantics-preserving; no stage may alter observable behaviour relative to the evaluated TAST.
+- **Deterministic Effects**: Typed interpretation records structural edits in a deterministic order so repeated builds
+  produce identical TAST snapshots and downstream outputs.
+- **Shared Diagnostics**: Spans captured during the initial LAST→AST phase are threaded through THIR, TAST, and
+  re-projection, ensuring consistent user feedback in every mode.
 
 ## Detailed Discussion: Type System Design
 
