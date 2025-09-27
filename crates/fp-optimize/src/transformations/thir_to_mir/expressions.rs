@@ -96,7 +96,7 @@ impl MirGenerator {
                 let result_place = mir::Place::from_local(result_local);
 
                 // Convert THIR BinOp to BinOpKind
-                let binop_kind = self.convert_thir_binop_to_kind(op);
+                let binop_kind = self.convert_thir_binop_to_kind(op)?;
 
                 self.add_statement_to_block(
                     after_rhs,
@@ -566,15 +566,16 @@ impl MirGenerator {
                             let arm_block_id = self.create_basic_block();
                             let next_block_id = self.create_basic_block();
 
+                            let result_ty = self.transform_type(&expr.ty);
+                            let default_value =
+                                self.default_rvalue_for_type(&result_ty, arm.span)?;
+
                             self.add_statement_to_block(
                                 current_block,
                                 mir::Statement {
                                     kind: mir::StatementKind::Assign(
                                         result_place.clone(),
-                                        self.default_rvalue_for_type(
-                                            &self.transform_type(&expr.ty),
-                                            arm.span,
-                                        ),
+                                        default_value,
                                     ),
                                     source_info: arm.span,
                                 },
@@ -587,7 +588,7 @@ impl MirGenerator {
                                         discr: mir::Operand::Copy(scrutinee_place.clone()),
                                         switch_ty: self.transform_type(&arm.pattern.ty),
                                         targets: mir::SwitchTargets {
-                                            values: vec![self.constant_to_u128(value)],
+                                            values: vec![self.constant_to_u128(value)?],
                                             targets: vec![arm_block_id],
                                             otherwise: next_block_id,
                                         },
@@ -657,48 +658,22 @@ impl MirGenerator {
                             current_block = join_block;
                             break;
                         }
-                        _ => {
-                            tracing::warn!(
-                                "THIR→MIR: pattern kind {:?} not supported; falling back to wildcard handling",
-                                arm.pattern.kind
-                            );
-                            let ExprOutcome {
-                                place: arm_place,
-                                block: arm_block,
-                            } = self.transform_expr(arm.body, current_block)?;
-
-                            if !self.block_has_terminator(arm_block) {
-                                self.add_statement_to_block(
-                                    arm_block,
-                                    mir::Statement {
-                                        kind: mir::StatementKind::Assign(
-                                            result_place.clone(),
-                                            mir::Rvalue::Use(mir::Operand::Move(arm_place)),
-                                        ),
-                                        source_info: arm.span,
-                                    },
-                                );
-                                self.ensure_goto(arm_block, join_block, arm.span);
-                            }
-
-                            handled = true;
-                            current_block = join_block;
-                            break;
+                        other => {
+                            return Err(optimization_error(format!(
+                                "Unsupported THIR pattern in match lowering: {:?}",
+                                other
+                            )));
                         }
                     }
                 }
 
                 if !handled && !self.block_has_terminator(current_block) {
+                    let default_value =
+                        self.default_rvalue_for_type(&self.transform_type(&expr.ty), expr.span)?;
                     self.add_statement_to_block(
                         current_block,
                         mir::Statement {
-                            kind: mir::StatementKind::Assign(
-                                result_place.clone(),
-                                self.default_rvalue_for_type(
-                                    &self.transform_type(&expr.ty),
-                                    expr.span,
-                                ),
-                            ),
+                            kind: mir::StatementKind::Assign(result_place.clone(), default_value),
                             source_info: expr.span,
                         },
                     );
@@ -806,7 +781,7 @@ impl MirGenerator {
                     block: block_after_rhs,
                 } = self.transform_expr(rhs_expr, block_after_lhs)?;
 
-                let binop_kind = self.convert_thir_binop_to_kind(op);
+                let binop_kind = self.convert_thir_binop_to_kind(op)?;
                 let mir_binop = self.transform_binary_op(binop_kind)?;
 
                 let target_place = lhs_place.clone();
@@ -924,18 +899,26 @@ impl MirGenerator {
         }
     }
 
-    pub(super) fn default_rvalue_for_type(&self, ty: &Ty, span: Span) -> mir::Rvalue {
-        match &ty.kind {
+    pub(super) fn default_rvalue_for_type(&self, ty: &Ty, span: Span) -> Result<mir::Rvalue> {
+        let rvalue = match &ty.kind {
             TyKind::Bool => mir::Rvalue::Use(self.bool_operand(false, span)),
             TyKind::Tuple(elems) if elems.is_empty() => self.unit_rvalue(),
-            TyKind::Never => mir::Rvalue::Use(self.bool_operand(false, span)),
-            _ => mir::Rvalue::Use(self.bool_operand(false, span)),
-        }
+            other => {
+                return Err(optimization_error(format!(
+                    "Cannot synthesise default MIR rvalue for type {:?}",
+                    other
+                )))
+            }
+        };
+
+        Ok(rvalue)
     }
 
-    pub(super) fn constant_to_u128(&self, _value: &thir::ConstValue) -> u128 {
-        tracing::warn!("THIR→MIR: const pattern lowering uses placeholder value; treating as zero");
-        0
+    pub(super) fn constant_to_u128(&self, value: &thir::ConstValue) -> Result<u128> {
+        Err(optimization_error(format!(
+            "Cannot lower THIR constant {:?} to u128; proper constant representation required",
+            value
+        )))
     }
 
     pub(super) fn transform_binary_op(&self, op: BinOpKind) -> Result<mir::BinOp> {
@@ -950,7 +933,10 @@ impl MirGenerator {
             BinOpKind::Le => Ok(mir::BinOp::Le),
             BinOpKind::Gt => Ok(mir::BinOp::Gt),
             BinOpKind::Ge => Ok(mir::BinOp::Ge),
-            _ => Ok(mir::BinOp::Add), // Default fallback
+            other => Err(optimization_error(format!(
+                "Unsupported THIR binary operator during MIR lowering: {:?}",
+                other
+            ))),
         }
     }
 
@@ -982,19 +968,22 @@ impl MirGenerator {
         matches!(ty.kind, TyKind::FnDef(..) | TyKind::FnPtr(..))
     }
 
-    pub(super) fn convert_thir_binop_to_kind(&self, op: thir::BinOp) -> BinOpKind {
+    pub(super) fn convert_thir_binop_to_kind(&self, op: thir::BinOp) -> Result<BinOpKind> {
         match op {
-            thir::BinOp::Add => BinOpKind::Add,
-            thir::BinOp::Sub => BinOpKind::Sub,
-            thir::BinOp::Mul => BinOpKind::Mul,
-            thir::BinOp::Div => BinOpKind::Div,
-            thir::BinOp::Eq => BinOpKind::Eq,
-            thir::BinOp::Ne => BinOpKind::Ne,
-            thir::BinOp::Lt => BinOpKind::Lt,
-            thir::BinOp::Le => BinOpKind::Le,
-            thir::BinOp::Gt => BinOpKind::Gt,
-            thir::BinOp::Ge => BinOpKind::Ge,
-            _ => BinOpKind::Add, // Default fallback for other ops
+            thir::BinOp::Add => Ok(BinOpKind::Add),
+            thir::BinOp::Sub => Ok(BinOpKind::Sub),
+            thir::BinOp::Mul => Ok(BinOpKind::Mul),
+            thir::BinOp::Div => Ok(BinOpKind::Div),
+            thir::BinOp::Eq => Ok(BinOpKind::Eq),
+            thir::BinOp::Ne => Ok(BinOpKind::Ne),
+            thir::BinOp::Lt => Ok(BinOpKind::Lt),
+            thir::BinOp::Le => Ok(BinOpKind::Le),
+            thir::BinOp::Gt => Ok(BinOpKind::Gt),
+            thir::BinOp::Ge => Ok(BinOpKind::Ge),
+            other => Err(optimization_error(format!(
+                "Unsupported THIR binary operator {:?} during MIR lowering",
+                other
+            ))),
         }
     }
 }

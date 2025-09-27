@@ -184,7 +184,7 @@ impl Default for CliConfig {
 }
 
 impl CliConfig {
-    /// Load configuration from file, falling back to defaults
+    /// Load configuration from explicit or well-known locations, merging with defaults
     pub fn load(config_path: Option<&Path>) -> Result<Self> {
         let config = if let Some(path) = config_path {
             Self::load_from_file(path)?
@@ -193,23 +193,24 @@ impl CliConfig {
             let mut config = Self::default();
 
             // Try current directory
-            if let Ok(local_config) = Self::load_from_file(Path::new("ferrophase.toml")) {
-                config = config.merge(local_config);
+            let local_path = Path::new("ferrophase.toml");
+            if local_path.exists() {
+                config = config.merge(Self::load_from_file(local_path)?);
             }
 
             // Try home directory
             if let Some(home_dir) = dirs::home_dir() {
                 let home_config = home_dir.join(".ferrophase.toml");
-                if let Ok(home_config) = Self::load_from_file(&home_config) {
-                    config = config.merge(home_config);
+                if home_config.exists() {
+                    config = config.merge(Self::load_from_file(&home_config)?);
                 }
             }
 
             // Try system config directory
             if let Some(config_dir) = dirs::config_dir() {
                 let system_config = config_dir.join("ferrophase").join("config.toml");
-                if let Ok(system_config) = Self::load_from_file(&system_config) {
-                    config = config.merge(system_config);
+                if system_config.exists() {
+                    config = config.merge(Self::load_from_file(&system_config)?);
                 }
             }
 
