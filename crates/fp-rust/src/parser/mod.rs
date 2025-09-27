@@ -197,9 +197,10 @@ impl RustParser {
                     }
                 }
             }
-            Err(_e) => {
-                // For transpilation mode, if parsing fails, try to extract just the struct definitions
-                self.try_parse_structs_only(source)
+            Err(e) => {
+                // Log the original parsing error and propagate it
+                tracing::error!("Failed to parse file content: {}", e);
+                Err(e).with_context(|| "Failed to parse as file - unable to extract AST structure")?
             }
         }
     }
@@ -238,9 +239,9 @@ impl RustParser {
             // Filter to only struct definitions and other safe items
             match item {
                 syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Type(_) => {
-                    if let Ok(ast_item) = self.parse_item(item) {
-                        parsed_items.push(BlockStmt::Item(Box::new(ast_item)));
-                    }
+                    let ast_item = self.parse_item(item)
+                        .with_context(|| "Failed to parse struct/enum/type item")?;
+                    parsed_items.push(BlockStmt::Item(Box::new(ast_item)));
                 }
                 _ => {
                     // Skip other item types that might cause issues
@@ -258,7 +259,7 @@ impl RustParser {
     pub fn parse_fp_content(&self, content: &str) -> Result<Expr> {
         // First try to parse as items wrapped in a module
         let wrapped_content = format!("mod fp_block {{ {} }}", content);
-        
+
         match syn::parse_str::<syn::File>(&wrapped_content) {
             Ok(file) => {
                 // Extract the module content
@@ -266,27 +267,37 @@ impl RustParser {
                     if let Some((_, items)) = module.content {
                         // Parse the items using the existing FP parser
                         let parsed_items = self.parse_items(items)?;
-                        
+
                         // Convert items to block statements
                         let stmts: Vec<BlockStmt> = parsed_items
                             .into_iter()
                             .map(|item| BlockStmt::Item(Box::new(item)))
                             .collect();
-                        
+
                         return Ok(Expr::Block(ExprBlock { stmts }));
                     }
                 }
             }
-            Err(_) => {
-                // If module parsing fails, try parsing as block statements
+            Err(module_err) => {
+                // If module parsing fails, try parsing as block statements or expressions
                 let wrapped_content = format!("{{ {} }}", content);
-                
-                if let Ok(syn::Expr::Block(block_expr)) = syn::parse_str::<syn::Expr>(&wrapped_content) {
-                    return crate::parser::expr::parse_block(block_expr.block).map(Expr::Block);
+
+                match syn::parse_str::<syn::Expr>(&wrapped_content) {
+                    Ok(syn::Expr::Block(block_expr)) => {
+                        return crate::parser::expr::parse_block(block_expr.block).map(Expr::Block);
+                    }
+                    Ok(other) => {
+                        return self.parse_expr(other);
+                    }
+                    Err(expr_err) => {
+                        // Both module and expression parsing failed - report both errors
+                        bail!("Failed to parse FP content as module: {}. Also failed as expression: {}. Content: {}", 
+                              module_err, expr_err, content)
+                    }
                 }
             }
         }
-        
+
         // If all parsing attempts fail, return a descriptive error
         bail!("Failed to parse FP content: {}", content)
     }

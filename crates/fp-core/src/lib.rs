@@ -17,6 +17,7 @@ pub mod ops;
 pub mod passes;
 pub mod pat;
 pub mod printer;
+pub mod reporting;
 pub mod span;
 pub mod utils;
 
