@@ -1023,7 +1023,7 @@ impl<'ctx> LirCodegen<'ctx> {
         lir_const: lir::LirConstant,
     ) -> Result<ConstantRef> {
         match lir_const {
-            lir::LirConstant::String(s) => Ok(self.get_or_create_string_gep(&s)),
+            lir::LirConstant::String(s) => Ok(self.get_or_create_string_ptr(&s)),
             other => {
                 // Use the immutable path for non-string constants
                 self.convert_lir_constant_to_llvm(other)
@@ -1075,22 +1075,10 @@ impl<'ctx> LirCodegen<'ctx> {
         })
     }
 
-    fn get_or_create_string_gep(&mut self, s: &str) -> ConstantRef {
-        if let Some((name, len)) = self.string_globals.get(s).cloned() {
-            // Build GEP to first element
-            let array_ty = self
-                .llvm_ctx
-                .module
-                .types
-                .array_of(self.llvm_ctx.module.types.i8(), len);
-            let base = ConstantRef::new(Constant::GlobalReference { name, ty: array_ty });
-            let idx0 = ConstantRef::new(Constant::Int { bits: 32, value: 0 });
-            let gep = Constant::GetElementPtr(constant::GetElementPtr {
-                address: base,
-                indices: vec![idx0.clone(), idx0],
-                in_bounds: true,
-            });
-            return ConstantRef::new(gep);
+    fn get_or_create_string_ptr(&mut self, s: &str) -> ConstantRef {
+        if let Some((name, _len)) = self.string_globals.get(s).cloned() {
+            let ptr_ty = self.llvm_ctx.module.types.pointer();
+            return ConstantRef::new(Constant::GlobalReference { name, ty: ptr_ty });
         }
 
         let bytes = s.as_bytes();
@@ -1131,17 +1119,11 @@ impl<'ctx> LirCodegen<'ctx> {
         self.string_globals
             .insert(s.to_string(), (gv_name.clone(), len));
 
-        // Return pointer to first char via GEP
-        let base = ConstantRef::new(Constant::GlobalReference {
+        let ptr_ty = self.llvm_ctx.module.types.pointer();
+        ConstantRef::new(Constant::GlobalReference {
             name: gv_name,
-            ty: array_ty,
-        });
-        let idx0 = ConstantRef::new(Constant::Int { bits: 32, value: 0 });
-        ConstantRef::new(Constant::GetElementPtr(constant::GetElementPtr {
-            address: base,
-            indices: vec![idx0.clone(), idx0],
-            in_bounds: true,
-        }))
+            ty: ptr_ty,
+        })
     }
 
     /// Convert LIR type to LLVM type
