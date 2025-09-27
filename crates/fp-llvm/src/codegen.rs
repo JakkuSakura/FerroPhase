@@ -117,7 +117,7 @@ impl<'ctx> LirCodegen<'ctx> {
         // Convert the initializer first to determine the type
         let (ty, initializer) = if let Some(init) = global.initializer {
             let llvm_constant = self.convert_lir_constant_to_llvm(init)?;
-            let ty = self.get_type_from_constant(&llvm_constant).into();
+            let ty = self.get_type_from_constant(&llvm_constant)?.into();
             (ty, Some(llvm_constant))
         } else {
             return Err(Error::Generic(eyre!(
@@ -1001,7 +1001,10 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirConstant::Float(value, ty) => match ty {
                 lir::LirType::F32 => Ok(self.llvm_ctx.const_f32(value as f32)),
                 lir::LirType::F64 => Ok(self.llvm_ctx.const_f64(value)),
-                _ => Ok(self.llvm_ctx.const_f32(value as f32)),
+                other => Err(Error::Generic(eyre!(
+                    "Unsupported floating-point type {:?} for LLVM constant",
+                    other
+                ))),
             },
             lir::LirConstant::Bool(value) => Ok(self.llvm_ctx.const_bool(value)),
             lir::LirConstant::String(s) => {
@@ -1029,23 +1032,40 @@ impl<'ctx> LirCodegen<'ctx> {
     }
 
     /// Get the LLVM type for a given constant
-    fn get_type_from_constant(&self, constant: &ConstantRef) -> TypeRef {
-        match constant.as_ref() {
+    fn get_type_from_constant(&self, constant: &ConstantRef) -> Result<TypeRef> {
+        let ty = match constant.as_ref() {
             Constant::Int { bits, .. } => match bits {
                 1 => self.llvm_ctx.module.types.bool(),
                 8 => self.llvm_ctx.module.types.i8(),
                 16 => self.llvm_ctx.module.types.i16(),
                 32 => self.llvm_ctx.module.types.i32(),
                 64 => self.llvm_ctx.module.types.i64(),
-                _ => self.llvm_ctx.module.types.i32(), // Default to i32
+                other => {
+                    return Err(Error::Generic(eyre!(
+                        "Unsupported integer bit width {} for LLVM constant",
+                        other
+                    )))
+                }
             },
             Constant::Float(Float::Single(_)) => self.llvm_ctx.module.types.fp(FPType::Single),
             Constant::Float(Float::Double(_)) => self.llvm_ctx.module.types.fp(FPType::Double),
-            Constant::Array { element_type, .. } => {
-                self.llvm_ctx.module.types.array_of(element_type.clone(), 0)
+            Constant::Array {
+                element_type,
+                elements,
+            } => self
+                .llvm_ctx
+                .module
+                .types
+                .array_of(element_type.clone(), elements.len()),
+            other => {
+                return Err(Error::Generic(eyre!(
+                    "Unsupported LLVM constant for type inference: {:?}",
+                    other
+                )))
             }
-            _ => self.llvm_ctx.module.types.i32(), // Default fallback
-        }
+        };
+
+        Ok(ty)
     }
 
     fn const_i8(&self, b: u8) -> ConstantRef {

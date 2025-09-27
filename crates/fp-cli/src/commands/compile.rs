@@ -428,29 +428,16 @@ async fn compile_llvm_to_binary(llvm_ir: &str, output: &Path, args: &CompileArgs
     info!("Generated LLVM IR: {}", temp_ll.display());
 
     // Try to compile with LLVM tools (llc + ld/clang)
-    if let Err(e) = compile_with_llvm_tools(&temp_ll, output, args).await {
-        warn!(
-            "LLVM compilation failed: {}, falling back to saving LLVM IR",
-            e
-        );
-
-        // Fallback: just save the LLVM IR as the output
-        fs::write(output.with_extension("ll"), llvm_ir)
-            .await
-            .map_err(|e| CliError::Io(e))?;
-
-        info!(
-            "Saved LLVM IR as: {}",
-            output.with_extension("ll").display()
-        );
-        info!(
-            "To compile manually, use: llc {} -o {}.s && clang {}.s -o {}",
-            output.with_extension("ll").display(),
-            output.display(),
-            output.display(),
-            output.display()
-        );
-    }
+    compile_with_llvm_tools(&temp_ll, output, args)
+        .await
+        .map_err(|e| {
+            warn!("LLVM compilation failed: {}", e);
+            CliError::Compilation(format!(
+                "LLVM compilation failed: {}. Intermediate IR left at {}",
+                e,
+                temp_ll.display()
+            ))
+        })?;
 
     // Clean up temporary LLVM IR file
     let _ = fs::remove_file(&temp_ll).await;

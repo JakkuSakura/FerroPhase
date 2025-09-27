@@ -297,7 +297,7 @@ impl HirGenerator {
     /// Transform unary operation to HIR
     pub(super) fn transform_unop_to_hir(&mut self, unop: &ast::ExprUnOp) -> Result<hir::ExprKind> {
         let operand = Box::new(self.transform_expr_to_hir(&unop.val)?);
-        let op = self.convert_unop_kind(&unop.op);
+        let op = self.convert_unop_kind(&unop.op)?;
 
         Ok(hir::ExprKind::Unary(op, operand))
     }
@@ -563,16 +563,15 @@ impl HirGenerator {
     }
 
     /// Convert AST unary operator to HIR
-    pub(super) fn convert_unop_kind(&self, op: &UnOpKind) -> hir::UnOp {
+    pub(super) fn convert_unop_kind(&self, op: &UnOpKind) -> Result<hir::UnOp> {
         match op {
-            UnOpKind::Neg => hir::UnOp::Neg,
-            UnOpKind::Not => hir::UnOp::Not,
-            UnOpKind::Deref => hir::UnOp::Deref,
-            UnOpKind::Any(_) => {
-                // For Any variants, default to Neg as a fallback
-                // This handles custom unary operators that don't have direct HIR equivalents
-                hir::UnOp::Neg
-            }
+            UnOpKind::Neg => Ok(hir::UnOp::Neg),
+            UnOpKind::Not => Ok(hir::UnOp::Not),
+            UnOpKind::Deref => Ok(hir::UnOp::Deref),
+            UnOpKind::Any(kind) => Err(crate::error::optimization_error(format!(
+                "Unsupported unary operator variant encountered during AST→HIR lowering: {:?}",
+                kind
+            ))),
         }
     }
 
