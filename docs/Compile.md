@@ -65,14 +65,14 @@ Highlights:
 
 ## Running Const Evaluation
 
-To inspect const-eval output and verify EAST contents, run:
+To inspect const-eval output and verify TAST contents, run:
 
 ```bash
 $ fp compile src/main.fp --emit ast --emit east
 ```
 
 Artifacts (paths depend on your configuration):
-- `target/east/src_main.east` – Evaluated AST snapshot (EAST)
+- `target/tast/src_main.tast` – Evaluated typed AST snapshot (TAST)
 - `target/hir/src_main.hir` – HIR after lowering
 
 ## Building to Native (LLVM target)
@@ -112,8 +112,8 @@ Hello from quote/splice!
 
 - **Missing LLVM tools**: `fp compile` reports if `llc`/`clang` are unavailable. Install via your package manager or set
   `FP_LLVM_PATH`.
-- **Const eval errors**: Review EAST artefacts. Diagnostics map back to original spans.
-- **Transpile mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—EAST must match quoted/spliced code.
+- **Const eval errors**: Review TAST artefacts. Diagnostics map back to original spans.
+- **Transpile mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—TAST must match quoted/spliced code.
 
 ## Next Steps
 

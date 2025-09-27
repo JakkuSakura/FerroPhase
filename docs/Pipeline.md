@@ -3,51 +3,54 @@
 FerroPhase's pipeline is organised as a share-nothing driver that threads an
 explicit `CompilationContext` and diagnostics between functional stages. The
 frontend now produces a language-specific AST (LAST) snapshot alongside the
-canonical AST, ensuring multi-language inputs flow through the same lowerings.
+canonical AST, ensuring multi-language inputs flow through the same
+lowerings. The updated flow centres typed interpretation on THIR before
+resugaring to TAST and, for compilation backends, re-projecting into the
+optimisation IR stack.
 
 ## Stage Overview
 
-1. **Frontend (Source → LAST → AST)**
-   - Each `LanguageFrontend` normalises source into a LAST snapshot and the
-     unified AST (`fp_core::ast::Node`).
-   - A language-specific serializer (`Arc<dyn AstSerializer>`) accompanies the
-     result; it is registered with `register_threadlocal_serializer` before
-     const-eval or interpretation.
+1. **Frontend (Source → LAST → Annotated AST)**
+   - Each `LanguageFrontend` normalises source into a language-specific LAST
+     snapshot and the canonical AST (`fp_core::ast::Node`).
+   - Annotation captures language metadata (imports, attributes, serializer)
+     so later tooling can recover front-end specifics.
    - The frontend stores provenance (`FrontendSnapshot`) inside the
      `CompilationContext` so later tooling can persist or inspect LAST data.
 
-2. **Const Evaluation (AST → EAST)**
-   - `ConstEvaluationOrchestrator` consumes the AST and produces an evaluated
-     AST with macro expansion and compile-time execution applied.
-   - Results from this phase (const tables, globals) are recorded on the
-     `CompilationContext` for consumption by lower stages.
+2. **Parsing & Normalisation (AST → AST)**
+   - Macro expansion, annotation, and canonical std remapping execute in this
+     stage while spans are preserved.
+   - The output is the normalised AST that every downstream mode consumes.
 
-3. **Lowering Steps**
-   - **AST → HIR** (`HirGenerator`)
-   - **HIR → THIR** (`ThirGenerator`)
-   - **THIR → MIR** (`MirGenerator`)
-   - **MIR → LIR** (`LirGenerator`, seeded with const results)
-   - **LIR → LLVM IR** (fp-llvm backend)
+3. **Desugaring & Typing (AST → HIR → THIR)**
+   - `HirGenerator` removes surface sugar and resolves bindings.
+   - `ThirGenerator` runs Algorithm W style inference to produce a typed HIR
+     (THIR). Types are attached to every expression and pattern.
 
-   Each IR stage owns its own lightweight type module:
+4. **Typed Interpretation (THIR → THIR′)**
+   - Compile-time and runtime interpretation operate directly on THIR.
+   - Intrinsics record structural edits via effect logs; the resulting THIR′ is
+     the authoritative typed program after evaluation.
 
-   | Stage | Type Module | Purpose |
-   |-------|-------------|---------|
-   | HIR   | `fp_core::hir::ty` | Rich semantic types used during high-level analysis. |
-   | THIR  | `fp_core::hir::typed` | Re-exports HIR types alongside typed THIR nodes. |
-   | MIR   | `fp_core::mir::ty` | Mid-level view constrained to constructs the MIR builder needs. |
-   | LIR   | `fp_core::lir::ty` | LLVM-adjacent value types used by the backend. |
+5. **Resugaring (THIR′ → TAST → LAST′)**
+   - A lifting phase rebuilds a typed AST (TAST) that mirrors surface syntax
+     while preserving the THIR types and spans.
+   - Language-specific generators can rehydrate a LAST′ view for transpilers or
+     tooling that prefers front-end formats.
 
-   Sharing is now strictly top-down: lower stages never import higher-stage type
-   definitions, which keeps each lowering isolated and simplifies future stage
-   evolution.
+6. **Backend Lowering (Compile / Optimisation Modes)**
+   - For native/optimised targets, the driver re-projects the evaluated program:
+     `TAST → HIR → THIR → MIR → LIR → LLVM IR`.
+   - MIR/LIR benefit from evaluation results (folded consts, generated structs)
+     while preserving deterministic spans from the original source.
 
-Each step returns a `StageReport<T>` containing the produced IR (or a
+Each step returns a `StageReport<T>` containing the produced artefact (or a
 placeholder in tolerant mode), an updated `CompilationContext`, and a list of
-`PipelineDiagnostic` entries. Diagnostics are printed stage-by-stage but also
-bubble up for aggregate reporting.
+`Diagnostic` entries. Diagnostics are printed stage-by-stage but also bubble up
+for aggregate reporting.
 
-4. **Binary Emission (optional)**
+7. **Binary Emission (optional)**
    - If the target is `Binary`, the LLVM artefact is passed to `llc` and the
      configured linker via `BinaryCompiler` with diagnostics folded into the
      final report.
@@ -99,8 +102,9 @@ flags for informational entries but always surfaces warnings and errors.
 ## Intermediates & Persistence
 
 When `save_intermediates` is enabled, each stage writes its artefact into the
-`base_path` with a conventional extension (`.east`, `.hir`, `.thir`, `.mir`,
-`.lir`, `.ll`). The driver handles the IO so the stage helpers remain pure.
+`base_path` with a conventional extension (`.ast`, `.hir`, `.thir`, `.tast`,
+`.mir`, `.lir`, `.ll`). The driver handles the IO so the stage helpers remain
+pure.
 
 ## Error Tolerance
 

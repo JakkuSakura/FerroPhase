@@ -324,6 +324,7 @@ impl LlvmLinker {
 
 /// High-level interface for linking LLVM modules
 pub struct ModuleLinker {
+    #[allow(dead_code)]
     linker_config: LinkerConfig,
     temp_dir: Option<PathBuf>,
 }

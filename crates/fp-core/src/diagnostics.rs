@@ -2,6 +2,73 @@ use crate::span::Span;
 use once_cell::sync::Lazy;
 use std::sync::{Arc, Mutex};
 
+/// Context provided to diagnostic template renderers while producing output lines.
+pub struct DiagnosticRenderContext<'a> {
+    pub context: &'a str,
+    pub verbose_info: bool,
+}
+
+/// Trait for converting a diagnostic into human-readable output according to a template.
+pub trait DiagnosticTemplateRenderer: Send + Sync {
+    fn render(
+        &self,
+        diagnostic: &Diagnostic,
+        ctx: &DiagnosticRenderContext<'_>,
+    ) -> Option<Vec<String>>;
+}
+
+/// Built-in templates supported by the diagnostic manager.
+#[derive(Clone)]
+pub enum DiagnosticTemplate {
+    Pretty,
+    Plain,
+    Custom(Arc<dyn DiagnosticTemplateRenderer>),
+}
+
+impl DiagnosticTemplate {
+    fn render(
+        &self,
+        diagnostic: &Diagnostic,
+        ctx: &DiagnosticRenderContext<'_>,
+    ) -> Option<Vec<String>> {
+        match self {
+            DiagnosticTemplate::Pretty => render_pretty(diagnostic, ctx),
+            DiagnosticTemplate::Plain => render_plain(diagnostic, ctx),
+            DiagnosticTemplate::Custom(renderer) => renderer.render(diagnostic, ctx),
+        }
+    }
+}
+
+/// Runtime configuration for emitting diagnostics.
+#[derive(Clone)]
+pub struct DiagnosticDisplayOptions {
+    pub template: DiagnosticTemplate,
+    pub verbose_info: bool,
+}
+
+impl DiagnosticDisplayOptions {
+    pub fn with_template(template: DiagnosticTemplate, verbose_info: bool) -> Self {
+        Self {
+            template,
+            verbose_info,
+        }
+    }
+
+    pub fn pretty(verbose_info: bool) -> Self {
+        Self::with_template(DiagnosticTemplate::Pretty, verbose_info)
+    }
+
+    pub fn plain(verbose_info: bool) -> Self {
+        Self::with_template(DiagnosticTemplate::Plain, verbose_info)
+    }
+}
+
+impl Default for DiagnosticDisplayOptions {
+    fn default() -> Self {
+        DiagnosticDisplayOptions::pretty(false)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticLevel {
     Info,
@@ -170,6 +237,37 @@ impl DiagnosticManager {
             diagnostics.clear();
         }
     }
+
+    /// Emit diagnostics using the provided template and options. The fallback context is used
+    /// when a diagnostic does not specify a source context.
+    pub fn emit(
+        diagnostics: &[Diagnostic],
+        fallback_context: Option<&str>,
+        options: &DiagnosticDisplayOptions,
+    ) {
+        if diagnostics.is_empty() {
+            return;
+        }
+
+        for diagnostic in diagnostics {
+            let context = diagnostic
+                .source_context
+                .as_deref()
+                .or(fallback_context)
+                .unwrap_or("pipeline");
+
+            let render_ctx = DiagnosticRenderContext {
+                context,
+                verbose_info: options.verbose_info,
+            };
+
+            if let Some(lines) = options.template.render(diagnostic, &render_ctx) {
+                for line in lines {
+                    eprintln!("{}", line);
+                }
+            }
+        }
+    }
 }
 
 static GLOBAL_DIAGNOSTIC_MANAGER: Lazy<Arc<DiagnosticManager>> =
@@ -183,6 +281,76 @@ pub fn report_error(message: impl Into<String>) -> crate::error::Error {
     let diagnostic = Diagnostic::error(message);
     diagnostic_manager().error(diagnostic.clone());
     crate::error::Error::diagnostic(diagnostic)
+}
+
+fn render_pretty(
+    diagnostic: &Diagnostic,
+    ctx: &DiagnosticRenderContext<'_>,
+) -> Option<Vec<String>> {
+    if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
+        return None;
+    }
+
+    let prefix = match diagnostic.level {
+        DiagnosticLevel::Error => "❌",
+        DiagnosticLevel::Warning => "⚠️ ",
+        DiagnosticLevel::Info => "ℹ️ ",
+    };
+
+    let header = match diagnostic.code.as_ref() {
+        Some(code) => format!(
+            "{} [{}] {} ({})",
+            prefix, ctx.context, diagnostic.message, code
+        ),
+        None => format!("{} [{}] {}", prefix, ctx.context, diagnostic.message),
+    };
+
+    let mut lines = vec![header];
+
+    if let Some(span) = &diagnostic.span {
+        lines.push(format!("   at {}", span.to_string()));
+    }
+
+    for suggestion in &diagnostic.suggestions {
+        lines.push(format!("   💡 {}", suggestion));
+    }
+
+    Some(lines)
+}
+
+fn render_plain(
+    diagnostic: &Diagnostic,
+    ctx: &DiagnosticRenderContext<'_>,
+) -> Option<Vec<String>> {
+    if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
+        return None;
+    }
+
+    let level = match diagnostic.level {
+        DiagnosticLevel::Error => "ERROR",
+        DiagnosticLevel::Warning => "WARNING",
+        DiagnosticLevel::Info => "INFO",
+    };
+
+    let header = match diagnostic.code.as_ref() {
+        Some(code) => format!(
+            "[{}] {}: {} ({})",
+            ctx.context, level, diagnostic.message, code
+        ),
+        None => format!("[{}] {}: {}", ctx.context, level, diagnostic.message),
+    };
+
+    let mut lines = vec![header];
+
+    if let Some(span) = &diagnostic.span {
+        lines.push(format!("   at {}", span.to_string()));
+    }
+
+    for suggestion in &diagnostic.suggestions {
+        lines.push(format!("   suggestion: {}", suggestion));
+    }
+
+    Some(lines)
 }
 
 #[macro_export]
