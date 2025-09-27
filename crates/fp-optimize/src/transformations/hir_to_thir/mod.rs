@@ -10,11 +10,13 @@ use super::IrTransform;
 
 mod context;
 mod lowering;
+mod type_inference;
 
 #[cfg(test)]
 mod tests;
 
 use context::TypeContext;
+use type_inference::TypeInferencer;
 
 /// Generator for transforming HIR to THIR (Typed High-level IR)
 /// This transformation performs type checking and inference
@@ -33,6 +35,10 @@ pub struct ThirGenerator {
     current_locals: Vec<thir::LocalDecl>,
     /// Counter for allocating fresh THIR local identifiers.
     next_local_id: thir::LocalId,
+    /// Inferred expression types keyed by HIR id.
+    inferred_expr_types: HashMap<hir::HirId, hir_types::Ty>,
+    /// Inferred pattern types keyed by HIR id.
+    inferred_pattern_types: HashMap<hir::HirId, hir_types::Ty>,
 }
 
 impl ThirGenerator {
@@ -48,6 +54,8 @@ impl ThirGenerator {
             local_scopes: Vec::new(),
             current_locals: Vec::new(),
             next_local_id: 0,
+            inferred_expr_types: HashMap::new(),
+            inferred_pattern_types: HashMap::new(),
         }
     }
 
@@ -103,6 +111,14 @@ impl ThirGenerator {
         let id = thir::BodyId::new(self.next_body_id);
         self.next_body_id += 1;
         id
+    }
+
+    pub(super) fn lookup_expr_ty(&self, hir_id: hir::HirId) -> Option<&hir_types::Ty> {
+        self.inferred_expr_types.get(&hir_id)
+    }
+
+    pub(super) fn lookup_pattern_ty(&self, hir_id: hir::HirId) -> Option<&hir_types::Ty> {
+        self.inferred_pattern_types.get(&hir_id)
     }
 
     /// Collect type information from HIR program

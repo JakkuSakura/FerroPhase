@@ -46,6 +46,11 @@ impl ThirGenerator {
 
     /// Transform HIR function to THIR
     pub(super) fn transform_function(&mut self, hir_func: hir::Function) -> Result<thir::Function> {
+        if let Some(ref body) = hir_func.body {
+            let mut inferencer = TypeInferencer::new(self);
+            inferencer.infer_function(body)?;
+        }
+
         let inputs = hir_func
             .sig
             .inputs
@@ -188,10 +193,11 @@ impl ThirGenerator {
     /// Transform HIR expression to THIR with type checking
     pub(super) fn transform_expr(&mut self, hir_expr: hir::Expr) -> Result<thir::Expr> {
         let thir_id = self.next_id();
+        let expected_ty = self.lookup_expr_ty(hir_expr.hir_id).cloned();
 
         let (kind, ty) = match hir_expr.kind {
             hir::ExprKind::Literal(lit) => {
-                let (thir_lit, ty) = self.transform_literal(lit)?;
+                let (thir_lit, ty) = self.transform_literal(lit, expected_ty.as_ref())?;
                 (thir::ExprKind::Literal(thir_lit), ty)
             }
             hir::ExprKind::Path(path) => {
@@ -235,8 +241,8 @@ impl ThirGenerator {
                 }
             }
             hir::ExprKind::Binary(op, left, right) => {
-                let mut left_thir = self.transform_expr(*left)?;
-                let mut right_thir = self.transform_expr(*right)?;
+                let left_thir = self.transform_expr(*left)?;
+                let right_thir = self.transform_expr(*right)?;
                 let op_thir = self.transform_binary_op(op);
 
                 // Constant folding for simple integer ops when both sides are literals
@@ -246,6 +252,20 @@ impl ThirGenerator {
                         thir::ExprKind::Literal(thir::Lit::Int(b, _)),
                         thir::BinOp::Add | thir::BinOp::Sub | thir::BinOp::Mul | thir::BinOp::Div,
                     ) => {
+                        let result_hir_ty = expected_ty
+                            .clone()
+                            .unwrap_or_else(|| self.create_i32_type());
+                        let thir_int_ty = match &result_hir_ty.kind {
+                            hir_types::TyKind::Int(int_ty) => match int_ty {
+                                hir_types::IntTy::Isize => thir::IntTy::Isize,
+                                hir_types::IntTy::I8 => thir::IntTy::I8,
+                                hir_types::IntTy::I16 => thir::IntTy::I16,
+                                hir_types::IntTy::I32 => thir::IntTy::I32,
+                                hir_types::IntTy::I64 => thir::IntTy::I64,
+                                hir_types::IntTy::I128 => thir::IntTy::I128,
+                            },
+                            _ => thir::IntTy::I64,
+                        };
                         let val = match op_thir {
                             thir::BinOp::Add => a + b,
                             thir::BinOp::Sub => a - b,
@@ -260,18 +280,14 @@ impl ThirGenerator {
                             _ => unreachable!(),
                         };
                         (
-                            thir::ExprKind::Literal(thir::Lit::Int(val, thir::IntTy::I32)),
-                            self.create_i32_type(),
+                            thir::ExprKind::Literal(thir::Lit::Int(val, thir_int_ty)),
+                            result_hir_ty,
                         )
                     }
                     _ => {
-                        // Type checking: ensure operands are compatible
-                        let result_ty =
-                            self.check_binary_op_types(&left_thir.ty, &right_thir.ty, &op_thir)?;
-                        Self::retarget_literal_expr(&mut left_thir, &result_ty);
-                        left_thir.ty = result_ty.clone();
-                        Self::retarget_literal_expr(&mut right_thir, &result_ty);
-                        right_thir.ty = result_ty.clone();
+                        let result_ty = expected_ty
+                            .clone()
+                            .unwrap_or_else(|| self.create_i32_type());
                         (
                             thir::ExprKind::Binary(
                                 op_thir,
@@ -355,7 +371,7 @@ impl ThirGenerator {
             }
             hir::ExprKind::Unary(op, expr) => {
                 let expr_thir = self.transform_expr(*expr)?;
-                let op_thir = self.transform_unary_op(op);
+                let op_thir = self.transform_unary_op(op)?;
                 let result_ty = self.check_unary_op_type(&expr_thir.ty, &op_thir)?;
                 (
                     thir::ExprKind::Unary(op_thir, Box::new(expr_thir)),
@@ -487,7 +503,6 @@ impl ThirGenerator {
                 };
 
                 if let Some(init_expr) = init_thir.as_mut() {
-                    Self::retarget_literal_expr(init_expr, &binding_ty);
                     init_expr.ty = binding_ty.clone();
                 }
 
@@ -520,7 +535,6 @@ impl ThirGenerator {
                 let mut rhs_thir = self.transform_expr(*rhs)?;
                 let unit_ty = self.create_unit_type();
 
-                Self::retarget_literal_expr(&mut rhs_thir, &lhs_thir.ty);
                 rhs_thir.ty = lhs_thir.ty.clone();
 
                 (
@@ -680,20 +694,26 @@ impl ThirGenerator {
                     None => None,
                 };
 
+                let binding_ty = self
+                    .lookup_pattern_ty(local.pat.hir_id)
+                    .cloned()
+                    .or_else(|| initializer.as_ref().map(|expr| expr.ty.clone()))
+                    .or_else(|| {
+                        local
+                            .ty
+                            .as_ref()
+                            .and_then(|ty_expr| self.hir_ty_to_ty(ty_expr).ok())
+                    })
+                    .unwrap_or_else(|| self.create_unit_type());
+
+                if let Some(init_expr) = initializer.as_mut() {
+                    init_expr.ty = binding_ty.clone();
+                }
+
                 let pattern = match &local.pat.kind {
                     hir::PatKind::Binding { name, mutable } => {
-                        let ty = if let Some(explicit_ty) = &local.ty {
-                            self.hir_ty_to_ty(explicit_ty)?
-                        } else if let Some(expr) = &initializer {
-                            expr.ty.clone()
-                        } else {
-                            self.create_unit_type()
-                        };
-                        if let Some(init_expr) = initializer.as_mut() {
-                            Self::retarget_literal_expr(init_expr, &ty);
-                            init_expr.ty = ty.clone();
-                        }
-                        let pat = self.create_binding_pattern(name.clone(), ty, *mutable);
+                        let pat =
+                            self.create_binding_pattern(name.clone(), binding_ty.clone(), *mutable);
                         println!("transform_stmt binding pattern created for {}", name);
                         match &pat.kind {
                             thir::PatKind::Binding { .. } => println!("pattern kind Binding"),
@@ -727,17 +747,42 @@ impl ThirGenerator {
     pub(super) fn transform_literal(
         &mut self,
         hir_lit: hir::Lit,
+        expected_ty: Option<&hir_types::Ty>,
     ) -> Result<(thir::Lit, hir_types::Ty)> {
+        use hir_types::TyKind;
         let (thir_lit, ty) = match hir_lit {
             hir::Lit::Bool(b) => (thir::Lit::Bool(b), hir_types::Ty::bool()),
-            hir::Lit::Integer(i) => (
-                thir::Lit::Int(i as i128, thir::IntTy::I32),
-                hir_types::Ty::int(hir_types::IntTy::I32),
-            ),
-            hir::Lit::Float(f) => (
-                thir::Lit::Float(f, thir::FloatTy::F64),
-                hir_types::Ty::float(hir_types::FloatTy::F64),
-            ),
+            hir::Lit::Integer(i) => {
+                let inferred = expected_ty.and_then(|ty| match &ty.kind {
+                    TyKind::Int(int_ty) => Some(*int_ty),
+                    _ => None,
+                });
+                let int_ty = inferred.unwrap_or(hir_types::IntTy::I64);
+                let thir_ty = match int_ty {
+                    hir_types::IntTy::Isize => thir::IntTy::Isize,
+                    hir_types::IntTy::I8 => thir::IntTy::I8,
+                    hir_types::IntTy::I16 => thir::IntTy::I16,
+                    hir_types::IntTy::I32 => thir::IntTy::I32,
+                    hir_types::IntTy::I64 => thir::IntTy::I64,
+                    hir_types::IntTy::I128 => thir::IntTy::I128,
+                };
+                (
+                    thir::Lit::Int(i as i128, thir_ty),
+                    hir_types::Ty::int(int_ty),
+                )
+            }
+            hir::Lit::Float(f) => {
+                let inferred = expected_ty.and_then(|ty| match &ty.kind {
+                    TyKind::Float(float_ty) => Some(*float_ty),
+                    _ => None,
+                });
+                let float_ty = inferred.unwrap_or(hir_types::FloatTy::F64);
+                let thir_ty = match float_ty {
+                    hir_types::FloatTy::F32 => thir::FloatTy::F32,
+                    hir_types::FloatTy::F64 => thir::FloatTy::F64,
+                };
+                (thir::Lit::Float(f, thir_ty), hir_types::Ty::float(float_ty))
+            }
             hir::Lit::Str(s) => (thir::Lit::Str(s), self.create_string_type()),
             hir::Lit::Char(c) => (thir::Lit::Char(c), hir_types::Ty::char()),
         };
@@ -1176,7 +1221,7 @@ impl ThirGenerator {
                             )));
                         }
                     } else {
-                        self.infer_printf_spec(&arg_expr.ty)
+                        self.infer_printf_spec(&arg_expr.ty)?
                     };
 
                     result.push_str(&spec);
@@ -1189,8 +1234,8 @@ impl ThirGenerator {
         Ok(result)
     }
 
-    fn infer_printf_spec(&self, ty: &hir_types::Ty) -> String {
-        match &ty.kind {
+    fn infer_printf_spec(&self, ty: &hir_types::Ty) -> Result<String> {
+        let spec = match &ty.kind {
             hir_types::TyKind::Bool => "%d".to_string(),
             hir_types::TyKind::Char => "%c".to_string(),
             hir_types::TyKind::Int(int_ty) => match int_ty {
@@ -1213,8 +1258,15 @@ impl ThirGenerator {
                 hir_types::FloatTy::F32 => "%f".to_string(),
                 hir_types::FloatTy::F64 => "%f".to_string(),
             },
-            _ => "%s".to_string(),
-        }
+            other => {
+                return Err(crate::error::optimization_error(format!(
+                    "Cannot infer printf spec for type {:?}",
+                    other
+                )))
+            }
+        };
+
+        Ok(spec)
     }
 
     pub(super) fn create_wildcard_pattern(&mut self) -> thir::Pat {
@@ -1227,12 +1279,18 @@ impl ThirGenerator {
     }
 
     /// Transform unary operator
-    pub(super) fn transform_unary_op(&self, op: hir::UnOp) -> thir::UnOp {
-        match op {
+    pub(super) fn transform_unary_op(&self, op: hir::UnOp) -> Result<thir::UnOp> {
+        let lowered = match op {
             hir::UnOp::Not => thir::UnOp::Not,
             hir::UnOp::Neg => thir::UnOp::Neg,
-            hir::UnOp::Deref => thir::UnOp::Not, // Deref not available, use Not as fallback
-        }
+            hir::UnOp::Deref => {
+                return Err(crate::error::optimization_error(
+                    "Unary deref is not supported during HIR→THIR lowering",
+                ))
+            }
+        };
+
+        Ok(lowered)
     }
 
     /// Check type for unary operations
@@ -1258,7 +1316,10 @@ impl ThirGenerator {
         {
             return Ok((*sig.output).clone());
         }
-        Ok(self.create_unit_type())
+        Err(crate::error::optimization_error(format!(
+            "Method '{}' not found for receiver type {:?}",
+            method_name, receiver.ty
+        )))
     }
 
     /// Unify two types
@@ -1271,7 +1332,10 @@ impl ThirGenerator {
         if ty1 == ty2 {
             Ok(ty1.clone())
         } else {
-            Ok(ty1.clone())
+            Err(crate::error::optimization_error(format!(
+                "Type mismatch during unification: {:?} vs {:?}",
+                ty1, ty2
+            )))
         }
     }
 

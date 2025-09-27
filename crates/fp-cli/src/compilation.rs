@@ -88,8 +88,9 @@ impl BinaryCompiler {
         {
             "/opt/homebrew/Cellar/lld@19/19.1.7/bin/lld"
         } else {
-            // Fallback to system ld instead of lld
-            return Self::run_system_ld(obj_path, binary_path, options);
+            return Err(CliError::Compilation(
+                "No supported linker available. Install clang or lld to continue.".to_string(),
+            ));
         };
 
         let mut cmd = Command::new(lld_cmd);
@@ -190,67 +191,6 @@ impl BinaryCompiler {
 
         Ok(format!(
             "clang: {} -> {}",
-            obj_path.display(),
-            binary_path.display()
-        ))
-    }
-
-    /// Run system ld to link object file to binary (minimal fallback when lld is not available)
-    pub fn run_system_ld(
-        obj_path: &std::path::Path,
-        binary_path: &std::path::Path,
-        options: &PipelineOptions,
-    ) -> Result<String, CliError> {
-        let mut cmd = Command::new("ld");
-
-        // Minimal linking process
-        #[cfg(target_os = "linux")]
-        {
-            cmd.arg(obj_path)
-                .arg("-o")
-                .arg(binary_path)
-                .arg("-lc")
-                .arg("-dynamic-linker")
-                .arg("/lib64/ld-linux-x86-64.so.2");
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            cmd.arg(obj_path)
-                .arg("-o")
-                .arg(binary_path)
-                .arg("-lSystem")
-                .arg("-macosx_version_min")
-                .arg("14.0");
-
-            #[cfg(target_arch = "aarch64")]
-            cmd.arg("-arch").arg("arm64");
-
-            #[cfg(target_arch = "x86_64")]
-            cmd.arg("-arch").arg("x86_64");
-        }
-
-        if options.debug.verbose {
-            cmd.arg("-v");
-        }
-
-        let output = cmd.output().map_err(|e| {
-            CliError::Compilation(format!(
-                "Failed to run ld: {}. System linker not available.",
-                e
-            ))
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(CliError::Compilation(format!("ld failed: {}", stderr)));
-        }
-
-        // Make binary executable
-        Self::make_executable(binary_path)?;
-
-        Ok(format!(
-            "ld: {} -> {}",
             obj_path.display(),
             binary_path.display()
         ))

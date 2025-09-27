@@ -1,0 +1,868 @@
+use super::*;
+use std::collections::HashMap;
+
+pub(super) struct TypeInferencer<'a> {
+    generator: &'a mut ThirGenerator,
+    type_vars: Vec<TypeVar>,
+    expr_types: HashMap<hir::HirId, TypeVarId>,
+    pattern_types: HashMap<hir::HirId, TypeVarId>,
+    binding_vars: HashMap<hir::HirId, TypeVarId>,
+    env: HashMap<hir::HirId, TypeScheme>,
+    scope_stack: Vec<Vec<hir::HirId>>,
+    current_level: usize,
+}
+
+type TypeVarId = usize;
+
+#[derive(Clone)]
+struct TypeVar {
+    kind: TypeVarKind,
+}
+
+#[derive(Clone)]
+enum TypeVarKind {
+    Unbound { level: usize },
+    Link(TypeVarId),
+    Bound(TypeTerm),
+}
+
+#[derive(Clone, Debug)]
+enum TypeTerm {
+    Bool,
+    Int(Option<hir_types::IntTy>),
+    Uint(Option<hir_types::UintTy>),
+    Float(Option<hir_types::FloatTy>),
+    String,
+    Unit,
+    Never,
+    Custom(hir_types::Ty),
+    Tuple(Vec<TypeVarId>),
+    Function(Vec<TypeVarId>, TypeVarId),
+}
+
+#[derive(Clone)]
+struct TypeScheme {
+    vars: usize,
+    body: SchemeType,
+}
+
+#[derive(Clone)]
+enum SchemeType {
+    Var(u32),
+    Bool,
+    Int(Option<hir_types::IntTy>),
+    Uint(Option<hir_types::UintTy>),
+    Float(Option<hir_types::FloatTy>),
+    String,
+    Unit,
+    Never,
+    Custom(hir_types::Ty),
+    Tuple(Vec<SchemeType>),
+    Function(Vec<SchemeType>, Box<SchemeType>),
+}
+
+impl<'a> TypeInferencer<'a> {
+    pub fn new(generator: &'a mut ThirGenerator) -> Self {
+        Self {
+            generator,
+            type_vars: Vec::new(),
+            expr_types: HashMap::new(),
+            pattern_types: HashMap::new(),
+            binding_vars: HashMap::new(),
+            env: HashMap::new(),
+            scope_stack: Vec::new(),
+            current_level: 0,
+        }
+    }
+
+    pub fn infer_function(&mut self, body: &hir::Body) -> Result<()> {
+        self.scope_stack.push(Vec::new());
+        self.current_level += 1;
+
+        for param in &body.params {
+            let pattern_ty = self.infer_pattern(&param.pat)?;
+            let annotated = self.generator.hir_ty_to_ty(&param.ty)?;
+            let annotated_var = self.type_from_hir_ty(&annotated)?;
+            self.unify(pattern_ty, annotated_var)?;
+            let _ = self.introduce_pattern_bindings(&param.pat)?;
+        }
+
+        let _ = self.infer_expr(&body.value)?;
+
+        self.generalize_record_results()?;
+
+        if let Some(ids) = self.scope_stack.pop() {
+            for id in ids {
+                self.env.remove(&id);
+            }
+        }
+        self.current_level -= 1;
+        Ok(())
+    }
+
+    fn infer_block(&mut self, block: &hir::Block) -> Result<TypeVarId> {
+        self.scope_stack.push(Vec::new());
+        self.current_level += 1;
+
+        for stmt in &block.stmts {
+            self.infer_stmt(stmt)?;
+        }
+
+        let result = if let Some(expr) = &block.expr {
+            self.infer_expr(expr)?
+        } else {
+            let unit = self.fresh_type_var();
+            self.bind(unit, TypeTerm::Unit)?;
+            unit
+        };
+
+        if let Some(ids) = self.scope_stack.pop() {
+            for id in ids {
+                self.env.remove(&id);
+            }
+        }
+        self.current_level -= 1;
+        Ok(result)
+    }
+
+    fn infer_stmt(&mut self, stmt: &hir::Stmt) -> Result<()> {
+        match &stmt.kind {
+            hir::StmtKind::Local(local) => {
+                let init_var = if let Some(init) = &local.init {
+                    Some(self.infer_expr(init)?)
+                } else {
+                    None
+                };
+
+                let pat_var = self.infer_pattern(&local.pat)?;
+                if let Some(init_var) = init_var {
+                    self.unify(pat_var, init_var)?;
+                }
+                if let Some(ty_expr) = &local.ty {
+                    let annotated = self.generator.hir_ty_to_ty(ty_expr)?;
+                    let annotated_var = self.type_from_hir_ty(&annotated)?;
+                    self.unify(pat_var, annotated_var)?;
+                }
+
+                let _ = self.introduce_pattern_bindings(&local.pat)?;
+            }
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                let _ = self.infer_expr(expr)?;
+            }
+            hir::StmtKind::Item(_) => {}
+        }
+        Ok(())
+    }
+
+    fn infer_expr(&mut self, expr: &hir::Expr) -> Result<TypeVarId> {
+        use hir::ExprKind;
+        let ty = match &expr.kind {
+            ExprKind::Literal(lit) => self.infer_literal(lit)?,
+            ExprKind::Path(path) => self.infer_path(expr.hir_id, path)?,
+            ExprKind::Binary(op, lhs, rhs) => {
+                let lhs_ty = self.infer_expr(lhs)?;
+                let rhs_ty = self.infer_expr(rhs)?;
+                match op {
+                    hir::BinOp::Add
+                    | hir::BinOp::Sub
+                    | hir::BinOp::Mul
+                    | hir::BinOp::Div
+                    | hir::BinOp::Rem
+                    | hir::BinOp::BitAnd
+                    | hir::BinOp::BitOr
+                    | hir::BinOp::BitXor
+                    | hir::BinOp::Shl
+                    | hir::BinOp::Shr => {
+                        let num_ty = self.fresh_type_var();
+                        self.bind(num_ty, TypeTerm::Int(None))?;
+                        self.unify(lhs_ty, num_ty)?;
+                        self.unify(rhs_ty, num_ty)?;
+                        lhs_ty
+                    }
+                    hir::BinOp::Eq
+                    | hir::BinOp::Ne
+                    | hir::BinOp::Lt
+                    | hir::BinOp::Le
+                    | hir::BinOp::Gt
+                    | hir::BinOp::Ge => {
+                        self.unify(lhs_ty, rhs_ty)?;
+                        let bool_ty = self.fresh_type_var();
+                        self.bind(bool_ty, TypeTerm::Bool)?;
+                        bool_ty
+                    }
+                    hir::BinOp::And | hir::BinOp::Or => {
+                        let bool_ty = self.fresh_type_var();
+                        self.bind(bool_ty, TypeTerm::Bool)?;
+                        self.unify(lhs_ty, bool_ty)?;
+                        self.unify(rhs_ty, bool_ty)?;
+                        bool_ty
+                    }
+                }
+            }
+            ExprKind::Assign(lhs, rhs) => {
+                let lhs_ty = self.infer_expr(lhs)?;
+                let rhs_ty = self.infer_expr(rhs)?;
+                self.unify(lhs_ty, rhs_ty)?;
+                let unit = self.fresh_type_var();
+                self.bind(unit, TypeTerm::Unit)?;
+                unit
+            }
+            ExprKind::Call(callee, args) => {
+                let _callee_ty = self.infer_expr(callee)?;
+                if let hir::ExprKind::Path(path) = &callee.kind {
+                    if let Some(hir::Res::Def(def_id)) = path.res {
+                        let function_sig = self
+                            .generator
+                            .type_context
+                            .lookup_function_signature(def_id)
+                            .cloned();
+
+                        if let Some(sig) = function_sig {
+                            for (arg_expr, expected_ty) in args.iter().zip(sig.inputs.iter()) {
+                                let arg_ty = self.infer_expr(arg_expr)?;
+                                let expected_var = self.type_from_hir_ty(expected_ty.as_ref())?;
+                                self.unify(arg_ty, expected_var)?;
+                            }
+                            return self.type_from_hir_ty(sig.output.as_ref());
+                        }
+                        return self.infer_call_args(args);
+                    }
+                }
+                self.infer_call_args(args)?
+            }
+            ExprKind::Block(block) => self.infer_block(block)?,
+            ExprKind::StdIoPrintln(println) => {
+                for arg in &println.format.args {
+                    let _ = self.infer_expr(arg)?;
+                }
+                let unit = self.fresh_type_var();
+                self.bind(unit, TypeTerm::Unit)?;
+                unit
+            }
+            ExprKind::If(cond, then_expr, else_expr) => {
+                let cond_ty = self.infer_expr(cond)?;
+                let bool_ty = self.fresh_type_var();
+                self.bind(bool_ty, TypeTerm::Bool)?;
+                self.unify(cond_ty, bool_ty)?;
+                let then_ty = self.infer_expr(then_expr)?;
+                if let Some(else_expr) = else_expr {
+                    let else_ty = self.infer_expr(else_expr)?;
+                    self.unify(then_ty, else_ty)?;
+                    then_ty
+                } else {
+                    then_ty
+                }
+            }
+            ExprKind::Return(value) => {
+                if let Some(expr) = value {
+                    let _ = self.infer_expr(expr)?;
+                }
+                let never = self.fresh_type_var();
+                self.bind(never, TypeTerm::Never)?;
+                never
+            }
+            ExprKind::Break(value) => {
+                if let Some(expr) = value {
+                    let _ = self.infer_expr(expr)?;
+                }
+                let never = self.fresh_type_var();
+                self.bind(never, TypeTerm::Never)?;
+                never
+            }
+            ExprKind::Continue => {
+                let never = self.fresh_type_var();
+                self.bind(never, TypeTerm::Never)?;
+                never
+            }
+            ExprKind::Let(pat, _ty, init) => {
+                let init_ty = if let Some(expr) = init {
+                    self.infer_expr(expr)?
+                } else {
+                    let unit = self.fresh_type_var();
+                    self.bind(unit, TypeTerm::Unit)?;
+                    unit
+                };
+                let pat_ty = self.infer_pattern(pat)?;
+                self.unify(pat_ty, init_ty)?;
+                let inserted = self.introduce_pattern_bindings(pat)?;
+                let bool_ty = self.fresh_type_var();
+                self.bind(bool_ty, TypeTerm::Bool)?;
+                for id in inserted {
+                    self.env.remove(&id);
+                    if let Some(scope) = self.scope_stack.last_mut() {
+                        scope.retain(|entry| *entry != id);
+                    }
+                }
+                bool_ty
+            }
+            _ => {
+                let unit = self.fresh_type_var();
+                self.bind(unit, TypeTerm::Unit)?;
+                unit
+            }
+        };
+
+        self.expr_types.insert(expr.hir_id, ty);
+        Ok(ty)
+    }
+
+    fn infer_literal(&mut self, lit: &hir::Lit) -> Result<TypeVarId> {
+        let var = self.fresh_type_var();
+        match lit {
+            hir::Lit::Bool(_value) => self.bind(var, TypeTerm::Bool)?,
+            hir::Lit::Integer(_) => self.bind(var, TypeTerm::Int(None))?,
+            hir::Lit::Float(_) => self.bind(var, TypeTerm::Float(None))?,
+            hir::Lit::Str(_) => self.bind(var, TypeTerm::String)?,
+            hir::Lit::Char(_) => self.bind(var, TypeTerm::Custom(hir_types::Ty::char()))?,
+        }
+        Ok(var)
+    }
+
+    fn infer_path(&mut self, hir_id: hir::HirId, path: &hir::Path) -> Result<TypeVarId> {
+        if let Some(hir::Res::Local(local_id)) = path.res {
+            if let Some(scheme) = self.env.get(&local_id).cloned() {
+                return self.instantiate(&scheme);
+            }
+        }
+
+        if let Some(hir::Res::Def(def_id)) = path.res {
+            let const_ty = self
+                .generator
+                .type_context
+                .lookup_const_type(def_id)
+                .cloned();
+            if let Some(const_ty) = const_ty {
+                return self.type_from_hir_ty(&const_ty);
+            }
+
+            let function_sig = self
+                .generator
+                .type_context
+                .lookup_function_signature(def_id)
+                .cloned();
+            if let Some(sig) = function_sig {
+                let ret_var = self.type_from_hir_ty(sig.output.as_ref())?;
+                return Ok(ret_var);
+            }
+        }
+
+        let ty = self.generator.infer_path_type(&path)?;
+        let var = self.type_from_hir_ty(&ty)?;
+        self.expr_types.insert(hir_id, var);
+        Ok(var)
+    }
+
+    fn infer_call_args(&mut self, args: &[hir::Expr]) -> Result<TypeVarId> {
+        for arg in args {
+            let _ = self.infer_expr(arg)?;
+        }
+        let unit = self.fresh_type_var();
+        self.bind(unit, TypeTerm::Unit)?;
+        Ok(unit)
+    }
+
+    fn infer_pattern(&mut self, pat: &hir::Pat) -> Result<TypeVarId> {
+        use hir::PatKind;
+        let var = match &pat.kind {
+            PatKind::Binding { .. } => {
+                let var = self.fresh_type_var();
+                self.binding_vars.insert(pat.hir_id, var);
+                var
+            }
+            PatKind::Wild => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Unit)?;
+                var
+            }
+            PatKind::Struct(_, fields) => {
+                let struct_var = self.fresh_type_var();
+                for field in fields {
+                    let field_var = self.infer_pattern(&field.pat)?;
+                    self.unify(struct_var, field_var)?;
+                }
+                struct_var
+            }
+            PatKind::Tuple(elements) => {
+                let tuple_var = self.fresh_type_var();
+                for elem in elements {
+                    let elem_var = self.infer_pattern(elem)?;
+                    self.unify(tuple_var, elem_var)?;
+                }
+                tuple_var
+            }
+            PatKind::Lit(lit) => {
+                let var = self.infer_literal(lit)?;
+                var
+            }
+        };
+        self.pattern_types.insert(pat.hir_id, var);
+        Ok(var)
+    }
+
+    fn introduce_pattern_bindings(&mut self, pat: &hir::Pat) -> Result<Vec<hir::HirId>> {
+        let mut bindings = Vec::new();
+        self.collect_pattern_bindings(pat, &mut bindings);
+        for binding_id in &bindings {
+            if let Some(var) = self.binding_vars.get(&binding_id).copied() {
+                let scheme = self.generalize(var)?;
+                self.env.insert(*binding_id, scheme);
+                if let Some(scope) = self.scope_stack.last_mut() {
+                    scope.push(*binding_id);
+                }
+            }
+        }
+        Ok(bindings)
+    }
+
+    fn collect_pattern_bindings(&self, pat: &hir::Pat, acc: &mut Vec<hir::HirId>) {
+        match &pat.kind {
+            hir::PatKind::Binding { .. } => acc.push(pat.hir_id),
+            hir::PatKind::Struct(_, fields) => {
+                for field in fields {
+                    self.collect_pattern_bindings(&field.pat, acc);
+                }
+            }
+            hir::PatKind::Tuple(elements) => {
+                for element in elements {
+                    self.collect_pattern_bindings(element, acc);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn fresh_type_var(&mut self) -> TypeVarId {
+        let id = self.type_vars.len();
+        self.type_vars.push(TypeVar {
+            kind: TypeVarKind::Unbound {
+                level: self.current_level,
+            },
+        });
+        id
+    }
+
+    fn find(&mut self, var: TypeVarId) -> TypeVarId {
+        match self.type_vars[var].kind.clone() {
+            TypeVarKind::Link(target) => {
+                let root = self.find(target);
+                self.type_vars[var].kind = TypeVarKind::Link(root);
+                root
+            }
+            _ => var,
+        }
+    }
+
+    fn bind(&mut self, var: TypeVarId, term: TypeTerm) -> Result<()> {
+        let root = self.find(var);
+        if self.occurs_check(root, &term)? {
+            return Err(crate::error::optimization_error(
+                "Occurs check failed during type inference",
+            ));
+        }
+        self.type_vars[root].kind = TypeVarKind::Bound(term);
+        Ok(())
+    }
+
+    fn occurs_check(&mut self, var: TypeVarId, term: &TypeTerm) -> Result<bool> {
+        let mut stack = Vec::new();
+        stack.push(term.clone());
+        while let Some(t) = stack.pop() {
+            match t {
+                TypeTerm::Tuple(elems) => {
+                    for elem in elems {
+                        let root = self.find(elem);
+                        if root == var {
+                            return Ok(true);
+                        }
+                        match self.type_vars[root].kind.clone() {
+                            TypeVarKind::Bound(term) => stack.push(term),
+                            _ => {}
+                        }
+                    }
+                }
+                TypeTerm::Function(args, ret) => {
+                    for arg in args {
+                        let root = self.find(arg);
+                        if root == var {
+                            return Ok(true);
+                        }
+                        match self.type_vars[root].kind.clone() {
+                            TypeVarKind::Bound(term) => stack.push(term),
+                            _ => {}
+                        }
+                    }
+                    let ret_root = self.find(ret);
+                    if ret_root == var {
+                        return Ok(true);
+                    }
+                    if let TypeVarKind::Bound(term) = self.type_vars[ret_root].kind.clone() {
+                        stack.push(term);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(false)
+    }
+
+    fn unify(&mut self, left: TypeVarId, right: TypeVarId) -> Result<()> {
+        let left_root = self.find(left);
+        let right_root = self.find(right);
+        if left_root == right_root {
+            return Ok(());
+        }
+
+        let left_kind = self.type_vars[left_root].kind.clone();
+        let right_kind = self.type_vars[right_root].kind.clone();
+
+        match (left_kind, right_kind) {
+            (TypeVarKind::Unbound { level: l_level }, TypeVarKind::Unbound { level: r_level }) => {
+                if l_level <= r_level {
+                    self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                } else {
+                    self.type_vars[left_root].kind = TypeVarKind::Link(right_root);
+                }
+                Ok(())
+            }
+            (TypeVarKind::Unbound { .. }, TypeVarKind::Bound(term)) => {
+                self.bind(left_root, term)?;
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (TypeVarKind::Bound(term), TypeVarKind::Unbound { .. }) => {
+                self.bind(right_root, term)?;
+                self.type_vars[left_root].kind = TypeVarKind::Link(right_root);
+                Ok(())
+            }
+            (TypeVarKind::Bound(left_term), TypeVarKind::Bound(right_term)) => {
+                self.unify_terms(left_root, left_term, right_root, right_term)
+            }
+            (TypeVarKind::Link(_), _) | (_, TypeVarKind::Link(_)) => unreachable!(),
+        }
+    }
+
+    fn unify_terms(
+        &mut self,
+        left_root: TypeVarId,
+        left_term: TypeTerm,
+        right_root: TypeVarId,
+        right_term: TypeTerm,
+    ) -> Result<()> {
+        use TypeTerm::*;
+        match (left_term, right_term) {
+            (Bool, Bool) | (String, String) | (Unit, Unit) | (Never, Never) => {
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Int(a), Int(b)) => {
+                let merged = Self::merge_int_kinds(a, b)?;
+                self.type_vars[left_root].kind = TypeVarKind::Bound(Int(merged));
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Uint(a), Uint(b)) => {
+                let merged = Self::merge_uint_kinds(a, b)?;
+                self.type_vars[left_root].kind = TypeVarKind::Bound(Uint(merged));
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Float(a), Float(b)) => {
+                let merged = Self::merge_float_kinds(a, b)?;
+                self.type_vars[left_root].kind = TypeVarKind::Bound(Float(merged));
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Custom(a), Custom(b)) if a == b => {
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Tuple(a_elems), Tuple(b_elems)) if a_elems.len() == b_elems.len() => {
+                for (a, b) in a_elems.into_iter().zip(b_elems.into_iter()) {
+                    self.unify(a, b)?;
+                }
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Function(a_args, a_ret), Function(b_args, b_ret)) if a_args.len() == b_args.len() => {
+                for (a, b) in a_args.into_iter().zip(b_args.into_iter()) {
+                    self.unify(a, b)?;
+                }
+                self.unify(a_ret, b_ret)?;
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (lhs, rhs) => Err(crate::error::optimization_error(format!(
+                "Type mismatch during unification: {:?} vs {:?}",
+                lhs, rhs
+            ))),
+        }
+    }
+
+    fn merge_int_kinds(
+        a: Option<hir_types::IntTy>,
+        b: Option<hir_types::IntTy>,
+    ) -> Result<Option<hir_types::IntTy>> {
+        match (a, b) {
+            (Some(x), Some(y)) if x == y => Ok(Some(x)),
+            (Some(x), None) | (None, Some(x)) => Ok(Some(x)),
+            (None, None) => Ok(None),
+            (Some(x), Some(y)) => Err(crate::error::optimization_error(format!(
+                "Conflicting integer types: {:?} vs {:?}",
+                x, y
+            ))),
+        }
+    }
+
+    fn merge_uint_kinds(
+        a: Option<hir_types::UintTy>,
+        b: Option<hir_types::UintTy>,
+    ) -> Result<Option<hir_types::UintTy>> {
+        match (a, b) {
+            (Some(x), Some(y)) if x == y => Ok(Some(x)),
+            (Some(x), None) | (None, Some(x)) => Ok(Some(x)),
+            (None, None) => Ok(None),
+            (Some(x), Some(y)) => Err(crate::error::optimization_error(format!(
+                "Conflicting unsigned integer types: {:?} vs {:?}",
+                x, y
+            ))),
+        }
+    }
+
+    fn merge_float_kinds(
+        a: Option<hir_types::FloatTy>,
+        b: Option<hir_types::FloatTy>,
+    ) -> Result<Option<hir_types::FloatTy>> {
+        match (a, b) {
+            (Some(x), Some(y)) if x == y => Ok(Some(x)),
+            (Some(x), None) | (None, Some(x)) => Ok(Some(x)),
+            (None, None) => Ok(None),
+            (Some(x), Some(y)) => Err(crate::error::optimization_error(format!(
+                "Conflicting float types: {:?} vs {:?}",
+                x, y
+            ))),
+        }
+    }
+
+    fn type_from_hir_ty(&mut self, ty: &hir_types::Ty) -> Result<TypeVarId> {
+        use hir_types::TyKind;
+        let var = self.fresh_type_var();
+        let term = match &ty.kind {
+            TyKind::Bool => TypeTerm::Bool,
+            TyKind::Char => TypeTerm::Custom(hir_types::Ty::char()),
+            TyKind::Int(int_ty) => TypeTerm::Int(Some(*int_ty)),
+            TyKind::Uint(uint_ty) => TypeTerm::Uint(Some(*uint_ty)),
+            TyKind::Float(float_ty) => TypeTerm::Float(Some(*float_ty)),
+            TyKind::Tuple(elements) => {
+                let mut element_vars = Vec::new();
+                for elem in elements {
+                    let elem_ty = self.type_from_hir_ty(elem)?;
+                    element_vars.push(elem_ty);
+                }
+                TypeTerm::Tuple(element_vars)
+            }
+            TyKind::Never => TypeTerm::Never,
+            _ => TypeTerm::Custom(ty.clone()),
+        };
+        self.bind(var, term)?;
+        Ok(var)
+    }
+
+    fn instantiate(&mut self, scheme: &TypeScheme) -> Result<TypeVarId> {
+        let mut map = Vec::with_capacity(scheme.vars);
+        for _ in 0..scheme.vars {
+            map.push(self.fresh_type_var());
+        }
+        self.instantiate_scheme_type(&scheme.body, &map)
+    }
+
+    fn instantiate_scheme_type(&mut self, ty: &SchemeType, map: &[TypeVarId]) -> Result<TypeVarId> {
+        use SchemeType::*;
+        Ok(match ty {
+            Var(idx) => map[*idx as usize],
+            Bool => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Bool)?;
+                var
+            }
+            Int(kind) => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Int(*kind))?;
+                var
+            }
+            Uint(kind) => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Uint(*kind))?;
+                var
+            }
+            Float(kind) => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Float(*kind))?;
+                var
+            }
+            String => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::String)?;
+                var
+            }
+            Unit => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Unit)?;
+                var
+            }
+            Never => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Never)?;
+                var
+            }
+            Custom(inner) => {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Custom(inner.clone()))?;
+                var
+            }
+            Tuple(elements) => {
+                let mut vars = Vec::new();
+                for elem in elements {
+                    vars.push(self.instantiate_scheme_type(elem, map)?);
+                }
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Tuple(vars))?;
+                var
+            }
+            Function(args, ret) => {
+                let mut arg_vars = Vec::new();
+                for arg in args {
+                    arg_vars.push(self.instantiate_scheme_type(arg, map)?);
+                }
+                let ret_var = self.instantiate_scheme_type(ret, map)?;
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Function(arg_vars, ret_var))?;
+                var
+            }
+        })
+    }
+
+    fn generalize(&mut self, var: TypeVarId) -> Result<TypeScheme> {
+        let mut mapping = HashMap::new();
+        let mut next_index = 0u32;
+        let body = self.build_scheme_type(var, &mut mapping, &mut next_index)?;
+        Ok(TypeScheme {
+            vars: next_index as usize,
+            body,
+        })
+    }
+
+    fn build_scheme_type(
+        &mut self,
+        var: TypeVarId,
+        mapping: &mut HashMap<TypeVarId, u32>,
+        next_index: &mut u32,
+    ) -> Result<SchemeType> {
+        let root = self.find(var);
+        match self.type_vars[root].kind.clone() {
+            TypeVarKind::Unbound { level } => {
+                if level > self.current_level {
+                    if let Some(idx) = mapping.get(&root) {
+                        Ok(SchemeType::Var(*idx))
+                    } else {
+                        let idx = *next_index;
+                        mapping.insert(root, idx);
+                        *next_index += 1;
+                        Ok(SchemeType::Var(idx))
+                    }
+                } else {
+                    // Default unconstrained variables to i64
+                    Ok(SchemeType::Int(Some(hir_types::IntTy::I64)))
+                }
+            }
+            TypeVarKind::Bound(term) => match term {
+                TypeTerm::Bool => Ok(SchemeType::Bool),
+                TypeTerm::Int(kind) => Ok(SchemeType::Int(kind)),
+                TypeTerm::Uint(kind) => Ok(SchemeType::Uint(kind)),
+                TypeTerm::Float(kind) => Ok(SchemeType::Float(kind)),
+                TypeTerm::String => Ok(SchemeType::String),
+                TypeTerm::Unit => Ok(SchemeType::Unit),
+                TypeTerm::Never => Ok(SchemeType::Never),
+                TypeTerm::Custom(inner) => Ok(SchemeType::Custom(inner)),
+                TypeTerm::Tuple(elements) => {
+                    let mut converted = Vec::new();
+                    for elem in elements {
+                        converted.push(self.build_scheme_type(elem, mapping, next_index)?);
+                    }
+                    Ok(SchemeType::Tuple(converted))
+                }
+                TypeTerm::Function(args, ret) => {
+                    let mut converted_args = Vec::new();
+                    for arg in args {
+                        converted_args.push(self.build_scheme_type(arg, mapping, next_index)?);
+                    }
+                    let ret_ty = self.build_scheme_type(ret, mapping, next_index)?;
+                    Ok(SchemeType::Function(converted_args, Box::new(ret_ty)))
+                }
+            },
+            TypeVarKind::Link(_) => unreachable!(),
+        }
+    }
+
+    fn generalize_record_results(&mut self) -> Result<()> {
+        let mut expr_results = HashMap::new();
+        let expr_ids: Vec<_> = self.expr_types.keys().copied().collect();
+        for hir_id in expr_ids {
+            let var = self.expr_types[&hir_id];
+            let ty = self.resolve_to_hir(var)?;
+            expr_results.insert(hir_id, ty);
+        }
+
+        let mut pat_results = HashMap::new();
+        let pat_ids: Vec<_> = self.pattern_types.keys().copied().collect();
+        for hir_id in pat_ids {
+            let var = self.pattern_types[&hir_id];
+            let ty = self.resolve_to_hir(var)?;
+            pat_results.insert(hir_id, ty);
+        }
+
+        for (hir_id, ty) in expr_results {
+            self.generator.inferred_expr_types.insert(hir_id, ty);
+        }
+        for (hir_id, ty) in pat_results {
+            self.generator.inferred_pattern_types.insert(hir_id, ty);
+        }
+
+        Ok(())
+    }
+
+    fn resolve_to_hir(&mut self, var: TypeVarId) -> Result<hir_types::Ty> {
+        let root = self.find(var);
+        match self.type_vars[root].kind.clone() {
+            TypeVarKind::Unbound { .. } => Ok(hir_types::Ty::int(hir_types::IntTy::I64)),
+            TypeVarKind::Bound(term) => self.term_to_hir(term),
+            TypeVarKind::Link(_) => unreachable!(),
+        }
+    }
+
+    fn term_to_hir(&mut self, term: TypeTerm) -> Result<hir_types::Ty> {
+        use TypeTerm::*;
+        Ok(match term {
+            Bool => hir_types::Ty::bool(),
+            Int(kind) => hir_types::Ty::int(kind.unwrap_or(hir_types::IntTy::I64)),
+            Uint(kind) => hir_types::Ty::uint(kind.unwrap_or(hir_types::UintTy::U32)),
+            Float(kind) => hir_types::Ty::float(kind.unwrap_or(hir_types::FloatTy::F64)),
+            String => self.generator.create_string_type(),
+            Unit => self.generator.create_unit_type(),
+            Never => self.generator.create_never_type(),
+            Custom(inner) => inner,
+            Tuple(elements) => {
+                let mut tys = Vec::new();
+                for elem in elements {
+                    tys.push(Box::new(self.resolve_to_hir(elem)?));
+                }
+                hir_types::Ty {
+                    kind: hir_types::TyKind::Tuple(tys),
+                }
+            }
+            Function(args, ret) => {
+                let _ = (args, ret);
+                self.generator.create_unit_type()
+            }
+        })
+    }
+}

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use llvm_ir::Module;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -154,7 +154,7 @@ impl LlvmLinker {
 
     /// Link an executable
     fn link_executable(&self, object_files: &[&Path]) -> Result<()> {
-        let mut cmd = self.get_linker_command();
+        let mut cmd = self.get_linker_command()?;
 
         // Add output path
         cmd.arg("-o").arg(&self.config.output_path);
@@ -227,7 +227,7 @@ impl LlvmLinker {
 
     /// Link a dynamic library
     fn link_dynamic_library(&self, object_files: &[&Path]) -> Result<()> {
-        let mut cmd = self.get_linker_command();
+        let mut cmd = self.get_linker_command()?;
 
         // Add shared library flag
         cmd.arg("-shared");
@@ -259,23 +259,23 @@ impl LlvmLinker {
     }
 
     /// Get the appropriate linker command for the platform
-    fn get_linker_command(&self) -> Command {
-        // Try to use the system's default linker
-        if cfg!(target_os = "macos") {
-            Command::new("ld")
-        } else if cfg!(target_os = "linux") {
-            Command::new("ld")
-        } else if cfg!(target_os = "windows") {
-            Command::new("link")
-        } else {
-            // Fallback to gcc/clang which can invoke the linker
-            if which::which("clang").is_ok() {
-                Command::new("clang")
-            } else if which::which("gcc").is_ok() {
-                Command::new("gcc")
+    fn get_linker_command(&self) -> Result<Command> {
+        if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
+            if which::which("ld").is_ok() {
+                Ok(Command::new("ld"))
             } else {
-                Command::new("ld")
+                Err(anyhow!("System linker 'ld' not found on PATH"))
             }
+        } else if cfg!(target_os = "windows") {
+            if which::which("link").is_ok() {
+                Ok(Command::new("link"))
+            } else {
+                Err(anyhow!("MSVC linker 'link' not found on PATH"))
+            }
+        } else {
+            Err(anyhow!(
+                "Unsupported target operating system for module linking"
+            ))
         }
     }
 
@@ -349,38 +349,11 @@ impl ModuleLinker {
         modules: &[&Module],
         _target_codegen: &crate::target::TargetCodegen,
     ) -> Result<PathBuf> {
-        tracing::warn!("LLVM backend falling back to IR dump; native linking not yet implemented");
-
-        if let Some(parent) = self.linker_config.output_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create output directory {}", parent.display())
-            })?;
-        }
-
-        let mut aggregated_ir = String::new();
-        for module in modules {
-            aggregated_ir.push_str(&format!("; Module: {}\n", module.name));
-            aggregated_ir.push_str("; Functions:\n");
-            for func in &module.functions {
-                aggregated_ir.push_str(&format!(";   {}\n", func.name));
-            }
-            aggregated_ir.push('\n');
-        }
-
-        aggregated_ir.push_str("; Fallback stub main emitted by fp-llvm\n");
-        aggregated_ir.push_str("define i32 @main() {\n");
-        aggregated_ir.push_str("entry:\n");
-        aggregated_ir.push_str("  ret i32 0\n");
-        aggregated_ir.push_str("}\n");
-
-        std::fs::write(&self.linker_config.output_path, aggregated_ir).with_context(|| {
-            format!(
-                "Failed to write LLVM IR fallback to {}",
-                self.linker_config.output_path.display()
-            )
-        })?;
-
-        Ok(self.linker_config.output_path.clone())
+        let module_names: Vec<_> = modules.iter().map(|module| module.name.clone()).collect();
+        Err(anyhow::anyhow!(
+            "LLVM module linking is not implemented. Modules: {:?}. Provide a real linker implementation instead of writing a stub.",
+            module_names
+        ))
     }
 }
 
