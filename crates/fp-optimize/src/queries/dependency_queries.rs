@@ -1,5 +1,6 @@
 // Dependency queries - stateless operations for dependency analysis
 
+use crate::utils::evaluation_context::ConstBlock;
 use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use std::cmp::Reverse;
@@ -16,7 +17,7 @@ impl DependencyQueries {
     /// Analyze dependencies between const blocks
     pub fn analyze_dependencies(
         &self,
-        const_blocks: &HashMap<u64, crate::utils::ConstBlock>,
+        const_blocks: &HashMap<u64, ConstBlock>,
     ) -> Result<HashMap<u64, HashSet<u64>>> {
         let mut graph = HashMap::new();
 
