@@ -45,8 +45,8 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 ## Example Workflow
 
 ```bash
-fp compile examples/05_parametric_structs.fp --emit tast
-fp bytecode examples/10_metaprogramming_patterns.fp --run
+fp compile examples/05_struct_generation.fp --emit tast
+fp bytecode examples/09_metaprogramming_patterns.fp --run
 fp transpile src/service.fp --target rust --emit east
 ```
 
@@ -62,4 +62,4 @@ fp transpile src/service.fp --target rust --emit east
 - `docs/Types.md` – phased type system
 - `docs/ConstEval.md` – const evaluation semantics
 - `docs/StdLib.md` – standard library normalisation across languages
-- `examples/` – end-to-end scenarios
+- `examples/` – end-to-end scenarios (flat, renumbered catalog)

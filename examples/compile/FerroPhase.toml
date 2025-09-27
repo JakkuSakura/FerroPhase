@@ -1,7 +1,0 @@
-[package]
-name = "compile-example"
-version = "0.1.0"
-authors = ["FerroPhase Team"]
-
-[targets.native]
-# Additional native compile options can be placed here
