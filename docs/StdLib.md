@@ -26,7 +26,7 @@ The std library normalization system is now fully implemented with dedicated std
 ## Pipeline Integration
 
 ```
-CST → LAST —[capture native std usage]→ AST —[canonical std projection]→ EAST → HIR → THIR → MIR → LIR → Backends
+CST → LAST —[capture native std usage]→ AST —[canonical std projection]→ TAST → HIR → THIR → MIR → LIR → Backends
                                              ↓                                      ↓
                                      ExprStdIoPrintln                        StdIoPrintln
                                                                                    ↓

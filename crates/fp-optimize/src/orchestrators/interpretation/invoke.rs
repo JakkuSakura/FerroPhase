@@ -1,4 +1,5 @@
 use super::*;
+use itertools::Itertools;
 
 impl InterpretationOrchestrator {
     pub fn interpret_invoke(&self, node: &ExprInvoke, ctx: &SharedScopedContext) -> Result<Value> {
@@ -50,17 +51,38 @@ impl InterpretationOrchestrator {
                         ctx,
                     )
                 } else {
-                    // For multi-segment paths, use context lookup
-                    let func = ctx.get_value_recursive(path).ok_or_else(|| {
-                        optimization_error(format!("could not find function {:?} in context", path))
-                    })?;
-                    self.interpret_invoke(
-                        &ExprInvoke {
-                            target: ExprInvokeTarget::expr(Expr::value(func).into()),
-                            args: args.to_vec(),
-                        },
-                        ctx,
-                    )
+                    // For multi-segment paths, first try context lookup using the hierarchical path
+                    if let Some(func) = ctx.get_value_recursive(path.clone()) {
+                        return self.interpret_invoke(
+                            &ExprInvoke {
+                                target: ExprInvokeTarget::expr(Expr::value(func).into()),
+                                args: args.to_vec(),
+                            },
+                            ctx,
+                        );
+                    }
+
+                    // Fallback: many impl methods are stored as a single identifier like `Type::method`
+                    let joined_ident = path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.as_str())
+                        .join("::");
+
+                    if let Some(func) = ctx.get_value(Ident::new(joined_ident.clone())) {
+                        return self.interpret_invoke(
+                            &ExprInvoke {
+                                target: ExprInvokeTarget::expr(Expr::value(func).into()),
+                                args: args.to_vec(),
+                            },
+                            ctx,
+                        );
+                    }
+
+                    Err(optimization_error(format!(
+                        "could not find function {:?} in context",
+                        path
+                    )))
                 }
             }
             Locator::ParameterPath(_) => {

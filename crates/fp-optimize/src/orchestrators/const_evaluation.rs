@@ -8,7 +8,7 @@ use crate::utils::{ConstEval, ConstEvalTracker, EvaluationContext, IntrinsicEval
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
-use fp_core::id::Locator;
+use fp_core::id::{Ident, Locator};
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -138,10 +138,13 @@ impl ConstEvaluationOrchestrator {
         }
 
         // Apply accumulated mutations to AST
-        self.const_eval_tracker.apply(ast)?;
+        let changes_made = self.const_eval_tracker.apply(ast)?;
 
-        // Inline constant expressions now that const results are in context
-        self.inline_constant_expressions(ast, ctx)?;
+        // Only attempt inlining when we have const blocks or recorded mutations.
+        // This avoids interpreting regular runtime code (e.g., println! with runtime values).
+        if changes_made || !self.evaluation_context.get_const_blocks().is_empty() {
+            self.inline_constant_expressions(ast, ctx)?;
+        }
 
         debug!("Phase 2 completed: Const evaluation operations applied");
         Ok(())
@@ -404,13 +407,15 @@ impl ConstEvaluationOrchestrator {
             return Ok(None);
         }
 
-        if invoke.args.is_empty() {
-            return Ok(None);
-        }
-
         let format_expr = &invoke.args[0];
         if !matches!(format_expr, Expr::FormatString(_)) {
             return Ok(None);
+        }
+
+        if let Expr::FormatString(fmt) = format_expr {
+            if !fmt.args.is_empty() || !fmt.kwargs.is_empty() {
+                return Ok(None);
+            }
         }
 
         let evaluated = self
@@ -437,6 +442,10 @@ impl ConstEvaluationOrchestrator {
         println_expr: &ExprStdIoPrintln,
         ctx: &SharedScopedContext,
     ) -> Result<Option<ExprStdIoPrintln>> {
+        if !println_expr.format.args.is_empty() || !println_expr.format.kwargs.is_empty() {
+            return Ok(None);
+        }
+
         let format_expr = Expr::FormatString(println_expr.format.clone());
         let evaluated = self
             .interpreter
@@ -481,12 +490,24 @@ impl ConstEvaluationOrchestrator {
                 }
             }
             Item::Impl(item_impl) => {
-                for child in &item_impl.items {
-                    self.register_type_in_item(child, ctx);
+                if let Expr::Locator(Locator::Ident(type_ident)) = &item_impl.self_ty {
+                    if let Some(type_value) = ctx.get_value(type_ident.clone()) {
+                        ctx.insert_value_with_ctx(Ident::new("Self"), type_value);
+                    }
+                    for child in &item_impl.items {
+                        if let Item::DefFunction(func_def) = child {
+                            let method_key = Ident::new(&format!(
+                                "{}::{}",
+                                type_ident.as_str(),
+                                func_def.name.as_str()
+                            ));
+                            ctx.insert_value_with_ctx(method_key, Value::Function(func_def._to_value()));
+                        }
+                    }
                 }
             }
             Item::DefFunction(def_fn) => {
-                self.register_type_in_expr(def_fn.body.as_ref(), ctx);
+                ctx.insert_value_with_ctx(def_fn.name.clone(), Value::Function(def_fn._to_value()));
             }
             Item::Expr(expr) => self.register_type_in_expr(expr, ctx),
             _ => {}

@@ -10,7 +10,14 @@ use crate::languages::detect_source_language;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
-use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager, DiagnosticReport};
+use fp_core::diagnostics::{
+    Diagnostic,
+    DiagnosticDisplayOptions,
+    DiagnosticManager,
+    DiagnosticReport,
+    DiagnosticTemplate,
+};
+use fp_core::error::Error as CoreError;
 use fp_core::hir::typed as thir;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
 use fp_optimize::ConstEvaluationOrchestrator;
@@ -125,6 +132,7 @@ struct LoweringResult {
 pub struct Pipeline {
     frontends: Arc<FrontendRegistry>,
     default_runtime: String,
+    diagnostic_template: DiagnosticTemplate,
 }
 
 impl Pipeline {
@@ -136,6 +144,7 @@ impl Pipeline {
         Self {
             frontends: Arc::new(registry),
             default_runtime: "literal".to_string(),
+            diagnostic_template: DiagnosticTemplate::Pretty,
         }
     }
 
@@ -149,11 +158,21 @@ impl Pipeline {
         Self {
             frontends: registry,
             default_runtime: "literal".to_string(),
+            diagnostic_template: DiagnosticTemplate::Pretty,
         }
     }
 
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.default_runtime = runtime_name.to_string();
+    }
+
+    pub fn with_diagnostic_template(mut self, template: DiagnosticTemplate) -> Self {
+        self.diagnostic_template = template;
+        self
+    }
+
+    pub fn set_diagnostic_template(&mut self, template: DiagnosticTemplate) {
+        self.diagnostic_template = template;
     }
 
     pub async fn execute_with_options(
@@ -255,7 +274,7 @@ impl Pipeline {
             PipelineTarget::Llvm => {
                 let lowering =
                     self.compile_to_llvm_ir(ast_node, &options, input_path.as_deref(), context)?;
-                self.emit_diagnostics(&lowering.diagnostics, &options);
+                self.emit_diagnostics(&lowering.diagnostics, None, &options);
                 Ok(PipelineOutput::Code(
                     lowering.llvm_ir.to_str().unwrap_or_default().to_string(),
                 ))
@@ -263,7 +282,7 @@ impl Pipeline {
             PipelineTarget::Binary => {
                 let (message, diagnostics) =
                     self.compile_to_binary(ast_node, &options, input_path.as_deref(), context)?;
-                self.emit_diagnostics(&diagnostics, &options);
+                self.emit_diagnostics(&diagnostics, None, &options);
                 println!("{}", message);
                 Ok(PipelineOutput::Value(Value::string(
                     "Binary compilation completed".to_string(),
@@ -333,33 +352,57 @@ impl Pipeline {
         let diagnostic_manager = DiagnosticManager::new();
 
         let const_report = self.run_const_eval_stage(ast, context, options, base_path)?;
-        self.emit_diagnostics(&const_report.report.diagnostics, options);
+        self.emit_diagnostics(
+            &const_report.report.diagnostics,
+            const_report.report.context,
+            options,
+        );
         let (evaluated_ast, updated_context) = const_report.into_result(&diagnostic_manager)?;
         context = updated_context;
 
         let hir_report =
             self.run_hir_stage(&evaluated_ast, context, options, file_path, base_path)?;
-        self.emit_diagnostics(&hir_report.report.diagnostics, options);
+        self.emit_diagnostics(
+            &hir_report.report.diagnostics,
+            hir_report.report.context,
+            options,
+        );
         let (hir_program, updated_context) = hir_report.into_result(&diagnostic_manager)?;
         context = updated_context;
 
         let thir_report = self.run_thir_stage(hir_program, context, options, base_path)?;
-        self.emit_diagnostics(&thir_report.report.diagnostics, options);
+        self.emit_diagnostics(
+            &thir_report.report.diagnostics,
+            thir_report.report.context,
+            options,
+        );
         let (thir_program, updated_context) = thir_report.into_result(&diagnostic_manager)?;
         context = updated_context;
 
         let mir_report = self.run_mir_stage(thir_program, context, options, base_path)?;
-        self.emit_diagnostics(&mir_report.report.diagnostics, options);
+        self.emit_diagnostics(
+            &mir_report.report.diagnostics,
+            mir_report.report.context,
+            options,
+        );
         let (mir_program, updated_context) = mir_report.into_result(&diagnostic_manager)?;
         context = updated_context;
 
         let lir_report = self.run_lir_stage(mir_program, context, options, base_path)?;
-        self.emit_diagnostics(&lir_report.report.diagnostics, options);
+        self.emit_diagnostics(
+            &lir_report.report.diagnostics,
+            lir_report.report.context,
+            options,
+        );
         let (lir_program, updated_context) = lir_report.into_result(&diagnostic_manager)?;
         context = updated_context;
 
         let llvm_report = self.run_llvm_stage(lir_program, context, base_path)?;
-        self.emit_diagnostics(&llvm_report.report.diagnostics, options);
+        self.emit_diagnostics(
+            &llvm_report.report.diagnostics,
+            llvm_report.report.context,
+            options,
+        );
         let (llvm_ir, _context) = llvm_report.into_result(&diagnostic_manager)?;
 
         let diagnostics = diagnostic_manager.get_diagnostics();
@@ -387,8 +430,16 @@ impl Pipeline {
         let mut evaluated_node = ast;
 
         if let Err(e) = const_evaluator.evaluate(&mut evaluated_node, &shared_context) {
-            let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
-                .with_source_context(STAGE_CONST_EVAL);
+            let diagnostic = match e {
+                CoreError::Diagnostic(mut diagnostic) => {
+                    if diagnostic.source_context.is_none() {
+                        diagnostic.source_context = Some(STAGE_CONST_EVAL.to_string());
+                    }
+                    diagnostic
+                }
+                other => Diagnostic::error(format!("Const evaluation failed: {}", other))
+                    .with_source_context(STAGE_CONST_EVAL),
+            };
             return Ok(PipelineStageReport::failure(
                 context,
                 STAGE_CONST_EVAL,
@@ -797,35 +848,25 @@ impl Pipeline {
         }
     }
 
-    fn emit_diagnostics(&self, diagnostics: &[Diagnostic], options: &PipelineOptions) {
+    fn emit_diagnostics(
+        &self,
+        diagnostics: &[Diagnostic],
+        stage_context: Option<&str>,
+        options: &PipelineOptions,
+    ) {
         if diagnostics.is_empty() {
             return;
         }
 
-        for diagnostic in diagnostics {
-            let context = diagnostic.source_context.as_deref().unwrap_or("pipeline");
-            match diagnostic.level {
-                DiagnosticLevel::Error => {
-                    eprintln!("❌ [{}] {}", context, diagnostic.message);
-                }
-                DiagnosticLevel::Warning => {
-                    eprintln!("⚠️  [{}] {}", context, diagnostic.message);
-                }
-                DiagnosticLevel::Info => {
-                    if options.debug.verbose {
-                        eprintln!("ℹ️  [{}] {}", context, diagnostic.message);
-                    }
-                }
-            }
+        let display_options = self.diagnostic_display_options(options);
+        DiagnosticManager::emit(diagnostics, stage_context, &display_options);
+    }
 
-            if let Some(span) = &diagnostic.span {
-                eprintln!("   at {}", span.to_string());
-            }
-
-            for suggestion in &diagnostic.suggestions {
-                eprintln!("   💡 {}", suggestion);
-            }
-        }
+    fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
+        DiagnosticDisplayOptions::with_template(
+            self.diagnostic_template.clone(),
+            options.debug.verbose,
+        )
     }
 }
 

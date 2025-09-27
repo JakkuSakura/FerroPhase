@@ -685,7 +685,8 @@ impl ThirGenerator {
                 thir::StmtKind::Expr(thir_expr)
             }
             hir::StmtKind::Semi(expr) => {
-                let thir_expr = self.transform_expr(expr)?;
+                let mut thir_expr = self.transform_expr(expr)?;
+                thir_expr.ty = self.create_unit_type();
                 thir::StmtKind::Expr(thir_expr)
             }
             hir::StmtKind::Local(local) => {
@@ -732,12 +733,11 @@ impl ThirGenerator {
                     lint_level: 0,
                 }
             }
-            _ => thir::StmtKind::Expr(thir::Expr {
-                thir_id: self.next_id(),
-                kind: thir::ExprKind::Literal(thir::Lit::Int(0, thir::IntTy::I32)),
-                ty: self.create_i32_type(),
-                span: Span::new(0, 0, 0),
-            }),
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "Unsupported HIR statement during THIR lowering",
+                ));
+            }
         };
 
         Ok(thir::Stmt { kind })

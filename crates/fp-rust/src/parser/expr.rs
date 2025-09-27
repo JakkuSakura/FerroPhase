@@ -232,9 +232,58 @@ pub fn parse_expr_loop(l: syn::ExprLoop) -> Result<ExprLoop> {
 }
 
 pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
-    let lhs = parse_expr(*b.left)?.into();
-    let rhs = parse_expr(*b.right)?.into();
+    let lhs_expr = parse_expr(*b.left)?;
+    let rhs_expr = parse_expr(*b.right)?;
+
     let (kind, _flatten) = match b.op {
+        syn::BinOp::AddAssign(_) => {
+            let assign = ExprAssign {
+                target: lhs_expr.clone().into(),
+                value: Expr::BinOp(ExprBinOp {
+                    kind: BinOpKind::Add,
+                    lhs: lhs_expr.into(),
+                    rhs: rhs_expr.into(),
+                })
+                .into(),
+            };
+            return Ok(Expr::Assign(assign.into()));
+        }
+        syn::BinOp::SubAssign(_) => {
+            let assign = ExprAssign {
+                target: lhs_expr.clone().into(),
+                value: Expr::BinOp(ExprBinOp {
+                    kind: BinOpKind::Sub,
+                    lhs: lhs_expr.into(),
+                    rhs: rhs_expr.into(),
+                })
+                .into(),
+            };
+            return Ok(Expr::Assign(assign.into()));
+        }
+        syn::BinOp::MulAssign(_) => {
+            let assign = ExprAssign {
+                target: lhs_expr.clone().into(),
+                value: Expr::BinOp(ExprBinOp {
+                    kind: BinOpKind::Mul,
+                    lhs: lhs_expr.into(),
+                    rhs: rhs_expr.into(),
+                })
+                .into(),
+            };
+            return Ok(Expr::Assign(assign.into()));
+        }
+        syn::BinOp::DivAssign(_) => {
+            let assign = ExprAssign {
+                target: lhs_expr.clone().into(),
+                value: Expr::BinOp(ExprBinOp {
+                    kind: BinOpKind::Div,
+                    lhs: lhs_expr.into(),
+                    rhs: rhs_expr.into(),
+                })
+                .into(),
+            };
+            return Ok(Expr::Assign(assign.into()));
+        }
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
         syn::BinOp::Sub(_) => (BinOpKind::Sub, false),
@@ -252,6 +301,9 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::And(_) => (BinOpKind::And, true),
         _ => bail!("Op not supported {:?}", b.op),
     };
+
+    let lhs = lhs_expr.into();
+    let rhs = rhs_expr.into();
 
     Ok(ExprBinOp { kind, lhs, rhs }.into())
 }
