@@ -178,12 +178,23 @@ impl ConstEvaluationOrchestrator {
             (const_block.expr.clone(), const_block.name.clone())
         };
 
+        self.evaluation_context.begin_evaluation(block_id)?;
+
         // Delegate actual expression evaluation to the interpretation orchestrator
         // The interpretation orchestrator knows how to handle const expressions and
         // intrinsics that may request AST mutations
         let result =
-            self.interpreter
-                .evaluate_const_expression(&expr, ctx, &self.intrinsic_context)?;
+            match self
+                .interpreter
+                .evaluate_const_expression(&expr, ctx, &self.intrinsic_context)
+            {
+                Ok(value) => value,
+                Err(err) => {
+                    self.evaluation_context
+                        .set_block_error(block_id, err.to_string())?;
+                    return Err(err);
+                }
+            };
 
         // Store the result for later queries
         self.evaluation_context
@@ -369,7 +380,8 @@ impl ConstEvaluationOrchestrator {
             Ok(val @ (Value::Int(_) | Value::Bool(_) | Value::Decimal(_) | Value::String(_))) => {
                 *expr = Expr::value(val);
             }
-            Ok(_) | Err(_) => {}
+            Ok(_) => {}
+            Err(err) => return Err(err),
         }
         Ok(())
     }

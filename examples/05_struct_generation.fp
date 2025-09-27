@@ -14,7 +14,7 @@ fn main() {
     const ENABLE_METRICS: bool = false;
     const TARGET_PLATFORM: &str = "linux";
 
-    t! {
+    fp! {
         struct Application {
             // Always-present fields
             name: String,
@@ -84,7 +84,7 @@ fn main() {
     //------------------------------------------------------------------
     // 2. Dimensional vector specialisations
     //------------------------------------------------------------------
-    t! {
+    fp! {
         struct Vector2D {
             x: f32,
             y: f32,
@@ -127,7 +127,7 @@ fn main() {
     //------------------------------------------------------------------
     // 3. Feature matrix specialisation
     //------------------------------------------------------------------
-    t! {
+    fp! {
         struct MetricsWindow {
             window: [f64; 8],
             len: usize,

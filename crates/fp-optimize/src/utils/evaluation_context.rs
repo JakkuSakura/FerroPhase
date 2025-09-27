@@ -115,8 +115,85 @@ impl EvaluationContext {
     /// Set the result of a const block evaluation
     pub fn set_block_result(&mut self, block_id: u64, result: Value) -> Result<()> {
         if let Some(block) = self.const_blocks.get_mut(&block_id) {
-            block.result = Some(result);
-            block.state = ConstEvalState::Evaluated;
+            match &block.state {
+                ConstEvalState::NotEvaluated | ConstEvalState::Evaluating => {
+                    block.result = Some(result);
+                    block.state = ConstEvalState::Evaluated;
+                    Ok(())
+                }
+                ConstEvalState::Evaluated => Err(fp_core::error::Error::Generic(eyre!(
+                    "Const block {} was already evaluated",
+                    block
+                        .name
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| block.id.to_string())
+                ))),
+                ConstEvalState::Error(message) => Err(fp_core::error::Error::Generic(eyre!(
+                    "Const block {} is in error state ({}); cannot set result",
+                    block
+                        .name
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| block.id.to_string()),
+                    message
+                ))),
+            }
+        } else {
+            Err(fp_core::error::Error::Generic(eyre!(
+                "Const block {} not found",
+                block_id
+            )))
+        }
+    }
+
+    /// Mark a const block evaluation as started to detect recursion and report re-entrancy.
+    pub fn begin_evaluation(&mut self, block_id: u64) -> Result<()> {
+        if let Some(block) = self.const_blocks.get_mut(&block_id) {
+            match &block.state {
+                ConstEvalState::NotEvaluated => {
+                    block.state = ConstEvalState::Evaluating;
+                    Ok(())
+                }
+                ConstEvalState::Evaluating => Err(fp_core::error::Error::Generic(eyre!(
+                    "Const block {} is already being evaluated",
+                    block
+                        .name
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| block.id.to_string())
+                ))),
+                ConstEvalState::Evaluated => Err(fp_core::error::Error::Generic(eyre!(
+                    "Const block {} has already been evaluated",
+                    block
+                        .name
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| block.id.to_string())
+                ))),
+                ConstEvalState::Error(message) => Err(fp_core::error::Error::Generic(eyre!(
+                    "Const block {} is in error state ({}); cannot re-evaluate",
+                    block
+                        .name
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| block.id.to_string()),
+                    message
+                ))),
+            }
+        } else {
+            Err(fp_core::error::Error::Generic(eyre!(
+                "Const block {} not found",
+                block_id
+            )))
+        }
+    }
+
+    /// Record a const evaluation error for diagnostic reporting.
+    pub fn set_block_error(&mut self, block_id: u64, message: impl Into<String>) -> Result<()> {
+        if let Some(block) = self.const_blocks.get_mut(&block_id) {
+            block.state = ConstEvalState::Error(message.into());
+            block.result = None;
             Ok(())
         } else {
             Err(fp_core::error::Error::Generic(eyre!(
