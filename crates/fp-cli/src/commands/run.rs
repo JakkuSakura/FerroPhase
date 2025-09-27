@@ -2,15 +2,9 @@
 
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{BExpr, RuntimeValue, Value};
-use fp_core::context::SharedScopedContext;
-use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
-use fp_optimize::orchestrators::InterpretationOrchestrator;
 use fp_rust::parser::RustParser;
-use fp_rust::printer::RustPrinter;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tracing::info;
 
 /// Arguments for the run command
@@ -147,56 +141,18 @@ fn try_parse_simple_expression(parser: &RustParser, source: &str) -> Result<BExp
 
 /// Interpret AST using literal semantics (basic const evaluation)
 async fn interpret_ast_literal(ast: &BExpr) -> Result<Value> {
-    // Create a serializer using RustPrinter
-    let serializer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(serializer.clone());
-
-    let orchestrator = InterpretationOrchestrator::new(serializer);
-    let context = SharedScopedContext::new();
-
-    let result = orchestrator
-        .interpret_expr(ast, &context)
-        .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?;
-
-    // Retrieve and print any println! outputs
-    let outputs = context.take_outputs();
-    for output in outputs {
-        print!("{}", output);
-    }
-
-    Ok(result)
+    let _ = ast;
+    Err(CliError::Compilation(
+        "Typed interpreter path is not implemented yet".to_string(),
+    ))
 }
 
 /// Interpret AST using runtime semantics (ownership tracking)
 async fn interpret_ast_runtime(ast: &BExpr, runtime_name: &str) -> Result<RuntimeValue> {
-    // Create a serializer using RustPrinter
-    let serializer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(serializer.clone());
-
-    // Create runtime pass based on name
-    let runtime_pass: Arc<dyn RuntimePass> = match runtime_name {
-        "rust" => Arc::new(RustRuntimePass::new()),
-        "literal" | _ => Arc::new(LiteralRuntimePass::default()),
-    };
-
-    // Create an orchestrator with the runtime pass
-    let orchestrator = InterpretationOrchestrator::new(serializer).with_runtime_pass(runtime_pass);
-
-    // Create a context for interpretation
-    let context = SharedScopedContext::new();
-
-    // Interpret with runtime semantics
-    let result = orchestrator
-        .interpret_expr_runtime(ast, &context)
-        .map_err(|e| CliError::Compilation(format!("Runtime interpretation failed: {}", e)))?;
-
-    // Retrieve and print any println! outputs
-    let outputs = context.take_outputs();
-    for output in outputs {
-        print!("{}", output);
-    }
-
-    Ok(result)
+    let _ = (ast, runtime_name);
+    Err(CliError::Compilation(
+        "Runtime typed interpreter is not implemented yet".to_string(),
+    ))
 }
 
 fn print_ast(ast: &BExpr) -> Result<()> {

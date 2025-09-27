@@ -15,7 +15,6 @@ pub mod id;
 pub mod lir;
 pub mod mir;
 pub mod ops;
-pub mod passes;
 pub mod pat;
 pub mod printer;
 pub mod span;

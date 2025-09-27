@@ -30,8 +30,7 @@ optimisation IR stack.
 
 4. **Typed Interpretation (THIR → THIR′)**
    - Compile-time and runtime interpretation operate directly on THIR.
-   - Intrinsics record structural edits via effect logs; the resulting THIR′ is
-     the authoritative typed program after evaluation.
+   - The resulting THIR′ snapshot captures any compile-time structural edits and becomes the authoritative typed program after evaluation.
 
 5. **Resugaring (THIR′ → TAST → LAST′)**
    - A lifting phase rebuilds a typed AST (TAST) that mirrors surface syntax
@@ -114,9 +113,14 @@ stage can produce a placeholder artefact, it returns it while emitting
 
 ## Runtime & Interpretation
 
-Interpretation now reuses the serializer selected by the frontend, ensuring that
-runtime semantics stay in sync with the LAST/AST produced by multi-language
-inputs.
+Interpretation (interactive `run`/`eval`) now flows through the same AST → HIR
+→ THIR → const-eval pipeline used for compilation. The typed interpreter reuses
+the frontend serializer, executes THIR bodies in either const or runtime mode,
+and currently produces owned runtime values via the same evaluation machinery.
+
+The runtime path still needs richer semantics (ownership-aware operations,
+language intrinsics), but the driver no longer depends on the removed
+`RuntimePass` abstraction.
 
 ## Extending the Pipeline
 

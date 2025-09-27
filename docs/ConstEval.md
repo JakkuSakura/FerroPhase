@@ -4,7 +4,7 @@
 
 Const evaluation in FerroPhase now operates on the typed intermediate representation (THIR). Frontends produce annotated
 ASTs, desugar to HIR, and run Algorithm W inference to build THIR before any compile-time execution takes place. Typed
-interpretation evaluates const blocks, records structural effects, and produces an updated THIR′ alongside an effect log.
+interpretation evaluates const blocks and produces an updated THIR′ snapshot.
 
 Const evaluation itself stops at THIR′. Resugaring or re-projection for particular backends happens in later pipeline phases.
 
@@ -15,9 +15,7 @@ Source → LAST → Annotated AST → HIR → THIR → Typed Interpretation (Con
 **Benefits**
 
 - Typed evaluation: const/runtime interpretation sees principal types for every expression.
-- Deterministic effect logs: metaprogramming intrinsics record typed mutations that replay in later stages.
-- Unified interpreter: const and runtime execution share the same traversal engine configured with different effect
-  handlers.
+- Unified interpreter: const and runtime execution share the same traversal engine (configuration still in progress).
 
 ## Const Block Semantics
 
@@ -35,7 +33,7 @@ const RESULT: i32 = {
 **Properties**
 
 - Executed at compile time using the typed interpreter.
-- Pure evaluation: no runtime side effects; structural edits are captured as typed effects.
+- Pure evaluation: no runtime side effects; structural edits are visible in the resulting THIR′ snapshot.
 - Access to type intrinsics (`sizeof!`, `field_count!`, `hasfield!`, etc.).
 - Local scope confined to the block; the final expression yields the const value.
 
@@ -94,7 +92,7 @@ const GENERATED_STRUCT: Type = {
 2. Circular dependencies are detected and diagnosed before evaluation starts.
 3. Only pure functions participate; effectful calls must be encapsulated in runtime hooks.
 4. Intrinsics query the shared type tables captured during HIR→THIR inference.
-5. Structural edits (`struct`/`impl` declarations, builder intrinsics) append typed effects rather than mutating AST nodes
+5. Structural edits (`struct`/`impl` declarations, builder intrinsics) are reflected directly in the resulting THIR′ snapshot.
    directly.
 
 ## Const Blocks vs Regular Code
@@ -103,19 +101,12 @@ const GENERATED_STRUCT: Type = {
 |--------------------|----------------------------------|-------------------------------|
 | Execution time     | Compile time                     | Runtime                       |
 | Allowed functions  | Pure / const-compatible          | All                           |
-| Structural edits   | Recorded typed effects           | N/A                           |
+| Structural edits   | Reflected in THIR′ snapshot     | N/A                           |
 | Scope              | Block-local                      | Module/function               |
 | Type information   | Resolved THIR types              | Runtime reflection (if any)   |
 | Failure handling   | Compile-time diagnostics         | Runtime errors/exceptions     |
 
 ## Typed Effects
-
-Typed interpretation produces an ordered effect log:
-
-- `StructDefinition` – typed fields and provenance for new structs.
-- `ImplDefinition` – trait or inherent impls with typed method signatures.
-- Builder mutations like `addfield!`/`addmethod!` translate to the same typed forms.
-- Diagnostics (errors/warnings) with THIR spans.
 
 The log replays during subsequent pipeline phases so every downstream stage observes the same evaluated programme.
 
@@ -130,7 +121,7 @@ The historical three-phase structure still applies, now expressed in typed terms
 
 2. **Phase 2 – Typed interpretation**
    - Analyse const-block dependencies on THIR.
-   - Interpret blocks, emitting values and typed effects.
+   - Interpret blocks and capture evaluated values.
    - Commit `mut type` tokens by promoting them to `ConcreteType` entries.
 
 3. **Phase 3 – Downstream validation**
@@ -141,7 +132,7 @@ The historical three-phase structure still applies, now expressed in typed terms
 ```
 Phase 1: build THIR, resolve Point, Config, etc.
 Phase 2: evaluate const blocks, compute sizeof!(Point), append GeneratedPoint fields, emit diagnostics if needed.
-Phase 3: downstream passes replay effects, verify generated definitions, and prepare outputs for compilation or transpilation (outside the const-eval step).
+Phase 3: downstream passes verify generated definitions and prepare outputs for compilation or transpilation (outside the const-eval step).
 ```
 
 The updated THIR′ snapshot is persisted when `--save-intermediates` is enabled (e.g., `target/thir/...`). Later phases may emit additional artefacts (`.tast`, `.hir`, etc.) depending on the selected mode.
@@ -149,12 +140,11 @@ The updated THIR′ snapshot is persisted when `--save-intermediates` is enabled
 ## Summary
 
 - Const evaluation operates on THIR with full type information produced by the HIR → THIR Algorithm W inference stage.
-- Typed effects provide a deterministic, replayable metaprogramming model.
 
 ```
 Phase 1: build THIR, resolve Point, Config, etc.
 Phase 2: evaluate const blocks, compute sizeof!(Point), append GeneratedPoint fields, emit diagnostics if needed.
-Phase 3: downstream passes replay effects, verify generated definitions, and prepare outputs for compilation or transpilation (outside the const-eval step).
+Phase 3: downstream passes verify generated definitions and prepare outputs for compilation or transpilation (outside the const-eval step).
 ```
 
 When `--save-intermediates` is enabled, const evaluation persists the updated THIR snapshot (`.thir`). Later phases may produce additional artefacts as needed.
@@ -162,4 +152,3 @@ When `--save-intermediates` is enabled, const evaluation persists the updated TH
 ## Summary
 
 - Const evaluation operates on THIR with full type information.
-- Typed effects provide a deterministic, replayable metaprogramming model.
