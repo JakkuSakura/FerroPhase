@@ -81,6 +81,6 @@ impl PartialEq for RawTokenSteam {
 }
 impl Eq for RawTokenSteam {}
 #[macro_export]
-macro_rules! t {
+macro_rules! fp {
     ($t: tt) => {};
 }

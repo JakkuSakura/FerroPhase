@@ -313,6 +313,11 @@ pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<Expr> {
         return parse_println_macro_to_function_call(&m.mac);
     }
 
+    // Check if this is an fp! macro
+    if is_fp_macro(&m.mac) {
+        return parse_fp_macro(&m.mac);
+    }
+
     // For other macros, preserve the original behavior
     Ok(Expr::any(RawExprMacro { raw: m }))
 }
@@ -327,12 +332,40 @@ pub fn parse_stmt_macro(raw: syn::StmtMacro) -> Result<BlockStmt> {
         ));
     }
 
+    // Check if this is an fp! macro
+    if is_fp_macro(&raw.mac) {
+        let call_expr = parse_fp_macro(&raw.mac)?;
+        tracing::debug!("parsed fp! macro");
+        return Ok(BlockStmt::Expr(
+            BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
+        ));
+    }
+
     // For other macros, preserve the original behavior
     Ok(BlockStmt::any(RawStmtMacro { raw }))
 }
 
 fn is_println_macro(mac: &syn::Macro) -> bool {
     mac.path.segments.len() == 1 && mac.path.segments[0].ident == "println"
+}
+
+fn is_fp_macro(mac: &syn::Macro) -> bool {
+    mac.path.segments.len() == 1 && mac.path.segments[0].ident == "fp"
+}
+
+fn parse_fp_macro(mac: &syn::Macro) -> Result<Expr> {
+    // fp! contains FP-specific syntax that needs custom parsing
+    let tokens_str = mac.tokens.to_string();
+    tracing::debug!("fp! macro found with tokens: {}", tokens_str);
+
+    // Handle empty fp!()
+    if tokens_str.trim().is_empty() {
+        return Ok(Expr::unit());
+    }
+
+    // Use the new public method for parsing FP content
+    let parser = crate::parser::RustParser::new();
+    parser.parse_fp_content(&tokens_str)
 }
 
 fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {

@@ -902,10 +902,7 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 ),
             };
 
-            let mut param_strs: Vec<String> = param_types
-                .iter()
-                .map(|t| format_type(t))
-                .collect();
+            let mut param_strs: Vec<String> = param_types.iter().map(|t| format_type(t)).collect();
             if is_var_arg {
                 param_strs.push("...".to_string());
             }
@@ -924,10 +921,7 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
             } else {
                 format!(
                     "call {} {} {}({})",
-                    return_type_str,
-                    fn_sig,
-                    function_operand,
-                    args_str
+                    return_type_str, fn_sig, function_operand, args_str
                 )
             }
         }
