@@ -7,6 +7,7 @@ pub mod ast;
 pub mod context;
 pub mod cst;
 pub mod ctx;
+pub mod diagnostics;
 pub mod error;
 pub mod frontend;
 pub mod hir;
@@ -17,7 +18,6 @@ pub mod ops;
 pub mod passes;
 pub mod pat;
 pub mod printer;
-pub mod reporting;
 pub mod span;
 pub mod utils;
 

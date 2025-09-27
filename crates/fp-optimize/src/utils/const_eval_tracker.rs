@@ -1,7 +1,7 @@
 // Const-eval tracker - collects compile-time mutations requested during evaluation
 
-use eyre::eyre;
 use fp_core::ast::*;
+use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use fp_core::id::{Ident, Locator};
 
@@ -106,8 +106,8 @@ impl ConstEvalTracker {
                     }
                 }
                 ConstEval::CompileError { message } => {
-                    return Err(fp_core::error::Error::Generic(eyre!(
-                        "Compile error: {}",
+                    return Err(report_error(format!(
+                        "Const-eval compile error: {}",
                         message
                     )));
                 }
@@ -167,10 +167,9 @@ impl ConstEvalTracker {
             ));
             Ok(())
         } else {
-            Err(fp_core::error::Error::Generic(eyre!(
-                "Unable to add field {} to unknown struct {}",
-                field_name,
-                target_type
+            Err(report_error(format!(
+                "Const-eval unable to add field {} to unknown struct {}",
+                field_name, target_type
             )))
         }
     }
@@ -401,8 +400,8 @@ fn push_item(ast: &mut Node, item: Item) -> Result<()> {
             module.items.push(item);
             Ok(())
         }
-        _ => Err(fp_core::error::Error::Generic(eyre!(
-            "Unable to insert generated item into AST at this location"
-        ))),
+        _ => Err(report_error(
+            "Const-eval cannot insert generated item into this AST location",
+        )),
     }
 }

@@ -1,0 +1,206 @@
+use crate::span::Span;
+use once_cell::sync::Lazy;
+use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+    pub level: DiagnosticLevel,
+    pub message: String,
+    pub span: Option<Span>,
+    pub suggestions: Vec<String>,
+    pub source_context: Option<String>,
+    pub code: Option<String>,
+}
+
+impl Diagnostic {
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            level: DiagnosticLevel::Error,
+            message: message.into(),
+            span: None,
+            suggestions: Vec::new(),
+            source_context: None,
+            code: None,
+        }
+    }
+
+    pub fn warning(message: impl Into<String>) -> Self {
+        Self {
+            level: DiagnosticLevel::Warning,
+            message: message.into(),
+            span: None,
+            suggestions: Vec::new(),
+            source_context: None,
+            code: None,
+        }
+    }
+
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            level: DiagnosticLevel::Info,
+            message: message.into(),
+            span: None,
+            suggestions: Vec::new(),
+            source_context: None,
+            code: None,
+        }
+    }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestions.push(suggestion.into());
+        self
+    }
+
+    pub fn with_suggestions(mut self, suggestions: Vec<String>) -> Self {
+        self.suggestions.extend(suggestions);
+        self
+    }
+
+    pub fn with_source_context(mut self, context: impl Into<String>) -> Self {
+        self.source_context = Some(context.into());
+        self
+    }
+
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticReport<T> {
+    pub context: Option<&'static str>,
+    pub value: Option<T>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl<T> DiagnosticReport<T> {
+    pub fn success(value: T, context: Option<&'static str>) -> Self {
+        Self {
+            context,
+            value: Some(value),
+            diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn success_with_diagnostics(
+        value: T,
+        context: Option<&'static str>,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Self {
+        Self {
+            context,
+            value: Some(value),
+            diagnostics,
+        }
+    }
+
+    pub fn failure(context: Option<&'static str>, diagnostics: Vec<Diagnostic>) -> Self {
+        Self {
+            context,
+            value: None,
+            diagnostics,
+        }
+    }
+
+    pub fn into_result(self) -> Result<(T, Vec<Diagnostic>), Vec<Diagnostic>> {
+        match self.value {
+            Some(value) => Ok((value, self.diagnostics)),
+            None => Err(self.diagnostics),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticManager {
+    diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
+}
+
+impl DiagnosticManager {
+    pub fn new() -> Self {
+        Self {
+            diagnostics: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn error(&self, diagnostic: Diagnostic) {
+        self.add_diagnostic(diagnostic);
+    }
+
+    pub fn add_diagnostic(&self, diagnostic: Diagnostic) {
+        if let Ok(mut diagnostics) = self.diagnostics.lock() {
+            diagnostics.push(diagnostic);
+        }
+    }
+
+    pub fn add_diagnostics(&self, mut new_diagnostics: Vec<Diagnostic>) {
+        if let Ok(mut diagnostics) = self.diagnostics.lock() {
+            diagnostics.append(&mut new_diagnostics);
+        }
+    }
+
+    pub fn get_diagnostics(&self) -> Vec<Diagnostic> {
+        self.diagnostics
+            .lock()
+            .map(|d| d.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .lock()
+            .map(|d| d.iter().any(|diag| diag.level == DiagnosticLevel::Error))
+            .unwrap_or(false)
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut diagnostics) = self.diagnostics.lock() {
+            diagnostics.clear();
+        }
+    }
+}
+
+static GLOBAL_DIAGNOSTIC_MANAGER: Lazy<Arc<DiagnosticManager>> =
+    Lazy::new(|| Arc::new(DiagnosticManager::new()));
+
+pub fn diagnostic_manager() -> Arc<DiagnosticManager> {
+    GLOBAL_DIAGNOSTIC_MANAGER.clone()
+}
+
+pub fn report_error(message: impl Into<String>) -> crate::error::Error {
+    let diagnostic = Diagnostic::error(message);
+    diagnostic_manager().error(diagnostic.clone());
+    crate::error::Error::diagnostic(diagnostic)
+}
+
+#[macro_export]
+macro_rules! diagnostic_error {
+    ($context:expr, $($arg:tt)*) => {
+        $crate::diagnostics::DiagnosticReport::failure(
+            Some($context),
+            vec![$crate::diagnostics::Diagnostic::error(format!($($arg)*))],
+        )
+    };
+}
+
+#[macro_export]
+macro_rules! emit_error {
+    ($manager:expr, $context:expr, $($arg:tt)*) => {
+        $manager.add_diagnostic(
+            $crate::diagnostics::Diagnostic::error(format!($($arg)*))
+                .with_source_context($context.to_string())
+        )
+    };
+}
