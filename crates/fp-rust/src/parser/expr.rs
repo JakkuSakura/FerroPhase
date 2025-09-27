@@ -425,16 +425,9 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
                 args,
             }))
         }
-        Err(_) => {
-            // If parsing fails, fall back to treating it as a string literal
-            Ok(Expr::StdIoPrintln(ExprStdIoPrintln {
-                format: ExprFormatString {
-                    parts: vec![FormatTemplatePart::Literal(tokens_str)],
-                    args: Vec::new(),
-                    kwargs: Vec::new(),
-                },
-                newline: true,
-            }))
+        Err(e) => {
+            // Don't silently fallback - report the parsing error
+            bail!("Failed to parse println! macro arguments '{}': {}", tokens_str, e)
         }
     }
 }
