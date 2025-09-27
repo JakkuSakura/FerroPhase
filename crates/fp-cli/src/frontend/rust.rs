@@ -1,8 +1,8 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use fp_core::Result as CoreResult;
 use fp_core::ast::{BExpr, File, Node};
-use fp_core::{Error as CoreError, Result as CoreResult};
 use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
@@ -10,13 +10,13 @@ use fp_rust::printer::RustPrinter;
 use super::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 
 pub struct RustFrontend {
-    parser: RustParser,
+    parser: Mutex<RustParser>,
 }
 
 impl RustFrontend {
     pub fn new() -> Self {
         Self {
-            parser: RustParser::new(),
+            parser: Mutex::new(RustParser::new()),
         }
     }
 
@@ -30,25 +30,22 @@ impl RustFrontend {
 
     fn parse_expression(&self, source: &str) -> CoreResult<BExpr> {
         // Try parsing as file, block expression, and finally simple expression.
-        if let Ok(expr) = self.parser.try_parse_as_file(source) {
+        let parser = self.parser.lock().unwrap();
+
+        if let Ok(expr) = parser.try_parse_as_file(source) {
             return Ok(expr);
         }
 
-        if let Ok(expr) = self.parser.try_parse_block_expression(source) {
+        if let Ok(expr) = parser.try_parse_block_expression(source) {
             return Ok(expr);
         }
 
-        self.parser.try_parse_simple_expression(source)
+        parser.try_parse_simple_expression(source)
     }
 
     fn parse_file(&self, source: &str, path: &Path) -> CoreResult<File> {
-        let syn_file: syn::File = syn::parse_file(source).map_err(|e| {
-            CoreError::from(format!("Failed to parse {} as file: {}", path.display(), e))
-        })?;
-
-        self.parser
-            .parse_file_content(path.to_path_buf(), syn_file)
-            .map_err(|e| CoreError::from(format!("Failed to lower file {}: {}", path.display(), e)))
+        let mut parser = self.parser.lock().unwrap();
+        parser.parse_file(source, path)
     }
 }
 

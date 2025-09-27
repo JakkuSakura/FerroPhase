@@ -847,6 +847,7 @@ dependencies = [
  "fp-rust",
  "itertools 0.13.0",
  "miette 7.2.0",
+ "once_cell",
  "pretty_assertions",
  "proc-macro2",
  "quote",

@@ -14,6 +14,7 @@ use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use itertools::Itertools;
 
 use eyre::{ensure, eyre, Context};
+use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use std::path::PathBuf;
 use syn::parse_str;
@@ -80,10 +81,6 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
         syn::Visibility::Inherited => Visibility::Private,
     }
 }
-pub fn parse_file(path: PathBuf, file: syn::File) -> Result<File> {
-    let items = file.items.into_iter().map(item::parse_item).try_collect()?;
-    Ok(File { path, items })
-}
 pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
     Ok(Module {
         name: parse_ident(m.ident),
@@ -105,12 +102,12 @@ pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
         body: Expr::block(body).into(),
     })
 }
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
-pub struct RustParser {}
+#[derive(Debug, Clone, Default)]
+pub struct RustParser;
 
 impl RustParser {
     pub fn new() -> Self {
-        RustParser {}
+        RustParser
     }
     pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
         let builder = InlinerBuilder::new();
@@ -127,10 +124,26 @@ impl RustParser {
             errors_str.push_str(&format!("{}\n", err));
         }
         if !errors_str.is_empty() {
-            bail!("Errors when parsing {}: {}", path.display(), errors_str);
+            return Err(report_error(format!(
+                "Errors when parsing {}: {}",
+                path.display(),
+                errors_str
+            )));
         }
-        let file = self.parse_file_content(path, outputs)?;
-        Ok(file)
+        match self.parse_file_content(path.clone(), outputs) {
+            Ok(file) => Ok(file),
+            Err(e) => {
+                let _ = report_error(format!(
+                    "Failed to parse inlined file {}: {}",
+                    path.display(),
+                    e
+                ));
+                Ok(File {
+                    path,
+                    items: Vec::new(),
+                })
+            }
+        }
     }
     pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
         expr::parse_expr(code).map(|x| Value::expr(x.get()))
@@ -145,7 +158,33 @@ impl RustParser {
         code.into_iter().map(|x| self.parse_item(x)).try_collect()
     }
     pub fn parse_file_content(&self, path: PathBuf, code: syn::File) -> Result<File> {
-        parse_file(path, code)
+        let items = code.items.into_iter().map(item::parse_item).try_collect()?;
+        Ok(File { path, items })
+    }
+
+    pub fn parse_file(&mut self, source: &str, path: &std::path::Path) -> Result<File> {
+        let path_buf = path.to_path_buf();
+        let syn_file = match syn::parse_file(source) {
+            Ok(file) => file,
+            Err(e) => {
+                let _ = report_error(format!("Failed to parse {} as file: {}", path.display(), e));
+                return Ok(File {
+                    path: path_buf,
+                    items: Vec::new(),
+                });
+            }
+        };
+
+        match self.parse_file_content(path_buf.clone(), syn_file) {
+            Ok(file) => Ok(file),
+            Err(e) => {
+                let _ = report_error(format!("Failed to lower file {}: {}", path.display(), e));
+                Ok(File {
+                    path: path_buf,
+                    items: Vec::new(),
+                })
+            }
+        }
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
         parse_module(code)
@@ -200,7 +239,8 @@ impl RustParser {
             Err(e) => {
                 // Log the original parsing error and propagate it
                 tracing::error!("Failed to parse file content: {}", e);
-                Err(e).with_context(|| "Failed to parse as file - unable to extract AST structure")?
+                Err(e)
+                    .with_context(|| "Failed to parse as file - unable to extract AST structure")?
             }
         }
     }
@@ -239,7 +279,8 @@ impl RustParser {
             // Filter to only struct definitions and other safe items
             match item {
                 syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Type(_) => {
-                    let ast_item = self.parse_item(item)
+                    let ast_item = self
+                        .parse_item(item)
                         .with_context(|| "Failed to parse struct/enum/type item")?;
                     parsed_items.push(BlockStmt::Item(Box::new(ast_item)));
                 }
@@ -291,15 +332,19 @@ impl RustParser {
                     }
                     Err(expr_err) => {
                         // Both module and expression parsing failed - report both errors
-                        bail!("Failed to parse FP content as module: {}. Also failed as expression: {}. Content: {}", 
-                              module_err, expr_err, content)
+                        let _ = report_error(format!(
+                            "Failed to parse FP content as module: {}. Also failed as expression: {}. Content: {}",
+                            module_err, expr_err, content
+                        ));
+                        return Ok(Expr::unit());
                     }
                 }
             }
         }
 
-        // If all parsing attempts fail, return a descriptive error
-        bail!("Failed to parse FP content: {}", content)
+        // If all parsing attempts fail, return a descriptive error placeholder
+        let _ = report_error(format!("Failed to parse FP content: {}", content));
+        Ok(Expr::unit())
     }
 }
 

@@ -1,8 +1,8 @@
 use crate::ast::{Expr, ExprId};
 use crate::ast::{FunctionParam, Ty, Value};
 use crate::ctx::Context;
+use crate::diagnostics::report_error;
 use crate::error::Result;
-use eyre::eyre;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -116,10 +116,7 @@ impl TypeRegistry {
                         if let Some(ident) = locator.as_ident() {
                             let sizes = self.primitive_sizes.read().unwrap();
                             return sizes.get(&ident.name).copied().ok_or_else(|| {
-                                crate::error::Error::Generic(eyre!(
-                                    "Unknown primitive type: {}",
-                                    ident.name
-                                ))
+                                report_error(format!("Unknown primitive type: {}", ident.name))
                             });
                         }
                     }
@@ -136,10 +133,7 @@ impl TypeRegistry {
                 _ => Ok(8), // Default size
             }
         } else {
-            Err(crate::error::Error::Generic(eyre!(
-                "Type not found: {:?}",
-                type_id
-            )))
+            Err(report_error(format!("Type not found: {:?}", type_id)))
         }
     }
 
@@ -148,10 +142,7 @@ impl TypeRegistry {
         if let Some(type_info) = self.get_type_info(type_id) {
             Ok(type_info.fields)
         } else {
-            Err(crate::error::Error::Generic(eyre!(
-                "Type not found: {:?}",
-                type_id
-            )))
+            Err(report_error(format!("Type not found: {:?}", type_id)))
         }
     }
 
@@ -172,10 +163,7 @@ impl TypeRegistry {
         if let Some(type_info) = self.get_type_info(type_id) {
             Ok(type_info.methods)
         } else {
-            Err(crate::error::Error::Generic(eyre!(
-                "Type not found: {:?}",
-                type_id
-            )))
+            Err(report_error(format!("Type not found: {:?}", type_id)))
         }
     }
 
@@ -186,10 +174,7 @@ impl TypeRegistry {
             type_info.methods.push(method);
             Ok(())
         } else {
-            Err(crate::error::Error::Generic(eyre!(
-                "Type not found: {:?}",
-                type_id
-            )))
+            Err(report_error(format!("Type not found: {:?}", type_id)))
         }
     }
 
@@ -202,10 +187,7 @@ impl TypeRegistry {
             type_info.size_bytes = None;
             Ok(())
         } else {
-            Err(crate::error::Error::Generic(eyre!(
-                "Type not found: {:?}",
-                type_id
-            )))
+            Err(report_error(format!("Type not found: {:?}", type_id)))
         }
     }
 

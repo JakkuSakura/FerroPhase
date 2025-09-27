@@ -42,10 +42,10 @@ canonical AST, ensuring multi-language inputs flow through the same lowerings.
    definitions, which keeps each lowering isolated and simplifies future stage
    evolution.
 
-   Each step returns a `StageReport<T>` containing the produced IR (or a
-   placeholder in tolerant mode), an updated `CompilationContext`, and a list of
-   `PipelineDiagnostic` entries. Diagnostics are printed stage-by-stage but also
-   bubble up for aggregate reporting.
+Each step returns a `StageReport<T>` containing the produced IR (or a
+placeholder in tolerant mode), an updated `CompilationContext`, and a list of
+`PipelineDiagnostic` entries. Diagnostics are printed stage-by-stage but also
+bubble up for aggregate reporting.
 
 4. **Binary Emission (optional)**
    - If the target is `Binary`, the LLVM artefact is passed to `llc` and the
@@ -55,26 +55,18 @@ canonical AST, ensuring multi-language inputs flow through the same lowerings.
 ## CompilationContext
 
 ```rust
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CompilationContext {
-    pub const_results: HashMap<String, Value>,
-    pub globals: HashMap<String, Value>,
-    pub types: HashMap<String, String>,
-    pub imports: HashMap<String, String>,
     pub serializer: Option<Arc<dyn AstSerializer>>,
     pub source_language: Option<String>,
     pub frontend_snapshot: Option<FrontendSnapshot>,
 }
 ```
 
-The context acts as the explicit thread that replaces the previous implicit,
-mutable state. Every stage receives the context by value and returns an updated
-copy. THIS allows:
-
-- Serializers to be reused by interpretation or downstream emitters.
-- LAST snapshots to be persisted alongside intermediates.
-- Const results and globals to feed low-level transformations without hidden
-  globals.
+The context carries only structural metadata that cannot be recovered from the
+stage artefacts themselves. Every stage receives the context by value and
+returns an updated copy. This keeps serializers and optional frontend snapshots
+available without smuggling additional semantic data through side channels.
 
 ## Diagnostics
 
@@ -101,8 +93,8 @@ flags for informational entries but always surfaces warnings and errors.
   to feed `PipelineOptions.source_language`. Use it when file extensions are
   ambiguous (e.g., stdin or embedded expressions) or when forcing a particular
   frontend during experiments.
-- `--save-intermediates` persists stage outputs (_including the LAST snapshot_
-  as part of the context hand-off) regardless of the selected language.
+- `--save-intermediates` persists stage outputs (including the LAST snapshot
+  captured in the context) regardless of the selected language.
 
 ## Intermediates & Persistence
 

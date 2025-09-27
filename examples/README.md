@@ -33,7 +33,7 @@ done
 | `02_string_processing.fp` | Compile-time strings | Concatenation, search, formatting |
 | `03_control_flow.fp` | Control-flow tour | Nested `if`, boolean logic, numeric guards |
 | `04_struct_introspection.fp` | Type analysis | `sizeof!`, `field_count!`, `hasfield!` |
-| `05_struct_generation.fp` | Config-driven types | `t!` macro, feature toggles, vector specialisation |
+| `05_struct_generation.fp` | Config-driven structs | const toggles feeding generated defaults |
 | `06_struct_methods.fp` | Struct behaviour | `impl` blocks, method receivers, runtime math |
 | `07_compile_time_validation.fp` | Static validation | Custom diagnostics, constraint checking |
 | `08_error_tolerance.fp` | Error aggregation | Multiple diagnostics without aborting evaluation |
