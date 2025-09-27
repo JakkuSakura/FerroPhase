@@ -1,8 +1,8 @@
 // Evaluation context - utility for tracking const blocks and their state
 
 use crate::queries::TypeQueries;
-use eyre::eyre;
 use fp_core::ast::*;
+use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use fp_rust::parser::RustParser;
 use std::collections::{HashMap, HashSet};
@@ -97,9 +97,9 @@ impl EvaluationContext {
 
     /// Get a specific const block
     pub fn get_const_block(&self, block_id: u64) -> Result<&ConstBlock> {
-        self.const_blocks.get(&block_id).ok_or_else(|| {
-            fp_core::error::Error::Generic(eyre!("Const block {} not found", block_id))
-        })
+        self.const_blocks
+            .get(&block_id)
+            .ok_or_else(|| report_error(format!("Const block {} not found", block_id)))
     }
 
     /// Set dependencies for const blocks
@@ -121,7 +121,7 @@ impl EvaluationContext {
                     block.state = ConstEvalState::Evaluated;
                     Ok(())
                 }
-                ConstEvalState::Evaluated => Err(fp_core::error::Error::Generic(eyre!(
+                ConstEvalState::Evaluated => Err(report_error(format!(
                     "Const block {} was already evaluated",
                     block
                         .name
@@ -129,7 +129,7 @@ impl EvaluationContext {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| block.id.to_string())
                 ))),
-                ConstEvalState::Error(message) => Err(fp_core::error::Error::Generic(eyre!(
+                ConstEvalState::Error(message) => Err(report_error(format!(
                     "Const block {} is in error state ({}); cannot set result",
                     block
                         .name
@@ -140,10 +140,7 @@ impl EvaluationContext {
                 ))),
             }
         } else {
-            Err(fp_core::error::Error::Generic(eyre!(
-                "Const block {} not found",
-                block_id
-            )))
+            Err(report_error(format!("Const block {} not found", block_id)))
         }
     }
 
@@ -155,7 +152,7 @@ impl EvaluationContext {
                     block.state = ConstEvalState::Evaluating;
                     Ok(())
                 }
-                ConstEvalState::Evaluating => Err(fp_core::error::Error::Generic(eyre!(
+                ConstEvalState::Evaluating => Err(report_error(format!(
                     "Const block {} is already being evaluated",
                     block
                         .name
@@ -163,7 +160,7 @@ impl EvaluationContext {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| block.id.to_string())
                 ))),
-                ConstEvalState::Evaluated => Err(fp_core::error::Error::Generic(eyre!(
+                ConstEvalState::Evaluated => Err(report_error(format!(
                     "Const block {} has already been evaluated",
                     block
                         .name
@@ -171,7 +168,7 @@ impl EvaluationContext {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| block.id.to_string())
                 ))),
-                ConstEvalState::Error(message) => Err(fp_core::error::Error::Generic(eyre!(
+                ConstEvalState::Error(message) => Err(report_error(format!(
                     "Const block {} is in error state ({}); cannot re-evaluate",
                     block
                         .name
@@ -182,10 +179,7 @@ impl EvaluationContext {
                 ))),
             }
         } else {
-            Err(fp_core::error::Error::Generic(eyre!(
-                "Const block {} not found",
-                block_id
-            )))
+            Err(report_error(format!("Const block {} not found", block_id)))
         }
     }
 
@@ -196,10 +190,7 @@ impl EvaluationContext {
             block.result = None;
             Ok(())
         } else {
-            Err(fp_core::error::Error::Generic(eyre!(
-                "Const block {} not found",
-                block_id
-            )))
+            Err(report_error(format!("Const block {} not found", block_id)))
         }
     }
 
@@ -222,7 +213,7 @@ impl EvaluationContext {
             match &block.state {
                 ConstEvalState::Evaluated => {
                     if block.result.is_none() {
-                        return Err(fp_core::error::Error::Generic(eyre!(
+                        return Err(report_error(format!(
                             "Const block {} evaluated without result",
                             block
                                 .name
@@ -233,7 +224,7 @@ impl EvaluationContext {
                     }
                 }
                 ConstEvalState::Error(message) => {
-                    return Err(fp_core::error::Error::Generic(eyre!(
+                    return Err(report_error(format!(
                         "Const evaluation error in {}: {}",
                         block
                             .name
@@ -244,7 +235,7 @@ impl EvaluationContext {
                     )));
                 }
                 _ => {
-                    return Err(fp_core::error::Error::Generic(eyre!(
+                    return Err(report_error(format!(
                         "Const block {} not evaluated",
                         block
                             .name
@@ -441,16 +432,14 @@ where
 fn parse_macro_exprs(tokens: &proc_macro2::TokenStream) -> Result<Vec<Expr>> {
     let parsed = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
         .parse2(tokens.clone())
-        .map_err(|err| {
-            fp_core::error::Error::Generic(eyre!("Failed to parse macro arguments: {}", err))
-        })?;
+        .map_err(|err| report_error(format!("Failed to parse macro arguments: {}", err)))?;
 
     let parser = RustParser::new();
     let mut expressions = Vec::with_capacity(parsed.len());
     for syn_expr in parsed.into_iter() {
-        let expr = parser.parse_expr(syn_expr).map_err(|err| {
-            fp_core::error::Error::Generic(eyre!("Failed to lower macro argument: {}", err))
-        })?;
+        let expr = parser
+            .parse_expr(syn_expr)
+            .map_err(|err| report_error(format!("Failed to lower macro argument: {}", err)))?;
         expressions.push(expr);
     }
 

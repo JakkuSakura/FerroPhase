@@ -1,9 +1,9 @@
 // Type queries - stateless operations for type system information
 
-use eyre::eyre;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ctx::ty::{FieldInfo, TypeId, TypeInfo, TypeRegistry};
+use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use fp_core::id::Ident;
 use std::collections::HashSet;
@@ -71,7 +71,7 @@ impl TypeQueries {
         if missing.is_empty() {
             Ok(())
         } else {
-            Err(fp_core::error::Error::Generic(eyre!(
+            Err(report_error(format!(
                 "Unresolved types: {}",
                 missing.join(", ")
             )))
@@ -179,10 +179,7 @@ impl TypeQueries {
     fn populate_struct_fields(&self, struct_def: &ItemDefStruct) -> Result<()> {
         let name = struct_def.name.name.clone();
         let Some(info) = self.type_registry.get_type_by_name(&name) else {
-            return Err(fp_core::error::Error::Generic(eyre!(
-                "Struct {} not registered",
-                name
-            )));
+            return Err(report_error(format!("Struct {} not registered", name)));
         };
 
         let mut known_fields: HashSet<String> =

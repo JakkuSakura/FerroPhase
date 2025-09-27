@@ -1,0 +1,191 @@
+LirProgram {
+    functions: [
+        LirFunction {
+            name: "func_0",
+            signature: LirFunctionSignature {
+                params: [],
+                return_type: Void,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 0,
+                            kind: Call {
+                                function: Global(
+                                    "std::io::println",
+                                    Void,
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "Config: buffer=4KB, connections=150, timeout=30000ms, debug=0",
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        1,
+                    ),
+                    predecessors: [],
+                    successors: [
+                        1,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 1,
+                    label: Some(
+                        "bb1",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 1,
+                            kind: Call {
+                                function: Global(
+                                    "std::io::println",
+                                    Void,
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "Computed: factorial=120, is_pow2=true",
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        2,
+                    ),
+                    predecessors: [
+                        0,
+                    ],
+                    successors: [
+                        2,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 2,
+                    label: Some(
+                        "bb2",
+                    ),
+                    instructions: [],
+                    terminator: Return(
+                        None,
+                    ),
+                    predecessors: [
+                        1,
+                    ],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 6,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 7,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 8,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 9,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 10,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 11,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 12,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 13,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+    ],
+    globals: [],
+    type_definitions: [],
+}

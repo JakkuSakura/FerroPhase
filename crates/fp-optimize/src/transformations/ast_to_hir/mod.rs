@@ -14,11 +14,9 @@ mod expressions;
 #[cfg(test)]
 mod tests;
 
-// Re-export error types from fp-core for convenience
-pub use fp_core::error::{
-    TransformationError, TransformationErrorKind, TransformationStage, TransformationWarning,
-    TransformationWarningKind,
-};
+use fp_core::diagnostics::Diagnostic;
+
+const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
 /// Generator for transforming AST to HIR (High-level IR)
 ///
@@ -39,9 +37,9 @@ pub struct HirGenerator {
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
-    pub errors: Vec<TransformationError>,
-    /// Collected warnings during transformation  
-    pub warnings: Vec<TransformationWarning>,
+    pub errors: Vec<Diagnostic>,
+    /// Collected warnings during transformation
+    pub warnings: Vec<Diagnostic>,
     /// Whether error recovery should be attempted
     pub error_tolerance: bool,
     /// Maximum number of errors to collect before giving up
@@ -115,15 +113,19 @@ impl HirGenerator {
     }
 
     /// Add an error to the collection (for error tolerance mode)
-    fn add_error(&mut self, error: TransformationError) -> bool {
+    fn add_error(&mut self, error: Diagnostic) -> bool {
         self.errors.push(error);
         // Return false if we've hit the error limit (should stop transformation)
         self.errors.len() < self.max_errors
     }
 
+    fn build_error(message: impl Into<String>) -> Diagnostic {
+        Diagnostic::error(message).with_source_context(DIAGNOSTIC_CONTEXT)
+    }
+
     /// Add a warning to the collection
     #[allow(dead_code)]
-    fn add_warning(&mut self, warning: TransformationWarning) {
+    fn add_warning(&mut self, warning: Diagnostic) {
         self.warnings.push(warning);
     }
 
@@ -157,7 +159,7 @@ impl HirGenerator {
     }
 
     /// Get all collected errors and warnings
-    pub fn take_diagnostics(&mut self) -> (Vec<TransformationError>, Vec<TransformationWarning>) {
+    pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
         (
             std::mem::take(&mut self.errors),
             std::mem::take(&mut self.warnings),
@@ -170,12 +172,8 @@ impl HirGenerator {
             Err(e) if self.error_tolerance => {
                 // In error tolerance mode, collect the error and continue
                 self.add_error(
-                    TransformationError::new(
-                        TransformationErrorKind::ImportError,
-                        TransformationStage::AstToHir,
-                        format!("Failed to expand import tree: {}", e),
-                    ) // No span available on ItemImport
-                    .with_suggestion("Check import syntax and module availability".to_string()),
+                    Self::build_error(format!("Failed to expand import tree: {}", e))
+                        .with_suggestion("Check import syntax and module availability".to_string()),
                 );
                 return Ok(()); // Continue with empty imports
             }
@@ -190,11 +188,10 @@ impl HirGenerator {
                 if self.error_tolerance {
                     // Collect error and continue instead of early return
                     let continue_processing = self.add_error(
-                        TransformationError::new(
-                            TransformationErrorKind::UnresolvedSymbol,
-                            TransformationStage::AstToHir,
-                            format!("Unresolved import: {}", path_segments.join("::")),
-                        ) // No span available on ItemImport
+                        Self::build_error(format!(
+                            "Unresolved import: {}",
+                            path_segments.join("::")
+                        ))
                         .with_suggestions(vec![
                             "Check if the module exists".to_string(),
                             "Verify the import path".to_string(),

@@ -948,7 +948,6 @@ impl ThirGenerator {
         }
     }
 
-
     /// Infer type from HIR path
     pub(super) fn infer_path_type(&mut self, path: &hir::Path) -> Result<hir_types::Ty> {
         let (def_id_opt, qualified_name, base_name, substs) = self.path_to_type_info(path)?;
@@ -1013,7 +1012,6 @@ impl ThirGenerator {
         }
         Ok(self.create_unit_type())
     }
-
 
     /// Infer type of block expression
     pub(super) fn infer_block_type(&self, block: &thir::Block) -> Result<hir_types::Ty> {

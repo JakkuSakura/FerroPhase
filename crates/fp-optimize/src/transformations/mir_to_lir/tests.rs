@@ -56,7 +56,7 @@ fn builds_function_signature_and_locals() {
         bodies,
     };
 
-    let mut generator = LirGenerator::new(std::collections::HashMap::new());
+    let mut generator = LirGenerator::new();
     let lir_program = generator
         .transform(mir_program)
         .expect("lowering should succeed");
@@ -137,7 +137,7 @@ fn lowers_general_call_and_branches() {
         bodies,
     };
 
-    let mut generator = LirGenerator::new(std::collections::HashMap::new());
+    let mut generator = LirGenerator::new();
     let lir_program = generator
         .transform(mir_program)
         .expect("lowering should succeed");

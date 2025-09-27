@@ -1,4 +1,3 @@
-use fp_core::ast::Value;
 use fp_core::error::Result;
 use fp_core::mir::ty::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
 use fp_core::{lir, mir};
@@ -19,7 +18,6 @@ pub struct LirGenerator {
     local_types: Vec<Ty>,
     current_return_type: Option<lir::LirType>,
     return_local: Option<mir::LocalId>,
-    const_globals: HashMap<String, Value>,
     mutable_locals: HashSet<mir::LocalId>,
     local_storage: HashMap<mir::LocalId, LocalStorage>,
     entry_allocas: Vec<lir::LirInstruction>,
@@ -35,7 +33,7 @@ struct LocalStorage {
 
 impl LirGenerator {
     /// Create a new LIR generator
-    pub fn new(const_globals: HashMap<String, Value>) -> Self {
+    pub fn new() -> Self {
         Self {
             next_lir_id: 0,
             next_label: 0,
@@ -45,7 +43,6 @@ impl LirGenerator {
             local_types: Vec::new(),
             current_return_type: None,
             return_local: None,
-            const_globals,
             mutable_locals: HashSet::new(),
             local_storage: HashMap::new(),
             entry_allocas: Vec::new(),
@@ -450,16 +447,10 @@ impl LirGenerator {
                     name.clone(),
                     self.lir_type_from_ty(ty),
                 )),
-                mir::ConstantKind::Global(name, ty) => {
-                    if let Some(constant) = self.const_global_to_lir_constant(name, ty) {
-                        Ok(lir::LirValue::Constant(constant))
-                    } else {
-                        Ok(lir::LirValue::Global(
-                            name.clone(),
-                            self.lir_type_from_ty(ty),
-                        ))
-                    }
-                }
+                mir::ConstantKind::Global(name, ty) => Ok(lir::LirValue::Global(
+                    name.clone(),
+                    self.lir_type_from_ty(ty),
+                )),
                 mir::ConstantKind::Str(s) => {
                     Ok(lir::LirValue::Constant(lir::LirConstant::String(s.clone())))
                 }
@@ -486,29 +477,6 @@ impl LirGenerator {
                     ))
                 }
             },
-        }
-    }
-
-    fn const_global_to_lir_constant(&self, name: &str, ty: &Ty) -> Option<lir::LirConstant> {
-        let value = self.const_globals.get(name)?;
-        match (&ty.kind, value) {
-            (TyKind::Int(_), Value::Int(v)) => {
-                let lir_ty = self.lir_type_from_ty(ty);
-                Some(lir::LirConstant::Int(v.value, lir_ty))
-            }
-            (TyKind::Uint(_), Value::Int(v)) => {
-                let lir_ty = self.lir_type_from_ty(ty);
-                Some(lir::LirConstant::UInt(v.value as u64, lir_ty))
-            }
-            (TyKind::Bool, Value::Bool(b)) => Some(lir::LirConstant::Bool(b.value)),
-            (TyKind::Float(_), Value::Decimal(d)) => {
-                let lir_ty = self.lir_type_from_ty(ty);
-                Some(lir::LirConstant::Float(d.value, lir_ty))
-            }
-            (TyKind::Tuple(elements), Value::Unit(_)) if elements.is_empty() => {
-                Some(lir::LirConstant::Struct(Vec::new(), lir::LirType::Void))
-            }
-            _ => None,
         }
     }
 
@@ -1199,6 +1167,6 @@ impl super::IrTransform<mir::Program, lir::LirProgram> for LirGenerator {
 
 impl Default for LirGenerator {
     fn default() -> Self {
-        Self::new(HashMap::new())
+        Self::new()
     }
 }

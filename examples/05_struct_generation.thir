@@ -1,0 +1,522 @@
+Program {
+    items: [
+        Item {
+            thir_id: 0,
+            kind: Function(
+                Function {
+                    sig: FunctionSig {
+                        inputs: [],
+                        output: Ty {
+                            kind: Tuple(
+                                [],
+                            ),
+                        },
+                        c_variadic: false,
+                    },
+                    body_id: Some(
+                        BodyId(
+                            0,
+                        ),
+                    ),
+                    is_const: false,
+                },
+            ),
+            ty: Ty {
+                kind: FnDef(
+                    0,
+                    [],
+                ),
+            },
+            span: Span {
+                file: 15464124933241149777,
+                lo: 0,
+                hi: 1,
+            },
+        },
+    ],
+    bodies: {
+        BodyId(
+            0,
+        ): Body {
+            params: [],
+            value: Expr {
+                thir_id: 1,
+                kind: Block(
+                    Block {
+                        targeted_by_break: false,
+                        region: 0,
+                        span: Span {
+                            file: 0,
+                            lo: 0,
+                            hi: 0,
+                        },
+                        stmts: [
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 2,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 3,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 4,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 5,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 6,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 7,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 8,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 9,
+                                        kind: Literal(
+                                            Int(
+                                                0,
+                                                I32,
+                                            ),
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I32,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 10,
+                                        kind: Call {
+                                            fun: Expr {
+                                                thir_id: 11,
+                                                kind: Path(
+                                                    ItemRef {
+                                                        name: "std::io::println",
+                                                        def_id: None,
+                                                    },
+                                                ),
+                                                ty: Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
+                                                },
+                                            },
+                                            args: [
+                                                Expr {
+                                                    thir_id: 12,
+                                                    kind: Literal(
+                                                        Str(
+                                                            "=== Generated Struct Configuration ===",
+                                                        ),
+                                                    ),
+                                                    ty: Ty {
+                                                        kind: RawPtr(
+                                                            TypeAndMut {
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I8,
+                                                                    ),
+                                                                },
+                                                                mutbl: Not,
+                                                            },
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 0,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            ],
+                                            from_hir_call: true,
+                                        },
+                                        ty: Ty {
+                                            kind: Tuple(
+                                                [],
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 15464124933241149777,
+                                            lo: 34,
+                                            hi: 35,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 13,
+                                        kind: Call {
+                                            fun: Expr {
+                                                thir_id: 14,
+                                                kind: Path(
+                                                    ItemRef {
+                                                        name: "std::io::println",
+                                                        def_id: None,
+                                                    },
+                                                ),
+                                                ty: Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
+                                                },
+                                            },
+                                            args: [
+                                                Expr {
+                                                    thir_id: 15,
+                                                    kind: Literal(
+                                                        Str(
+                                                            "  logging=true profiling=false priority=1 clients=128",
+                                                        ),
+                                                    ),
+                                                    ty: Ty {
+                                                        kind: RawPtr(
+                                                            TypeAndMut {
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I8,
+                                                                    ),
+                                                                },
+                                                                mutbl: Not,
+                                                            },
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 0,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            ],
+                                            from_hir_call: true,
+                                        },
+                                        ty: Ty {
+                                            kind: Tuple(
+                                                [],
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 15464124933241149777,
+                                            lo: 35,
+                                            hi: 36,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 16,
+                                        kind: Call {
+                                            fun: Expr {
+                                                thir_id: 17,
+                                                kind: Path(
+                                                    ItemRef {
+                                                        name: "std::io::println",
+                                                        def_id: None,
+                                                    },
+                                                ),
+                                                ty: Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
+                                                },
+                                            },
+                                            args: [
+                                                Expr {
+                                                    thir_id: 18,
+                                                    kind: Literal(
+                                                        Str(
+                                                            "  metrics: window=8 smoothing=3 ",
+                                                        ),
+                                                    ),
+                                                    ty: Ty {
+                                                        kind: RawPtr(
+                                                            TypeAndMut {
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I8,
+                                                                    ),
+                                                                },
+                                                                mutbl: Not,
+                                                            },
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 0,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            ],
+                                            from_hir_call: true,
+                                        },
+                                        ty: Ty {
+                                            kind: Tuple(
+                                                [],
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 15464124933241149777,
+                                            lo: 36,
+                                            hi: 37,
+                                        },
+                                    },
+                                ),
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 19,
+                                        kind: Call {
+                                            fun: Expr {
+                                                thir_id: 20,
+                                                kind: Path(
+                                                    ItemRef {
+                                                        name: "std::io::println",
+                                                        def_id: None,
+                                                    },
+                                                ),
+                                                ty: Ty {
+                                                    kind: Tuple(
+                                                        [],
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 0,
+                                                    lo: 0,
+                                                    hi: 0,
+                                                },
+                                            },
+                                            args: [
+                                                Expr {
+                                                    thir_id: 21,
+                                                    kind: Literal(
+                                                        Str(
+                                                            "\n[ok] Struct generation scenarios complete",
+                                                        ),
+                                                    ),
+                                                    ty: Ty {
+                                                        kind: RawPtr(
+                                                            TypeAndMut {
+                                                                ty: Ty {
+                                                                    kind: Int(
+                                                                        I8,
+                                                                    ),
+                                                                },
+                                                                mutbl: Not,
+                                                            },
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 0,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            ],
+                                            from_hir_call: true,
+                                        },
+                                        ty: Ty {
+                                            kind: Tuple(
+                                                [],
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 15464124933241149777,
+                                            lo: 37,
+                                            hi: 38,
+                                        },
+                                    },
+                                ),
+                            },
+                        ],
+                        expr: None,
+                        safety_mode: Safe,
+                    },
+                ),
+                ty: Ty {
+                    kind: Tuple(
+                        [],
+                    ),
+                },
+                span: Span {
+                    file: 15464124933241149777,
+                    lo: 1,
+                    hi: 2,
+                },
+            },
+            locals: [],
+        },
+    },
+    next_thir_id: 22,
+}

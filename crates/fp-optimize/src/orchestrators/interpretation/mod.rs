@@ -10,6 +10,7 @@ use crate::utils::{FoldOptimizer, OptimizePass};
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ctx::{Context, ValueSystem};
+use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::Result;
 use fp_core::id::{Ident, Locator};
 use fp_core::ops::*;
@@ -30,6 +31,8 @@ pub struct InterpretationOrchestrator {
     pub serializer: Arc<dyn AstSerializer>,
     pub ignore_missing_items: bool,
     pub runtime_pass: Arc<dyn RuntimePass>,
+    pub diagnostic_manager: Option<Arc<DiagnosticManager>>,
+    pub abort_on_first_error: bool,
 }
 
 impl InterpretationOrchestrator {
@@ -38,6 +41,8 @@ impl InterpretationOrchestrator {
             serializer,
             ignore_missing_items: false,
             runtime_pass: Arc::new(LiteralRuntimePass::default()),
+            diagnostic_manager: None,
+            abort_on_first_error: true, // Default to current behavior
         }
     }
 
@@ -48,6 +53,24 @@ impl InterpretationOrchestrator {
 
     pub fn set_runtime_pass(&mut self, runtime_pass: Arc<dyn RuntimePass>) {
         self.runtime_pass = runtime_pass;
+    }
+
+    pub fn with_diagnostic_manager(mut self, diagnostic_manager: Arc<DiagnosticManager>) -> Self {
+        self.diagnostic_manager = Some(diagnostic_manager);
+        self
+    }
+
+    pub fn set_diagnostic_manager(&mut self, diagnostic_manager: Option<Arc<DiagnosticManager>>) {
+        self.diagnostic_manager = diagnostic_manager;
+    }
+
+    pub fn with_error_tolerance(mut self, abort_on_first_error: bool) -> Self {
+        self.abort_on_first_error = abort_on_first_error;
+        self
+    }
+
+    pub fn set_error_tolerance(&mut self, abort_on_first_error: bool) {
+        self.abort_on_first_error = abort_on_first_error;
     }
 
     // Evaluation and runtime helpers live in submodules.
