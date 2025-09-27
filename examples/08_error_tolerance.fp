@@ -1,4 +1,5 @@
-// Demo of multiple errors being collected instead of early termination
+#!/usr/bin/env fp run
+//! Demonstrates that multiple diagnostics can be collected without aborting evaluation
 
 // This import doesn't exist - should generate error but continue
 use nonexistent::module::Function;
