@@ -427,7 +427,11 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
         }
         Err(e) => {
             // Don't silently fallback - report the parsing error
-            bail!("Failed to parse println! macro arguments '{}': {}", tokens_str, e)
+            bail!(
+                "Failed to parse println! macro arguments '{}': {}",
+                tokens_str,
+                e
+            )
         }
     }
 }

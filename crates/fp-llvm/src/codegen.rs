@@ -1,5 +1,6 @@
 use crate::context::LlvmContext;
 use crate::stdlib::CStdLib;
+use fp_core::diagnostics::report_error;
 use fp_core::{error::Result, lir, Error};
 use llvm_ir::constant::Float;
 use llvm_ir::module::{DLLStorageClass, GlobalVariable, Linkage, ThreadLocalMode, Visibility};
@@ -7,9 +8,10 @@ use llvm_ir::predicates::IntPredicate;
 use llvm_ir::types::FPType;
 use llvm_ir::*;
 // use llvm_ir::instruction::Call; // Not needed currently
-use eyre::eyre;
 use fp_core::tracing::debug;
 use std::collections::HashMap;
+
+const LOG_AREA: &str = "[lir→llvm]";
 
 /// LLVM code generator that transforms LIR to LLVM IR
 pub struct LirCodegen<'ctx> {
@@ -81,10 +83,9 @@ impl<'ctx> LirCodegen<'ctx> {
                 global.name
             );
             self.generate_global(global).map_err(|e| {
-                fp_core::error::Error::Generic(eyre!(
-                    "Failed to generate global {} at step: {}",
-                    i,
-                    e
+                report_error(format!(
+                    "{} Failed to generate global {} at step: {}",
+                    LOG_AREA, i, e
                 ))
             })?;
         }
@@ -99,11 +100,9 @@ impl<'ctx> LirCodegen<'ctx> {
                 function_name
             );
             self.generate_function(function).map_err(|e| {
-                fp_core::error::Error::Generic(eyre!(
-                    "Failed to generate function {} '{}' at step: {}",
-                    i,
-                    function_name,
-                    e
+                report_error(format!(
+                    "{} Failed to generate function {} '{}' at step: {}",
+                    LOG_AREA, i, function_name, e
                 ))
             })?;
         }
@@ -120,9 +119,9 @@ impl<'ctx> LirCodegen<'ctx> {
             let ty = self.get_type_from_constant(&llvm_constant)?.into();
             (ty, Some(llvm_constant))
         } else {
-            return Err(Error::Generic(eyre!(
-                "Global variable '{}' must have an initializer",
-                global.name
+            return Err(report_error(format!(
+                "{} Global variable '{}' must have an initializer",
+                LOG_AREA, global.name
             )));
         };
 
@@ -168,10 +167,9 @@ impl<'ctx> LirCodegen<'ctx> {
             .map(|(i, param)| {
                 debug!("LLVM: Converting param {} type: {:?}", i, param);
                 self.convert_lir_type_to_llvm(param.clone()).map_err(|e| {
-                    fp_core::error::Error::Generic(eyre!(
-                        "Failed to convert parameter {} type: {}",
-                        i,
-                        e
+                    report_error(format!(
+                        "{} Failed to convert parameter {} type: {}",
+                        LOG_AREA, i, e
                     ))
                 })
             })
@@ -190,7 +188,7 @@ impl<'ctx> LirCodegen<'ctx> {
         let return_type = self
             .convert_lir_type_to_llvm(return_lir_type.clone())
             .map_err(|e| {
-                fp_core::error::Error::Generic(eyre!("Failed to convert return type: {}", e))
+                report_error(format!("{} Failed to convert return type: {}", LOG_AREA, e))
             })?;
         debug!("LLVM: Converted return type successfully");
 
@@ -215,7 +213,10 @@ impl<'ctx> LirCodegen<'ctx> {
                 i, basic_block.label
             );
             self.generate_basic_block(basic_block).map_err(|e| {
-                fp_core::error::Error::Generic(eyre!("Failed to generate basic block {}: {}", i, e))
+                report_error(format!(
+                    "{} Failed to generate basic block {}: {}",
+                    LOG_AREA, i, e
+                ))
             })?;
         }
 
@@ -243,7 +244,7 @@ impl<'ctx> LirCodegen<'ctx> {
         let func_name = self
             .llvm_ctx
             .current_function()
-            .ok_or_else(|| fp_core::error::Error::Generic(eyre!("No current function set")))?;
+            .ok_or_else(|| report_error(format!("{} No current function set", LOG_AREA)))?;
 
         // Add the basic block to the function
         let function = self
@@ -252,7 +253,7 @@ impl<'ctx> LirCodegen<'ctx> {
             .functions
             .iter_mut()
             .find(|f| f.name == func_name)
-            .ok_or_else(|| fp_core::error::Error::Generic(eyre!("Current function not found")))?;
+            .ok_or_else(|| report_error(format!("{} Current function not found", LOG_AREA)))?;
 
         function.basic_blocks.push(basic_block);
         debug!("LLVM: Created LLVM BasicBlock: {}", block_name);
@@ -881,9 +882,9 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
             }
             term => {
-                return Err(fp_core::error::Error::Generic(eyre!(
-                    "Unimplemented LIR terminator: {:?}",
-                    term
+                return Err(report_error(format!(
+                    "{} Unimplemented LIR terminator: {:?}",
+                    LOG_AREA, term
                 )));
             }
         }
@@ -905,9 +906,9 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .operand_from_name_and_type(name.clone(), &llvm_ty))
                 } else {
-                    Err(fp_core::error::Error::Generic(eyre!(
-                        "Unknown register {} encountered during codegen",
-                        reg_id
+                    Err(report_error(format!(
+                        "{} Unknown register {} encountered during codegen",
+                        LOG_AREA, reg_id
                     )))
                 }
             }
@@ -925,10 +926,9 @@ impl<'ctx> LirCodegen<'ctx> {
                 }
 
                 // For now, return an error that can be caught and handled
-                Err(Error::Generic(eyre!(
-                    "Global variable '{}' of type {:?} not found",
-                    name,
-                    ty
+                Err(report_error(format!(
+                    "{} Global variable '{}' of type {:?} not found",
+                    LOG_AREA, name, ty
                 )))
             }
             lir::LirValue::Function(name) => {
@@ -953,9 +953,9 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .operand_from_name_and_type(name.clone(), &llvm_ty))
                 } else {
-                    Err(fp_core::error::Error::Generic(eyre!(
-                        "Unknown local: {}",
-                        local_id
+                    Err(report_error(format!(
+                        "{} Unknown local: {}",
+                        LOG_AREA, local_id
                     )))
                 }
             }
@@ -967,9 +967,9 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .operand_from_name_and_type(name.clone(), &llvm_ty))
                 } else {
-                    Err(fp_core::error::Error::Generic(eyre!(
-                        "Unknown stack slot: {}",
-                        slot_id
+                    Err(report_error(format!(
+                        "{} Unknown stack slot: {}",
+                        LOG_AREA, slot_id
                     )))
                 }
             }
@@ -1001,17 +1001,17 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirConstant::Float(value, ty) => match ty {
                 lir::LirType::F32 => Ok(self.llvm_ctx.const_f32(value as f32)),
                 lir::LirType::F64 => Ok(self.llvm_ctx.const_f64(value)),
-                other => Err(Error::Generic(eyre!(
-                    "Unsupported floating-point type {:?} for LLVM constant",
-                    other
+                other => Err(report_error(format!(
+                    "{} Unsupported floating-point type {:?} for LLVM constant",
+                    LOG_AREA, other
                 ))),
             },
             lir::LirConstant::Bool(value) => Ok(self.llvm_ctx.const_bool(value)),
             lir::LirConstant::String(s) => {
                 // Defer to mutable self method via interior mutability workaround
-                Err(fp_core::error::Error::Generic(eyre!(
-                    "String constant requires mutable context: {}",
-                    s
+                Err(report_error(format!(
+                    "{} String constant requires mutable context: {}",
+                    LOG_AREA, s
                 )))
             }
             _ => Err("Unsupported LIR constant in LLVM conversion".into()),
@@ -1041,9 +1041,9 @@ impl<'ctx> LirCodegen<'ctx> {
                 32 => self.llvm_ctx.module.types.i32(),
                 64 => self.llvm_ctx.module.types.i64(),
                 other => {
-                    return Err(Error::Generic(eyre!(
-                        "Unsupported integer bit width {} for LLVM constant",
-                        other
+                    return Err(report_error(format!(
+                        "{} Unsupported integer bit width {} for LLVM constant",
+                        LOG_AREA, other
                     )))
                 }
             },
@@ -1058,9 +1058,9 @@ impl<'ctx> LirCodegen<'ctx> {
                 .types
                 .array_of(element_type.clone(), elements.len()),
             other => {
-                return Err(Error::Generic(eyre!(
-                    "Unsupported LLVM constant for type inference: {:?}",
-                    other
+                return Err(report_error(format!(
+                    "{} Unsupported LLVM constant for type inference: {:?}",
+                    LOG_AREA, other
                 )))
             }
         };

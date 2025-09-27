@@ -1,6 +1,6 @@
 // Dependency queries - stateless operations for dependency analysis
 
-use eyre::eyre;
+use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -49,10 +49,9 @@ impl DependencyQueries {
             in_degree.entry(*node).or_insert(0);
             for dep in deps {
                 if !dependencies.contains_key(dep) {
-                    return Err(fp_core::error::Error::Generic(eyre!(
-                        "Unknown const dependency {} referenced by {}",
-                        dep,
-                        node
+                    return Err(report_error(format!(
+                        "Const-eval reference to unknown dependency {} from {}",
+                        dep, node
                     )));
                 }
                 *in_degree.entry(*node).or_insert(0) += 1;
@@ -93,9 +92,7 @@ impl DependencyQueries {
         }
 
         if ordered.len() != remaining.len() {
-            return Err(fp_core::error::Error::Generic(eyre!(
-                "Circular const dependency detected"
-            )));
+            return Err(report_error("Const-eval circular dependency detected"));
         }
 
         Ok(ordered)
