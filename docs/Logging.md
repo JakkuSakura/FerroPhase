@@ -31,8 +31,8 @@ work captured in `specs/003-compile/tasks.md` (T027).
 ## Tracing Roadmap (T027)
 
 1. **Structured Spans** – Introduce span guards for each pipeline step so nested operations (e.g., module lowering) are visible.
-2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with EAST/THIR outputs.
-3. **Error Correlation** – Ensure errors recorded through `tracing::error!` map back to EAST spans, matching the cross-stage guarantees.
+2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with TAST/THIR outputs.
+3. **Error Correlation** – Ensure errors recorded through `tracing::error!` map back to TAST spans, matching the cross-stage guarantees.
 4. **CLI Flags** – Add `--log {level}` and `--log-format {pretty,json}` flags with sensible defaults.
 5. **Test Hooks** – Provide utilities in `fp-optimize/tests` to assert log spans when running pipeline tests.
 

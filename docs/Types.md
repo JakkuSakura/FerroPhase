@@ -8,7 +8,7 @@ query mechanisms, and interactions between modes.
 FerroPhase uses a tiered collection of type representations. Stable type tokens allow information to flow between stages
 without duplication:
 
-- **Ty** – Flexible, syntax-oriented types used in AST, LAST, and EAST. Supports unknowns, generics, `mut type`
+- **Ty** – Flexible, syntax-oriented types used in LAST and the canonical AST prior to typing. Supports unknowns, generics, `mut type`
   declarations, and comptime queries.
 - **ConcreteType** – Fully resolved, layout-aware types embedded in THIR, MIR, LIR, and static transpile outputs.
 - **IntermediateType** (optional) – Bridges ConcreteType into backend-specific forms (e.g., bytecode abstractions) when
@@ -39,23 +39,22 @@ The TypeQueryEngine is the const-eval facing façade over the shared type tables
 ## Flow Through the Pipeline
 
 ```
-CST → LAST → AST → (Phase 1 types) → EAST → HIR → THIR → {TAST | MIR} → LIR → Backends
+CST → LAST → Annotated AST → HIR → THIR → Typed Interpretation → TAST → {re-project HIR → THIR → MIR | surface LAST′} → LIR → Backends
 ```
 
-- **EAST** is the evaluated AST snapshot shared by every mode. All transformations are applied atomically prior to
-  generating HIR or surface outputs.
 - **HIR** operates primarily on Ty but references the shared tables for resolved tokens.
-- **THIR** embeds ConcreteType directly, consuming the promoted entries produced during const evaluation.
-- **TAST** (static transpile) re-sugars AST structure while carrying ConcreteType metadata for emitters like C.
+- **THIR** embeds ConcreteType directly and serves as the input to typed interpretation.
+- **TAST** (Typed AST) is the evaluated, resugared tree shared by all modes and carries ConcreteType metadata for emitters like C.
+- **Re-projected HIR/THIR** reuse the evaluated program for optimisation stages (compile, bytecode).
 - **MIR/LIR** continue with ConcreteType (or optional IntermediateType); MIR forms an SSA Mid-level Intermediate
   Representation before LIR handles low-level layout and backend codegen.
 
 ## Cross-Stage Guarantees
 
-- **Canonical EAST**: All downstream stages consume the exact EAST snapshot emitted after const evaluation.
-- **Semantic Preservation**: Lowering (AST→HIR→THIR→TAST/MIR/LIR) cannot alter observable behaviour relative to EAST.
+- **Canonical TAST**: All downstream stages consume the TAST snapshot emitted after typed interpretation.
+- **Semantic Preservation**: Lowering (TAST→HIR→THIR→MIR/LIR) cannot alter observable behaviour relative to the evaluated TAST.
 - **Deterministic Promotions**: `mut type` tokens promote in a deterministic order so repeated builds are stable.
-- **Shared Diagnostics**: All stages report errors using EAST spans, providing consistent user feedback.
+- **Shared Diagnostics**: Spans from the initial AST are threaded through THIR and TAST, providing consistent user feedback.
 
 ## Shared Infrastructure
 

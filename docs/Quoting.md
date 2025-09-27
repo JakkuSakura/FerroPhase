@@ -26,7 +26,7 @@ const DOUBLE_HELPER = splice(BLOCK);
 ```
 
 - `BLOCK` becomes an AST value (represented internally as an `NodeId` + hygienic context).
-- `splice(BLOCK)` materialises the AST inside the surrounding context, contributing to EAST during const evaluation.
+- `splice(BLOCK)` materialises the AST inside the surrounding context, contributing to TAST during const evaluation.
 
 ## Comptime Integration
 
@@ -39,16 +39,16 @@ During Phase 2 const evaluation:
 2. `splice` registers a structural transformation identical to `addfield!`/`addmethod!`. The TypeQueryEngine treats the
    quoted fragment as an atomic transformation:
    - New declarations are introduced via provisional `mut type` tokens (if types are declared within the splice)
-   - The EAST snapshot records the splice source span for diagnostics
+   - The TAST snapshot records the splice source span for diagnostics
 
-All transformations remain deterministic: repeated quoting/splicing with identical inputs yields identical EAST.
+All transformations remain deterministic: repeated quoting/splicing with identical inputs yields identical TAST.
 
 ## Type Handling
 
 - Quoted fragments retain their `Ty` annotations. When spliced, the existing `mut type` promotion rules apply and
   ConcreteType entries are generated during commit.
 - The Hindley–Milner solver sees spliced code the same way it sees handwritten AST—they are indistinguishable after
-  promotion to EAST and subsequent HIR lowering.
+  promotion to TAST and subsequent HIR lowering.
 
 ## Hygiene & Scoping
 
@@ -67,7 +67,7 @@ All transformations remain deterministic: repeated quoting/splicing with identic
 - **Surface transpile**: treats spliced code like any other AST. Generated files include the re-sugared version of the
   injected code.
 - **Static transpile**: the TAST lift recognises quoted fragments and re-sugars them based on the stored provenance.
-- **Bytecode/compile**: HIR/THIR lowering consumes spliced fragments after EAST consolidation; no special casing required.
+- **Bytecode/compile**: HIR/THIR lowering consumes spliced fragments after TAST consolidation; no special casing required.
 
 ## Future Work
 

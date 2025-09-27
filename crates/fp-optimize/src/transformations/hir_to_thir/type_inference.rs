@@ -156,6 +156,7 @@ impl<'a> TypeInferencer<'a> {
 
     fn infer_expr(&mut self, expr: &hir::Expr) -> Result<TypeVarId> {
         use hir::ExprKind;
+        eprintln!("infer_expr kind {:?}", expr.kind);
         let ty = match &expr.kind {
             ExprKind::Literal(lit) => self.infer_literal(lit)?,
             ExprKind::Path(path) => self.infer_path(expr.hir_id, path)?,
@@ -591,10 +592,14 @@ impl<'a> TypeInferencer<'a> {
                 self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
                 Ok(())
             }
-            (lhs, rhs) => Err(crate::error::optimization_error(format!(
-                "Type mismatch during unification: {:?} vs {:?}",
-                lhs, rhs
-            ))),
+            (lhs, rhs) => {
+                eprintln!("unify mismatch lhs={:?} rhs={:?}", lhs, rhs);
+                eprintln!("backtrace: {}", std::backtrace::Backtrace::capture());
+                Err(crate::error::optimization_error(format!(
+                    "Type mismatch during unification: {:?} vs {:?}",
+                    lhs, rhs
+                )))
+            }
         }
     }
 

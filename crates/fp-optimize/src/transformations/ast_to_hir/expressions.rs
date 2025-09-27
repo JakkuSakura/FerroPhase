@@ -32,6 +32,9 @@ impl HirGenerator {
             }
             Expr::FormatString(format_str) => self.transform_format_string_to_hir(format_str)?,
             Expr::StdIoPrintln(println) => self.transform_std_io_println_to_hir(println)?,
+            Expr::Reference(reference) => {
+                return self.transform_expr_to_hir(reference.referee.as_ref());
+            }
             _ => {
                 return Err(crate::error::optimization_error(format!(
                     "Unimplemented AST expression type for HIR transformation: {:?}",
@@ -501,7 +504,12 @@ impl HirGenerator {
     ) -> Result<hir::Stmt> {
         let kind = match stmt {
             ast::BlockStmt::Expr(expr_stmt) => {
-                hir::StmtKind::Expr(self.transform_expr_to_hir(&expr_stmt.expr)?)
+                let expr = self.transform_expr_to_hir(&expr_stmt.expr)?;
+                if expr_stmt.has_value() {
+                    hir::StmtKind::Expr(expr)
+                } else {
+                    hir::StmtKind::Semi(expr)
+                }
             }
             ast::BlockStmt::Let(let_stmt) => {
                 let (pat, explicit_ty, _) = self.transform_pattern_with_metadata(&let_stmt.pat)?;
