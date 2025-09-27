@@ -60,7 +60,7 @@ impl LlvmContext {
         // Set target triple to host
         let triple = if cfg!(target_os = "macos") {
             if cfg!(target_arch = "aarch64") {
-                "arm64-apple-macosx12.0.0"
+                "arm64-apple-macosx15.0.0"
             } else {
                 "x86_64-apple-macosx10.15.0"
             }
@@ -77,8 +77,7 @@ impl LlvmContext {
             "x86_64-unknown-linux-gnu"
         };
         self.module.target_triple = Some(triple.to_string());
-        // For now, skip data layout configuration - it may be optional
-        // TODO: Properly configure data layout if needed for target architecture
+
         Ok(())
     }
 
@@ -564,7 +563,7 @@ impl LlvmContext {
         let triple = self.module.target_triple.clone().unwrap_or_else(|| {
             if cfg!(target_os = "macos") {
                 if cfg!(target_arch = "aarch64") {
-                    "arm64-apple-macosx12.0.0".to_string()
+                    "arm64-apple-macosx15.0.0".to_string()
                 } else {
                     "x86_64-apple-macosx10.15.0".to_string()
                 }
@@ -580,8 +579,10 @@ impl LlvmContext {
                 "x86_64-unknown-linux-gnu".to_string()
             }
         });
-        let datalayout = if triple.starts_with("arm64-apple") || triple.starts_with("aarch64-") {
-            "e-m:o-i64:64-i128:128-n32:64-S128"
+        let datalayout = if triple.starts_with("arm64-apple") {
+            "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128"
+        } else if triple.starts_with("aarch64-") {
+            "e-m:e-i64:64-i128:128-n32:64-S128"
         } else if triple.starts_with("x86_64-") {
             "e-m:o-i64:64-f80:128-n8:16:32:64-S128"
         } else {
@@ -777,6 +778,11 @@ fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
         }
         llvm_ir::Constant::Null(_) => "null".to_string(),
         llvm_ir::Constant::Undef(_) => "undef".to_string(),
+        llvm_ir::Constant::BitCast(bitcast) => format!(
+            "bitcast ({}) to {}",
+            format_constant_ref(&bitcast.operand),
+            format_type(&bitcast.to_type)
+        ),
         llvm_ir::Constant::GlobalReference { name, .. } => format!("@{}", format_name(name)),
         llvm_ir::Constant::GetElementPtr(gep) => {
             let (base_name, array_type) = match gep.address.as_ref() {
@@ -884,24 +890,45 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 either::Either::Right(operand) => format_operand(operand),
             };
 
-            let return_type = match &call.function_ty.as_ref() {
-                llvm_ir::Type::FuncType { result_type, .. } => format_type(result_type),
+            let (return_type, param_types, is_var_arg) = match call.function_ty.as_ref() {
+                llvm_ir::Type::FuncType {
+                    result_type,
+                    param_types,
+                    is_var_arg,
+                } => (result_type, param_types, *is_var_arg),
                 other => panic!(
                     "Call instruction missing function type information: {:?}",
                     other
                 ),
             };
 
+            let mut param_strs: Vec<String> = param_types
+                .iter()
+                .map(|t| format_type(t))
+                .collect();
+            if is_var_arg {
+                param_strs.push("...".to_string());
+            }
+            let fn_sig = format!("({})", param_strs.join(", "));
+            let return_type_str = format_type(return_type);
+
             if let Some(dest) = &call.dest {
                 format!(
-                    "{} = call {} {}({})",
+                    "{} = call {} {} {}({})",
                     format_value_name(dest),
-                    return_type,
+                    return_type_str,
+                    fn_sig,
                     function_operand,
                     args_str
                 )
             } else {
-                format!("call {} {}({})", return_type, function_operand, args_str)
+                format!(
+                    "call {} {} {}({})",
+                    return_type_str,
+                    fn_sig,
+                    function_operand,
+                    args_str
+                )
             }
         }
         llvm_ir::Instruction::ICmp(icmp) => {
@@ -980,6 +1007,7 @@ fn get_operand_type(operand: &llvm_ir::Operand) -> Type {
             llvm_ir::Constant::Float(Float::Half) => Type::FPType(FPType::Half),
             llvm_ir::Constant::Float(Float::Single(_)) => Type::FPType(FPType::Single),
             llvm_ir::Constant::Float(Float::Double(_)) => Type::FPType(FPType::Double),
+            llvm_ir::Constant::BitCast(bitcast) => bitcast.to_type.as_ref().clone(),
             llvm_ir::Constant::GlobalReference { ty, .. }
             | llvm_ir::Constant::Null(ty)
             | llvm_ir::Constant::Undef(ty) => ty.as_ref().clone(),
