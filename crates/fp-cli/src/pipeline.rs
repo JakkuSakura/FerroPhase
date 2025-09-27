@@ -12,6 +12,7 @@ use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::hir::typed as thir;
 use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
+use fp_core::reporting::{Diagnostic, DiagnosticLevel, Stage, StageReport};
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::ir::{hir, lir, mir};
 use fp_optimize::orchestrators::InterpretationOrchestrator;
@@ -63,110 +64,55 @@ impl Default for CompilationContext {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PipelineStage {
-    Frontend,
-    ConstEval,
-    AstToHir,
-    HirToThir,
-    ThirToMir,
-    MirToLir,
-    LirToLlvm,
-    BinaryLink,
-}
-
-impl std::fmt::Display for PipelineStage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PipelineStage::Frontend => write!(f, "frontend"),
-            PipelineStage::ConstEval => write!(f, "const-eval"),
-            PipelineStage::AstToHir => write!(f, "ast→hir"),
-            PipelineStage::HirToThir => write!(f, "hir→thir"),
-            PipelineStage::ThirToMir => write!(f, "thir→mir"),
-            PipelineStage::MirToLir => write!(f, "mir→lir"),
-            PipelineStage::LirToLlvm => write!(f, "lir→llvm"),
-            PipelineStage::BinaryLink => write!(f, "binary"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiagnosticLevel {
-    Info,
-    Warning,
-    Error,
-}
-
-#[derive(Debug, Clone)]
-pub struct PipelineDiagnostic {
-    pub stage: PipelineStage,
-    pub level: DiagnosticLevel,
-    pub message: String,
-    pub span: Option<String>,
-    pub suggestions: Vec<String>,
-}
-
-impl PipelineDiagnostic {
-    pub fn error(stage: PipelineStage, message: impl Into<String>) -> Self {
-        Self {
-            stage,
-            level: DiagnosticLevel::Error,
-            message: message.into(),
-            span: None,
-            suggestions: Vec::new(),
-        }
-    }
-
-    pub fn warning(stage: PipelineStage, message: impl Into<String>) -> Self {
-        Self {
-            stage,
-            level: DiagnosticLevel::Warning,
-            message: message.into(),
-            span: None,
-            suggestions: Vec::new(),
-        }
-    }
-}
-
-pub struct StageReport<T> {
-    pub value: Option<T>,
+/// Pipeline-specific stage report that includes compilation context
+#[derive(Clone)]
+pub struct PipelineStageReport<T> {
+    pub report: StageReport<T>,
     pub context: CompilationContext,
-    pub diagnostics: Vec<PipelineDiagnostic>,
 }
 
-impl<T> StageReport<T> {
+impl<T> PipelineStageReport<T> {
     fn success(
         value: T,
         context: CompilationContext,
-        diagnostics: Vec<PipelineDiagnostic>,
+        stage: Stage,
     ) -> Self {
         Self {
-            value: Some(value),
+            report: StageReport::success(value, stage),
             context,
-            diagnostics,
         }
     }
 
-    fn failure(context: CompilationContext, diagnostics: Vec<PipelineDiagnostic>) -> Self {
+    fn success_with_diagnostics(
+        value: T,
+        context: CompilationContext,
+        stage: Stage,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Self {
         Self {
-            value: None,
+            report: StageReport::success_with_diagnostics(value, stage, diagnostics),
             context,
-            diagnostics,
+        }
+    }
+
+    fn failure(context: CompilationContext, stage: Stage, diagnostics: Vec<Diagnostic>) -> Self {
+        Self {
+            report: StageReport::failure(stage, diagnostics),
+            context,
         }
     }
 
     fn into_result(
         self,
-        stage: PipelineStage,
-        collected: &mut Vec<PipelineDiagnostic>,
+        collected: &mut Vec<Diagnostic>,
     ) -> Result<(T, CompilationContext), CliError> {
-        collected.extend(self.diagnostics.clone());
-        if let Some(value) = self.value {
+        collected.extend(self.report.diagnostics.clone());
+        if let Some(value) = self.report.value {
             Ok((value, self.context))
         } else {
             Err(CliError::Compilation(format!(
                 "{} stage failed; see diagnostics for details",
-                stage
+                self.report.stage
             )))
         }
     }
@@ -174,7 +120,7 @@ impl<T> StageReport<T> {
 
 struct LoweringResult {
     llvm_ir: PathBuf,
-    diagnostics: Vec<PipelineDiagnostic>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 pub struct Pipeline {
@@ -340,7 +286,7 @@ impl Pipeline {
         options: &PipelineOptions,
         file_path: Option<&Path>,
         context: CompilationContext,
-    ) -> Result<(String, Vec<PipelineDiagnostic>), CliError> {
+    ) -> Result<(String, Vec<Diagnostic>), CliError> {
         let lowering = self.compile_to_llvm_ir(ast, options, file_path, context)?;
 
         let base_path = options.base_path.as_ref().ok_or_else(|| {
@@ -357,8 +303,8 @@ impl Pipeline {
         let link_result = BinaryCompiler::link_binary(&obj_path, &binary_path, options)?;
 
         let mut diagnostics = lowering.diagnostics;
-        diagnostics.push(PipelineDiagnostic::info(
-            PipelineStage::BinaryLink,
+        diagnostics.push(Diagnostic::info(
+            Stage::BinaryLink,
             format!("Linked binary to {}", binary_path.display()),
         ));
 
@@ -388,40 +334,40 @@ impl Pipeline {
         let mut diagnostics = Vec::new();
 
         let const_report = self.run_const_eval_stage(ast, context, options, base_path)?;
-        self.emit_diagnostics(&const_report.diagnostics, options);
+        self.emit_diagnostics(&const_report.report.diagnostics, options);
         let (evaluated_ast, updated_context) =
-            const_report.into_result(PipelineStage::ConstEval, &mut diagnostics)?;
+            const_report.into_result(&mut diagnostics)?;
         context = updated_context;
 
         let hir_report =
             self.run_hir_stage(&evaluated_ast, context, options, file_path, base_path)?;
-        self.emit_diagnostics(&hir_report.diagnostics, options);
+        self.emit_diagnostics(&hir_report.report.diagnostics, options);
         let (hir_program, updated_context) =
-            hir_report.into_result(PipelineStage::AstToHir, &mut diagnostics)?;
+            hir_report.into_result(&mut diagnostics)?;
         context = updated_context;
 
         let thir_report = self.run_thir_stage(hir_program, context, options, base_path)?;
-        self.emit_diagnostics(&thir_report.diagnostics, options);
+        self.emit_diagnostics(&thir_report.report.diagnostics, options);
         let (thir_program, updated_context) =
-            thir_report.into_result(PipelineStage::HirToThir, &mut diagnostics)?;
+            thir_report.into_result(&mut diagnostics)?;
         context = updated_context;
 
         let mir_report = self.run_mir_stage(thir_program, context, options, base_path)?;
-        self.emit_diagnostics(&mir_report.diagnostics, options);
+        self.emit_diagnostics(&mir_report.report.diagnostics, options);
         let (mir_program, updated_context) =
-            mir_report.into_result(PipelineStage::ThirToMir, &mut diagnostics)?;
+            mir_report.into_result(&mut diagnostics)?;
         context = updated_context;
 
         let lir_report = self.run_lir_stage(mir_program, context, options, base_path)?;
-        self.emit_diagnostics(&lir_report.diagnostics, options);
+        self.emit_diagnostics(&lir_report.report.diagnostics, options);
         let (lir_program, updated_context) =
-            lir_report.into_result(PipelineStage::MirToLir, &mut diagnostics)?;
+            lir_report.into_result(&mut diagnostics)?;
         context = updated_context;
 
         let llvm_report = self.run_llvm_stage(lir_program, context, base_path)?;
-        self.emit_diagnostics(&llvm_report.diagnostics, options);
+        self.emit_diagnostics(&llvm_report.report.diagnostics, options);
         let (llvm_ir, _context) =
-            llvm_report.into_result(PipelineStage::LirToLlvm, &mut diagnostics)?;
+            llvm_report.into_result(&mut diagnostics)?;
 
         Ok(LoweringResult {
             llvm_ir,
@@ -435,7 +381,7 @@ impl Pipeline {
         mut context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<StageReport<Node>, CliError> {
+    ) -> Result<PipelineStageReport<Node>, CliError> {
         let serializer = context.serializer.clone().ok_or_else(|| {
             CliError::Compilation("No serializer registered for const-eval".to_string())
         })?;
@@ -446,11 +392,11 @@ impl Pipeline {
         let mut evaluated_node = ast;
 
         if let Err(e) = const_evaluator.evaluate(&mut evaluated_node, &shared_context) {
-            let diagnostic = PipelineDiagnostic::error(
-                PipelineStage::ConstEval,
+            let diagnostic = Diagnostic::error(
+                Stage::ConstEval,
                 format!("Const evaluation failed: {}", e),
             );
-            return Ok(StageReport::failure(context, vec![diagnostic]));
+            return Ok(PipelineStageReport::failure(context, Stage::ConstEval, vec![diagnostic]));
         }
 
         context.const_results = const_evaluator.get_results();
@@ -464,7 +410,7 @@ impl Pipeline {
             }
         }
 
-        Ok(StageReport::success(evaluated_node, context, Vec::new()))
+        Ok(PipelineStageReport::success(evaluated_node, context, Stage::ConstEval))
     }
 
     fn run_hir_stage(
@@ -474,7 +420,7 @@ impl Pipeline {
         options: &PipelineOptions,
         file_path: Option<&Path>,
         base_path: &Path,
-    ) -> Result<StageReport<hir::Program>, CliError> {
+    ) -> Result<PipelineStageReport<hir::Program>, CliError> {
         let mut generator = match file_path {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
@@ -485,11 +431,11 @@ impl Pipeline {
         }
 
         if matches!(ast, Node::Item(_)) {
-            let diag = PipelineDiagnostic::error(
-                PipelineStage::AstToHir,
+            let diag = Diagnostic::error(
+                Stage::AstToHir,
                 "Top-level items are not supported; provide a file or expression",
             );
-            return Ok(StageReport::failure(context, vec![diag]));
+            return Ok(PipelineStageReport::failure(context, Stage::AstToHir, vec![diag]));
         }
 
         let result = match ast {
@@ -502,8 +448,8 @@ impl Pipeline {
         let mut diagnostics = Vec::new();
 
         for warning in warnings {
-            let mut diag = PipelineDiagnostic::warning(
-                PipelineStage::AstToHir,
+            let mut diag = Diagnostic::warning(
+                Stage::AstToHir,
                 format!("{}", warning.message),
             );
             diag.span = warning.span.map(|span| span.to_string());
@@ -511,16 +457,16 @@ impl Pipeline {
         }
 
         if let Err(e) = &result {
-            diagnostics.push(PipelineDiagnostic::error(
-                PipelineStage::AstToHir,
+            diagnostics.push(Diagnostic::error(
+                Stage::AstToHir,
                 format!("AST→HIR transformation failed: {}", e),
             ));
         }
 
         if !errors.is_empty() {
             for error in &errors {
-                let mut diag = PipelineDiagnostic::error(
-                    PipelineStage::AstToHir,
+                let mut diag = Diagnostic::error(
+                    Stage::AstToHir,
                     format!("{}", error.message),
                 );
                 diag.span = error.span.map(|span| span.to_string());
@@ -539,9 +485,9 @@ impl Pipeline {
                     }
                 }
 
-                Ok(StageReport::success(program, context, diagnostics))
+                Ok(PipelineStageReport::success_with_diagnostics(program, context, Stage::AstToHir, diagnostics))
             }
-            _ => Ok(StageReport::failure(context, diagnostics)),
+            _ => Ok(PipelineStageReport::failure(context, Stage::AstToHir, diagnostics)),
         }
     }
 
@@ -551,14 +497,14 @@ impl Pipeline {
         context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<StageReport<thir::Program>, CliError> {
+    ) -> Result<PipelineStageReport<thir::Program>, CliError> {
         let mut generator = ThirGenerator::new();
         let result = generator.transform(hir_program);
         let mut diagnostics = Vec::new();
 
         if let Err(e) = &result {
-            diagnostics.push(PipelineDiagnostic::error(
-                PipelineStage::HirToThir,
+            diagnostics.push(Diagnostic::error(
+                Stage::HirToThir,
                 format!("HIR→THIR transformation failed: {}", e),
             ));
         }
@@ -573,9 +519,18 @@ impl Pipeline {
                     }
                 }
 
-                Ok(StageReport::success(program, context, diagnostics))
+                Ok(PipelineStageReport::success_with_diagnostics(program, context, Stage::HirToThir, diagnostics))
             }
-            Err(_) => Ok(StageReport::failure(context, diagnostics)),
+            Err(e) => {
+                // Ensure the error is captured in diagnostics if it wasn't already
+                if diagnostics.is_empty() {
+                    diagnostics.push(Diagnostic::error(
+                        Stage::HirToThir,
+                        format!("HIR→THIR transformation failed: {}", e),
+                    ));
+                }
+                Ok(PipelineStageReport::failure(context, Stage::HirToThir, diagnostics))
+            },
         }
     }
 
@@ -585,14 +540,14 @@ impl Pipeline {
         context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<StageReport<mir::Program>, CliError> {
+    ) -> Result<PipelineStageReport<mir::Program>, CliError> {
         let mut generator = MirGenerator::new();
         let result = generator.transform(thir_program);
         let mut diagnostics = Vec::new();
 
         if let Err(e) = &result {
-            diagnostics.push(PipelineDiagnostic::error(
-                PipelineStage::ThirToMir,
+            diagnostics.push(Diagnostic::error(
+                Stage::ThirToMir,
                 format!("THIR→MIR transformation failed: {}", e),
             ));
         }
@@ -607,9 +562,18 @@ impl Pipeline {
                     }
                 }
 
-                Ok(StageReport::success(program, context, diagnostics))
+                Ok(PipelineStageReport::success_with_diagnostics(program, context, Stage::ThirToMir, diagnostics))
             }
-            Err(_) => Ok(StageReport::failure(context, diagnostics)),
+            Err(e) => {
+                // Ensure the error is captured in diagnostics if it wasn't already
+                if diagnostics.is_empty() {
+                    diagnostics.push(Diagnostic::error(
+                        Stage::ThirToMir,
+                        format!("THIR→MIR transformation failed: {}", e),
+                    ));
+                }
+                Ok(PipelineStageReport::failure(context, Stage::ThirToMir, diagnostics))
+            },
         }
     }
 
@@ -619,14 +583,14 @@ impl Pipeline {
         context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<StageReport<lir::LirProgram>, CliError> {
+    ) -> Result<PipelineStageReport<lir::LirProgram>, CliError> {
         let mut generator = LirGenerator::new(context.const_results.clone());
         let result = generator.transform(mir_program);
         let mut diagnostics = Vec::new();
 
         if let Err(e) = &result {
-            diagnostics.push(PipelineDiagnostic::error(
-                PipelineStage::MirToLir,
+            diagnostics.push(Diagnostic::error(
+                Stage::MirToLir,
                 format!("MIR→LIR transformation failed: {}", e),
             ));
         }
@@ -641,9 +605,18 @@ impl Pipeline {
                     }
                 }
 
-                Ok(StageReport::success(program, context, diagnostics))
+                Ok(PipelineStageReport::success_with_diagnostics(program, context, Stage::MirToLir, diagnostics))
             }
-            Err(_) => Ok(StageReport::failure(context, diagnostics)),
+            Err(e) => {
+                // Ensure the error is captured in diagnostics if it wasn't already
+                if diagnostics.is_empty() {
+                    diagnostics.push(Diagnostic::error(
+                        Stage::MirToLir,
+                        format!("MIR→LIR transformation failed: {}", e),
+                    ));
+                }
+                Ok(PipelineStageReport::failure(context, Stage::MirToLir, diagnostics))
+            },
         }
     }
 
@@ -652,7 +625,7 @@ impl Pipeline {
         lir_program: lir::LirProgram,
         context: CompilationContext,
         base_path: &Path,
-    ) -> Result<StageReport<PathBuf>, CliError> {
+    ) -> Result<PipelineStageReport<PathBuf>, CliError> {
         let llvm_output = base_path.with_extension("ll");
         let llvm_config = fp_llvm::LlvmConfig::executable(&llvm_output);
         let llvm_compiler = fp_llvm::LlvmCompiler::new(llvm_config);
@@ -661,18 +634,18 @@ impl Pipeline {
 
         let result = llvm_compiler.compile(lir_program, None);
         if let Err(e) = &result {
-            diagnostics.push(PipelineDiagnostic::error(
-                PipelineStage::LirToLlvm,
+            diagnostics.push(Diagnostic::error(
+                Stage::LirToLlvm,
                 format!("LLVM IR generation failed: {}", e),
             ));
         }
 
         let llvm_ir = match result {
             Ok(path) => path,
-            Err(_) => return Ok(StageReport::failure(context, diagnostics)),
+            Err(_) => return Ok(PipelineStageReport::failure(context, Stage::LirToLlvm, diagnostics)),
         };
 
-        Ok(StageReport::success(llvm_ir, context, diagnostics))
+        Ok(PipelineStageReport::success_with_diagnostics(llvm_ir, context, Stage::LirToLlvm, diagnostics))
     }
 
     pub async fn execute(
@@ -776,7 +749,7 @@ impl Pipeline {
         }
     }
 
-    fn emit_diagnostics(&self, diagnostics: &[PipelineDiagnostic], options: &PipelineOptions) {
+    fn emit_diagnostics(&self, diagnostics: &[Diagnostic], options: &PipelineOptions) {
         if diagnostics.is_empty() {
             return;
         }
@@ -807,17 +780,6 @@ impl Pipeline {
     }
 }
 
-impl PipelineDiagnostic {
-    fn info(stage: PipelineStage, message: impl Into<String>) -> Self {
-        Self {
-            stage,
-            level: DiagnosticLevel::Info,
-            message: message.into(),
-            span: None,
-            suggestions: Vec::new(),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

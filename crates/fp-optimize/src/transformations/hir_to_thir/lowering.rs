@@ -948,21 +948,6 @@ impl ThirGenerator {
         }
     }
 
-    /// Type checking for binary operations
-    pub(super) fn check_binary_op_types(
-        &self,
-        left_ty: &hir_types::Ty,
-        right_ty: &hir_types::Ty,
-        _op: &thir::BinOp,
-    ) -> Result<hir_types::Ty> {
-        // Simplified type checking - assume same types for operands
-        if left_ty == right_ty {
-            Ok(left_ty.clone())
-        } else {
-            // Try to find a common type
-            Ok(left_ty.clone())
-        }
-    }
 
     /// Infer type from HIR path
     pub(super) fn infer_path_type(&mut self, path: &hir::Path) -> Result<hir_types::Ty> {
@@ -1029,79 +1014,6 @@ impl ThirGenerator {
         Ok(self.create_unit_type())
     }
 
-    fn retarget_literal_expr(expr: &mut thir::Expr, target_ty: &hir_types::Ty) {
-        match &mut expr.kind {
-            thir::ExprKind::Literal(lit) => Self::retarget_literal(lit, target_ty),
-            thir::ExprKind::Use(inner) => Self::retarget_literal_expr(inner, target_ty),
-            _ => {}
-        }
-
-        expr.ty = target_ty.clone();
-    }
-
-    fn retarget_literal(lit: &mut thir::Lit, target_ty: &hir_types::Ty) {
-        match (&mut *lit, &target_ty.kind) {
-            (thir::Lit::Int(value, int_ty), hir_types::TyKind::Int(target_int)) => {
-                let mapped = Self::map_int_ty(target_int);
-                *value = Self::truncate_int(*value, &mapped);
-                *int_ty = mapped;
-            }
-            (thir::Lit::Int(value, _), hir_types::TyKind::Uint(target_uint)) => {
-                let coerced = if *value < 0 { 0 } else { *value as u128 };
-                *lit = thir::Lit::Uint(coerced, Self::map_uint_ty(target_uint));
-            }
-            (thir::Lit::Uint(_, uint_ty), hir_types::TyKind::Uint(target_uint)) => {
-                *uint_ty = Self::map_uint_ty(target_uint);
-            }
-            (thir::Lit::Uint(value, _), hir_types::TyKind::Int(target_int)) => {
-                *lit = thir::Lit::Int(*value as i128, Self::map_int_ty(target_int));
-            }
-            (thir::Lit::Float(val, float_ty), hir_types::TyKind::Float(target_float)) => {
-                *float_ty = Self::map_float_ty(target_float);
-                *val = *val;
-            }
-            _ => {}
-        }
-    }
-
-    fn map_int_ty(ty: &hir_types::IntTy) -> thir::IntTy {
-        match ty {
-            hir_types::IntTy::Isize => thir::IntTy::Isize,
-            hir_types::IntTy::I8 => thir::IntTy::I8,
-            hir_types::IntTy::I16 => thir::IntTy::I16,
-            hir_types::IntTy::I32 => thir::IntTy::I32,
-            hir_types::IntTy::I64 => thir::IntTy::I64,
-            hir_types::IntTy::I128 => thir::IntTy::I128,
-        }
-    }
-
-    fn map_uint_ty(ty: &hir_types::UintTy) -> thir::UintTy {
-        match ty {
-            hir_types::UintTy::Usize => thir::UintTy::Usize,
-            hir_types::UintTy::U8 => thir::UintTy::U8,
-            hir_types::UintTy::U16 => thir::UintTy::U16,
-            hir_types::UintTy::U32 => thir::UintTy::U32,
-            hir_types::UintTy::U64 => thir::UintTy::U64,
-            hir_types::UintTy::U128 => thir::UintTy::U128,
-        }
-    }
-
-    fn map_float_ty(ty: &hir_types::FloatTy) -> thir::FloatTy {
-        match ty {
-            hir_types::FloatTy::F32 => thir::FloatTy::F32,
-            hir_types::FloatTy::F64 => thir::FloatTy::F64,
-        }
-    }
-
-    fn truncate_int(value: i128, int_ty: &thir::IntTy) -> i128 {
-        match int_ty {
-            thir::IntTy::I8 => value as i8 as i128,
-            thir::IntTy::I16 => value as i16 as i128,
-            thir::IntTy::I32 => value as i32 as i128,
-            thir::IntTy::I64 => value as i64 as i128,
-            thir::IntTy::I128 | thir::IntTy::Isize => value,
-        }
-    }
 
     /// Infer type of block expression
     pub(super) fn infer_block_type(&self, block: &thir::Block) -> Result<hir_types::Ty> {
