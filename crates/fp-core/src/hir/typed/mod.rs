@@ -60,6 +60,7 @@ pub struct StructField {
 pub struct Const {
     pub ty: Ty,
     pub body_id: BodyId,
+    pub def_id: Option<ty::DefId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

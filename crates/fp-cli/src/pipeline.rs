@@ -11,21 +11,15 @@ use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
-    Diagnostic,
-    DiagnosticDisplayOptions,
-    DiagnosticManager,
-    DiagnosticReport,
-    DiagnosticTemplate,
+    Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport, DiagnosticTemplate,
 };
-use fp_core::error::Error as CoreError;
 use fp_core::hir::typed as thir;
-use fp_core::passes::{LiteralRuntimePass, RuntimePass, RustRuntimePass};
-use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::ir::{hir, lir, mir};
-use fp_optimize::orchestrators::InterpretationOrchestrator;
+use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::transformations::{
     HirGenerator, IrTransform, LirGenerator, MirGenerator, ThirGenerator,
 };
+use fp_optimize::{ConstEvaluationOrchestrator, InterpretationOrchestrator, InterpreterMode};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,6 +32,7 @@ const STAGE_THIR_TO_MIR: &str = "thir→mir";
 const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_LIR_TO_LLVM: &str = "lir→llvm";
 const STAGE_BINARY: &str = "binary";
+const STAGE_INTERPRET: &str = "interpret";
 
 pub use crate::config::PipelineConfig;
 #[derive(Debug)]
@@ -127,6 +122,11 @@ impl<T> PipelineStageReport<T> {
 struct LoweringResult {
     llvm_ir: PathBuf,
     diagnostics: Vec<Diagnostic>,
+}
+
+struct ConstEvalArtifacts {
+    thir_program: thir::Program,
+    outcome: ConstEvalOutcome,
 }
 
 pub struct Pipeline {
@@ -237,12 +237,6 @@ impl Pipeline {
                 Ok(PipelineOutput::Code(rust_code))
             }
             PipelineTarget::Interpret => {
-                let serializer = context.serializer.clone().ok_or_else(|| {
-                    CliError::Compilation(
-                        "Frontend did not register serializer for interpretation".to_string(),
-                    )
-                })?;
-
                 let runtime = if options.runtime.runtime_type.is_empty() {
                     self.default_runtime.clone()
                 } else {
@@ -253,7 +247,9 @@ impl Pipeline {
                     "literal" => {
                         let interpret_span = info_span!("pipeline.interpret", runtime = "literal");
                         let _enter_interp = interpret_span.enter();
-                        let result = self.interpret_ast(&ast_node, serializer).await?;
+                        let result = self
+                            .interpret_ast(&ast_node, context, &options, input_path.as_deref())
+                            .await?;
                         drop(_enter_interp);
                         Ok(PipelineOutput::Value(result))
                     }
@@ -264,7 +260,13 @@ impl Pipeline {
                         );
                         let _enter_interp = interpret_span.enter();
                         let result = self
-                            .interpret_ast_runtime(&ast_node, &runtime, serializer)
+                            .interpret_ast_runtime(
+                                &ast_node,
+                                context,
+                                &runtime,
+                                &options,
+                                input_path.as_deref(),
+                            )
                             .await?;
                         drop(_enter_interp);
                         Ok(PipelineOutput::RuntimeValue(result))
@@ -351,17 +353,7 @@ impl Pipeline {
 
         let diagnostic_manager = DiagnosticManager::new();
 
-        let const_report = self.run_const_eval_stage(ast, context, options, base_path)?;
-        self.emit_diagnostics(
-            &const_report.report.diagnostics,
-            const_report.report.context,
-            options,
-        );
-        let (evaluated_ast, updated_context) = const_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
-
-        let hir_report =
-            self.run_hir_stage(&evaluated_ast, context, options, file_path, base_path)?;
+        let hir_report = self.run_hir_stage(&ast, context, options, file_path, base_path)?;
         self.emit_diagnostics(
             &hir_report.report.diagnostics,
             hir_report.report.context,
@@ -378,6 +370,20 @@ impl Pipeline {
         );
         let (thir_program, updated_context) = thir_report.into_result(&diagnostic_manager)?;
         context = updated_context;
+
+        let const_report = self.run_const_eval_stage(thir_program, context, options, base_path)?;
+        self.emit_diagnostics(
+            &const_report.report.diagnostics,
+            const_report.report.context,
+            options,
+        );
+        let (const_artifacts, updated_context) = const_report.into_result(&diagnostic_manager)?;
+        context = updated_context;
+
+        let ConstEvalArtifacts {
+            thir_program,
+            outcome: _const_outcome,
+        } = const_artifacts;
 
         let mir_report = self.run_mir_stage(thir_program, context, options, base_path)?;
         self.emit_diagnostics(
@@ -415,11 +421,11 @@ impl Pipeline {
 
     fn run_const_eval_stage(
         &self,
-        ast: Node,
+        thir_program: thir::Program,
         context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<Node>, CliError> {
+    ) -> Result<PipelineStageReport<ConstEvalArtifacts>, CliError> {
         let serializer = context.serializer.clone().ok_or_else(|| {
             CliError::Compilation("No serializer registered for const-eval".to_string())
         })?;
@@ -427,37 +433,34 @@ impl Pipeline {
 
         let shared_context = SharedScopedContext::new();
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
-        let mut evaluated_node = ast;
 
-        if let Err(e) = const_evaluator.evaluate(&mut evaluated_node, &shared_context) {
-            let diagnostic = match e {
-                CoreError::Diagnostic(mut diagnostic) => {
-                    if diagnostic.source_context.is_none() {
-                        diagnostic.source_context = Some(STAGE_CONST_EVAL.to_string());
-                    }
-                    diagnostic
-                }
-                other => Diagnostic::error(format!("Const evaluation failed: {}", other))
-                    .with_source_context(STAGE_CONST_EVAL),
-            };
-            return Ok(PipelineStageReport::failure(
-                context,
-                STAGE_CONST_EVAL,
-                vec![diagnostic],
-            ));
-        }
+        let outcome = match const_evaluator.evaluate(&thir_program, &shared_context) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
+                    .with_source_context(STAGE_CONST_EVAL);
+                return Ok(PipelineStageReport::failure(
+                    context,
+                    STAGE_CONST_EVAL,
+                    vec![diagnostic],
+                ));
+            }
+        };
 
         if options.save_intermediates {
             if let Err(err) = fs::write(
-                base_path.with_extension("east"),
-                format!("{:#?}", evaluated_node),
+                base_path.with_extension("thir"),
+                format!("{:#?}", thir_program),
             ) {
-                debug!(error = %err, "failed to persist EAST intermediate");
+                debug!(error = %err, "failed to persist THIR intermediate after const eval");
             }
         }
 
         Ok(PipelineStageReport::success(
-            evaluated_node,
+            ConstEvalArtifacts {
+                thir_program,
+                outcome,
+            },
             context,
             STAGE_CONST_EVAL,
         ))
@@ -794,58 +797,92 @@ impl Pipeline {
     async fn interpret_ast(
         &self,
         ast: &Node,
-        serializer: Arc<dyn AstSerializer>,
+        context: CompilationContext,
+        options: &PipelineOptions,
+        file_path: Option<&Path>,
     ) -> Result<Value, CliError> {
-        register_threadlocal_serializer(serializer.clone());
-        let orchestrator = InterpretationOrchestrator::new(serializer);
-        let context = SharedScopedContext::new();
-
-        let result = match ast {
-            Node::Expr(expr) => orchestrator
-                .interpret_expr(expr, &context)
-                .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
-            Node::File(file) => orchestrator
-                .interpret_items(&file.items, &context)
-                .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
-            Node::Item(item) => orchestrator
-                .interpret_item(item, &context)
-                .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))?,
-        };
-
-        for output in context.take_outputs() {
-            print!("{}", output);
-        }
-
-        Ok(result)
+        self.interpret_ast_with_mode(ast, context, options, file_path, InterpreterMode::Const)
+            .await
     }
 
     async fn interpret_ast_runtime(
         &self,
         ast: &Node,
-        runtime_name: &str,
-        serializer: Arc<dyn AstSerializer>,
+        context: CompilationContext,
+        _runtime_name: &str,
+        options: &PipelineOptions,
+        file_path: Option<&Path>,
     ) -> Result<RuntimeValue, CliError> {
-        register_threadlocal_serializer(serializer.clone());
+        let value = self
+            .interpret_ast_with_mode(ast, context, options, file_path, InterpreterMode::Runtime)
+            .await?;
+        Ok(value.to_runtime_owned())
+    }
 
-        let runtime_pass: Arc<dyn RuntimePass> = match runtime_name {
-            "rust" => Arc::new(RustRuntimePass::new()),
-            _ => Arc::new(LiteralRuntimePass::default()),
-        };
+    async fn interpret_ast_with_mode(
+        &self,
+        ast: &Node,
+        mut context: CompilationContext,
+        options: &PipelineOptions,
+        file_path: Option<&Path>,
+        mode: InterpreterMode,
+    ) -> Result<Value, CliError> {
+        let base_path = options.base_path.as_ref().ok_or_else(|| {
+            CliError::Compilation("Missing base path for interpretation".to_string())
+        })?;
 
-        let orchestrator =
-            InterpretationOrchestrator::new(serializer).with_runtime_pass(runtime_pass);
-        let context = SharedScopedContext::new();
+        let diagnostic_manager = DiagnosticManager::new();
 
-        match ast {
-            Node::Expr(expr) => orchestrator
-                .interpret_expr_runtime(expr, &context)
-                .map_err(|e| {
-                    CliError::Compilation(format!("Runtime interpretation failed: {}", e))
-                }),
-            _ => Err(CliError::Compilation(
-                "Runtime interpretation currently supports expressions only".to_string(),
-            )),
-        }
+        let hir_report = self.run_hir_stage(ast, context, options, file_path, base_path)?;
+        self.emit_diagnostics(
+            &hir_report.report.diagnostics,
+            hir_report.report.context,
+            options,
+        );
+        let (hir_program, updated_context) = hir_report.into_result(&diagnostic_manager)?;
+        context = updated_context;
+
+        let thir_report = self.run_thir_stage(hir_program, context, options, base_path)?;
+        self.emit_diagnostics(
+            &thir_report.report.diagnostics,
+            thir_report.report.context,
+            options,
+        );
+        let (thir_program, updated_context) = thir_report.into_result(&diagnostic_manager)?;
+        context = updated_context;
+
+        let const_report = self.run_const_eval_stage(thir_program, context, options, base_path)?;
+        self.emit_diagnostics(
+            &const_report.report.diagnostics,
+            const_report.report.context,
+            options,
+        );
+        let (const_artifacts, updated_context) = const_report.into_result(&diagnostic_manager)?;
+        context = updated_context;
+
+        let ConstEvalArtifacts {
+            thir_program,
+            outcome,
+        } = const_artifacts;
+
+        let serializer = context.serializer.clone().ok_or_else(|| {
+            CliError::Compilation(
+                "Frontend did not register serializer for interpretation".to_string(),
+            )
+        })?;
+        register_threadlocal_serializer(serializer);
+
+        let mut interpreter = InterpretationOrchestrator::new(mode);
+        let interpreter_diagnostics = Arc::new(DiagnosticManager::new());
+        interpreter.set_diagnostics(Some(interpreter_diagnostics.clone()));
+
+        let value =
+            self.evaluate_program_entry(&thir_program, &mut interpreter, &outcome.values)?;
+
+        let interp_diags = interpreter_diagnostics.get_diagnostics();
+        self.emit_diagnostics(&interp_diags, Some(STAGE_INTERPRET), options);
+
+        Ok(value)
     }
 
     fn emit_diagnostics(
@@ -867,6 +904,47 @@ impl Pipeline {
             self.diagnostic_template.clone(),
             options.debug.verbose,
         )
+    }
+
+    fn evaluate_program_entry(
+        &self,
+        program: &thir::Program,
+        interpreter: &mut InterpretationOrchestrator,
+        const_values: &std::collections::HashMap<thir::ty::DefId, Value>,
+    ) -> Result<Value, CliError> {
+        let (_body_id, body) = self.find_entry_body(program).ok_or_else(|| {
+            CliError::Compilation("No executable entry point found in THIR program".to_string())
+        })?;
+
+        let shared_context = SharedScopedContext::new();
+
+        interpreter
+            .evaluate_body(body, program, &shared_context, const_values)
+            .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))
+    }
+
+    fn find_entry_body<'a>(
+        &self,
+        program: &'a thir::Program,
+    ) -> Option<(thir::BodyId, &'a thir::Body)> {
+        let mut fallback = None;
+
+        for item in &program.items {
+            if let thir::ItemKind::Function(function) = &item.kind {
+                if let Some(body_id) = function.body_id {
+                    if let Some(body) = program.bodies.get(&body_id) {
+                        if !function.is_const {
+                            return Some((body_id, body));
+                        }
+                        if fallback.is_none() {
+                            fallback = Some((body_id, body));
+                        }
+                    }
+                }
+            }
+        }
+
+        fallback
     }
 }
 

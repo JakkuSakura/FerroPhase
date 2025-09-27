@@ -9,12 +9,10 @@
 - Error handling routes through generic `optimization_error` calls, so diagnostics emitted during const evaluation cannot distinguish between recoverable intrinsic failures and structural bugs.
 - Inline-constant pass duplicates traversal logic already present in the interpreter and reruns interpretation per expression; this is costly and complicates mutation ordering.
 
-### InterpretationOrchestrator (`crates/fp-optimize/src/orchestrators/interpretation/*`)
-- Implements both literal and runtime evaluation by switching between `interpret_expr` and `interpret_expr_runtime`, duplicating traversal and resolution rules.
-- Builtins and intrinsics are hard-coded lookup branches; there is no table-driven dispatch or registration story for language frontends.
-- Runtime evaluation depends on an injected `RuntimePass`, but const evaluation paths bypass the pass entirely, so behaviors diverge.
-- The orchestrator exposes no configuration surface beyond toggling the runtime pass and serializers—modes such as "const", "runtime", or "meta" are implicit in call sites.
-- Error propagation still relies on optimization errors instead of the new diagnostic manager, making it difficult to surface rich context during evaluation.
+### InterpretationOrchestrator (`crates/fp-optimize/src/orchestrators/interpretation/mod.rs`)
+- The THIR-based interpreter now drives both const and (basic) runtime modes through a shared configuration object. Runtime mode currently returns owned runtime values and still needs richer semantics (ownership, IO shims).
+- Intrinsics are routed through a small registry (print/println today); expand this to cover the rest of the standard library and language-specific hooks.
+- Error propagation still relies on `optimization_error`; richer diagnostics should flow through `DiagnosticManager`.
 
 ### Type Inference
 - `TypeQueries` is limited to structural reflection backed by `TypeRegistry`; it does not perform inference itself.
@@ -24,8 +22,8 @@
 
 ## Design Gaps and Risks
 
-1. **Duplicated Evaluation Logic**: Const and runtime evaluation both recurse through the AST with near-identical semantics, yet live in separate entry points (`interpret_expr`, `interpret_expr_runtime`). This invites inconsistencies (e.g., runtime field access uses `RuntimePass::access_field` while const evaluation just interprets literals).
-2. **Intrinsic Handling**: The intrinsic context collects `ConstEval` operations, but the interpreter invokes intrinsics via ad-hoc builtins that directly mutate shared state. Missing separation between evaluation results and side-effect recording leads to fragile ordering (see `try_fold_expr`).
+1. **Runtime Execution Gap**: Only const evaluation runs today; runtime execution still needs to be built on the THIR interpreter.
+2. **Intrinsic Handling**: The intrinsic context collects `ConstEval` operations, but the interpreter invokes intrinsics via ad-hoc builtins that directly mutate shared state. This needs to be ported to THIR-aware intrinsics.
 3. **Configuration Surface**: There is no single struct representing "an evaluator" parameterized by mode. Instead, `ConstEvaluationOrchestrator` owns a dedicated `InterpretationOrchestrator`, meaning runtime interpretation cannot reuse the same instance with alternate policies.
 4. **Diagnostics**: Evaluation errors bubble up as generic optimization failures. With the new diagnostic manager infrastructure, evaluation should log structured diagnostics (node span, intrinsic name, etc.) and allow const evaluation to recover when possible.
 5. **Type Information**: The Algorithm W–style solver that runs during HIR→THIR is not surfaced to const/runtime evaluation, so those paths still operate without principal types. Until its results are exposed through a reusable interface, evaluators are forced to rely on ad-hoc registries.
@@ -33,13 +31,8 @@
 ## Recommended Direction
 
 ### Unify the Evaluator
-- Extract a core `Evaluator` struct that owns:
-  - A reference to the AST serializer/runtime pass bundle.
-  - A `Mode` enum (`Const`, `Runtime`, `Meta`) controlling resolution rules.
-  - A trait object for `EffectHandler` (records const-eval ops, performs runtime assignments, surfaces diagnostics).
-  - Hooks for environment lookups (`SharedScopedContext`) and intrinsic tables.
-- Parameterize const and runtime use cases by constructing the evaluator with different handlers/configs instead of separate wrappers.
-- Ensure intrinsic evaluation always goes through the effect handler so compile-time operations and runtime calls share the same dispatch code.
+- Extract a core THIR evaluator configuration (mode, diagnostics, intrinsic handlers) so const and runtime interpretation share infrastructure.
+- Ensure intrinsic evaluation always goes through a unified pathway so compile-time operations and runtime calls share the same dispatch code.
 
 ### Intrinsic and Builtin Registry
 - Replace the hard-coded `match` ladder in `interpret_ident` with a registry keyed by symbol + mode. This allows language frontends (Rust, LAST, etc.) to register their own intrinsics without editing the interpreter.
@@ -50,7 +43,7 @@
 - Augment `EvaluationContext` with per-block diagnostics; allow const evaluation to continue past non-fatal intrinsic failures while reporting actionable messages.
 
 ### Revisit Const Evaluation Workflow
-- After unifying evaluation, reduce the orchestrator to sequencing phases: dependency ordering, evaluating blocks, applying recorded effects. Inline folding should leverage the evaluator directly via a dedicated `fold_to_value` helper that short-circuits on non-literals.
+- After unifying evaluation, reduce the orchestrator to sequencing phases: dependency ordering, evaluating blocks, and inlining constant expressions using the typed interpreter.
 - Consider batching const block results: once a block evaluates, inject its value into the shared context and the evaluator cache so subsequent lookups avoid re-interpretation.
 
 ### Type Inference Path

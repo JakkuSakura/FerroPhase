@@ -152,7 +152,11 @@ impl ThirGenerator {
             self.const_symbols.insert(id, body_id);
         }
 
-        Ok(thir::Const { ty, body_id })
+        Ok(thir::Const {
+            ty,
+            body_id,
+            def_id,
+        })
     }
 
     /// Transform HIR body to THIR
