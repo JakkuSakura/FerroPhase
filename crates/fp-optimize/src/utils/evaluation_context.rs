@@ -1,36 +1,47 @@
-// Evaluation context - utility for tracking const blocks and their state
-
-use crate::queries::TypeQueries;
-use fp_core::ast::*;
+use fp_core::ast::Value;
 use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
-use fp_rust::parser::RustParser;
+use fp_core::hir::typed as thir;
+use fp_core::span::Span;
 use std::collections::{HashMap, HashSet};
-use syn::parse::Parser;
 
-/// Represents a const block or expression that needs evaluation
+/// Represents a typed const block extracted from THIR.
 #[derive(Debug, Clone)]
 pub struct ConstBlock {
     pub id: u64,
-    pub name: Option<String>,
-    pub expr: Expr,
+    pub def_id: thir::ty::DefId,
+    pub body_id: thir::BodyId,
+    pub span: Span,
     pub dependencies: HashSet<u64>,
     pub state: ConstEvalState,
     pub result: Option<Value>,
 }
 
-/// State of const evaluation for a block
+impl ConstBlock {
+    pub fn new(id: u64, def_id: thir::ty::DefId, body_id: thir::BodyId, span: Span) -> Self {
+        Self {
+            id,
+            def_id,
+            body_id,
+            span,
+            dependencies: HashSet::new(),
+            state: ConstEvalState::NotEvaluated,
+            result: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstEvalState {
     NotEvaluated,
-    Evaluating, // Prevents infinite recursion
+    Evaluating,
     Evaluated,
     Error(String),
 }
 
-/// Utility for tracking const block evaluation state
 pub struct EvaluationContext {
-    const_blocks: HashMap<u64, ConstBlock>,
+    blocks: HashMap<u64, ConstBlock>,
+    index_by_def: HashMap<thir::ty::DefId, u64>,
     dependencies: HashMap<u64, HashSet<u64>>,
     next_block_id: u64,
 }
@@ -38,563 +49,227 @@ pub struct EvaluationContext {
 impl EvaluationContext {
     pub fn new() -> Self {
         Self {
-            const_blocks: HashMap::new(),
+            blocks: HashMap::new(),
+            index_by_def: HashMap::new(),
             dependencies: HashMap::new(),
             next_block_id: 0,
         }
     }
 
-    /// Discover const blocks in the AST
-    pub fn discover_const_blocks(&mut self, ast: &Node) -> Result<()> {
-        self.const_blocks.clear();
+    pub fn discover_const_blocks(&mut self, program: &thir::Program) -> Result<()> {
+        self.blocks.clear();
+        self.index_by_def.clear();
         self.dependencies.clear();
         self.next_block_id = 0;
 
-        let mut name_to_id: HashMap<String, u64> = HashMap::new();
-        let mut pending_exprs: Vec<(u64, Expr)> = Vec::new();
-
-        walk_const_items(ast, &mut |item_const| {
-            let expr = item_const.value.as_ref().clone();
-            let name = item_const.name.name.clone();
-            let id = self.next_id();
-
-            let block = ConstBlock::new(id, Some(name.clone()), expr.clone());
-            self.const_blocks.insert(id, block);
-            name_to_id.insert(name, id);
-            pending_exprs.push((id, expr));
-        });
-
-        for (block_id, expr) in pending_exprs {
-            let mut references = HashSet::new();
-            collect_expr_references(&expr, &mut references);
-
-            let deps: HashSet<u64> = references
-                .into_iter()
-                .filter_map(|name| name_to_id.get(&name).copied())
-                .filter(|dep_id| *dep_id != block_id)
-                .collect();
-
-            if let Some(block) = self.const_blocks.get_mut(&block_id) {
-                block.dependencies = deps.clone();
+        for item in &program.items {
+            if let thir::ItemKind::Const(const_item) = &item.kind {
+                if let Some(def_id) = const_item.def_id {
+                    let block_id = self.next_id();
+                    let mut block =
+                        ConstBlock::new(block_id, def_id, const_item.body_id, item.span);
+                    if let Some(body) = program.bodies.get(&const_item.body_id) {
+                        let mut deps = HashSet::new();
+                        collect_expr_dependencies(&body.value, &self.index_by_def, &mut deps);
+                        block.dependencies = deps.clone();
+                        self.dependencies.insert(block_id, deps);
+                    } else {
+                        return Err(report_error(format!(
+                            "Missing THIR body {:?} for const block",
+                            const_item.body_id
+                        )));
+                    }
+                    self.index_by_def.insert(def_id, block_id);
+                    self.blocks.insert(block_id, block);
+                }
             }
-            self.dependencies.insert(block_id, deps);
+        }
+
+        // Recompute dependencies now that all blocks are known.
+        for block in self.blocks.values_mut() {
+            let mut deps = HashSet::new();
+            if let Some(body) = program.bodies.get(&block.body_id) {
+                collect_expr_dependencies(&body.value, &self.index_by_def, &mut deps);
+            }
+            block.dependencies = deps.clone();
+            self.dependencies.insert(block.id, deps);
         }
 
         Ok(())
     }
 
-    /// Generate a new unique block ID
-    pub fn next_id(&mut self) -> u64 {
-        let id = self.next_block_id;
-        self.next_block_id += 1;
-        id
+    pub fn blocks(&self) -> &HashMap<u64, ConstBlock> {
+        &self.blocks
     }
 
-    /// Get all const blocks
-    pub fn get_const_blocks(&self) -> &HashMap<u64, ConstBlock> {
-        &self.const_blocks
-    }
-
-    /// Get a specific const block
-    pub fn get_const_block(&self, block_id: u64) -> Result<&ConstBlock> {
-        self.const_blocks
-            .get(&block_id)
-            .ok_or_else(|| report_error(format!("Const block {} not found", block_id)))
-    }
-
-    /// Set dependencies for const blocks
-    pub fn set_dependencies(&mut self, dependencies: HashMap<u64, HashSet<u64>>) {
-        self.dependencies = dependencies;
-    }
-
-    /// Get dependencies
     pub fn get_dependencies(&self) -> &HashMap<u64, HashSet<u64>> {
         &self.dependencies
     }
 
-    /// Set the result of a const block evaluation
-    pub fn set_block_result(&mut self, block_id: u64, result: Value) -> Result<()> {
-        if let Some(block) = self.const_blocks.get_mut(&block_id) {
-            match &block.state {
-                ConstEvalState::NotEvaluated | ConstEvalState::Evaluating => {
-                    block.result = Some(result);
-                    block.state = ConstEvalState::Evaluated;
-                    Ok(())
-                }
-                ConstEvalState::Evaluated => Err(report_error(format!(
-                    "Const block {} was already evaluated",
-                    block
-                        .name
-                        .as_deref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| block.id.to_string())
-                ))),
-                ConstEvalState::Error(message) => Err(report_error(format!(
-                    "Const block {} is in error state ({}); cannot set result",
-                    block
-                        .name
-                        .as_deref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| block.id.to_string()),
-                    message
-                ))),
-            }
-        } else {
-            Err(report_error(format!("Const block {} not found", block_id)))
-        }
+    pub fn lookup_block_id(&self, def_id: thir::ty::DefId) -> Option<u64> {
+        self.index_by_def.get(&def_id).copied()
     }
 
-    /// Mark a const block evaluation as started to detect recursion and report re-entrancy.
     pub fn begin_evaluation(&mut self, block_id: u64) -> Result<()> {
-        if let Some(block) = self.const_blocks.get_mut(&block_id) {
-            match &block.state {
-                ConstEvalState::NotEvaluated => {
-                    block.state = ConstEvalState::Evaluating;
-                    Ok(())
-                }
-                ConstEvalState::Evaluating => Err(report_error(format!(
-                    "Const block {} is already being evaluated",
-                    block
-                        .name
-                        .as_deref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| block.id.to_string())
-                ))),
-                ConstEvalState::Evaluated => Err(report_error(format!(
-                    "Const block {} has already been evaluated",
-                    block
-                        .name
-                        .as_deref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| block.id.to_string())
-                ))),
-                ConstEvalState::Error(message) => Err(report_error(format!(
-                    "Const block {} is in error state ({}); cannot re-evaluate",
-                    block
-                        .name
-                        .as_deref()
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| block.id.to_string()),
-                    message
-                ))),
+        let block = self
+            .blocks
+            .get_mut(&block_id)
+            .ok_or_else(|| report_error(format!("Const block {} not found", block_id)))?;
+        match block.state {
+            ConstEvalState::NotEvaluated => {
+                block.state = ConstEvalState::Evaluating;
+                Ok(())
             }
-        } else {
-            Err(report_error(format!("Const block {} not found", block_id)))
+            ConstEvalState::Evaluating => Err(report_error(format!(
+                "Const block {} is already being evaluated",
+                block_id
+            ))),
+            ConstEvalState::Evaluated => Err(report_error(format!(
+                "Const block {} has already been evaluated",
+                block_id
+            ))),
+            ConstEvalState::Error(ref msg) => Err(report_error(format!(
+                "Const block {} is in error state ({}); cannot re-evaluate",
+                block_id, msg
+            ))),
         }
     }
 
-    /// Record a const evaluation error for diagnostic reporting.
+    pub fn set_block_result(&mut self, block_id: u64, value: Value) -> Result<()> {
+        let block = self
+            .blocks
+            .get_mut(&block_id)
+            .ok_or_else(|| report_error(format!("Const block {} not found", block_id)))?;
+        match block.state {
+            ConstEvalState::Evaluating | ConstEvalState::NotEvaluated => {
+                block.result = Some(value);
+                block.state = ConstEvalState::Evaluated;
+                Ok(())
+            }
+            ConstEvalState::Evaluated => Err(report_error(format!(
+                "Const block {} already has a value",
+                block_id
+            ))),
+            ConstEvalState::Error(ref msg) => Err(report_error(format!(
+                "Const block {} is in error state ({}); cannot set result",
+                block_id, msg
+            ))),
+        }
+    }
+
     pub fn set_block_error(&mut self, block_id: u64, message: impl Into<String>) -> Result<()> {
-        if let Some(block) = self.const_blocks.get_mut(&block_id) {
-            block.state = ConstEvalState::Error(message.into());
-            block.result = None;
-            Ok(())
-        } else {
-            Err(report_error(format!("Const block {} not found", block_id)))
-        }
-    }
-
-    /// Get all evaluation results
-    pub fn get_all_results(&self) -> HashMap<String, Value> {
-        let mut results = HashMap::new();
-        for (_, block) in &self.const_blocks {
-            if let (Some(name), Some(result)) = (&block.name, &block.result) {
-                results.insert(name.clone(), result.clone());
-            }
-        }
-        results
-    }
-
-    /// Validate const block results against expected types
-    pub fn validate_results(&self, type_queries: &TypeQueries) -> Result<()> {
-        let _ = type_queries;
-
-        for block in self.const_blocks.values() {
-            match &block.state {
-                ConstEvalState::Evaluated => {
-                    if block.result.is_none() {
-                        return Err(report_error(format!(
-                            "Const block {} evaluated without result",
-                            block
-                                .name
-                                .as_deref()
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| block.id.to_string())
-                        )));
-                    }
-                }
-                ConstEvalState::Error(message) => {
-                    return Err(report_error(format!(
-                        "Const evaluation error in {}: {}",
-                        block
-                            .name
-                            .as_deref()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| block.id.to_string()),
-                        message
-                    )));
-                }
-                _ => {
-                    return Err(report_error(format!(
-                        "Const block {} not evaluated",
-                        block
-                            .name
-                            .as_deref()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| block.id.to_string())
-                    )));
-                }
-            }
-        }
-
+        let block = self
+            .blocks
+            .get_mut(&block_id)
+            .ok_or_else(|| report_error(format!("Const block {} not found", block_id)))?;
+        block.state = ConstEvalState::Error(message.into());
+        block.result = None;
         Ok(())
     }
-}
 
-impl ConstBlock {
-    pub fn new(id: u64, name: Option<String>, expr: Expr) -> Self {
-        Self {
-            id,
-            name,
-            expr,
-            dependencies: HashSet::new(),
-            state: ConstEvalState::NotEvaluated,
-            result: None,
-        }
+    pub fn clone_results(&self) -> HashMap<thir::ty::DefId, Value> {
+        self.blocks
+            .values()
+            .filter_map(|block| block.result.clone().map(|value| (block.def_id, value)))
+            .collect()
     }
 
-    pub fn is_evaluated(&self) -> bool {
-        matches!(self.state, ConstEvalState::Evaluated)
-    }
-
-    pub fn is_evaluating(&self) -> bool {
-        matches!(self.state, ConstEvalState::Evaluating)
-    }
-
-    pub fn has_error(&self) -> bool {
-        matches!(self.state, ConstEvalState::Error(_))
+    fn next_id(&mut self) -> u64 {
+        let id = self.next_block_id;
+        self.next_block_id += 1;
+        id
     }
 }
 
-fn walk_const_items<F>(node: &Node, f: &mut F)
-where
-    F: FnMut(&ItemDefConst),
-{
-    match node {
-        Node::Item(item) => walk_const_in_item(item, f),
-        Node::Expr(expr) => walk_const_in_expr(expr, f),
-        Node::File(file) => {
-            for item in &file.items {
-                walk_const_in_item(item, f);
+fn collect_expr_dependencies(
+    expr: &thir::Expr,
+    index: &HashMap<thir::ty::DefId, u64>,
+    deps: &mut HashSet<u64>,
+) {
+    match &expr.kind {
+        thir::ExprKind::Literal(_) | thir::ExprKind::Local(_) | thir::ExprKind::VarRef { .. } => {}
+        thir::ExprKind::Path(item_ref) => {
+            if let Some(def_id) = item_ref.def_id {
+                if let Some(block_id) = index.get(&def_id) {
+                    deps.insert(*block_id);
+                }
             }
         }
-    }
-}
-
-fn walk_const_in_item<F>(item: &Item, f: &mut F)
-where
-    F: FnMut(&ItemDefConst),
-{
-    match item {
-        Item::DefConst(def_const) => f(def_const),
-        Item::DefFunction(def_fn) => {
-            // Traverse function bodies to discover nested const items
-            walk_const_in_expr(def_fn.body.as_ref(), f);
+        thir::ExprKind::Binary(_, lhs, rhs)
+        | thir::ExprKind::Assign { lhs, rhs }
+        | thir::ExprKind::AssignOp { lhs, rhs, .. }
+        | thir::ExprKind::LogicalOp { lhs, rhs, .. } => {
+            collect_expr_dependencies(lhs, index, deps);
+            collect_expr_dependencies(rhs, index, deps);
         }
-        Item::DefStatic(def_static) => {
-            // Static initializers can contain nested const declarations
-            walk_const_in_expr(def_static.value.as_ref(), f);
-        }
-        Item::Module(module) => {
-            for child in &module.items {
-                walk_const_in_item(child, f);
+        thir::ExprKind::Unary(_, val)
+        | thir::ExprKind::Cast(val, _)
+        | thir::ExprKind::Deref(val)
+        | thir::ExprKind::Borrow { arg: val, .. }
+        | thir::ExprKind::AddressOf { arg: val, .. }
+        | thir::ExprKind::Use(val)
+        | thir::ExprKind::Loop { body: val }
+        | thir::ExprKind::Scope { value: val, .. } => collect_expr_dependencies(val, index, deps),
+        thir::ExprKind::Call { fun, args, .. } => {
+            collect_expr_dependencies(fun, index, deps);
+            for arg in args {
+                collect_expr_dependencies(arg, index, deps);
             }
         }
-        Item::Impl(item_impl) => {
-            for child in &item_impl.items {
-                walk_const_in_item(child, f);
+        thir::ExprKind::Index(base, idx) => {
+            collect_expr_dependencies(base, index, deps);
+            collect_expr_dependencies(idx, index, deps);
+        }
+        thir::ExprKind::Field { base, .. } => collect_expr_dependencies(base, index, deps),
+        thir::ExprKind::If {
+            cond,
+            then,
+            else_opt,
+        } => {
+            collect_expr_dependencies(cond, index, deps);
+            collect_expr_dependencies(then, index, deps);
+            if let Some(e) = else_opt {
+                collect_expr_dependencies(e, index, deps);
             }
         }
-        Item::Expr(expr) => walk_const_in_expr(expr, f),
-        _ => {}
-    }
-}
-
-fn walk_const_in_expr<F>(expr: &Expr, f: &mut F)
-where
-    F: FnMut(&ItemDefConst),
-{
-    match expr {
-        Expr::Block(block) => {
+        thir::ExprKind::Match { scrutinee, arms } => {
+            collect_expr_dependencies(scrutinee, index, deps);
+            for arm in arms {
+                collect_expr_dependencies(&arm.body, index, deps);
+                if let Some(guard) = &arm.guard {
+                    collect_expr_dependencies(&guard.cond, index, deps);
+                }
+            }
+        }
+        thir::ExprKind::Block(block) => {
             for stmt in &block.stmts {
-                match stmt {
-                    BlockStmt::Item(item) => walk_const_in_item(item.as_ref(), f),
-                    BlockStmt::Expr(inner) => walk_const_in_expr(inner.expr.as_ref(), f),
-                    BlockStmt::Let(let_stmt) => {
-                        if let Some(init) = &let_stmt.init {
-                            walk_const_in_expr(init, f);
-                        }
-                        if let Some(diverge) = &let_stmt.diverge {
-                            walk_const_in_expr(diverge, f);
-                        }
-                    }
-                    _ => {}
-                }
+                collect_stmt_dependencies(stmt, index, deps);
+            }
+            if let Some(expr) = &block.expr {
+                collect_expr_dependencies(expr, index, deps);
             }
         }
-        Expr::If(if_expr) => {
-            walk_const_in_expr(&if_expr.cond, f);
-            walk_const_in_expr(&if_expr.then, f);
-            if let Some(elze) = if_expr.elze.as_ref() {
-                walk_const_in_expr(elze, f);
+        thir::ExprKind::Let { expr, .. } => collect_expr_dependencies(expr, index, deps),
+        thir::ExprKind::Break { value } | thir::ExprKind::Return { value } => {
+            if let Some(val) = value {
+                collect_expr_dependencies(val, index, deps);
             }
         }
-        Expr::Invoke(invoke) => {
-            for arg in &invoke.args {
-                walk_const_in_expr(arg, f);
-            }
-            if let ExprInvokeTarget::Expr(inner) = &invoke.target {
-                walk_const_in_expr(inner.as_ref(), f);
-            }
-        }
-        Expr::Let(let_expr) => walk_const_in_expr(let_expr.expr.as_ref(), f),
-        Expr::Assign(assign) => {
-            walk_const_in_expr(assign.target.as_ref(), f);
-            walk_const_in_expr(assign.value.as_ref(), f);
-        }
-        Expr::Struct(struct_expr) => {
-            walk_const_in_expr(struct_expr.name.as_ref(), f);
-            for field in &struct_expr.fields {
-                if let Some(value) = field.value.as_ref() {
-                    walk_const_in_expr(value, f);
-                }
-            }
-        }
-        Expr::Tuple(tuple) => {
-            for value in &tuple.values {
-                walk_const_in_expr(value, f);
-            }
-        }
-        Expr::Array(array) => {
-            for value in &array.values {
-                walk_const_in_expr(value, f);
-            }
-        }
-        Expr::Item(item) => walk_const_in_item(item, f),
-        Expr::Value(value) => collect_value_expr(value.as_ref(), f),
-        _ => {}
+        thir::ExprKind::UpvarRef { .. } | thir::ExprKind::Continue => {}
     }
 }
 
-fn collect_value_expr<F>(value: &Value, f: &mut F)
-where
-    F: FnMut(&ItemDefConst),
-{
-    match value {
-        Value::Expr(expr) => walk_const_in_expr(expr, f),
-        Value::Struct(value_struct) => {
-            for field in &value_struct.structural.fields {
-                collect_value_expr(&field.value, f);
+fn collect_stmt_dependencies(
+    stmt: &thir::Stmt,
+    index: &HashMap<thir::ty::DefId, u64>,
+    deps: &mut HashSet<u64>,
+) {
+    match &stmt.kind {
+        thir::StmtKind::Expr(expr) => collect_expr_dependencies(expr, index, deps),
+        thir::StmtKind::Let { initializer, .. } => {
+            if let Some(init) = initializer {
+                collect_expr_dependencies(init, index, deps);
             }
         }
-        Value::Tuple(tuple) => {
-            for value in &tuple.values {
-                collect_value_expr(value, f);
-            }
-        }
-        Value::Type(ty) => collect_type_expr(ty, f),
-        _ => {}
-    }
-}
-
-fn collect_type_expr<F>(ty: &Ty, f: &mut F)
-where
-    F: FnMut(&ItemDefConst),
-{
-    match ty {
-        Ty::Struct(struct_ty) => {
-            for field in &struct_ty.fields {
-                collect_type_expr(&field.value, f);
-            }
-        }
-        Ty::Tuple(tuple) => {
-            for ty in &tuple.types {
-                collect_type_expr(ty, f);
-            }
-        }
-        Ty::Vec(vec_ty) => collect_type_expr(&vec_ty.ty, f),
-        Ty::Reference(reference) => collect_type_expr(&reference.ty, f),
-        Ty::Expr(expr) => walk_const_in_expr(expr, f),
-        _ => {}
-    }
-}
-
-fn parse_macro_exprs(tokens: &proc_macro2::TokenStream) -> Result<Vec<Expr>> {
-    let parsed = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated
-        .parse2(tokens.clone())
-        .map_err(|err| report_error(format!("Failed to parse macro arguments: {}", err)))?;
-
-    let parser = RustParser::new();
-    let mut expressions = Vec::with_capacity(parsed.len());
-    for syn_expr in parsed.into_iter() {
-        let expr = parser
-            .parse_expr(syn_expr)
-            .map_err(|err| report_error(format!("Failed to lower macro argument: {}", err)))?;
-        expressions.push(expr);
-    }
-
-    Ok(expressions)
-}
-
-fn collect_expr_references(expr: &Expr, references: &mut HashSet<String>) {
-    match expr {
-        Expr::Locator(locator) => {
-            if let Some(ident) = locator.as_ident() {
-                references.insert(ident.name.clone());
-            }
-        }
-        Expr::Value(value) => collect_value_references(value.as_ref(), references),
-        Expr::Block(block) => {
-            for stmt in &block.stmts {
-                match stmt {
-                    BlockStmt::Item(item) => collect_item_references(item.as_ref(), references),
-                    BlockStmt::Expr(inner) => {
-                        collect_expr_references(inner.expr.as_ref(), references)
-                    }
-                    BlockStmt::Let(let_stmt) => {
-                        if let Some(init) = &let_stmt.init {
-                            collect_expr_references(init, references);
-                        }
-                        if let Some(diverge) = &let_stmt.diverge {
-                            collect_expr_references(diverge, references);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Expr::If(if_expr) => {
-            collect_expr_references(&if_expr.cond, references);
-            collect_expr_references(&if_expr.then, references);
-            if let Some(elze) = if_expr.elze.as_ref() {
-                collect_expr_references(elze, references);
-            }
-        }
-        Expr::Invoke(invoke) => {
-            for arg in &invoke.args {
-                collect_expr_references(arg, references);
-            }
-            if let ExprInvokeTarget::Expr(inner) = &invoke.target {
-                collect_expr_references(inner.as_ref(), references);
-            }
-        }
-        Expr::Assign(assign) => {
-            collect_expr_references(assign.target.as_ref(), references);
-            collect_expr_references(assign.value.as_ref(), references);
-        }
-        Expr::Struct(struct_expr) => {
-            collect_expr_references(struct_expr.name.as_ref(), references);
-            for field in &struct_expr.fields {
-                if let Some(value) = field.value.as_ref() {
-                    collect_expr_references(value, references);
-                }
-            }
-        }
-        Expr::Select(select) => {
-            collect_expr_references(select.obj.as_ref(), references);
-        }
-        Expr::BinOp(binop) => {
-            collect_expr_references(binop.lhs.as_ref(), references);
-            collect_expr_references(binop.rhs.as_ref(), references);
-        }
-        Expr::UnOp(unop) => collect_expr_references(unop.val.as_ref(), references),
-        Expr::Let(let_expr) => collect_expr_references(let_expr.expr.as_ref(), references),
-        Expr::Paren(paren) => collect_expr_references(paren.expr.as_ref(), references),
-        Expr::Tuple(tuple) => {
-            for value in &tuple.values {
-                collect_expr_references(value, references);
-            }
-        }
-        Expr::Array(array) => {
-            for value in &array.values {
-                collect_expr_references(value, references);
-            }
-        }
-        Expr::Item(item) => collect_item_references(item, references),
-        Expr::Any(node) => {
-            if let Some(raw_macro) = node.downcast_ref::<fp_rust::RawExprMacro>() {
-                let mac = &raw_macro.raw.mac;
-
-                if mac.path.is_ident("strlen") || mac.path.is_ident("concat") {
-                    if let Ok(exprs) = parse_macro_exprs(&mac.tokens) {
-                        for expr in exprs {
-                            collect_expr_references(&expr, references);
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_item_references(item: &Item, references: &mut HashSet<String>) {
-    match item {
-        Item::DefConst(def_const) => collect_expr_references(def_const.value.as_ref(), references),
-        Item::DefFunction(def_fn) => {
-            collect_expr_references(def_fn.body.as_ref(), references);
-        }
-        Item::DefStatic(def_static) => {
-            collect_expr_references(def_static.value.as_ref(), references);
-        }
-        Item::Module(module) => {
-            for child in &module.items {
-                collect_item_references(child, references);
-            }
-        }
-        Item::Impl(item_impl) => {
-            for child in &item_impl.items {
-                collect_item_references(child, references);
-            }
-        }
-        Item::Expr(expr) => collect_expr_references(expr, references),
-        _ => {}
-    }
-}
-
-fn collect_value_references(value: &Value, references: &mut HashSet<String>) {
-    match value {
-        Value::Expr(expr) => collect_expr_references(expr, references),
-        Value::Struct(value_struct) => {
-            for field in &value_struct.structural.fields {
-                collect_value_references(&field.value, references);
-            }
-        }
-        Value::Tuple(tuple) => {
-            for value in &tuple.values {
-                collect_value_references(value, references);
-            }
-        }
-        Value::Type(ty) => collect_type_references(ty, references),
-        _ => {}
-    }
-}
-
-fn collect_type_references(ty: &Ty, references: &mut HashSet<String>) {
-    match ty {
-        Ty::Struct(struct_ty) => {
-            for field in &struct_ty.fields {
-                collect_type_references(&field.value, references);
-            }
-        }
-        Ty::Tuple(tuple) => {
-            for ty in &tuple.types {
-                collect_type_references(ty, references);
-            }
-        }
-        Ty::Vec(vec_ty) => collect_type_references(&vec_ty.ty, references),
-        Ty::Reference(reference) => collect_type_references(&reference.ty, references),
-        Ty::Expr(expr) => collect_expr_references(expr, references),
-        _ => {}
     }
 }

@@ -14,6 +14,11 @@ without duplication:
 - **IntermediateType** (optional) – Bridges ConcreteType into backend-specific forms (e.g., bytecode abstractions) when
   needed.
 
+### Structural vs Dynamic Dictionaries
+
+- **Structural dictionaries**: Represented by `Ty::Structural` (and the field-carried `TypeStructural` node) and share storage with `TypeStruct`. When const-eval or other compile-time transforms synthesise one of these shapes the TypeQueryEngine records a full field list, and, once the effect log commits, the promotion step serialises the same layout into a `ConcreteType`. From that point the dictionary behaves exactly like any other frozen record type throughout THIR, MIR, LIR, and emission.
+- **Dynamic dictionaries**: Runtime values emitted as `Value::Structural` (or the structural payload of `Value::Struct`) remain outside the type tables. Until the program or const-eval proves a stable shape they continue to flow through interpretation as `Ty::Any`/`Ty::Unknown` placeholders. Only when a dynamic dictionary is promoted through a `TypeValue` expression or a comptime structural edit does it cross the boundary into the structural track above.
+
 ### `mut type` Tokens at Comptime
 
 During const evaluation, transformations can introduce new types using the language construct `let mut T = struct {...}`.

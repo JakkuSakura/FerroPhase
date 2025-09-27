@@ -318,10 +318,7 @@ fn render_pretty(
     Some(lines)
 }
 
-fn render_plain(
-    diagnostic: &Diagnostic,
-    ctx: &DiagnosticRenderContext<'_>,
-) -> Option<Vec<String>> {
+fn render_plain(diagnostic: &Diagnostic, ctx: &DiagnosticRenderContext<'_>) -> Option<Vec<String>> {
     if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
         return None;
     }

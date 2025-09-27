@@ -258,6 +258,14 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 collect_paths(cond, out);
                 collect_paths_from_block(block, out);
             }
+            hir::ExprKind::StdIoPrintln(println) => {
+                for arg in &println.format.args {
+                    collect_paths(arg, out);
+                }
+                for kwarg in &println.format.kwargs {
+                    collect_paths(&kwarg.value, out);
+                }
+            }
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}
         }
     }

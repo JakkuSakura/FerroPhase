@@ -1,6 +1,6 @@
 use fp_core::hir::{
-    self, Body, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program, Ty,
-    TyKind,
+    self, Body, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program, TypeExpr,
+    TypeExprKind,
 };
 use fp_core::span::Span;
 
@@ -12,9 +12,11 @@ pub fn literal_expr(value: i64) -> Expr {
     )
 }
 
-pub fn unit_type() -> Ty {
-    Ty {
-        kind: TyKind::Tuple(Vec::new()),
+pub fn unit_type() -> TypeExpr {
+    TypeExpr {
+        hir_id: 0,
+        kind: TypeExprKind::Tuple(Vec::new()),
+        span: Span::new(0, 0, 0),
     }
 }
 
