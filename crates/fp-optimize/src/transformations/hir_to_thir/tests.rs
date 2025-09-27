@@ -14,10 +14,12 @@ fn test_thir_generator_creation() {
 #[test]
 fn test_literal_transformation() -> Result<()> {
     let mut generator = ThirGenerator::new();
-    let (thir_lit, ty) = generator.transform_literal(hir::Lit::Integer(42)).unwrap();
+    let (thir_lit, ty) = generator
+        .transform_literal(hir::Lit::Integer(42), None)
+        .unwrap();
 
     match thir_lit {
-        thir::Lit::Int(value, thir::IntTy::I32) => {
+        thir::Lit::Int(value, thir::IntTy::I64) => {
             assert_eq!(value, 42);
         }
         _ => {
@@ -27,7 +29,7 @@ fn test_literal_transformation() -> Result<()> {
         }
     }
 
-    assert!(ty.is_integral());
+    assert_eq!(ty, hir_types::Ty::int(hir_types::IntTy::I64));
     Ok(())
 }
 

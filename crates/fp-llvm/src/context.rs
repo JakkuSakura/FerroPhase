@@ -770,7 +770,10 @@ fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
         llvm_ir::Constant::Float(Float::Single(v)) => format!("{}", v),
         llvm_ir::Constant::Float(Float::Double(v)) => format!("{}", v),
         other @ llvm_ir::Constant::Float(_) => {
-            panic!("Unsupported floating-point constant encountered: {:?}", other)
+            panic!(
+                "Unsupported floating-point constant encountered: {:?}",
+                other
+            )
         }
         llvm_ir::Constant::Null(_) => "null".to_string(),
         llvm_ir::Constant::Undef(_) => "undef".to_string(),
@@ -883,7 +886,10 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
 
             let return_type = match &call.function_ty.as_ref() {
                 llvm_ir::Type::FuncType { result_type, .. } => format_type(result_type),
-                _ => "i32".to_string(),
+                other => panic!(
+                    "Call instruction missing function type information: {:?}",
+                    other
+                ),
             };
 
             if let Some(dest) = &call.dest {
@@ -978,9 +984,12 @@ fn get_operand_type(operand: &llvm_ir::Operand) -> Type {
             | llvm_ir::Constant::Null(ty)
             | llvm_ir::Constant::Undef(ty) => ty.as_ref().clone(),
             llvm_ir::Constant::GetElementPtr(_) => Type::PointerType { addr_space: 0 },
-            _ => Type::IntegerType { bits: 32 },
+            other => panic!(
+                "Unsupported constant operand type for formatting: {:?}",
+                other
+            ),
         },
-        _ => Type::IntegerType { bits: 32 }, // fallback
+        other => panic!("Unsupported operand kind when deriving type: {:?}", other),
     }
 }
 
