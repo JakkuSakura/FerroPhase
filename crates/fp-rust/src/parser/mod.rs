@@ -252,6 +252,44 @@ impl RustParser {
             stmts: parsed_items,
         })))
     }
+
+    /// Parse FP-specific content that may contain structs with embedded functions
+    /// and other FerroPhase-specific syntax extensions
+    pub fn parse_fp_content(&self, content: &str) -> Result<Expr> {
+        // First try to parse as items wrapped in a module
+        let wrapped_content = format!("mod fp_block {{ {} }}", content);
+        
+        match syn::parse_str::<syn::File>(&wrapped_content) {
+            Ok(file) => {
+                // Extract the module content
+                if let Some(syn::Item::Mod(module)) = file.items.into_iter().next() {
+                    if let Some((_, items)) = module.content {
+                        // Parse the items using the existing FP parser
+                        let parsed_items = self.parse_items(items)?;
+                        
+                        // Convert items to block statements
+                        let stmts: Vec<BlockStmt> = parsed_items
+                            .into_iter()
+                            .map(|item| BlockStmt::Item(Box::new(item)))
+                            .collect();
+                        
+                        return Ok(Expr::Block(ExprBlock { stmts }));
+                    }
+                }
+            }
+            Err(_) => {
+                // If module parsing fails, try parsing as block statements
+                let wrapped_content = format!("{{ {} }}", content);
+                
+                if let Ok(syn::Expr::Block(block_expr)) = syn::parse_str::<syn::Expr>(&wrapped_content) {
+                    return crate::parser::expr::parse_block(block_expr.block).map(Expr::Block);
+                }
+            }
+        }
+        
+        // If all parsing attempts fail, return a descriptive error
+        bail!("Failed to parse FP content: {}", content)
+    }
 }
 
 impl AstDeserializer for RustParser {
