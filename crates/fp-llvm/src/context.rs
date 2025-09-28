@@ -611,7 +611,7 @@ impl LlvmContext {
                 continue; // Skip external function declarations - they're handled as declarations above
             }
             // Generate function signature; force main to return i32 for C ABIs
-            let is_main = function.name == "func_0" || function.name == "main";
+            let is_main = function.name == "main";
             let return_type_str = if is_main {
                 "i32"
             } else {
@@ -627,12 +627,7 @@ impl LlvmContext {
                 }
             };
 
-            // Use "main" for the first function, otherwise keep original name
-            let func_name = if function.name == "func_0" {
-                "main"
-            } else {
-                &function.name
-            };
+            let func_name = &function.name;
 
             ir.push_str(&format!("define {} @{}(", return_type_str, func_name));
 

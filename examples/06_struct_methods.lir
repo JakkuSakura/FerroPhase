@@ -1,0 +1,1963 @@
+LirProgram {
+    functions: [
+        LirFunction {
+            name: "Point__new",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                    I64,
+                ],
+                return_type: I64,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [],
+                    terminator: Return(
+                        Some(
+                            Constant(
+                                Int(
+                                    0,
+                                    I64,
+                                ),
+                            ),
+                        ),
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "Point__translate",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                    I64,
+                    I64,
+                ],
+                return_type: Void,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 0,
+                            kind: Alloca {
+                                size: Constant(
+                                    Int(
+                                        1,
+                                        I32,
+                                    ),
+                                ),
+                                alignment: 8,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 1,
+                            kind: Load {
+                                address: Register(
+                                    0,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 2,
+                            kind: Add(
+                                Register(
+                                    1,
+                                ),
+                                Local(
+                                    2,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 3,
+                            kind: Store {
+                                value: Register(
+                                    2,
+                                ),
+                                address: Register(
+                                    0,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 4,
+                            kind: Load {
+                                address: Register(
+                                    0,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 5,
+                            kind: Add(
+                                Register(
+                                    4,
+                                ),
+                                Local(
+                                    3,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 6,
+                            kind: Store {
+                                value: Register(
+                                    5,
+                                ),
+                                address: Register(
+                                    0,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        None,
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 6,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 7,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 8,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 9,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 10,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 11,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 12,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 13,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "Point__distance2",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                    I64,
+                ],
+                return_type: I64,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 7,
+                            kind: Sub(
+                                Local(
+                                    1,
+                                ),
+                                Local(
+                                    2,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 8,
+                            kind: Sub(
+                                Local(
+                                    1,
+                                ),
+                                Local(
+                                    2,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 9,
+                            kind: Mul(
+                                Register(
+                                    7,
+                                ),
+                                Register(
+                                    7,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 10,
+                            kind: Mul(
+                                Register(
+                                    8,
+                                ),
+                                Register(
+                                    8,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 11,
+                            kind: Add(
+                                Register(
+                                    9,
+                                ),
+                                Register(
+                                    10,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 12,
+                            kind: Mul(
+                                Register(
+                                    7,
+                                ),
+                                Register(
+                                    7,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 13,
+                            kind: Mul(
+                                Register(
+                                    8,
+                                ),
+                                Register(
+                                    8,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 14,
+                            kind: Add(
+                                Register(
+                                    12,
+                                ),
+                                Register(
+                                    13,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        Some(
+                            Register(
+                                14,
+                            ),
+                        ),
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 6,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 7,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 8,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 9,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 10,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 11,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 12,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 13,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 14,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 15,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 16,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 17,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 18,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "Rectangle__new",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                    I64,
+                ],
+                return_type: I64,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [],
+                    terminator: Return(
+                        Some(
+                            Constant(
+                                Int(
+                                    0,
+                                    I64,
+                                ),
+                            ),
+                        ),
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "Rectangle__area",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                ],
+                return_type: I64,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 15,
+                            kind: Mul(
+                                Local(
+                                    1,
+                                ),
+                                Local(
+                                    1,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        Some(
+                            Register(
+                                15,
+                            ),
+                        ),
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "Rectangle__perimeter",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                ],
+                return_type: I64,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 16,
+                            kind: Add(
+                                Local(
+                                    1,
+                                ),
+                                Local(
+                                    1,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 17,
+                            kind: Mul(
+                                Constant(
+                                    Int(
+                                        2,
+                                        I64,
+                                    ),
+                                ),
+                                Register(
+                                    16,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        Some(
+                            Register(
+                                17,
+                            ),
+                        ),
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 6,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 7,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "Rectangle__is_square",
+            signature: LirFunctionSignature {
+                params: [
+                    I64,
+                ],
+                return_type: I1,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 18,
+                            kind: Eq(
+                                Local(
+                                    1,
+                                ),
+                                Local(
+                                    1,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I1,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        Some(
+                            Register(
+                                18,
+                            ),
+                        ),
+                    ),
+                    predecessors: [],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: I1,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: true,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: I1,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+        LirFunction {
+            name: "main",
+            signature: LirFunctionSignature {
+                params: [],
+                return_type: Void,
+                is_variadic: false,
+            },
+            basic_blocks: [
+                LirBasicBlock {
+                    id: 0,
+                    label: Some(
+                        "bb0",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 19,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "=== Struct Operations ===",
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        1,
+                    ),
+                    predecessors: [],
+                    successors: [
+                        1,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 1,
+                    label: Some(
+                        "bb1",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 20,
+                            kind: Call {
+                                function: Function(
+                                    "Point::new",
+                                ),
+                                args: [
+                                    Constant(
+                                        Int(
+                                            10,
+                                            I64,
+                                        ),
+                                    ),
+                                    Constant(
+                                        Int(
+                                            20,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        2,
+                    ),
+                    predecessors: [
+                        0,
+                    ],
+                    successors: [
+                        2,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 2,
+                    label: Some(
+                        "bb2",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 21,
+                            kind: Call {
+                                function: Function(
+                                    "Point::new",
+                                ),
+                                args: [
+                                    Constant(
+                                        Int(
+                                            5,
+                                            I64,
+                                        ),
+                                    ),
+                                    Constant(
+                                        Int(
+                                            15,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        3,
+                    ),
+                    predecessors: [
+                        1,
+                    ],
+                    successors: [
+                        3,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 3,
+                    label: Some(
+                        "bb3",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 22,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "p1 = (%lld, %lld)",
+                                        ),
+                                    ),
+                                    Register(
+                                        20,
+                                    ),
+                                    Register(
+                                        20,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        4,
+                    ),
+                    predecessors: [
+                        2,
+                    ],
+                    successors: [
+                        4,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 4,
+                    label: Some(
+                        "bb4",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 23,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "p2 = (%lld, %lld)",
+                                        ),
+                                    ),
+                                    Register(
+                                        21,
+                                    ),
+                                    Register(
+                                        21,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        5,
+                    ),
+                    predecessors: [
+                        3,
+                    ],
+                    successors: [
+                        5,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 5,
+                    label: Some(
+                        "bb5",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 24,
+                            kind: Sub(
+                                Constant(
+                                    Int(
+                                        0,
+                                        I64,
+                                    ),
+                                ),
+                                Constant(
+                                    Int(
+                                        4,
+                                        I64,
+                                    ),
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 25,
+                            kind: Call {
+                                function: Function(
+                                    "translate",
+                                ),
+                                args: [
+                                    Register(
+                                        20,
+                                    ),
+                                    Constant(
+                                        Int(
+                                            3,
+                                            I64,
+                                        ),
+                                    ),
+                                    Register(
+                                        24,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        6,
+                    ),
+                    predecessors: [
+                        4,
+                    ],
+                    successors: [
+                        6,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 6,
+                    label: Some(
+                        "bb6",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 26,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "p1 after translate = (%lld, %lld)",
+                                        ),
+                                    ),
+                                    Register(
+                                        20,
+                                    ),
+                                    Register(
+                                        20,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        7,
+                    ),
+                    predecessors: [
+                        5,
+                    ],
+                    successors: [
+                        7,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 7,
+                    label: Some(
+                        "bb7",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 27,
+                            kind: Call {
+                                function: Function(
+                                    "distance2",
+                                ),
+                                args: [
+                                    Register(
+                                        20,
+                                    ),
+                                    Register(
+                                        21,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        8,
+                    ),
+                    predecessors: [
+                        6,
+                    ],
+                    successors: [
+                        8,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 8,
+                    label: Some(
+                        "bb8",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 28,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "Distance²(p1, p2) = %lld",
+                                        ),
+                                    ),
+                                    Register(
+                                        27,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        9,
+                    ),
+                    predecessors: [
+                        7,
+                    ],
+                    successors: [
+                        9,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 9,
+                    label: Some(
+                        "bb9",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 29,
+                            kind: Call {
+                                function: Function(
+                                    "Rectangle::new",
+                                ),
+                                args: [
+                                    Constant(
+                                        Int(
+                                            10,
+                                            I64,
+                                        ),
+                                    ),
+                                    Constant(
+                                        Int(
+                                            5,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        10,
+                    ),
+                    predecessors: [
+                        8,
+                    ],
+                    successors: [
+                        10,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 10,
+                    label: Some(
+                        "bb10",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 30,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "Rectangle: %lld×%lld",
+                                        ),
+                                    ),
+                                    Register(
+                                        29,
+                                    ),
+                                    Register(
+                                        29,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        11,
+                    ),
+                    predecessors: [
+                        9,
+                    ],
+                    successors: [
+                        11,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 11,
+                    label: Some(
+                        "bb11",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 31,
+                            kind: Call {
+                                function: Function(
+                                    "area",
+                                ),
+                                args: [
+                                    Register(
+                                        29,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        12,
+                    ),
+                    predecessors: [
+                        10,
+                    ],
+                    successors: [
+                        12,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 12,
+                    label: Some(
+                        "bb12",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 32,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "  area = %lld",
+                                        ),
+                                    ),
+                                    Register(
+                                        31,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        13,
+                    ),
+                    predecessors: [
+                        11,
+                    ],
+                    successors: [
+                        13,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 13,
+                    label: Some(
+                        "bb13",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 33,
+                            kind: Call {
+                                function: Function(
+                                    "perimeter",
+                                ),
+                                args: [
+                                    Register(
+                                        29,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        14,
+                    ),
+                    predecessors: [
+                        12,
+                    ],
+                    successors: [
+                        14,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 14,
+                    label: Some(
+                        "bb14",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 34,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "  perimeter = %lld",
+                                        ),
+                                    ),
+                                    Register(
+                                        33,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        15,
+                    ),
+                    predecessors: [
+                        13,
+                    ],
+                    successors: [
+                        15,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 15,
+                    label: Some(
+                        "bb15",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 35,
+                            kind: Call {
+                                function: Function(
+                                    "is_square",
+                                ),
+                                args: [
+                                    Register(
+                                        29,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                I1,
+                            ),
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        16,
+                    ),
+                    predecessors: [
+                        14,
+                    ],
+                    successors: [
+                        16,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 16,
+                    label: Some(
+                        "bb16",
+                    ),
+                    instructions: [
+                        LirInstruction {
+                            id: 36,
+                            kind: Call {
+                                function: Function(
+                                    "std::io::println",
+                                ),
+                                args: [
+                                    Constant(
+                                        String(
+                                            "  is_square = %d",
+                                        ),
+                                    ),
+                                    Register(
+                                        35,
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Br(
+                        17,
+                    ),
+                    predecessors: [
+                        15,
+                    ],
+                    successors: [
+                        17,
+                    ],
+                },
+                LirBasicBlock {
+                    id: 17,
+                    label: Some(
+                        "bb17",
+                    ),
+                    instructions: [],
+                    terminator: Return(
+                        None,
+                    ),
+                    predecessors: [
+                        16,
+                    ],
+                    successors: [],
+                },
+            ],
+            locals: [
+                LirLocal {
+                    id: 0,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 1,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 2,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 3,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 4,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 5,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 6,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 7,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 8,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 9,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 10,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 11,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 12,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 13,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 14,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 15,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 16,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 17,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 18,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 19,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 20,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 21,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 22,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 23,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 24,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 25,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 26,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 27,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 28,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 29,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 30,
+                    ty: I32,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 31,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 32,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 33,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 34,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 35,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 36,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 37,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 38,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 39,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 40,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 41,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 42,
+                    ty: I64,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 43,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 44,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 45,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 46,
+                    ty: I1,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 47,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+                LirLocal {
+                    id: 48,
+                    ty: Void,
+                    name: None,
+                    is_argument: false,
+                },
+            ],
+            stack_slots: [],
+            calling_convention: C,
+            linkage: Internal,
+        },
+    ],
+    globals: [],
+    type_definitions: [],
+}

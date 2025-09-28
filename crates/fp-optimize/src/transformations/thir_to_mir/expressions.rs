@@ -1,5 +1,6 @@
 use super::*;
 use crate::error::optimization_error;
+use fp_core::hir::typed::ty::TyKind as ThirTyKind;
 
 impl MirGenerator {
     pub(super) fn transform_expr(
@@ -115,6 +116,32 @@ impl MirGenerator {
                 Ok(ExprOutcome {
                     place: result_place,
                     block: after_rhs,
+                })
+            }
+            thir::ExprKind::Unary(op, operand) => {
+                let ExprOutcome {
+                    place: operand_place,
+                    block: after_operand,
+                } = self.transform_expr(*operand, current_bb)?;
+
+                let result_local = self.create_local_from_thir(&expr.ty);
+                let result_place = mir::Place::from_local(result_local);
+                let unary_op = self.convert_thir_unop(op)?;
+
+                self.add_statement_to_block(
+                    after_operand,
+                    mir::Statement {
+                        kind: mir::StatementKind::Assign(
+                            result_place.clone(),
+                            mir::Rvalue::UnaryOp(unary_op, mir::Operand::Move(operand_place)),
+                        ),
+                        source_info: expr.span,
+                    },
+                );
+
+                Ok(ExprOutcome {
+                    place: result_place,
+                    block: after_operand,
                 })
             }
             thir::ExprKind::Call { fun, args, .. } => {
@@ -886,7 +913,22 @@ impl MirGenerator {
         match expr.kind {
             thir::ExprKind::VarRef { id } => {
                 let local = self.get_or_create_local_from_thir(id, &expr.ty);
-                Ok((mir::Place::from_local(local), current_bb))
+                let mut place = mir::Place::from_local(local);
+                if matches!(
+                    expr.ty.kind,
+                    ThirTyKind::Ref(_, _, _) | ThirTyKind::RawPtr(_)
+                ) {
+                    place.projection.push(mir::PlaceElem::Deref);
+                }
+                Ok((place, current_bb))
+            }
+            thir::ExprKind::Field { base, field_idx } => {
+                let (mut base_place, block) = self.lower_place_expression(*base, current_bb)?;
+                let field_ty = self.transform_type(&expr.ty);
+                base_place
+                    .projection
+                    .push(mir::PlaceElem::Field(field_idx, field_ty));
+                Ok((base_place, block))
             }
             thir::ExprKind::Local(local_id) => {
                 let local = self.get_or_create_local_from_thir(local_id, &expr.ty);
@@ -984,6 +1026,13 @@ impl MirGenerator {
                 "Unsupported THIR binary operator {:?} during MIR lowering",
                 other
             ))),
+        }
+    }
+
+    pub(super) fn convert_thir_unop(&self, op: thir::UnOp) -> Result<mir::UnOp> {
+        match op {
+            thir::UnOp::Neg => Ok(mir::UnOp::Neg),
+            thir::UnOp::Not => Ok(mir::UnOp::Not),
         }
     }
 }

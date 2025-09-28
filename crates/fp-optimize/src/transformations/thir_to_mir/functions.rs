@@ -43,6 +43,9 @@ impl MirGenerator {
             .collect();
 
         let func = mir::Function {
+            name: func.name.clone(),
+            path: func.path.clone(),
+            def_id: func.def_id.map(|id| id as mir_types::DefId),
             sig: mir::FunctionSig {
                 inputs,
                 output: mir_ty,
@@ -183,10 +186,7 @@ impl MirGenerator {
 
     pub(super) fn binding_local_from_pattern(&self, pattern: &thir::Pat) -> Option<thir::LocalId> {
         match &pattern.kind {
-            thir::PatKind::Binding { var, .. } => {
-                println!("binding_local_from_pattern found local {}", var);
-                Some(*var)
-            }
+            thir::PatKind::Binding { var, .. } => Some(*var),
             thir::PatKind::Deref { subpattern } => self.binding_local_from_pattern(subpattern),
             _ => None,
         }

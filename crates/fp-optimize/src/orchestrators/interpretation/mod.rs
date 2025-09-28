@@ -1249,6 +1249,9 @@ mod tests {
         let function_item = thir::Item {
             thir_id: 30,
             kind: thir::ItemKind::Function(thir::Function {
+                name: "add_five".to_string(),
+                path: vec!["add_five".to_string()],
+                def_id: Some(def_id),
                 sig: thir::FunctionSig {
                     inputs: vec![param_ty.clone()],
                     output: param_ty.clone(),
@@ -1375,6 +1378,9 @@ mod tests {
         let function_item = thir::Item {
             thir_id: 220,
             kind: thir::ItemKind::Function(thir::Function {
+                name: "const_return".to_string(),
+                path: vec!["const_return".to_string()],
+                def_id: Some(def_id),
                 sig: thir::FunctionSig {
                     inputs: vec![param_ty.clone()],
                     output: param_ty.clone(),
@@ -1503,6 +1509,9 @@ mod tests {
         let function_item = thir::Item {
             thir_id: 440,
             kind: thir::ItemKind::Function(thir::Function {
+                name: "match_identity".to_string(),
+                path: vec!["match_identity".to_string()],
+                def_id: Some(def_id),
                 sig: thir::FunctionSig {
                     inputs: vec![param_ty.clone()],
                     output: param_ty.clone(),
@@ -1582,6 +1591,9 @@ mod tests {
         let function_item = thir::Item {
             thir_id: 901,
             kind: thir::ItemKind::Function(thir::Function {
+                name: "runtime_value".to_string(),
+                path: vec!["runtime_value".to_string()],
+                def_id: Some(def_id),
                 sig: thir::FunctionSig {
                     inputs: Vec::new(),
                     output: i32_ty(),
