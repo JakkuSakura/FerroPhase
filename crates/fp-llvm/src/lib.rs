@@ -175,9 +175,10 @@ impl LlvmCompiler {
         }
 
         // Verify the module
-        llvm_ctx
-            .verify_module()
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        llvm_ctx.verify_module().map_err(|e| {
+            println!("[fp-llvm] module verification failed: {}", e);
+            fp_core::error::Error::from(e.to_string())
+        })?;
 
         // Persist LLVM IR to file for downstream tools (llc/clang)
         let output_path = self.config.linker.output_path.clone();
