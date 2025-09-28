@@ -3560,6 +3560,904 @@ Program {
         },
     ],
     def_map: {
+        3: Item {
+            hir_id: 99,
+            def_id: 3,
+            visibility: Private,
+            kind: Impl(
+                Impl {
+                    generics: Generics {
+                        params: [],
+                        where_clause: None,
+                    },
+                    trait_ty: None,
+                    self_ty: TypeExpr {
+                        hir_id: 100,
+                        kind: Path(
+                            Path {
+                                segments: [
+                                    PathSegment {
+                                        name: "Rectangle",
+                                        args: None,
+                                    },
+                                ],
+                                res: Some(
+                                    Def(
+                                        2,
+                                    ),
+                                ),
+                            },
+                        ),
+                        span: Span {
+                            file: 18356164589870029453,
+                            lo: 0,
+                            hi: 0,
+                        },
+                    },
+                    items: [
+                        ImplItem {
+                            hir_id: 114,
+                            name: "new",
+                            kind: Method(
+                                Function {
+                                    sig: FunctionSig {
+                                        name: "new",
+                                        inputs: [
+                                            Param {
+                                                hir_id: 103,
+                                                pat: Pat {
+                                                    hir_id: 102,
+                                                    kind: Binding {
+                                                        name: "width",
+                                                        mutable: false,
+                                                    },
+                                                },
+                                                ty: TypeExpr {
+                                                    hir_id: 101,
+                                                    kind: Primitive(
+                                                        Int(
+                                                            I64,
+                                                        ),
+                                                    ),
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            },
+                                            Param {
+                                                hir_id: 106,
+                                                pat: Pat {
+                                                    hir_id: 105,
+                                                    kind: Binding {
+                                                        name: "height",
+                                                        mutable: false,
+                                                    },
+                                                },
+                                                ty: TypeExpr {
+                                                    hir_id: 104,
+                                                    kind: Primitive(
+                                                        Int(
+                                                            I64,
+                                                        ),
+                                                    ),
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            },
+                                        ],
+                                        output: TypeExpr {
+                                            hir_id: 107,
+                                            kind: Path(
+                                                Path {
+                                                    segments: [
+                                                        PathSegment {
+                                                            name: "Self",
+                                                            args: None,
+                                                        },
+                                                    ],
+                                                    res: Some(
+                                                        SelfTy,
+                                                    ),
+                                                },
+                                            ),
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                        },
+                                        generics: Generics {
+                                            params: [],
+                                            where_clause: None,
+                                        },
+                                    },
+                                    body: Some(
+                                        Body {
+                                            hir_id: 113,
+                                            params: [
+                                                Param {
+                                                    hir_id: 103,
+                                                    pat: Pat {
+                                                        hir_id: 102,
+                                                        kind: Binding {
+                                                            name: "width",
+                                                            mutable: false,
+                                                        },
+                                                    },
+                                                    ty: TypeExpr {
+                                                        hir_id: 101,
+                                                        kind: Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                },
+                                                Param {
+                                                    hir_id: 106,
+                                                    pat: Pat {
+                                                        hir_id: 105,
+                                                        kind: Binding {
+                                                            name: "height",
+                                                            mutable: false,
+                                                        },
+                                                    },
+                                                    ty: TypeExpr {
+                                                        hir_id: 104,
+                                                        kind: Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                },
+                                            ],
+                                            value: Expr {
+                                                hir_id: 108,
+                                                kind: Struct(
+                                                    Path {
+                                                        segments: [
+                                                            PathSegment {
+                                                                name: "Self",
+                                                                args: None,
+                                                            },
+                                                        ],
+                                                        res: Some(
+                                                            SelfTy,
+                                                        ),
+                                                    },
+                                                    [
+                                                        StructExprField {
+                                                            hir_id: 110,
+                                                            name: "width",
+                                                            expr: Expr {
+                                                                hir_id: 109,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "width",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                102,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 48,
+                                                                    hi: 49,
+                                                                },
+                                                            },
+                                                        },
+                                                        StructExprField {
+                                                            hir_id: 112,
+                                                            name: "height",
+                                                            expr: Expr {
+                                                                hir_id: 111,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "height",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                105,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 49,
+                                                                    hi: 50,
+                                                                },
+                                                            },
+                                                        },
+                                                    ],
+                                                ),
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 47,
+                                                    hi: 48,
+                                                },
+                                            },
+                                        },
+                                    ),
+                                    is_const: false,
+                                },
+                            ),
+                        },
+                        ImplItem {
+                            hir_id: 125,
+                            name: "area",
+                            kind: Method(
+                                Function {
+                                    sig: FunctionSig {
+                                        name: "area",
+                                        inputs: [
+                                            Param {
+                                                hir_id: 116,
+                                                pat: Pat {
+                                                    hir_id: 117,
+                                                    kind: Binding {
+                                                        name: "self",
+                                                        mutable: false,
+                                                    },
+                                                },
+                                                ty: TypeExpr {
+                                                    hir_id: 115,
+                                                    kind: Ref(
+                                                        TypeExpr {
+                                                            hir_id: 100,
+                                                            kind: Path(
+                                                                Path {
+                                                                    segments: [
+                                                                        PathSegment {
+                                                                            name: "Rectangle",
+                                                                            args: None,
+                                                                        },
+                                                                    ],
+                                                                    res: Some(
+                                                                        Def(
+                                                                            2,
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 0,
+                                                                hi: 0,
+                                                            },
+                                                        },
+                                                    ),
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            },
+                                        ],
+                                        output: TypeExpr {
+                                            hir_id: 118,
+                                            kind: Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                        },
+                                        generics: Generics {
+                                            params: [],
+                                            where_clause: None,
+                                        },
+                                    },
+                                    body: Some(
+                                        Body {
+                                            hir_id: 124,
+                                            params: [
+                                                Param {
+                                                    hir_id: 116,
+                                                    pat: Pat {
+                                                        hir_id: 117,
+                                                        kind: Binding {
+                                                            name: "self",
+                                                            mutable: false,
+                                                        },
+                                                    },
+                                                    ty: TypeExpr {
+                                                        hir_id: 115,
+                                                        kind: Ref(
+                                                            TypeExpr {
+                                                                hir_id: 100,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "Rectangle",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Def(
+                                                                                2,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                },
+                                            ],
+                                            value: Expr {
+                                                hir_id: 119,
+                                                kind: Binary(
+                                                    Mul,
+                                                    Expr {
+                                                        hir_id: 120,
+                                                        kind: FieldAccess(
+                                                            Expr {
+                                                                hir_id: 121,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "self",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                117,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 52,
+                                                                    hi: 53,
+                                                                },
+                                                            },
+                                                            "width",
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 51,
+                                                            hi: 52,
+                                                        },
+                                                    },
+                                                    Expr {
+                                                        hir_id: 122,
+                                                        kind: FieldAccess(
+                                                            Expr {
+                                                                hir_id: 123,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "self",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                117,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 54,
+                                                                    hi: 55,
+                                                                },
+                                                            },
+                                                            "height",
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 53,
+                                                            hi: 54,
+                                                        },
+                                                    },
+                                                ),
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 50,
+                                                    hi: 51,
+                                                },
+                                            },
+                                        },
+                                    ),
+                                    is_const: false,
+                                },
+                            ),
+                        },
+                        ImplItem {
+                            hir_id: 139,
+                            name: "perimeter",
+                            kind: Method(
+                                Function {
+                                    sig: FunctionSig {
+                                        name: "perimeter",
+                                        inputs: [
+                                            Param {
+                                                hir_id: 127,
+                                                pat: Pat {
+                                                    hir_id: 128,
+                                                    kind: Binding {
+                                                        name: "self",
+                                                        mutable: false,
+                                                    },
+                                                },
+                                                ty: TypeExpr {
+                                                    hir_id: 126,
+                                                    kind: Ref(
+                                                        TypeExpr {
+                                                            hir_id: 100,
+                                                            kind: Path(
+                                                                Path {
+                                                                    segments: [
+                                                                        PathSegment {
+                                                                            name: "Rectangle",
+                                                                            args: None,
+                                                                        },
+                                                                    ],
+                                                                    res: Some(
+                                                                        Def(
+                                                                            2,
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 0,
+                                                                hi: 0,
+                                                            },
+                                                        },
+                                                    ),
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            },
+                                        ],
+                                        output: TypeExpr {
+                                            hir_id: 129,
+                                            kind: Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                        },
+                                        generics: Generics {
+                                            params: [],
+                                            where_clause: None,
+                                        },
+                                    },
+                                    body: Some(
+                                        Body {
+                                            hir_id: 138,
+                                            params: [
+                                                Param {
+                                                    hir_id: 127,
+                                                    pat: Pat {
+                                                        hir_id: 128,
+                                                        kind: Binding {
+                                                            name: "self",
+                                                            mutable: false,
+                                                        },
+                                                    },
+                                                    ty: TypeExpr {
+                                                        hir_id: 126,
+                                                        kind: Ref(
+                                                            TypeExpr {
+                                                                hir_id: 100,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "Rectangle",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Def(
+                                                                                2,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                },
+                                            ],
+                                            value: Expr {
+                                                hir_id: 130,
+                                                kind: Binary(
+                                                    Mul,
+                                                    Expr {
+                                                        hir_id: 131,
+                                                        kind: Literal(
+                                                            Integer(
+                                                                2,
+                                                            ),
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 56,
+                                                            hi: 57,
+                                                        },
+                                                    },
+                                                    Expr {
+                                                        hir_id: 132,
+                                                        kind: Binary(
+                                                            Add,
+                                                            Expr {
+                                                                hir_id: 134,
+                                                                kind: FieldAccess(
+                                                                    Expr {
+                                                                        hir_id: 135,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "self",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        128,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 18356164589870029453,
+                                                                            lo: 60,
+                                                                            hi: 61,
+                                                                        },
+                                                                    },
+                                                                    "width",
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 59,
+                                                                    hi: 60,
+                                                                },
+                                                            },
+                                                            Expr {
+                                                                hir_id: 136,
+                                                                kind: FieldAccess(
+                                                                    Expr {
+                                                                        hir_id: 137,
+                                                                        kind: Path(
+                                                                            Path {
+                                                                                segments: [
+                                                                                    PathSegment {
+                                                                                        name: "self",
+                                                                                        args: None,
+                                                                                    },
+                                                                                ],
+                                                                                res: Some(
+                                                                                    Local(
+                                                                                        128,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                        span: Span {
+                                                                            file: 18356164589870029453,
+                                                                            lo: 62,
+                                                                            hi: 63,
+                                                                        },
+                                                                    },
+                                                                    "height",
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 61,
+                                                                    hi: 62,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 57,
+                                                            hi: 58,
+                                                        },
+                                                    },
+                                                ),
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 55,
+                                                    hi: 56,
+                                                },
+                                            },
+                                        },
+                                    ),
+                                    is_const: false,
+                                },
+                            ),
+                        },
+                        ImplItem {
+                            hir_id: 150,
+                            name: "is_square",
+                            kind: Method(
+                                Function {
+                                    sig: FunctionSig {
+                                        name: "is_square",
+                                        inputs: [
+                                            Param {
+                                                hir_id: 141,
+                                                pat: Pat {
+                                                    hir_id: 142,
+                                                    kind: Binding {
+                                                        name: "self",
+                                                        mutable: false,
+                                                    },
+                                                },
+                                                ty: TypeExpr {
+                                                    hir_id: 140,
+                                                    kind: Ref(
+                                                        TypeExpr {
+                                                            hir_id: 100,
+                                                            kind: Path(
+                                                                Path {
+                                                                    segments: [
+                                                                        PathSegment {
+                                                                            name: "Rectangle",
+                                                                            args: None,
+                                                                        },
+                                                                    ],
+                                                                    res: Some(
+                                                                        Def(
+                                                                            2,
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 0,
+                                                                hi: 0,
+                                                            },
+                                                        },
+                                                    ),
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 0,
+                                                        hi: 0,
+                                                    },
+                                                },
+                                            },
+                                        ],
+                                        output: TypeExpr {
+                                            hir_id: 143,
+                                            kind: Path(
+                                                Path {
+                                                    segments: [
+                                                        PathSegment {
+                                                            name: "bool",
+                                                            args: None,
+                                                        },
+                                                    ],
+                                                    res: None,
+                                                },
+                                            ),
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 0,
+                                                hi: 0,
+                                            },
+                                        },
+                                        generics: Generics {
+                                            params: [],
+                                            where_clause: None,
+                                        },
+                                    },
+                                    body: Some(
+                                        Body {
+                                            hir_id: 149,
+                                            params: [
+                                                Param {
+                                                    hir_id: 141,
+                                                    pat: Pat {
+                                                        hir_id: 142,
+                                                        kind: Binding {
+                                                            name: "self",
+                                                            mutable: false,
+                                                        },
+                                                    },
+                                                    ty: TypeExpr {
+                                                        hir_id: 140,
+                                                        kind: Ref(
+                                                            TypeExpr {
+                                                                hir_id: 100,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "Rectangle",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Def(
+                                                                                2,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 0,
+                                                                    hi: 0,
+                                                                },
+                                                            },
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 0,
+                                                            hi: 0,
+                                                        },
+                                                    },
+                                                },
+                                            ],
+                                            value: Expr {
+                                                hir_id: 144,
+                                                kind: Binary(
+                                                    Eq,
+                                                    Expr {
+                                                        hir_id: 145,
+                                                        kind: FieldAccess(
+                                                            Expr {
+                                                                hir_id: 146,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "self",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                142,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 65,
+                                                                    hi: 66,
+                                                                },
+                                                            },
+                                                            "width",
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 64,
+                                                            hi: 65,
+                                                        },
+                                                    },
+                                                    Expr {
+                                                        hir_id: 147,
+                                                        kind: FieldAccess(
+                                                            Expr {
+                                                                hir_id: 148,
+                                                                kind: Path(
+                                                                    Path {
+                                                                        segments: [
+                                                                            PathSegment {
+                                                                                name: "self",
+                                                                                args: None,
+                                                                            },
+                                                                        ],
+                                                                        res: Some(
+                                                                            Local(
+                                                                                142,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                span: Span {
+                                                                    file: 18356164589870029453,
+                                                                    lo: 67,
+                                                                    hi: 68,
+                                                                },
+                                                            },
+                                                            "height",
+                                                        ),
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 66,
+                                                            hi: 67,
+                                                        },
+                                                    },
+                                                ),
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 63,
+                                                    hi: 64,
+                                                },
+                                            },
+                                        },
+                                    ),
+                                    is_const: false,
+                                },
+                            ),
+                        },
+                    ],
+                },
+            ),
+            span: Span {
+                file: 18356164589870029453,
+                lo: 46,
+                hi: 47,
+            },
+        },
         2: Item {
             hir_id: 94,
             def_id: 2,
@@ -4823,904 +5721,6 @@ Program {
                 file: 18356164589870029453,
                 lo: 0,
                 hi: 1,
-            },
-        },
-        3: Item {
-            hir_id: 99,
-            def_id: 3,
-            visibility: Private,
-            kind: Impl(
-                Impl {
-                    generics: Generics {
-                        params: [],
-                        where_clause: None,
-                    },
-                    trait_ty: None,
-                    self_ty: TypeExpr {
-                        hir_id: 100,
-                        kind: Path(
-                            Path {
-                                segments: [
-                                    PathSegment {
-                                        name: "Rectangle",
-                                        args: None,
-                                    },
-                                ],
-                                res: Some(
-                                    Def(
-                                        2,
-                                    ),
-                                ),
-                            },
-                        ),
-                        span: Span {
-                            file: 18356164589870029453,
-                            lo: 0,
-                            hi: 0,
-                        },
-                    },
-                    items: [
-                        ImplItem {
-                            hir_id: 114,
-                            name: "new",
-                            kind: Method(
-                                Function {
-                                    sig: FunctionSig {
-                                        name: "new",
-                                        inputs: [
-                                            Param {
-                                                hir_id: 103,
-                                                pat: Pat {
-                                                    hir_id: 102,
-                                                    kind: Binding {
-                                                        name: "width",
-                                                        mutable: false,
-                                                    },
-                                                },
-                                                ty: TypeExpr {
-                                                    hir_id: 101,
-                                                    kind: Primitive(
-                                                        Int(
-                                                            I64,
-                                                        ),
-                                                    ),
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 0,
-                                                        hi: 0,
-                                                    },
-                                                },
-                                            },
-                                            Param {
-                                                hir_id: 106,
-                                                pat: Pat {
-                                                    hir_id: 105,
-                                                    kind: Binding {
-                                                        name: "height",
-                                                        mutable: false,
-                                                    },
-                                                },
-                                                ty: TypeExpr {
-                                                    hir_id: 104,
-                                                    kind: Primitive(
-                                                        Int(
-                                                            I64,
-                                                        ),
-                                                    ),
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 0,
-                                                        hi: 0,
-                                                    },
-                                                },
-                                            },
-                                        ],
-                                        output: TypeExpr {
-                                            hir_id: 107,
-                                            kind: Path(
-                                                Path {
-                                                    segments: [
-                                                        PathSegment {
-                                                            name: "Self",
-                                                            args: None,
-                                                        },
-                                                    ],
-                                                    res: Some(
-                                                        SelfTy,
-                                                    ),
-                                                },
-                                            ),
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                        },
-                                        generics: Generics {
-                                            params: [],
-                                            where_clause: None,
-                                        },
-                                    },
-                                    body: Some(
-                                        Body {
-                                            hir_id: 113,
-                                            params: [
-                                                Param {
-                                                    hir_id: 103,
-                                                    pat: Pat {
-                                                        hir_id: 102,
-                                                        kind: Binding {
-                                                            name: "width",
-                                                            mutable: false,
-                                                        },
-                                                    },
-                                                    ty: TypeExpr {
-                                                        hir_id: 101,
-                                                        kind: Primitive(
-                                                            Int(
-                                                                I64,
-                                                            ),
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 0,
-                                                            hi: 0,
-                                                        },
-                                                    },
-                                                },
-                                                Param {
-                                                    hir_id: 106,
-                                                    pat: Pat {
-                                                        hir_id: 105,
-                                                        kind: Binding {
-                                                            name: "height",
-                                                            mutable: false,
-                                                        },
-                                                    },
-                                                    ty: TypeExpr {
-                                                        hir_id: 104,
-                                                        kind: Primitive(
-                                                            Int(
-                                                                I64,
-                                                            ),
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 0,
-                                                            hi: 0,
-                                                        },
-                                                    },
-                                                },
-                                            ],
-                                            value: Expr {
-                                                hir_id: 108,
-                                                kind: Struct(
-                                                    Path {
-                                                        segments: [
-                                                            PathSegment {
-                                                                name: "Self",
-                                                                args: None,
-                                                            },
-                                                        ],
-                                                        res: Some(
-                                                            SelfTy,
-                                                        ),
-                                                    },
-                                                    [
-                                                        StructExprField {
-                                                            hir_id: 110,
-                                                            name: "width",
-                                                            expr: Expr {
-                                                                hir_id: 109,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "width",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Local(
-                                                                                102,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 48,
-                                                                    hi: 49,
-                                                                },
-                                                            },
-                                                        },
-                                                        StructExprField {
-                                                            hir_id: 112,
-                                                            name: "height",
-                                                            expr: Expr {
-                                                                hir_id: 111,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "height",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Local(
-                                                                                105,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 49,
-                                                                    hi: 50,
-                                                                },
-                                                            },
-                                                        },
-                                                    ],
-                                                ),
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 47,
-                                                    hi: 48,
-                                                },
-                                            },
-                                        },
-                                    ),
-                                    is_const: false,
-                                },
-                            ),
-                        },
-                        ImplItem {
-                            hir_id: 125,
-                            name: "area",
-                            kind: Method(
-                                Function {
-                                    sig: FunctionSig {
-                                        name: "area",
-                                        inputs: [
-                                            Param {
-                                                hir_id: 116,
-                                                pat: Pat {
-                                                    hir_id: 117,
-                                                    kind: Binding {
-                                                        name: "self",
-                                                        mutable: false,
-                                                    },
-                                                },
-                                                ty: TypeExpr {
-                                                    hir_id: 115,
-                                                    kind: Ref(
-                                                        TypeExpr {
-                                                            hir_id: 100,
-                                                            kind: Path(
-                                                                Path {
-                                                                    segments: [
-                                                                        PathSegment {
-                                                                            name: "Rectangle",
-                                                                            args: None,
-                                                                        },
-                                                                    ],
-                                                                    res: Some(
-                                                                        Def(
-                                                                            2,
-                                                                        ),
-                                                                    ),
-                                                                },
-                                                            ),
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 0,
-                                                                hi: 0,
-                                                            },
-                                                        },
-                                                    ),
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 0,
-                                                        hi: 0,
-                                                    },
-                                                },
-                                            },
-                                        ],
-                                        output: TypeExpr {
-                                            hir_id: 118,
-                                            kind: Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
-                                            ),
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                        },
-                                        generics: Generics {
-                                            params: [],
-                                            where_clause: None,
-                                        },
-                                    },
-                                    body: Some(
-                                        Body {
-                                            hir_id: 124,
-                                            params: [
-                                                Param {
-                                                    hir_id: 116,
-                                                    pat: Pat {
-                                                        hir_id: 117,
-                                                        kind: Binding {
-                                                            name: "self",
-                                                            mutable: false,
-                                                        },
-                                                    },
-                                                    ty: TypeExpr {
-                                                        hir_id: 115,
-                                                        kind: Ref(
-                                                            TypeExpr {
-                                                                hir_id: 100,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "Rectangle",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Def(
-                                                                                2,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 0,
-                                                                    hi: 0,
-                                                                },
-                                                            },
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 0,
-                                                            hi: 0,
-                                                        },
-                                                    },
-                                                },
-                                            ],
-                                            value: Expr {
-                                                hir_id: 119,
-                                                kind: Binary(
-                                                    Mul,
-                                                    Expr {
-                                                        hir_id: 120,
-                                                        kind: FieldAccess(
-                                                            Expr {
-                                                                hir_id: 121,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "self",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Local(
-                                                                                117,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 52,
-                                                                    hi: 53,
-                                                                },
-                                                            },
-                                                            "width",
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 51,
-                                                            hi: 52,
-                                                        },
-                                                    },
-                                                    Expr {
-                                                        hir_id: 122,
-                                                        kind: FieldAccess(
-                                                            Expr {
-                                                                hir_id: 123,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "self",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Local(
-                                                                                117,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 54,
-                                                                    hi: 55,
-                                                                },
-                                                            },
-                                                            "height",
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 53,
-                                                            hi: 54,
-                                                        },
-                                                    },
-                                                ),
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 50,
-                                                    hi: 51,
-                                                },
-                                            },
-                                        },
-                                    ),
-                                    is_const: false,
-                                },
-                            ),
-                        },
-                        ImplItem {
-                            hir_id: 139,
-                            name: "perimeter",
-                            kind: Method(
-                                Function {
-                                    sig: FunctionSig {
-                                        name: "perimeter",
-                                        inputs: [
-                                            Param {
-                                                hir_id: 127,
-                                                pat: Pat {
-                                                    hir_id: 128,
-                                                    kind: Binding {
-                                                        name: "self",
-                                                        mutable: false,
-                                                    },
-                                                },
-                                                ty: TypeExpr {
-                                                    hir_id: 126,
-                                                    kind: Ref(
-                                                        TypeExpr {
-                                                            hir_id: 100,
-                                                            kind: Path(
-                                                                Path {
-                                                                    segments: [
-                                                                        PathSegment {
-                                                                            name: "Rectangle",
-                                                                            args: None,
-                                                                        },
-                                                                    ],
-                                                                    res: Some(
-                                                                        Def(
-                                                                            2,
-                                                                        ),
-                                                                    ),
-                                                                },
-                                                            ),
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 0,
-                                                                hi: 0,
-                                                            },
-                                                        },
-                                                    ),
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 0,
-                                                        hi: 0,
-                                                    },
-                                                },
-                                            },
-                                        ],
-                                        output: TypeExpr {
-                                            hir_id: 129,
-                                            kind: Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
-                                            ),
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                        },
-                                        generics: Generics {
-                                            params: [],
-                                            where_clause: None,
-                                        },
-                                    },
-                                    body: Some(
-                                        Body {
-                                            hir_id: 138,
-                                            params: [
-                                                Param {
-                                                    hir_id: 127,
-                                                    pat: Pat {
-                                                        hir_id: 128,
-                                                        kind: Binding {
-                                                            name: "self",
-                                                            mutable: false,
-                                                        },
-                                                    },
-                                                    ty: TypeExpr {
-                                                        hir_id: 126,
-                                                        kind: Ref(
-                                                            TypeExpr {
-                                                                hir_id: 100,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "Rectangle",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Def(
-                                                                                2,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 0,
-                                                                    hi: 0,
-                                                                },
-                                                            },
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 0,
-                                                            hi: 0,
-                                                        },
-                                                    },
-                                                },
-                                            ],
-                                            value: Expr {
-                                                hir_id: 130,
-                                                kind: Binary(
-                                                    Mul,
-                                                    Expr {
-                                                        hir_id: 131,
-                                                        kind: Literal(
-                                                            Integer(
-                                                                2,
-                                                            ),
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 56,
-                                                            hi: 57,
-                                                        },
-                                                    },
-                                                    Expr {
-                                                        hir_id: 132,
-                                                        kind: Binary(
-                                                            Add,
-                                                            Expr {
-                                                                hir_id: 134,
-                                                                kind: FieldAccess(
-                                                                    Expr {
-                                                                        hir_id: 135,
-                                                                        kind: Path(
-                                                                            Path {
-                                                                                segments: [
-                                                                                    PathSegment {
-                                                                                        name: "self",
-                                                                                        args: None,
-                                                                                    },
-                                                                                ],
-                                                                                res: Some(
-                                                                                    Local(
-                                                                                        128,
-                                                                                    ),
-                                                                                ),
-                                                                            },
-                                                                        ),
-                                                                        span: Span {
-                                                                            file: 18356164589870029453,
-                                                                            lo: 60,
-                                                                            hi: 61,
-                                                                        },
-                                                                    },
-                                                                    "width",
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 59,
-                                                                    hi: 60,
-                                                                },
-                                                            },
-                                                            Expr {
-                                                                hir_id: 136,
-                                                                kind: FieldAccess(
-                                                                    Expr {
-                                                                        hir_id: 137,
-                                                                        kind: Path(
-                                                                            Path {
-                                                                                segments: [
-                                                                                    PathSegment {
-                                                                                        name: "self",
-                                                                                        args: None,
-                                                                                    },
-                                                                                ],
-                                                                                res: Some(
-                                                                                    Local(
-                                                                                        128,
-                                                                                    ),
-                                                                                ),
-                                                                            },
-                                                                        ),
-                                                                        span: Span {
-                                                                            file: 18356164589870029453,
-                                                                            lo: 62,
-                                                                            hi: 63,
-                                                                        },
-                                                                    },
-                                                                    "height",
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 61,
-                                                                    hi: 62,
-                                                                },
-                                                            },
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 57,
-                                                            hi: 58,
-                                                        },
-                                                    },
-                                                ),
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 55,
-                                                    hi: 56,
-                                                },
-                                            },
-                                        },
-                                    ),
-                                    is_const: false,
-                                },
-                            ),
-                        },
-                        ImplItem {
-                            hir_id: 150,
-                            name: "is_square",
-                            kind: Method(
-                                Function {
-                                    sig: FunctionSig {
-                                        name: "is_square",
-                                        inputs: [
-                                            Param {
-                                                hir_id: 141,
-                                                pat: Pat {
-                                                    hir_id: 142,
-                                                    kind: Binding {
-                                                        name: "self",
-                                                        mutable: false,
-                                                    },
-                                                },
-                                                ty: TypeExpr {
-                                                    hir_id: 140,
-                                                    kind: Ref(
-                                                        TypeExpr {
-                                                            hir_id: 100,
-                                                            kind: Path(
-                                                                Path {
-                                                                    segments: [
-                                                                        PathSegment {
-                                                                            name: "Rectangle",
-                                                                            args: None,
-                                                                        },
-                                                                    ],
-                                                                    res: Some(
-                                                                        Def(
-                                                                            2,
-                                                                        ),
-                                                                    ),
-                                                                },
-                                                            ),
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 0,
-                                                                hi: 0,
-                                                            },
-                                                        },
-                                                    ),
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 0,
-                                                        hi: 0,
-                                                    },
-                                                },
-                                            },
-                                        ],
-                                        output: TypeExpr {
-                                            hir_id: 143,
-                                            kind: Path(
-                                                Path {
-                                                    segments: [
-                                                        PathSegment {
-                                                            name: "bool",
-                                                            args: None,
-                                                        },
-                                                    ],
-                                                    res: None,
-                                                },
-                                            ),
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 0,
-                                                hi: 0,
-                                            },
-                                        },
-                                        generics: Generics {
-                                            params: [],
-                                            where_clause: None,
-                                        },
-                                    },
-                                    body: Some(
-                                        Body {
-                                            hir_id: 149,
-                                            params: [
-                                                Param {
-                                                    hir_id: 141,
-                                                    pat: Pat {
-                                                        hir_id: 142,
-                                                        kind: Binding {
-                                                            name: "self",
-                                                            mutable: false,
-                                                        },
-                                                    },
-                                                    ty: TypeExpr {
-                                                        hir_id: 140,
-                                                        kind: Ref(
-                                                            TypeExpr {
-                                                                hir_id: 100,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "Rectangle",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Def(
-                                                                                2,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 0,
-                                                                    hi: 0,
-                                                                },
-                                                            },
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 0,
-                                                            hi: 0,
-                                                        },
-                                                    },
-                                                },
-                                            ],
-                                            value: Expr {
-                                                hir_id: 144,
-                                                kind: Binary(
-                                                    Eq,
-                                                    Expr {
-                                                        hir_id: 145,
-                                                        kind: FieldAccess(
-                                                            Expr {
-                                                                hir_id: 146,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "self",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Local(
-                                                                                142,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 65,
-                                                                    hi: 66,
-                                                                },
-                                                            },
-                                                            "width",
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 64,
-                                                            hi: 65,
-                                                        },
-                                                    },
-                                                    Expr {
-                                                        hir_id: 147,
-                                                        kind: FieldAccess(
-                                                            Expr {
-                                                                hir_id: 148,
-                                                                kind: Path(
-                                                                    Path {
-                                                                        segments: [
-                                                                            PathSegment {
-                                                                                name: "self",
-                                                                                args: None,
-                                                                            },
-                                                                        ],
-                                                                        res: Some(
-                                                                            Local(
-                                                                                142,
-                                                                            ),
-                                                                        ),
-                                                                    },
-                                                                ),
-                                                                span: Span {
-                                                                    file: 18356164589870029453,
-                                                                    lo: 67,
-                                                                    hi: 68,
-                                                                },
-                                                            },
-                                                            "height",
-                                                        ),
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 66,
-                                                            hi: 67,
-                                                        },
-                                                    },
-                                                ),
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 63,
-                                                    hi: 64,
-                                                },
-                                            },
-                                        },
-                                    ),
-                                    is_const: false,
-                                },
-                            ),
-                        },
-                    ],
-                },
-            ),
-            span: Span {
-                file: 18356164589870029453,
-                lo: 46,
-                hi: 47,
             },
         },
         1: Item {

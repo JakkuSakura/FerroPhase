@@ -79,8 +79,20 @@ impl MirGenerator {
                 thir::ItemKind::Const(_const_item) => {
                     // Skip const items for now
                 }
-                thir::ItemKind::Impl(_) => {
-                    // Skip impl items for now
+                thir::ItemKind::Impl(impl_block) => {
+                    for impl_item in &impl_block.items {
+                        if let thir::ImplItemKind::Method(method) = &impl_item.kind {
+                            let (mir_func, maybe_body) =
+                                self.transform_function_with_body(method.clone(), &thir_program)?;
+                            if let Some((body_id, body)) = maybe_body {
+                                mir_program.bodies.insert(body_id, body);
+                            }
+                            mir_program.items.push(mir::Item {
+                                mir_id: self.next_id(),
+                                kind: mir::ItemKind::Function(mir_func),
+                            });
+                        }
+                    }
                 }
             }
         }

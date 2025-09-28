@@ -1,84 +1,110 @@
-# Standard Library Normalisation
+# Standard Library & Builtin Normalisation
 
-FerroPhase ingests multiple surface languages, each with its own "standard library" expectations. To guarantee that the
-rest of the pipeline sees a single, stable vocabulary, the compiler translates every language-specific library surface
-into a canonical `std` package as the program moves from LAST to the unified AST. This document describes that process
-and how it flows through the intermediate representations.
+FerroPhase ingests multiple surface languages and multiple execution targets. Every language brings its own standard
+library (and sometimes distinct builtin forms), while every backend expects a different concrete runtime. To keep that
+matrix manageable we split the work into two phases:
 
-## Implementation Status
+1. **Frontend normalisation** – map language-specific constructs onto a *symbolic* `std` surface (including
+   `std::builtins::*` and `std::intrinsics::*`) during
+   LAST → AST → HIR → THIR.
+2. **Backend materialisation** – translate those symbolic intrinsics into concrete calls/expressions only when a backend
+   is chosen (LLVM, interpreter runtime, Rust transpile, …).
 
-The std library normalization system is now fully implemented with dedicated std nodes throughout the compilation pipeline:
-
-- **AST Level**: `ExprStdIoPrintln` and other std library nodes capture semantic information
-- **HIR Level**: `StdIoPrintln` nodes maintain std library semantics through type checking
-- **Runtime Mapping**: Systematic mapping from std functions to C runtime implementations
-- **C Stdlib Integration**: Dedicated module with macro-based function declarations
+The rest of this document captures the design that makes those two steps cooperate.
 
 ## Goals
 
-- **Canonical API surface** – downstream phases work with a single package graph (`std::…`) regardless of the source
-  language.
-- **Lossless semantics** – language-specific details (e.g., Python’s truthiness helpers, Rust’s ownership-aware
-  iterators) survive the rewrite so later stages can reconstruct suitable runtime behaviour.
-- **Backend portability** – emitters can rehydrate the canonical `std` into target-specific imports or runtime shims
-  without duplicating adaptation logic.
+- **Single canonical vocabulary** – downstream passes see only `std::…` symbols regardless of the frontend, with
+  language primitives appearing under `std::builtins::` and low-level compiler intrinsics under `std::intrinsics::`.
+- **Backend-specific expansion without duplication** – each intrinsic is described once, then every backend emits its
+  own node/value from that description.
+- **No shared-state mutation** – THIR snapshots remain immutable so const-eval, MIR, LIR, and transpilers can reuse the
+  same tree without fighting.
 
-## Pipeline Integration
+## Frontend Projection (LAST → THIR)
 
 ```
-CST → LAST —[capture native std usage]→ AST —[canonical std projection]→ TAST → HIR → THIR → MIR → LIR → Backends
-                                             ↓                                      ↓
-                                     ExprStdIoPrintln                        StdIoPrintln
-                                                                                   ↓
-                                                                            std::io::println
-                                                                                   ↓
-                                                                               C stdlib
-                                                                              (puts, etc.)
+LAST  →  AST  →  HIR  →  THIR
+  │        │        │       └── symbolic intrinsic
+  │        │        └────────── `hir::ExprKind::Std(StdIntrinsic::IoPrintln)`
+  │        └──────────────────── `ast::ExprStdIoPrintln`
+  └───────────────────────────── frontend adapters annotate constructs
 ```
 
-1. **Capture in LAST**
-   - Frontend shims annotate imports/builtins with canonical intents. Example: `println!` macro is recognized and
-     mapped to `std::io::println`, while a FerroPhase module that uses `@sizeof` marks `std::intrinsics::sizeof`.
-   - Metadata tracks origin and any language-only nuances (e.g., format string handling, newline behavior).
+- Frontends register adapters that recognise language- or platform-specific helpers (`println!`, `print`, `sizeof`,
+  `@effect`, …) and attach canonical intents while building LAST. Builtins are projected into `std::builtins::*`, while
+  low-level compiler intrinsics land in `std::intrinsics::*`.
+- The AST keeps that intent in dedicated nodes (e.g. `ExprStdIoPrintln`, `ExprBuiltinSizeOf`).
+- HIR/THIR hold the same information using enums such as `StdIntrinsic` / `BuiltinIntrinsic`. **No** concrete runtime
+  symbol is chosen here; the node simply says “this is `std::io::println` with these arguments”.
 
-2. **Canonical projection during LAST → AST**
-   - The converter creates dedicated std library nodes like `ExprStdIoPrintln` that preserve semantic information
-     about the standard library function being called.
-   - Format strings and arguments are properly parsed and structured within these dedicated nodes.
+## Backend Materialisation via a Resolver
 
-3. **Propagation to later IRs**
-   - **HIR**: `StdIoPrintln` nodes maintain the high-level semantics while preparing for lowering
-   - **THIR**: Std library calls are converted to regular function calls with canonical names (e.g., `std::io::println`)
-   - **MIR/LIR**: Function calls are preserved with their canonical names for runtime mapping
+Every backend consumes the same `IntrinsicResolver`. Conceptually it is keyed by:
 
-4. **Runtime mapping in LLVM backend**
-   - LIR codegen maps canonical std library functions to their C runtime equivalents:
-     - `std::io::println` → `puts` (C stdio)
-     - `std::alloc::alloc` → `malloc` (C stdlib)  
-     - `std::f64::sin` → `sin` (libm)
-   - C stdlib module provides type-safe function declarations using a macro-based system
-   - Unknown functions result in compilation errors rather than silent fallbacks
+```
+(intrinsic kind, backend flavour) -> ResolvedIntrinsic
+```
 
-## Package Layout
+Where `ResolvedIntrinsic` is a backend-neutral description. A minimal sketch:
 
-The canonical hierarchy is intentionally small and extensible:
+```rust
+pub enum ResolvedIntrinsic<'a> {
+    Call {
+        callee: &'a str,
+        abi: CallAbi,
+        args: Vec<IntrinsicArg>,
+        return_kind: IntrinsicReturn,
+    },
+    InlineEmitter(fn(&mut dyn BackendBuilder) -> Result<()>),
+    NotSupported(&'a str),
+}
+```
 
-- `std::core` – primitive types, math helpers, option/result shims.
-- `std::string`, `std::collections`, `std::iter` – data structure and iterator utilities.
-- `std::io`, `std::os` – host interfaces; backends decide between FFI bindings or runtime stubs.
-- `std::intrinsics` – compile-time introspection (`sizeof`, `alignof`, trait queries) shared with const evaluation.
+Important details:
 
-Frontends map their native constructs onto the closest canonical module. If no direct equivalent exists, they can attach
-an adapter module under `std::compat::<language>`; backends may choose to elide or implement those helpers.
+- The resolver owns the *mapping* (`StdIo::Println` → formatted write). It does **not** construct THIR/MIR/TAST nodes
+  itself.
+- Arguments are specified declaratively (e.g. format string literal + trailing values, or pass-by-reference semantics)
+  so each backend can lower them correctly.
+- Builtins use the same mechanism—`std::builtins::size_of`, `std::builtins::addr_of`, etc. sit in the same table as
+  higher-level helpers, while compiler intrinsics live under `std::intrinsics::`.
+- Backends extend the resolver with their flavour (LLVM, interpreter runtime, Rust transpiler, JS transpiler, …).
 
-## Extending the Mapping
+### Consumers
 
-When adding a new language frontend:
+- **Const evaluation (`InterpretationOrchestrator`)** – consults the resolver using the *runtime* flavour. Simple
+  intrinsics may return an interpreter closure; others cause evaluation to request a lower stage.
+- **THIR → MIR / MIR → LIR** – when lowering a symbolic intrinsic to MIR/LIR, the generator fetches the resolver entry
+  for the compilation backend (LLVM or interpreter). The resulting `ResolvedIntrinsic::Call` becomes a MIR/LIR call to
+  `printf`, runtime shims, etc.
+- **THIR → TAST (transpile lift)** – the transpile pipeline asks the resolver with the target language flavour.
+  Emission code then builds target-specific AST nodes (e.g. Rust’s `println!`, JS’s `console.log`).
 
-1. Define a `StdAdapter` that enumerates native prelude/builtin symbols and maps them onto canonical module paths.
-2. Register the adapter with the LAST builder so import statements and implicit globals are annotated automatically.
-3. Provide realisation rules for transpilers or runtime backends if the canonical symbol needs a specialised
-   implementation.
+Because everyone reads the same `ResolvedIntrinsic`, we only describe each intrinsic once per backend flavour. Builtins
+share the path: no special cases required.
 
-Because the canonical package lives entirely in the unified AST, the rest of the compiler requires no changes. The
-adapter isolates frontend quirks while keeping diagnostics, optimisation, and code generation stable across languages.
+## Implementation Plan
+
+1. **Resolver Abstraction** – build `intrinsics::resolver` with:
+   - Symbol enums (e.g. `StdIntrinsic`, `BuiltinIntrinsic`).
+   - Backend flavour enum (`BackendFlavor::Llvm`, `::Interpreter`, `::TranspileRust`, …).
+   - `ResolvedIntrinsic` data structure.
+2. **Populate Canonical Table** – encode existing std/builtin mappings (currently scattered in LLVM codegen,
+   interpreter, etc.) inside the resolver modules.
+3. **Thread Resolver Through Pipelines** – update THIR→MIR, MIR→LIR, interpreter, and THIR→TAST to request entries and
+   materialise nodes/values from the returned description.
+4. **Delete Ad-hoc Mappings** – remove backend-specific hard-coded strings (`std::io::println` → `puts`) once they read
+   from the resolver.
+
+## Notes & Open Questions
+
+- Some intrinsics require backend-only behaviour (e.g. interpreter capturing output). Use the `InlineEmitter` / custom
+  handler hook for those cases while still centralising the mapping.
+- The resolver should be data-driven (e.g. `phf`/`HashMap`) so new intrinsics can be registered without editing every
+  backend.
+- Diagnostics must remain clear: when a backend lacks an implementation the resolver should return `NotSupported` with
+  explanatory text; callers surface that via `DiagnosticManager`.
+
+With this split we keep normalisation simple for frontends, avoid mutating THIR in place, and let every backend render
+the same intrinsic in its own dialect without duplicating knowledge.

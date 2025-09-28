@@ -1,6 +1,41 @@
 use super::*;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+pub(super) struct FunctionNaming {
+    name: String,
+    path: Vec<String>,
+    def_id: Option<hir_types::DefId>,
+}
+
+impl FunctionNaming {
+    fn new(name: String, path: Vec<String>, def_id: Option<hir_types::DefId>) -> Self {
+        Self { name, path, def_id }
+    }
+}
+
+fn describe_type_expr(ty: &hir::TypeExpr) -> String {
+    use hir::TypeExprKind;
+
+    match &ty.kind {
+        TypeExprKind::Path(path) => {
+            let parts: Vec<String> = path.segments.iter().map(|seg| seg.name.clone()).collect();
+            if parts.is_empty() {
+                "anonymous".to_string()
+            } else {
+                parts.join("::")
+            }
+        }
+        TypeExprKind::Primitive(prim) => format!("{prim:?}"),
+        TypeExprKind::Tuple(_) => "tuple".to_string(),
+        TypeExprKind::Array(elem, _) => format!("array_of_{}", describe_type_expr(elem)),
+        TypeExprKind::Ptr(inner) => format!("ptr_to_{}", describe_type_expr(inner)),
+        TypeExprKind::Ref(inner) => format!("ref_to_{}", describe_type_expr(inner)),
+        TypeExprKind::Never => "never".to_string(),
+        TypeExprKind::Infer => "infer".to_string(),
+    }
+}
+
 impl ThirGenerator {
     pub(super) fn transform_item(&mut self, hir_item: hir::Item) -> Result<thir::Item> {
         let thir_id = self.next_id();
@@ -9,7 +44,9 @@ impl ThirGenerator {
 
         let (kind, ty) = match hir_item.kind {
             hir::ItemKind::Function(func) => {
-                let thir_func = self.transform_function(func)?;
+                let fn_name = func.sig.name.clone();
+                let naming = FunctionNaming::new(fn_name.clone(), vec![fn_name], Some(def_id));
+                let thir_func = self.transform_function(func, naming)?;
                 let func_ty = self.get_function_type(def_id, &thir_func)?;
                 (thir::ItemKind::Function(thir_func), func_ty)
             }
@@ -45,9 +82,13 @@ impl ThirGenerator {
     }
 
     /// Transform HIR function to THIR
-    pub(super) fn transform_function(&mut self, hir_func: hir::Function) -> Result<thir::Function> {
+    pub(super) fn transform_function(
+        &mut self,
+        hir_func: hir::Function,
+        naming: FunctionNaming,
+    ) -> Result<thir::Function> {
         if let Some(ref body) = hir_func.body {
-            let mut inferencer = TypeInferencer::new(self);
+            let mut inferencer = TypeInferencer::new(self, self.current_self_ty.clone());
             inferencer.infer_function(body)?;
         }
 
@@ -76,6 +117,9 @@ impl ThirGenerator {
         };
 
         Ok(thir::Function {
+            name: naming.name,
+            path: naming.path,
+            def_id: naming.def_id,
             sig,
             body_id,
             is_const: hir_func.is_const,
@@ -83,13 +127,19 @@ impl ThirGenerator {
     }
 
     pub(super) fn transform_impl(&mut self, hir_impl: hir::Impl) -> Result<thir::Impl> {
+        let self_scope_name = describe_type_expr(&hir_impl.self_ty);
         let self_ty = self.hir_ty_to_ty(&hir_impl.self_ty)?;
+        let saved_self_ty = self.current_self_ty.clone();
+        self.current_self_ty = Some(self_ty.clone());
 
         let mut items = Vec::new();
         for item in hir_impl.items {
             match item.kind {
                 hir::ImplItemKind::Method(method) => {
-                    let thir_method = self.transform_function(method)?;
+                    let method_name = method.sig.name.clone();
+                    let path = vec![self_scope_name.clone(), method_name.clone()];
+                    let naming = FunctionNaming::new(method_name, path, None);
+                    let thir_method = self.transform_function(method, naming)?;
                     items.push(thir::ImplItem {
                         thir_id: self.next_id(),
                         kind: thir::ImplItemKind::Method(thir_method),
@@ -104,6 +154,8 @@ impl ThirGenerator {
                 }
             }
         }
+
+        self.current_self_ty = saved_self_ty;
 
         Ok(thir::Impl {
             self_ty,
@@ -161,6 +213,12 @@ impl ThirGenerator {
 
     /// Transform HIR body to THIR
     pub(super) fn transform_body(&mut self, hir_body: hir::Body) -> Result<thir::Body> {
+        let hir::Body {
+            hir_id: _body_hir_id,
+            params: hir_params,
+            value: hir_value,
+        } = hir_body;
+
         let saved_scopes = mem::take(&mut self.local_scopes);
         let saved_locals = mem::take(&mut self.current_locals);
         let saved_next_local_id = self.next_local_id;
@@ -169,16 +227,21 @@ impl ThirGenerator {
         self.current_locals = Vec::new();
         self.next_local_id = 0;
 
-        let value = self.transform_expr(hir_body.value)?;
-
-        let params = hir_body
-            .params
+        let params = hir_params
             .into_iter()
             .map(|param| {
-                let ty = self.hir_ty_to_ty(&param.ty)?;
-                Ok(thir::Param { ty, pat: None })
+                let hir_ty = self.hir_ty_to_ty(&param.ty)?;
+                let pat = match param.pat.kind {
+                    hir::PatKind::Binding { ref name, mutable } => {
+                        Some(self.create_binding_pattern(name.clone(), hir_ty.clone(), mutable))
+                    }
+                    _ => None,
+                };
+                Ok(thir::Param { ty: hir_ty, pat })
             })
             .collect::<Result<Vec<_>>>()?;
+
+        let value = self.transform_expr(hir_value)?;
 
         let locals = mem::take(&mut self.current_locals);
 
@@ -719,10 +782,11 @@ impl ThirGenerator {
                     hir::PatKind::Binding { name, mutable } => {
                         let pat =
                             self.create_binding_pattern(name.clone(), binding_ty.clone(), *mutable);
-                        println!("transform_stmt binding pattern created for {}", name);
                         match &pat.kind {
-                            thir::PatKind::Binding { .. } => println!("pattern kind Binding"),
-                            other => println!("pattern kind: {:?}", other),
+                            thir::PatKind::Binding { .. } => {}
+                            other => {
+                                let _ = other;
+                            }
                         }
                         pat
                     }
@@ -821,6 +885,11 @@ impl ThirGenerator {
         match &hir_ty.kind {
             hir::TypeExprKind::Primitive(prim) => Ok(self.primitive_ty_to_ty(prim)),
             hir::TypeExprKind::Path(path) => {
+                if matches!(path.res, Some(hir::Res::SelfTy)) {
+                    if let Some(self_ty) = &self.current_self_ty {
+                        return Ok(self_ty.clone());
+                    }
+                }
                 let (def_id_opt, qualified_name, base_name, substs) =
                     self.path_to_type_info(path)?;
 
@@ -1259,7 +1328,6 @@ impl ThirGenerator {
         ty: hir_types::Ty,
         mutable: bool,
     ) -> thir::Pat {
-        println!("create_binding_pattern: {}", name);
         let local_id = self.allocate_local(&name, ty.clone());
         thir::Pat {
             thir_id: self.next_id(),
@@ -1303,7 +1371,6 @@ impl ThirGenerator {
     fn lookup_local_binding(&self, name: &str) -> Option<(thir::LocalId, hir_types::Ty)> {
         for scope in self.local_scopes.iter().rev() {
             if let Some((local_id, ty)) = scope.get(name) {
-                println!("lookup_local_binding hit: {} -> {}", name, local_id);
                 return Some((*local_id, ty.clone()));
             }
         }

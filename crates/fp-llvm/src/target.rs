@@ -157,7 +157,9 @@ impl TargetCodegen {
             format!("Failed to write assembly file to {}", output_path.display())
         })?;
 
-        eprintln!("Note: Generated LLVM IR file instead of assembly (actual assembly generation requires LLVM compilation)");
+        tracing::warn!(
+            "Generated LLVM IR file instead of assembly (actual assembly generation requires LLVM compilation)"
+        );
         Ok(())
     }
 

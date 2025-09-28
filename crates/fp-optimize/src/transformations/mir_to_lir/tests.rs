@@ -46,6 +46,9 @@ fn builds_function_signature_and_locals() {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
+                name: "test_fn".to_string(),
+                path: vec!["test_fn".to_string()],
+                def_id: None,
                 sig: mir::FunctionSig {
                     inputs: vec![param_ty.clone()],
                     output: return_ty.clone(),
@@ -127,6 +130,9 @@ fn lowers_general_call_and_branches() {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
+                name: "test_fn".to_string(),
+                path: vec!["test_fn".to_string()],
+                def_id: None,
                 sig: mir::FunctionSig {
                     inputs: vec![param_ty.clone()],
                     output: return_ty.clone(),

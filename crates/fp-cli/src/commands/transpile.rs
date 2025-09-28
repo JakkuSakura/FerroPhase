@@ -131,6 +131,7 @@ async fn transpile_file(
         TYPESCRIPT | "ts" => TranspileTarget::TypeScript,
         JAVASCRIPT | "js" => TranspileTarget::JavaScript,
         CSHARP | "cs" | "c#" => TranspileTarget::CSharp,
+        RUST | "rs" | "rust" => TranspileTarget::Rust,
         _ => {
             return Err(CliError::InvalidInput(format!(
                 "Unsupported target: {}",
@@ -173,7 +174,8 @@ fn determine_transpile_output_path(
         let extension = match target {
             "typescript" | "ts" => "ts",
             "javascript" | "js" => "js",
-            "csharp" | "cs" => "cs",
+            "csharp" | "cs" | "c#" => "cs",
+            "rust" | "rs" => "rs",
             _ => {
                 return Err(CliError::InvalidInput(format!(
                     "Unknown target: {}",
