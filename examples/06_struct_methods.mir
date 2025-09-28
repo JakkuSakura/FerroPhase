@@ -297,828 +297,6 @@ Program {
     ],
     bodies: {
         BodyId(
-            1,
-        ): Body {
-            basic_blocks: [
-                BasicBlockData {
-                    statements: [
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 10,
-                                hi: 11,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 7,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 1,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 9,
-                                hi: 10,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 8,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Add,
-                                    Move(
-                                        Place {
-                                            local: 7,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 2,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 6,
-                                hi: 7,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 1,
-                                    projection: [
-                                        Deref,
-                                        Field(
-                                            0,
-                                            Ty {
-                                                kind: Int(
-                                                    I64,
-                                                ),
-                                            },
-                                        ),
-                                    ],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 8,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 6,
-                                hi: 7,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 9,
-                                    projection: [],
-                                },
-                                Aggregate(
-                                    Tuple,
-                                    [],
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 17,
-                                hi: 18,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 10,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 1,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 16,
-                                hi: 17,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 11,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Add,
-                                    Move(
-                                        Place {
-                                            local: 10,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 3,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 13,
-                                hi: 14,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 1,
-                                    projection: [
-                                        Deref,
-                                        Field(
-                                            1,
-                                            Ty {
-                                                kind: Int(
-                                                    I64,
-                                                ),
-                                            },
-                                        ),
-                                    ],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 11,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 13,
-                                hi: 14,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 12,
-                                    projection: [],
-                                },
-                                Aggregate(
-                                    Tuple,
-                                    [],
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 0,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 13,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                    ],
-                    terminator: Some(
-                        Terminator {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Return,
-                        },
-                    ),
-                    is_cleanup: false,
-                },
-            ],
-            locals: [
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Tuple(
-                            [],
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Tuple(
-                            [],
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Tuple(
-                            [],
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Tuple(
-                            [],
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-            ],
-            arg_count: 3,
-            return_local: 0,
-            var_debug_info: [],
-            span: Span {
-                file: 0,
-                lo: 0,
-                hi: 0,
-            },
-        },
-        BodyId(
-            5,
-        ): Body {
-            basic_blocks: [
-                BasicBlockData {
-                    statements: [
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 56,
-                                hi: 57,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 3,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 56,
-                                                hi: 57,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                2,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 59,
-                                hi: 60,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 4,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 1,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 61,
-                                hi: 62,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 5,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 1,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 57,
-                                hi: 58,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 6,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Add,
-                                    Move(
-                                        Place {
-                                            local: 4,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 5,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 55,
-                                hi: 56,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 7,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Mul,
-                                    Move(
-                                        Place {
-                                            local: 3,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 6,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 0,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 7,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                    ],
-                    terminator: Some(
-                        Terminator {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Return,
-                        },
-                    ),
-                    is_cleanup: false,
-                },
-            ],
-            locals: [
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-            ],
-            arg_count: 1,
-            return_local: 0,
-            var_debug_info: [],
-            span: Span {
-                file: 0,
-                lo: 0,
-                hi: 0,
-            },
-        },
-        BodyId(
             3,
         ): Body {
             basic_blocks: [
@@ -1142,188 +320,6 @@ Program {
                                                 file: 18356164589870029453,
                                                 lo: 47,
                                                 hi: 48,
-                                            },
-                                            user_ty: None,
-                                            literal: Int(
-                                                0,
-                                            ),
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 0,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 5,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                    ],
-                    terminator: Some(
-                        Terminator {
-                            source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Return,
-                        },
-                    ),
-                    is_cleanup: false,
-                },
-            ],
-            locals: [
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Tuple(
-                            [],
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-            ],
-            arg_count: 2,
-            return_local: 0,
-            var_debug_info: [],
-            span: Span {
-                file: 0,
-                lo: 0,
-                hi: 0,
-            },
-        },
-        BodyId(
-            0,
-        ): Body {
-            basic_blocks: [
-                BasicBlockData {
-                    statements: [
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 2,
-                                hi: 3,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 5,
-                                    projection: [],
-                                },
-                                Use(
-                                    Constant(
-                                        Constant {
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 2,
-                                                hi: 3,
                                             },
                                             user_ty: None,
                                             literal: Int(
@@ -1648,6 +644,1081 @@ Program {
                                 ),
                             },
                             Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+            ],
+            arg_count: 1,
+            return_local: 0,
+            var_debug_info: [],
+            span: Span {
+                file: 0,
+                lo: 0,
+                hi: 0,
+            },
+        },
+        BodyId(
+            2,
+        ): Body {
+            basic_blocks: [
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 22,
+                                hi: 23,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 7,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 1,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 24,
+                                hi: 25,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 8,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 2,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 21,
+                                hi: 22,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 9,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Sub,
+                                    Move(
+                                        Place {
+                                            local: 7,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 8,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 3,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 9,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 27,
+                                hi: 28,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 10,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 1,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 29,
+                                hi: 30,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 11,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 2,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 26,
+                                hi: 27,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 12,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Sub,
+                                    Move(
+                                        Place {
+                                            local: 10,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 11,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 4,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 12,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 32,
+                                hi: 33,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 13,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Mul,
+                                    Move(
+                                        Place {
+                                            local: 3,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 3,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 35,
+                                hi: 36,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 14,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Mul,
+                                    Move(
+                                        Place {
+                                            local: 4,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 4,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 31,
+                                hi: 32,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 15,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Add,
+                                    Move(
+                                        Place {
+                                            local: 13,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 14,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 39,
+                                hi: 40,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 16,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Mul,
+                                    Move(
+                                        Place {
+                                            local: 3,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 3,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 42,
+                                hi: 43,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 17,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Mul,
+                                    Move(
+                                        Place {
+                                            local: 4,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 4,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 38,
+                                hi: 39,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 18,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Add,
+                                    Move(
+                                        Place {
+                                            local: 16,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 17,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 0,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 18,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Return,
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+            ],
+            locals: [
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+            ],
+            arg_count: 2,
+            return_local: 0,
+            var_debug_info: [],
+            span: Span {
+                file: 0,
+                lo: 0,
+                hi: 0,
+            },
+        },
+        BodyId(
+            5,
+        ): Body {
+            basic_blocks: [
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 56,
+                                hi: 57,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 3,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 56,
+                                                hi: 57,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                2,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 59,
+                                hi: 60,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 4,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 1,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 61,
+                                hi: 62,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 5,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 1,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 57,
+                                hi: 58,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 6,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Add,
+                                    Move(
+                                        Place {
+                                            local: 4,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 5,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 55,
+                                hi: 56,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 7,
+                                    projection: [],
+                                },
+                                BinaryOp(
+                                    Mul,
+                                    Move(
+                                        Place {
+                                            local: 3,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 6,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 0,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 7,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Return,
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+            ],
+            locals: [
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
                         ),
                     },
                     user_ty: None,
@@ -4442,6 +4513,188 @@ Program {
             },
         },
         BodyId(
+            0,
+        ): Body {
+            basic_blocks: [
+                BasicBlockData {
+                    statements: [
+                        Statement {
+                            source_info: Span {
+                                file: 18356164589870029453,
+                                lo: 2,
+                                hi: 3,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 5,
+                                    projection: [],
+                                },
+                                Use(
+                                    Constant(
+                                        Constant {
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 2,
+                                                hi: 3,
+                                            },
+                                            user_ty: None,
+                                            literal: Int(
+                                                0,
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                        Statement {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Assign(
+                                Place {
+                                    local: 0,
+                                    projection: [],
+                                },
+                                Use(
+                                    Move(
+                                        Place {
+                                            local: 5,
+                                            projection: [],
+                                        },
+                                    ),
+                                ),
+                            ),
+                        },
+                    ],
+                    terminator: Some(
+                        Terminator {
+                            source_info: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                            kind: Return,
+                        },
+                    ),
+                    is_cleanup: false,
+                },
+            ],
+            locals: [
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+                LocalDecl {
+                    mutability: Not,
+                    local_info: Other,
+                    internal: false,
+                    is_block_tail: None,
+                    ty: Ty {
+                        kind: Tuple(
+                            [],
+                        ),
+                    },
+                    user_ty: None,
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                },
+            ],
+            arg_count: 2,
+            return_local: 0,
+            var_debug_info: [],
+            span: Span {
+                file: 0,
+                lo: 0,
+                hi: 0,
+            },
+        },
+        BodyId(
             6,
         ): Body {
             basic_blocks: [
@@ -4674,7 +4927,7 @@ Program {
             },
         },
         BodyId(
-            2,
+            1,
         ): Body {
             basic_blocks: [
                 BasicBlockData {
@@ -4682,8 +4935,8 @@ Program {
                         Statement {
                             source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 22,
-                                hi: 23,
+                                lo: 10,
+                                hi: 11,
                             },
                             kind: Assign(
                                 Place {
@@ -4703,15 +4956,22 @@ Program {
                         Statement {
                             source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 24,
-                                hi: 25,
+                                lo: 9,
+                                hi: 10,
                             },
                             kind: Assign(
                                 Place {
                                     local: 8,
                                     projection: [],
                                 },
-                                Use(
+                                BinaryOp(
+                                    Add,
+                                    Move(
+                                        Place {
+                                            local: 7,
+                                            projection: [],
+                                        },
+                                    ),
                                     Move(
                                         Place {
                                             local: 2,
@@ -4724,22 +4984,25 @@ Program {
                         Statement {
                             source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 21,
-                                hi: 22,
+                                lo: 6,
+                                hi: 7,
                             },
                             kind: Assign(
                                 Place {
-                                    local: 9,
-                                    projection: [],
+                                    local: 1,
+                                    projection: [
+                                        Deref,
+                                        Field(
+                                            0,
+                                            Ty {
+                                                kind: Int(
+                                                    I64,
+                                                ),
+                                            },
+                                        ),
+                                    ],
                                 },
-                                BinaryOp(
-                                    Sub,
-                                    Move(
-                                        Place {
-                                            local: 7,
-                                            projection: [],
-                                        },
-                                    ),
+                                Use(
                                     Move(
                                         Place {
                                             local: 8,
@@ -4751,30 +5014,26 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
+                                file: 18356164589870029453,
+                                lo: 6,
+                                hi: 7,
                             },
                             kind: Assign(
                                 Place {
-                                    local: 3,
+                                    local: 9,
                                     projection: [],
                                 },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 9,
-                                            projection: [],
-                                        },
-                                    ),
+                                Aggregate(
+                                    Tuple,
+                                    [],
                                 ),
                             ),
                         },
                         Statement {
                             source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 27,
-                                hi: 28,
+                                lo: 17,
+                                hi: 18,
                             },
                             kind: Assign(
                                 Place {
@@ -4794,18 +5053,25 @@ Program {
                         Statement {
                             source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 29,
-                                hi: 30,
+                                lo: 16,
+                                hi: 17,
                             },
                             kind: Assign(
                                 Place {
                                     local: 11,
                                     projection: [],
                                 },
-                                Use(
+                                BinaryOp(
+                                    Add,
                                     Move(
                                         Place {
-                                            local: 2,
+                                            local: 10,
+                                            projection: [],
+                                        },
+                                    ),
+                                    Move(
+                                        Place {
+                                            local: 3,
                                             projection: [],
                                         },
                                     ),
@@ -4815,22 +5081,25 @@ Program {
                         Statement {
                             source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 26,
-                                hi: 27,
+                                lo: 13,
+                                hi: 14,
                             },
                             kind: Assign(
                                 Place {
-                                    local: 12,
-                                    projection: [],
+                                    local: 1,
+                                    projection: [
+                                        Deref,
+                                        Field(
+                                            1,
+                                            Ty {
+                                                kind: Int(
+                                                    I64,
+                                                ),
+                                            },
+                                        ),
+                                    ],
                                 },
-                                BinaryOp(
-                                    Sub,
-                                    Move(
-                                        Place {
-                                            local: 10,
-                                            projection: [],
-                                        },
-                                    ),
+                                Use(
                                     Move(
                                         Place {
                                             local: 11,
@@ -4842,190 +5111,18 @@ Program {
                         },
                         Statement {
                             source_info: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 4,
-                                    projection: [],
-                                },
-                                Use(
-                                    Move(
-                                        Place {
-                                            local: 12,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
                                 file: 18356164589870029453,
-                                lo: 32,
-                                hi: 33,
+                                lo: 13,
+                                hi: 14,
                             },
                             kind: Assign(
                                 Place {
-                                    local: 13,
+                                    local: 12,
                                     projection: [],
                                 },
-                                BinaryOp(
-                                    Mul,
-                                    Move(
-                                        Place {
-                                            local: 3,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 3,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 35,
-                                hi: 36,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 14,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Mul,
-                                    Move(
-                                        Place {
-                                            local: 4,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 4,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 31,
-                                hi: 32,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 15,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Add,
-                                    Move(
-                                        Place {
-                                            local: 13,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 14,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 39,
-                                hi: 40,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 16,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Mul,
-                                    Move(
-                                        Place {
-                                            local: 3,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 3,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 42,
-                                hi: 43,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 17,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Mul,
-                                    Move(
-                                        Place {
-                                            local: 4,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 4,
-                                            projection: [],
-                                        },
-                                    ),
-                                ),
-                            ),
-                        },
-                        Statement {
-                            source_info: Span {
-                                file: 18356164589870029453,
-                                lo: 38,
-                                hi: 39,
-                            },
-                            kind: Assign(
-                                Place {
-                                    local: 18,
-                                    projection: [],
-                                },
-                                BinaryOp(
-                                    Add,
-                                    Move(
-                                        Place {
-                                            local: 16,
-                                            projection: [],
-                                        },
-                                    ),
-                                    Move(
-                                        Place {
-                                            local: 17,
-                                            projection: [],
-                                        },
-                                    ),
+                                Aggregate(
+                                    Tuple,
+                                    [],
                                 ),
                             ),
                         },
@@ -5043,7 +5140,7 @@ Program {
                                 Use(
                                     Move(
                                         Place {
-                                            local: 18,
+                                            local: 13,
                                             projection: [],
                                         },
                                     ),
@@ -5071,77 +5168,8 @@ Program {
                     internal: false,
                     is_block_tail: None,
                     ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            Not,
+                        kind: Tuple(
+                            [],
                         ),
                     },
                     user_ty: None,
@@ -5214,8 +5242,14 @@ Program {
                     internal: false,
                     is_block_tail: None,
                     ty: Ty {
-                        kind: Int(
-                            I64,
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            Not,
                         ),
                     },
                     user_ty: None,
@@ -5299,8 +5333,8 @@ Program {
                     internal: false,
                     is_block_tail: None,
                     ty: Ty {
-                        kind: Int(
-                            I64,
+                        kind: Tuple(
+                            [],
                         ),
                     },
                     user_ty: None,
@@ -5350,8 +5384,8 @@ Program {
                     internal: false,
                     is_block_tail: None,
                     ty: Ty {
-                        kind: Int(
-                            I64,
+                        kind: Tuple(
+                            [],
                         ),
                     },
                     user_ty: None,
@@ -5367,42 +5401,8 @@ Program {
                     internal: false,
                     is_block_tail: None,
                     ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    user_ty: None,
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                },
-                LocalDecl {
-                    mutability: Not,
-                    local_info: Other,
-                    internal: false,
-                    is_block_tail: None,
-                    ty: Ty {
-                        kind: Int(
-                            I64,
+                        kind: Tuple(
+                            [],
                         ),
                     },
                     user_ty: None,
@@ -5413,7 +5413,7 @@ Program {
                     },
                 },
             ],
-            arg_count: 2,
+            arg_count: 3,
             return_local: 0,
             var_debug_info: [],
             span: Span {

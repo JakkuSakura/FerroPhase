@@ -315,6 +315,7 @@ pub fn diagnostic_manager() -> Arc<DiagnosticManager> {
 
 pub fn report_error(message: impl Into<String>) -> crate::error::Error {
     let diagnostic = Diagnostic::error(message.into());
+    println!("[diagnostic] {}", diagnostic.message);
     diagnostic_manager().error(diagnostic.clone());
     crate::error::Error::diagnostic(diagnostic)
 }
