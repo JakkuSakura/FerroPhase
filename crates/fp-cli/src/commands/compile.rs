@@ -183,7 +183,7 @@ async fn compile_file(
     };
 
     // Execute pipeline with new options
-    let pipeline = Pipeline::new();
+    let mut pipeline = Pipeline::new();
     let pipeline_output = pipeline
         .execute_with_options(PipelineInput::File(input.to_path_buf()), pipeline_options)
         .await?;

@@ -120,7 +120,7 @@ impl HirGenerator {
     }
 
     fn build_error(message: impl Into<String>) -> Diagnostic {
-        Diagnostic::error(message).with_source_context(DIAGNOSTIC_CONTEXT)
+        Diagnostic::error(message.into()).with_source_context(DIAGNOSTIC_CONTEXT)
     }
 
     /// Add a warning to the collection

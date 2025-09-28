@@ -1,4 +1,4 @@
-use fp_core::ast::{Value, ValueChar};
+use fp_core::ast::{RuntimeValue, Value, ValueChar};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::Result;
@@ -46,6 +46,8 @@ struct IntrinsicRegistry {
 #[derive(Clone)]
 enum IntrinsicKind {
     Print { newline: bool },
+    StrLen,
+    Concat,
 }
 
 impl IntrinsicRegistry {
@@ -59,12 +61,24 @@ impl IntrinsicRegistry {
         registry.register_print("print", false);
         registry.register_print("print!", false);
         registry.register_print("std::io::print", false);
+        registry.register_strlen("strlen");
+        registry.register_strlen("strlen!");
+        registry.register_concat("concat");
+        registry.register_concat("concat!");
         registry
     }
 
     fn register_print(&mut self, name: impl Into<String>, newline: bool) {
         self.entries
             .insert(name.into(), IntrinsicKind::Print { newline });
+    }
+
+    fn register_strlen(&mut self, name: impl Into<String>) {
+        self.entries.insert(name.into(), IntrinsicKind::StrLen);
+    }
+
+    fn register_concat(&mut self, name: impl Into<String>) {
+        self.entries.insert(name.into(), IntrinsicKind::Concat);
     }
 
     fn invoke(
@@ -79,16 +93,17 @@ impl IntrinsicRegistry {
                 let value = interpreter.perform_print(*newline, args, ctx)?;
                 Ok(Some(value))
             }
+            Some(IntrinsicKind::StrLen) => {
+                let value = interpreter.perform_strlen(args)?;
+                Ok(Some(value))
+            }
+            Some(IntrinsicKind::Concat) => {
+                let value = interpreter.perform_concat(args)?;
+                Ok(Some(value))
+            }
             None => Ok(None),
         }
     }
-}
-
-/// Typed interpreter mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InterpreterMode {
-    Const,
-    Runtime,
 }
 
 #[derive(Clone)]
@@ -97,6 +112,7 @@ struct InterpreterConfig {
     diagnostics: Option<Arc<DiagnosticManager>>,
     abort_on_error: bool,
     intrinsics: IntrinsicRegistry,
+    runtime_environment: RuntimeEnvironment,
 }
 
 impl InterpreterConfig {
@@ -106,8 +122,84 @@ impl InterpreterConfig {
             diagnostics: None,
             abort_on_error: true,
             intrinsics: IntrinsicRegistry::new(),
+            runtime_environment: RuntimeEnvironment::new(mode),
         }
     }
+
+    fn set_diagnostics(&mut self, diagnostics: Option<Arc<DiagnosticManager>>) {
+        self.diagnostics = diagnostics;
+    }
+
+    fn store_local(&mut self, id: thir::LocalId, value: &Value) {
+        self.runtime_environment.store_local(id, value);
+    }
+
+    fn sync_locals(&mut self, locals: &HashMap<thir::LocalId, Value>) {
+        self.runtime_environment.sync_from(locals);
+    }
+
+    fn runtime_bindings(&self) -> Option<HashMap<thir::LocalId, RuntimeValue>> {
+        self.runtime_environment.clone_locals()
+    }
+}
+
+#[derive(Clone)]
+struct RuntimeEnvironment {
+    enabled: bool,
+    locals: HashMap<thir::LocalId, RuntimeValue>,
+}
+
+impl RuntimeEnvironment {
+    fn new(mode: InterpreterMode) -> Self {
+        Self {
+            enabled: matches!(mode, InterpreterMode::Runtime),
+            locals: HashMap::new(),
+        }
+    }
+
+    fn reset(&mut self) {
+        if self.enabled {
+            self.locals.clear();
+        }
+    }
+
+    fn store_local(&mut self, id: thir::LocalId, value: &Value) {
+        if self.enabled {
+            self.locals.insert(id, value.clone().to_runtime_owned());
+        }
+    }
+
+    fn sync_from(&mut self, locals: &HashMap<thir::LocalId, Value>) {
+        if self.enabled {
+            for (id, value) in locals {
+                self.locals.insert(*id, value.clone().to_runtime_owned());
+            }
+        }
+    }
+
+    fn finalize_value(&self, value: Value) -> RuntimeValue {
+        if self.enabled {
+            value.to_runtime_owned()
+        } else {
+            RuntimeValue::literal(value)
+        }
+    }
+
+    #[allow(dead_code)]
+    fn clone_locals(&self) -> Option<HashMap<thir::LocalId, RuntimeValue>> {
+        if self.enabled {
+            Some(self.locals.clone())
+        } else {
+            None
+        }
+    }
+}
+
+/// Typed interpreter mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterpreterMode {
+    Const,
+    Runtime,
 }
 
 /// Typed interpreter responsible for evaluating THIR bodies.
@@ -123,16 +215,24 @@ impl InterpretationOrchestrator {
     }
 
     pub fn with_diagnostics(mut self, manager: Arc<DiagnosticManager>) -> Self {
-        self.config.diagnostics = Some(manager);
+        self.config.set_diagnostics(Some(manager));
         self
     }
 
     pub fn set_diagnostics(&mut self, manager: Option<Arc<DiagnosticManager>>) {
-        self.config.diagnostics = manager;
+        self.config.set_diagnostics(manager);
     }
 
     pub fn set_abort_on_error(&mut self, abort: bool) {
         self.config.abort_on_error = abort;
+    }
+
+    pub fn finalize_runtime_value(&self, value: Value) -> RuntimeValue {
+        self.config.runtime_environment.finalize_value(value)
+    }
+
+    pub fn runtime_bindings(&self) -> Option<HashMap<thir::LocalId, RuntimeValue>> {
+        self.config.runtime_bindings()
     }
 
     /// Evaluate a THIR body in the current mode.
@@ -143,6 +243,7 @@ impl InterpretationOrchestrator {
         ctx: &SharedScopedContext,
         const_values: &HashMap<thir::ty::DefId, Value>,
     ) -> Result<Value> {
+        self.config.runtime_environment.reset();
         let mut locals = HashMap::new();
         let flow = self.evaluate_expr(&body.value, program, ctx, &mut locals, const_values)?;
         Ok(flow.into_value())
@@ -329,12 +430,107 @@ impl InterpretationOrchestrator {
                     let result =
                         self.evaluate_expr(&arm.body, program, ctx, &mut arm_locals, const_values)?;
                     *locals = arm_locals;
+                    self.config.sync_locals(locals);
                     return Ok(result);
                 }
 
                 Err(optimization_error(
                     "No match arm matched during const evaluation",
                 ))
+            }
+            EK::Field { base, field_idx } => {
+                let base_value = propagate_flow!(self.evaluate_expr(
+                    base,
+                    program,
+                    ctx,
+                    locals,
+                    const_values
+                )?);
+
+                let field_value = match base_value {
+                    Value::Struct(struct_value) => struct_value
+                        .structural
+                        .fields
+                        .get(*field_idx)
+                        .map(|field| field.value.clone())
+                        .ok_or_else(|| {
+                            optimization_error(format!(
+                                "Field index {} out of bounds for struct",
+                                field_idx
+                            ))
+                        })?,
+                    Value::Structural(structural) => structural
+                        .fields
+                        .get(*field_idx)
+                        .map(|field| field.value.clone())
+                        .ok_or_else(|| {
+                            optimization_error(format!(
+                                "Field index {} out of bounds for structural value",
+                                field_idx
+                            ))
+                        })?,
+                    other => {
+                        return Err(optimization_error(format!(
+                            "Field access is not supported for value {:?}",
+                            other
+                        )))
+                    }
+                };
+
+                Ok(EvalFlow::Value(field_value))
+            }
+            EK::Index(base, index_expr) => {
+                let base_value = propagate_flow!(self.evaluate_expr(
+                    base,
+                    program,
+                    ctx,
+                    locals,
+                    const_values
+                )?);
+                let index_value = propagate_flow!(self.evaluate_expr(
+                    index_expr,
+                    program,
+                    ctx,
+                    locals,
+                    const_values
+                )?);
+
+                let index = self.expect_int(index_value)?;
+                let index_usize = usize::try_from(index).map_err(|_| {
+                    optimization_error(format!("Index {} cannot be represented as usize", index))
+                })?;
+
+                let extracted = match base_value {
+                    Value::List(list) => {
+                        list.values.get(index_usize).cloned().ok_or_else(|| {
+                            optimization_error(format!(
+                                "Index {} is out of bounds for list of length {}",
+                                index_usize,
+                                list.values.len()
+                            ))
+                        })?
+                    }
+                    Value::String(string_value) => string_value
+                        .value
+                        .chars()
+                        .nth(index_usize)
+                        .map(|ch| Value::from(ValueChar::new(ch)))
+                        .ok_or_else(|| {
+                            optimization_error(format!(
+                                "Index {} is out of bounds for string of length {}",
+                                index_usize,
+                                string_value.value.chars().count()
+                            ))
+                        })?,
+                    other => {
+                        return Err(optimization_error(format!(
+                            "Indexing is not supported for value {:?}",
+                            other
+                        )))
+                    }
+                };
+
+                Ok(EvalFlow::Value(extracted))
             }
             EK::Loop { body } => loop {
                 match self.evaluate_expr(body, program, ctx, locals, const_values)? {
@@ -379,7 +575,9 @@ impl InterpretationOrchestrator {
                 let target = self.resolve_assignment_target(lhs)?;
                 let value =
                     propagate_flow!(self.evaluate_expr(rhs, program, ctx, locals, const_values)?);
+                let cloned = value.clone();
                 locals.insert(target, value);
+                self.config.store_local(target, &cloned);
                 Ok(EvalFlow::Value(Value::unit()))
             }
             EK::AssignOp { op, lhs, rhs } => {
@@ -393,15 +591,15 @@ impl InterpretationOrchestrator {
                 let rhs_value =
                     propagate_flow!(self.evaluate_expr(rhs, program, ctx, locals, const_values)?);
                 let combined = self.evaluate_binary(op.clone(), current, rhs_value)?;
+                let cloned = combined.clone();
                 locals.insert(target, combined);
+                self.config.store_local(target, &cloned);
                 Ok(EvalFlow::Value(Value::unit()))
             }
-            EK::Index(_, _) | EK::Field { .. } | EK::UpvarRef { .. } => {
-                Err(optimization_error(format!(
-                    "Unsupported THIR expression in const evaluation: {:?}",
-                    expr.kind
-                )))
-            }
+            EK::UpvarRef { .. } => Err(optimization_error(format!(
+                "Unsupported THIR expression in const evaluation: {:?}",
+                expr.kind
+            ))),
         }
     }
 
@@ -509,6 +707,35 @@ impl InterpretationOrchestrator {
         }
         ctx.print_str(rendered);
         Ok(Value::unit())
+    }
+
+    fn perform_strlen(&self, args: &[Value]) -> Result<Value> {
+        let value = args
+            .first()
+            .ok_or_else(|| optimization_error("strlen intrinsic expects at least one argument"))?;
+        let length = match value {
+            Value::String(s) => s.value.len() as i64,
+            other => {
+                return Err(optimization_error(format!(
+                    "strlen! expects a string argument, got {:?}",
+                    other
+                )))
+            }
+        };
+        Ok(Value::int(length))
+    }
+
+    fn perform_concat(&self, args: &[Value]) -> Result<Value> {
+        if args.is_empty() {
+            return Ok(Value::string(String::new()));
+        }
+
+        let mut output = String::new();
+        for value in args {
+            output.push_str(&Self::value_to_display_string(value));
+        }
+
+        Ok(Value::string(output))
     }
 
     fn render_printf(&self, template: &str, args: &[Value]) -> Result<String> {
@@ -691,7 +918,9 @@ impl InterpretationOrchestrator {
         match &pat.kind {
             thir::PatKind::Wild => Ok(()),
             thir::PatKind::Binding { var, .. } => {
+                let cloned = value.clone();
                 locals.insert(*var, value);
+                self.config.store_local(*var, &cloned);
                 Ok(())
             }
             _ => Err(optimization_error(format!(
@@ -817,11 +1046,14 @@ impl InterpretationOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fp_core::ast::RuntimeValue;
+    use fp_core::ast::{TypeStruct, ValueField, ValueList, ValueStruct};
     use fp_core::context::SharedScopedContext;
     use fp_core::hir::typed as thir;
     use fp_core::hir::typed::ty::{
         IntTy as TyInt, Mutability as TyMutability, Ty as TyTy, TyKind as TyTyKind, TypeAndMut,
     };
+    use fp_core::id::Ident;
     use fp_core::span::Span;
     use std::collections::HashMap;
 
@@ -1330,6 +1562,204 @@ mod tests {
         match result {
             Value::Int(i) => assert_eq!(i.value, 11),
             other => panic!("expected integer result from match arm, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn runtime_mode_produces_owned_values() {
+        let def_id: thir::ty::DefId = 7000;
+
+        let body = thir::Body {
+            params: Vec::new(),
+            value: int_literal_expr(900, 64),
+            locals: Vec::new(),
+        };
+
+        let mut bodies = HashMap::new();
+        let body_id = thir::BodyId(1);
+        bodies.insert(body_id, body);
+
+        let function_item = thir::Item {
+            thir_id: 901,
+            kind: thir::ItemKind::Function(thir::Function {
+                sig: thir::FunctionSig {
+                    inputs: Vec::new(),
+                    output: i32_ty(),
+                    c_variadic: false,
+                },
+                body_id: Some(body_id),
+                is_const: false,
+            }),
+            ty: fn_def_ty(def_id),
+            span: dummy_span(),
+        };
+
+        let program = thir::Program {
+            items: vec![function_item],
+            bodies,
+            next_thir_id: 20,
+        };
+
+        let ctx = SharedScopedContext::new();
+        let const_values = HashMap::new();
+        let mut interpreter = InterpretationOrchestrator::new(InterpreterMode::Runtime);
+        let body = program.bodies.get(&body_id).expect("body present");
+
+        let value = interpreter
+            .evaluate_body(body, &program, &ctx, &const_values)
+            .expect("runtime evaluation succeeds");
+        let runtime_value = interpreter.finalize_runtime_value(value.clone());
+
+        match (value, runtime_value) {
+            (Value::Int(i), RuntimeValue::Owned(rv)) => match rv {
+                Value::Int(inner) => assert_eq!(i.value, inner.value),
+                other => panic!("expected owned int runtime value, got {:?}", other),
+            },
+            other => panic!("expected owned runtime value, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn strlen_and_concat_intrinsics_work() {
+        let strlen_value = InterpretationOrchestrator::new(InterpreterMode::Const)
+            .perform_strlen(&[Value::string("world".into())])
+            .expect("strlen should succeed");
+        match strlen_value {
+            Value::Int(i) => assert_eq!(i.value, 5),
+            other => panic!("unexpected strlen result: {:?}", other),
+        }
+
+        let concat_value = InterpretationOrchestrator::new(InterpreterMode::Const)
+            .perform_concat(&[
+                Value::string("foo".into()),
+                Value::int(99),
+                Value::string("baz".into()),
+            ])
+            .expect("concat should succeed");
+        match concat_value {
+            Value::String(s) => assert_eq!(s.value, "foo99baz"),
+            other => panic!("unexpected concat result: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn index_expression_reads_list_values() {
+        let list_def: thir::ty::DefId = 8000;
+        let index_expr = thir::Expr {
+            thir_id: 60,
+            kind: thir::ExprKind::Index(
+                Box::new(thir::Expr {
+                    thir_id: 61,
+                    kind: thir::ExprKind::Path(thir::ItemRef {
+                        name: "LIST_CONST".to_string(),
+                        def_id: Some(list_def),
+                    }),
+                    ty: unit_ty(),
+                    span: dummy_span(),
+                }),
+                Box::new(int_literal_expr(62, 1)),
+            ),
+            ty: unit_ty(),
+            span: dummy_span(),
+        };
+
+        let body_id = thir::BodyId(0);
+        let body = thir::Body {
+            params: Vec::new(),
+            value: index_expr,
+            locals: Vec::new(),
+        };
+
+        let mut bodies = HashMap::new();
+        bodies.insert(body_id, body);
+        let program = thir::Program {
+            items: Vec::new(),
+            bodies,
+            next_thir_id: 70,
+        };
+
+        let ctx = SharedScopedContext::new();
+        let mut const_values = HashMap::new();
+        const_values.insert(
+            list_def,
+            Value::List(ValueList::new(vec![
+                Value::int(10),
+                Value::int(20),
+                Value::int(30),
+            ])),
+        );
+
+        let mut interpreter = InterpretationOrchestrator::new(InterpreterMode::Const);
+        let body = program.bodies.get(&body_id).unwrap();
+        let result = interpreter
+            .evaluate_body(body, &program, &ctx, &const_values)
+            .expect("index evaluation succeeds");
+
+        match result {
+            Value::Int(i) => assert_eq!(i.value, 20),
+            other => panic!("expected list element, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn field_expression_accesses_struct_fields() {
+        let struct_def: thir::ty::DefId = 8100;
+        let indexes_expr = thir::Expr {
+            thir_id: 80,
+            kind: thir::ExprKind::Field {
+                base: Box::new(thir::Expr {
+                    thir_id: 81,
+                    kind: thir::ExprKind::Path(thir::ItemRef {
+                        name: "STRUCT_CONST".to_string(),
+                        def_id: Some(struct_def),
+                    }),
+                    ty: unit_ty(),
+                    span: dummy_span(),
+                }),
+                field_idx: 1,
+            },
+            ty: unit_ty(),
+            span: dummy_span(),
+        };
+
+        let body_id = thir::BodyId(0);
+        let body = thir::Body {
+            params: Vec::new(),
+            value: indexes_expr,
+            locals: Vec::new(),
+        };
+
+        let mut bodies = HashMap::new();
+        bodies.insert(body_id, body);
+        let program = thir::Program {
+            items: Vec::new(),
+            bodies,
+            next_thir_id: 90,
+        };
+
+        let ctx = SharedScopedContext::new();
+        let mut const_values = HashMap::new();
+        let struct_value = ValueStruct::new(
+            TypeStruct {
+                name: Ident::new("Point"),
+                fields: vec![],
+            },
+            vec![
+                ValueField::new(Ident::new("x"), Value::int(1)),
+                ValueField::new(Ident::new("y"), Value::int(2)),
+            ],
+        );
+        const_values.insert(struct_def, Value::Struct(struct_value));
+
+        let mut interpreter = InterpretationOrchestrator::new(InterpreterMode::Const);
+        let body = program.bodies.get(&body_id).unwrap();
+        let result = interpreter
+            .evaluate_body(body, &program, &ctx, &const_values)
+            .expect("field access succeeds");
+
+        match result {
+            Value::Int(i) => assert_eq!(i.value, 2),
+            other => panic!("expected y field value, got {:?}", other),
         }
     }
 }

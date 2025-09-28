@@ -1,5 +1,6 @@
 use crate::span::Span;
 use once_cell::sync::Lazy;
+use std::fmt::{Display, Formatter};
 use std::sync::{Arc, Mutex};
 
 /// Context provided to diagnostic template renderers while producing output lines.
@@ -76,21 +77,27 @@ pub enum DiagnosticLevel {
     Error,
 }
 
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
+#[derive(Clone)]
+pub struct Diagnostic<T = String>
+where
+    T: Clone + Display,
+{
     pub level: DiagnosticLevel,
-    pub message: String,
+    pub message: T,
     pub span: Option<Span>,
     pub suggestions: Vec<String>,
     pub source_context: Option<String>,
     pub code: Option<String>,
 }
 
-impl Diagnostic {
-    pub fn error(message: impl Into<String>) -> Self {
+impl<T> Diagnostic<T>
+where
+    T: Clone + Display,
+{
+    pub fn error(message: T) -> Self {
         Self {
             level: DiagnosticLevel::Error,
-            message: message.into(),
+            message,
             span: None,
             suggestions: Vec::new(),
             source_context: None,
@@ -98,10 +105,10 @@ impl Diagnostic {
         }
     }
 
-    pub fn warning(message: impl Into<String>) -> Self {
+    pub fn warning(message: T) -> Self {
         Self {
             level: DiagnosticLevel::Warning,
-            message: message.into(),
+            message,
             span: None,
             suggestions: Vec::new(),
             source_context: None,
@@ -109,10 +116,10 @@ impl Diagnostic {
         }
     }
 
-    pub fn info(message: impl Into<String>) -> Self {
+    pub fn info(message: T) -> Self {
         Self {
             level: DiagnosticLevel::Info,
-            message: message.into(),
+            message,
             span: None,
             suggestions: Vec::new(),
             source_context: None,
@@ -144,45 +151,70 @@ impl Diagnostic {
         self.code = Some(code.into());
         self
     }
+
+    pub fn as_string_diagnostic(&self) -> Diagnostic<String> {
+        Diagnostic {
+            level: self.level,
+            message: self.message.to_string(),
+            span: self.span.clone(),
+            suggestions: self.suggestions.clone(),
+            source_context: self.source_context.clone(),
+            code: self.code.clone(),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for Diagnostic<T>
+where
+    T: Clone + Display,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Diagnostic")
+            .field("level", &self.level)
+            .field("message", &self.message.to_string())
+            .field("span", &self.span)
+            .field("suggestions", &self.suggestions)
+            .field("source_context", &self.source_context)
+            .field("code", &self.code)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct DiagnosticReport<T> {
-    pub context: Option<&'static str>,
+pub struct DiagnosticReport<T, M = String>
+where
+    M: Clone + Display,
+{
     pub value: Option<T>,
-    pub diagnostics: Vec<Diagnostic>,
+    pub diagnostics: Vec<Diagnostic<M>>,
 }
 
-impl<T> DiagnosticReport<T> {
-    pub fn success(value: T, context: Option<&'static str>) -> Self {
+impl<T, M> DiagnosticReport<T, M>
+where
+    M: Clone + Display,
+{
+    pub fn success(value: T) -> Self {
         Self {
-            context,
             value: Some(value),
             diagnostics: Vec::new(),
         }
     }
 
-    pub fn success_with_diagnostics(
-        value: T,
-        context: Option<&'static str>,
-        diagnostics: Vec<Diagnostic>,
-    ) -> Self {
+    pub fn success_with_diagnostics(value: T, diagnostics: Vec<Diagnostic<M>>) -> Self {
         Self {
-            context,
             value: Some(value),
             diagnostics,
         }
     }
 
-    pub fn failure(context: Option<&'static str>, diagnostics: Vec<Diagnostic>) -> Self {
+    pub fn failure(diagnostics: Vec<Diagnostic<M>>) -> Self {
         Self {
-            context,
             value: None,
             diagnostics,
         }
     }
 
-    pub fn into_result(self) -> Result<(T, Vec<Diagnostic>), Vec<Diagnostic>> {
+    pub fn into_result(self) -> Result<(T, Vec<Diagnostic<M>>), Vec<Diagnostic<M>>> {
         match self.value {
             Some(value) => Ok((value, self.diagnostics)),
             None => Err(self.diagnostics),
@@ -240,11 +272,13 @@ impl DiagnosticManager {
 
     /// Emit diagnostics using the provided template and options. The fallback context is used
     /// when a diagnostic does not specify a source context.
-    pub fn emit(
-        diagnostics: &[Diagnostic],
+    pub fn emit<M>(
+        diagnostics: &[Diagnostic<M>],
         fallback_context: Option<&str>,
         options: &DiagnosticDisplayOptions,
-    ) {
+    ) where
+        M: Clone + Display,
+    {
         if diagnostics.is_empty() {
             return;
         }
@@ -261,7 +295,9 @@ impl DiagnosticManager {
                 verbose_info: options.verbose_info,
             };
 
-            if let Some(lines) = options.template.render(diagnostic, &render_ctx) {
+            let printable = diagnostic.as_string_diagnostic();
+
+            if let Some(lines) = options.template.render(&printable, &render_ctx) {
                 for line in lines {
                     eprintln!("{}", line);
                 }
@@ -278,15 +314,18 @@ pub fn diagnostic_manager() -> Arc<DiagnosticManager> {
 }
 
 pub fn report_error(message: impl Into<String>) -> crate::error::Error {
-    let diagnostic = Diagnostic::error(message);
+    let diagnostic = Diagnostic::error(message.into());
     diagnostic_manager().error(diagnostic.clone());
     crate::error::Error::diagnostic(diagnostic)
 }
 
-fn render_pretty(
-    diagnostic: &Diagnostic,
+fn render_pretty<M>(
+    diagnostic: &Diagnostic<M>,
     ctx: &DiagnosticRenderContext<'_>,
-) -> Option<Vec<String>> {
+) -> Option<Vec<String>>
+where
+    M: Clone + Display,
+{
     if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
         return None;
     }
@@ -318,7 +357,13 @@ fn render_pretty(
     Some(lines)
 }
 
-fn render_plain(diagnostic: &Diagnostic, ctx: &DiagnosticRenderContext<'_>) -> Option<Vec<String>> {
+fn render_plain<M>(
+    diagnostic: &Diagnostic<M>,
+    ctx: &DiagnosticRenderContext<'_>,
+) -> Option<Vec<String>>
+where
+    M: Clone + Display,
+{
     if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
         return None;
     }
@@ -354,8 +399,8 @@ fn render_plain(diagnostic: &Diagnostic, ctx: &DiagnosticRenderContext<'_>) -> O
 macro_rules! diagnostic_error {
     ($context:expr, $($arg:tt)*) => {
         $crate::diagnostics::DiagnosticReport::failure(
-            Some($context),
-            vec![$crate::diagnostics::Diagnostic::error(format!($($arg)*))],
+            vec![$crate::diagnostics::Diagnostic::error(format!($($arg)*))
+                .with_source_context($context)],
         )
     };
 }

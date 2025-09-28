@@ -10,8 +10,9 @@
 - Inline-constant pass duplicates traversal logic already present in the interpreter and reruns interpretation per expression; this is costly and complicates mutation ordering.
 
 ### InterpretationOrchestrator (`crates/fp-optimize/src/orchestrators/interpretation/mod.rs`)
-- The THIR-based interpreter now drives both const and (basic) runtime modes through a shared configuration object. Runtime mode currently returns owned runtime values and still needs richer semantics (ownership, IO shims).
-- Intrinsics are routed through a small registry (print/println today); expand this to cover the rest of the standard library and language-specific hooks.
+- The THIR-based interpreter now drives both const and (basic) runtime modes through a shared configuration object (`InterpreterConfig`). Runtime mode records local bindings inside a `RuntimeEnvironment`, exposes them via `runtime_bindings()`, and returns owned `RuntimeValue`s; richer semantics (true borrow tracking, side-effect shims, foreign calls) remain TODO.
+- Intrinsics are routed through a small registry (print/println/strlen/concat today); expand this to cover the rest of the standard library and language-specific hooks.
+- THIR evaluation now covers loops, `break`/`continue`, local assignment, list/string indexing, and struct field access; continue expanding coverage to additional expression forms (tuple patterns, upvar refs, etc.).
 - Error propagation still relies on `optimization_error`; richer diagnostics should flow through `DiagnosticManager`.
 
 ### Type Inference
