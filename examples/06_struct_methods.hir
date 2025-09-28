@@ -3560,6 +3560,63 @@ Program {
         },
     ],
     def_map: {
+        2: Item {
+            hir_id: 94,
+            def_id: 2,
+            visibility: Private,
+            kind: Struct(
+                Struct {
+                    name: "Rectangle",
+                    fields: [
+                        StructField {
+                            hir_id: 95,
+                            name: "width",
+                            ty: TypeExpr {
+                                hir_id: 96,
+                                kind: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                span: Span {
+                                    file: 18356164589870029453,
+                                    lo: 0,
+                                    hi: 0,
+                                },
+                            },
+                            vis: Public,
+                        },
+                        StructField {
+                            hir_id: 97,
+                            name: "height",
+                            ty: TypeExpr {
+                                hir_id: 98,
+                                kind: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                span: Span {
+                                    file: 18356164589870029453,
+                                    lo: 0,
+                                    hi: 0,
+                                },
+                            },
+                            vis: Public,
+                        },
+                    ],
+                    generics: Generics {
+                        params: [],
+                        where_clause: None,
+                    },
+                },
+            ),
+            span: Span {
+                file: 18356164589870029453,
+                lo: 45,
+                hi: 46,
+            },
+        },
         3: Item {
             hir_id: 99,
             def_id: 3,
@@ -4458,19 +4515,19 @@ Program {
                 hi: 47,
             },
         },
-        2: Item {
-            hir_id: 94,
-            def_id: 2,
+        0: Item {
+            hir_id: 0,
+            def_id: 0,
             visibility: Private,
             kind: Struct(
                 Struct {
-                    name: "Rectangle",
+                    name: "Point",
                     fields: [
                         StructField {
-                            hir_id: 95,
-                            name: "width",
+                            hir_id: 1,
+                            name: "x",
                             ty: TypeExpr {
-                                hir_id: 96,
+                                hir_id: 2,
                                 kind: Primitive(
                                     Int(
                                         I64,
@@ -4485,10 +4542,10 @@ Program {
                             vis: Public,
                         },
                         StructField {
-                            hir_id: 97,
-                            name: "height",
+                            hir_id: 3,
+                            name: "y",
                             ty: TypeExpr {
-                                hir_id: 98,
+                                hir_id: 4,
                                 kind: Primitive(
                                     Int(
                                         I64,
@@ -4511,8 +4568,8 @@ Program {
             ),
             span: Span {
                 file: 18356164589870029453,
-                lo: 45,
-                hi: 46,
+                lo: 0,
+                hi: 1,
             },
         },
         4: Item {
@@ -5664,63 +5721,6 @@ Program {
                 file: 18356164589870029453,
                 lo: 68,
                 hi: 69,
-            },
-        },
-        0: Item {
-            hir_id: 0,
-            def_id: 0,
-            visibility: Private,
-            kind: Struct(
-                Struct {
-                    name: "Point",
-                    fields: [
-                        StructField {
-                            hir_id: 1,
-                            name: "x",
-                            ty: TypeExpr {
-                                hir_id: 2,
-                                kind: Primitive(
-                                    Int(
-                                        I64,
-                                    ),
-                                ),
-                                span: Span {
-                                    file: 18356164589870029453,
-                                    lo: 0,
-                                    hi: 0,
-                                },
-                            },
-                            vis: Public,
-                        },
-                        StructField {
-                            hir_id: 3,
-                            name: "y",
-                            ty: TypeExpr {
-                                hir_id: 4,
-                                kind: Primitive(
-                                    Int(
-                                        I64,
-                                    ),
-                                ),
-                                span: Span {
-                                    file: 18356164589870029453,
-                                    lo: 0,
-                                    hi: 0,
-                                },
-                            },
-                            vis: Public,
-                        },
-                    ],
-                    generics: Generics {
-                        params: [],
-                        where_clause: None,
-                    },
-                },
-            ),
-            span: Span {
-                file: 18356164589870029453,
-                lo: 0,
-                hi: 1,
             },
         },
         1: Item {
