@@ -50,7 +50,7 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     };
 
     // Execute pipeline
-    let pipeline = Pipeline::new();
+    let mut pipeline = Pipeline::new();
     let output = pipeline.execute(input, &config).await?;
 
     // Extract and print result
