@@ -1,6 +1,8 @@
 use llvm_ir::constant::Float;
 use llvm_ir::function::{CallingConvention, Parameter};
-use llvm_ir::instruction::{Add, Alloca, ICmp, Load, Mul, Store, Sub, UDiv, ZExt};
+use llvm_ir::instruction::{
+    Add, Alloca, BitCast, GetElementPtr, ICmp, Load, Mul, Store, Sub, UDiv, ZExt,
+};
 use llvm_ir::module::{DLLStorageClass, DataLayout, Linkage, Visibility};
 use llvm_ir::predicates::IntPredicate;
 use llvm_ir::terminator::{CondBr, Ret};
@@ -374,6 +376,24 @@ impl LlvmContext {
         Ok(name)
     }
 
+    pub fn build_bitcast(
+        &mut self,
+        operand: Operand,
+        target_type: Type,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::BitCast(BitCast {
+            operand,
+            to_type: self.module.types.get_for_type(&target_type),
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
     pub fn build_alloca(
         &mut self,
         allocated_type: TypeRef,
@@ -432,6 +452,27 @@ impl LlvmContext {
         });
         self.add_instruction(instruction)?;
         Ok(())
+    }
+
+    pub fn build_gep(
+        &mut self,
+        address: Operand,
+        element_type: Type,
+        indices: Vec<Operand>,
+        in_bounds: bool,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::GetElementPtr(GetElementPtr {
+            address,
+            indices,
+            dest: name.clone(),
+            in_bounds,
+            debugloc: None,
+            source_element_type: self.module.types.get_for_type(&element_type),
+        });
+        self.add_instruction(instruction)?;
+        Ok(name)
     }
 
     /// Create a return instruction
@@ -613,18 +654,9 @@ impl LlvmContext {
             // Generate function signature; force main to return i32 for C ABIs
             let is_main = function.name == "main";
             let return_type_str = if is_main {
-                "i32"
+                "i32".to_string()
             } else {
-                match &*function.return_type {
-                    llvm_ir::Type::VoidType => "void",
-                    llvm_ir::Type::IntegerType { bits } => match bits {
-                        32 => "i32",
-                        64 => "i64",
-                        1 => "i1",
-                        _ => "i32",
-                    },
-                    _ => "i32",
-                }
+                format_type(function.return_type.as_ref())
             };
 
             let func_name = &function.name;
@@ -632,11 +664,11 @@ impl LlvmContext {
             ir.push_str(&format!("define {} @{}(", return_type_str, func_name));
 
             // Parameters (simplified)
-            for (i, _param) in function.parameters.iter().enumerate() {
+            for (i, param) in function.parameters.iter().enumerate() {
                 if i > 0 {
                     ir.push_str(", ");
                 }
-                ir.push_str(&format!("i32 %arg{}", i));
+                ir.push_str(&format!("{} %arg{}", format_type(param.ty.as_ref()), i));
             }
             ir.push_str(") {\n");
 
@@ -871,6 +903,32 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 format_type(&load.loaded_ty),
                 format_operand(&load.address)
             )
+        }
+        llvm_ir::Instruction::GetElementPtr(gep) => {
+            let element_ty = format_type(gep.source_element_type.as_ref());
+            let prefix = if gep.in_bounds {
+                "getelementptr inbounds"
+            } else {
+                "getelementptr"
+            };
+            let indices = gep
+                .indices
+                .iter()
+                .map(|op| format_operand_with_type(op))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut result = format!(
+                "{} = {} {}, ptr {}",
+                format_value_name(&gep.dest),
+                prefix,
+                element_ty,
+                format_operand(&gep.address)
+            );
+            if !indices.is_empty() {
+                result.push_str(", ");
+                result.push_str(&indices);
+            }
+            result
         }
         llvm_ir::Instruction::Call(call) => {
             let args_str = call
