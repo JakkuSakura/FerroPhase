@@ -1,7 +1,8 @@
 # Pipeline Architecture
 
-FerroPhase's pipeline is organised as a share-nothing driver that threads an
-explicit `CompilationContext` and diagnostics between functional stages. The
+FerroPhase's pipeline is organised as a share-nothing driver that threads
+diagnostics between functional stages while the `Pipeline` struct caches the
+frontend serializer, detected language, and snapshot metadata. The
 frontend now produces a language-specific AST (LAST) snapshot alongside the
 canonical AST, ensuring multi-language inputs flow through the same
 lowerings. The updated flow centres typed interpretation on THIR before
@@ -15,8 +16,8 @@ optimisation IR stack.
      snapshot and the canonical AST (`fp_core::ast::Node`).
    - Annotation captures language metadata (imports, attributes, serializer)
      so later tooling can recover front-end specifics.
-   - The frontend stores provenance (`FrontendSnapshot`) inside the
-     `CompilationContext` so later tooling can persist or inspect LAST data.
+   - The frontend stores provenance (`FrontendSnapshot`) on the pipeline so
+     later tooling can persist or inspect LAST data without re-parsing.
 
 2. **Parsing & Normalisation (AST → AST)**
    - Macro expansion, annotation, and canonical std remapping execute in this
@@ -44,31 +45,32 @@ optimisation IR stack.
    - MIR/LIR benefit from evaluation results (folded consts, generated structs)
      while preserving deterministic spans from the original source.
 
-Each step returns a `StageReport<T>` containing the produced artefact (or a
-placeholder in tolerant mode), an updated `CompilationContext`, and a list of
-`Diagnostic` entries. Diagnostics are printed stage-by-stage but also bubble up
-for aggregate reporting.
+Each step returns a `DiagnosticReport<T>` containing the produced artefact (or a
+placeholder in tolerant mode) and the collected `Diagnostic` entries. The
+pipeline updates its cached serializer/language metadata in place, and
+diagnostics are printed stage-by-stage while also bubbling up for aggregate
+reporting.
 
 7. **Binary Emission (optional)**
    - If the target is `Binary`, the LLVM artefact is passed to `llc` and the
      configured linker via `BinaryCompiler` with diagnostics folded into the
      final report.
 
-## CompilationContext
+## Pipeline State
 
-```rust
-#[derive(Clone, Default)]
-pub struct CompilationContext {
-    pub serializer: Option<Arc<dyn AstSerializer>>,
-    pub source_language: Option<String>,
-    pub frontend_snapshot: Option<FrontendSnapshot>,
-}
-```
+`Pipeline` now owns the lightweight metadata that previously lived inside a
+`CompilationContext`:
 
-The context carries only structural metadata that cannot be recovered from the
-stage artefacts themselves. Every stage receives the context by value and
-returns an updated copy. This keeps serializers and optional frontend snapshots
-available without smuggling additional semantic data through side channels.
+- `serializer: Option<Arc<dyn AstSerializer>>` – reused by const-eval and
+  interpretation to serialise THIR/values.
+- `source_language: Option<String>` – records the detected or user-specified
+  language for diagnostics and downstream tooling.
+- `frontend_snapshot: Option<FrontendSnapshot>` – keeps LAST provenance handy
+  for emitters or persistence features.
+
+These fields are reset at the start of `execute_with_options` and repopulated
+after parsing so subsequent stages can access them without threading an
+explicit context object.
 
 ## Diagnostics
 
@@ -85,9 +87,9 @@ flags for informational entries but always surfaces warnings and errors.
 - `PipelineOptions.source_language` allows callers to override detection when an
   expression lacks a file extension.
 - Additional frontends should implement `LanguageFrontend::parse`, returning a
-  LAST snapshot and serializer tailored to the language. LAST is stored in the
-  context so future tooling can persist or inspect it alongside canonical AST
-  artefacts.
+  LAST snapshot and serializer tailored to the language. LAST provenance is
+  stored on the pipeline so future tooling can persist or inspect it alongside
+  canonical AST artefacts.
 
 ### CLI integration
 
@@ -95,8 +97,8 @@ flags for informational entries but always surfaces warnings and errors.
   to feed `PipelineOptions.source_language`. Use it when file extensions are
   ambiguous (e.g., stdin or embedded expressions) or when forcing a particular
   frontend during experiments.
-- `--save-intermediates` persists stage outputs (including the LAST snapshot
-  captured in the context) regardless of the selected language.
+- `--save-intermediates` persists stage outputs (including the cached LAST
+  snapshot) regardless of the selected language.
 
 ## Intermediates & Persistence
 

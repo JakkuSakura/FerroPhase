@@ -48,78 +48,7 @@ pub enum PipelineOutput {
     Code(String),
 }
 
-#[derive(Clone)]
-pub struct CompilationContext {
-    pub serializer: Option<Arc<dyn AstSerializer>>,
-    pub source_language: Option<String>,
-    pub frontend_snapshot: Option<FrontendSnapshot>,
-}
-
-impl Default for CompilationContext {
-    fn default() -> Self {
-        Self {
-            serializer: None,
-            source_language: None,
-            frontend_snapshot: None,
-        }
-    }
-}
-
-/// Pipeline-specific stage report that includes compilation context
-#[derive(Clone)]
-pub struct PipelineStageReport<T> {
-    pub report: DiagnosticReport<T>,
-    pub context: CompilationContext,
-}
-
-impl<T> PipelineStageReport<T> {
-    fn success(value: T, context: CompilationContext, stage: &'static str) -> Self {
-        Self {
-            report: DiagnosticReport::success(value, Some(stage)),
-            context,
-        }
-    }
-
-    fn success_with_diagnostics(
-        value: T,
-        context: CompilationContext,
-        stage: &'static str,
-        diagnostics: Vec<Diagnostic>,
-    ) -> Self {
-        Self {
-            report: DiagnosticReport::success_with_diagnostics(value, Some(stage), diagnostics),
-            context,
-        }
-    }
-
-    fn failure(
-        context: CompilationContext,
-        stage: &'static str,
-        diagnostics: Vec<Diagnostic>,
-    ) -> Self {
-        Self {
-            report: DiagnosticReport::failure(Some(stage), diagnostics),
-            context,
-        }
-    }
-
-    fn into_result(
-        self,
-        collected: &DiagnosticManager,
-    ) -> Result<(T, CompilationContext), CliError> {
-        collected.add_diagnostics(self.report.diagnostics.clone());
-        if let Some(value) = self.report.value {
-            Ok((value, self.context))
-        } else {
-            Err(CliError::Compilation(format!(
-                "{} stage failed; see diagnostics for details",
-                self.report.context.unwrap_or("pipeline")
-            )))
-        }
-    }
-}
-
-struct LoweringResult {
+struct CompilationArtifacts {
     llvm_ir: PathBuf,
     diagnostics: Vec<Diagnostic>,
 }
@@ -133,6 +62,9 @@ pub struct Pipeline {
     frontends: Arc<FrontendRegistry>,
     default_runtime: String,
     diagnostic_template: DiagnosticTemplate,
+    serializer: Option<Arc<dyn AstSerializer>>,
+    source_language: Option<String>,
+    frontend_snapshot: Option<FrontendSnapshot>,
 }
 
 impl Pipeline {
@@ -145,6 +77,9 @@ impl Pipeline {
             frontends: Arc::new(registry),
             default_runtime: "literal".to_string(),
             diagnostic_template: DiagnosticTemplate::Pretty,
+            serializer: None,
+            source_language: None,
+            frontend_snapshot: None,
         }
     }
 
@@ -159,6 +94,9 @@ impl Pipeline {
             frontends: registry,
             default_runtime: "literal".to_string(),
             diagnostic_template: DiagnosticTemplate::Pretty,
+            serializer: None,
+            source_language: None,
+            frontend_snapshot: None,
         }
     }
 
@@ -176,7 +114,7 @@ impl Pipeline {
     }
 
     pub async fn execute_with_options(
-        &self,
+        &mut self,
         input: PipelineInput,
         mut options: PipelineOptions,
     ) -> Result<PipelineOutput, CliError> {
@@ -198,6 +136,10 @@ impl Pipeline {
         drop(_enter_read);
         debug!(path = ?input_path, "loaded input source");
 
+        self.serializer = None;
+        self.source_language = None;
+        self.frontend_snapshot = None;
+
         options.base_path = Some(base_path.clone());
 
         let language = options
@@ -209,6 +151,8 @@ impl Pipeline {
                     .and_then(|path| detect_source_language(path).map(|lang| lang.name.to_string()))
             })
             .unwrap_or_else(|| languages::FERROPHASE.to_string());
+
+        self.source_language = Some(language.clone());
 
         let frontend = self.frontends.get(&language).ok_or_else(|| {
             CliError::Compilation(format!("Unsupported source language: {}", language))
@@ -223,10 +167,8 @@ impl Pipeline {
         } = frontend.parse(&source, input_path.as_deref())?;
         drop(_enter_parse);
 
-        let mut context = CompilationContext::default();
-        context.serializer = Some(serializer.clone());
-        context.source_language = Some(language.clone());
-        context.frontend_snapshot = snapshot;
+        self.serializer = Some(serializer.clone());
+        self.frontend_snapshot = snapshot;
 
         match options.target {
             PipelineTarget::Rust => {
@@ -248,7 +190,7 @@ impl Pipeline {
                         let interpret_span = info_span!("pipeline.interpret", runtime = "literal");
                         let _enter_interp = interpret_span.enter();
                         let result = self
-                            .interpret_ast(&ast_node, context, &options, input_path.as_deref())
+                            .interpret_ast(&ast_node, &options, input_path.as_deref())
                             .await?;
                         drop(_enter_interp);
                         Ok(PipelineOutput::Value(result))
@@ -262,7 +204,6 @@ impl Pipeline {
                         let result = self
                             .interpret_ast_runtime(
                                 &ast_node,
-                                context,
                                 &runtime,
                                 &options,
                                 input_path.as_deref(),
@@ -274,18 +215,42 @@ impl Pipeline {
                 }
             }
             PipelineTarget::Llvm => {
-                let lowering =
-                    self.compile_to_llvm_ir(ast_node, &options, input_path.as_deref(), context)?;
-                self.emit_diagnostics(&lowering.diagnostics, None, &options);
+                let artifacts = self.compile(ast_node, &options, input_path.as_deref())?;
+                self.emit_diagnostics(&artifacts.diagnostics, None, &options);
                 Ok(PipelineOutput::Code(
-                    lowering.llvm_ir.to_str().unwrap_or_default().to_string(),
+                    artifacts.llvm_ir.to_str().unwrap_or_default().to_string(),
                 ))
             }
             PipelineTarget::Binary => {
-                let (message, diagnostics) =
-                    self.compile_to_binary(ast_node, &options, input_path.as_deref(), context)?;
-                self.emit_diagnostics(&diagnostics, None, &options);
-                println!("{}", message);
+                let mut artifacts = self.compile(ast_node, &options, input_path.as_deref())?;
+                let base_path = options.base_path.as_ref().ok_or_else(|| {
+                    CliError::Compilation("Missing base path for binary output".to_string())
+                })?;
+
+                let obj_path = base_path.with_extension("o");
+                debug!(path = ?obj_path, "invoking llc");
+                let llc_result = BinaryCompiler::run_llc(&artifacts.llvm_ir, &obj_path, &options)?;
+
+                let binary_extension = if cfg!(windows) { "exe" } else { "out" };
+                let binary_path = base_path.with_extension(binary_extension);
+                debug!(path = ?binary_path, "linking final binary");
+                let link_result = BinaryCompiler::link_binary(&obj_path, &binary_path, &options)?;
+
+                artifacts.diagnostics.push(
+                    Diagnostic::info(format!("Linked binary to {}", binary_path.display()))
+                        .with_source_context(STAGE_BINARY),
+                );
+
+                self.emit_diagnostics(&artifacts.diagnostics, None, &options);
+                println!(
+                    "Binary compiled successfully:\n  LLVM IR: {}\n  Object: {}\n  Binary: {}\n  LLC: {}\n  Linker: {}",
+                    artifacts.llvm_ir.display(),
+                    obj_path.display(),
+                    binary_path.display(),
+                    llc_result,
+                    link_result
+                );
+
                 Ok(PipelineOutput::Value(Value::string(
                     "Binary compilation completed".to_string(),
                 )))
@@ -300,120 +265,47 @@ impl Pipeline {
         }
     }
 
-    fn compile_to_binary(
+    fn compile(
         &self,
         ast: Node,
         options: &PipelineOptions,
         file_path: Option<&Path>,
-        context: CompilationContext,
-    ) -> Result<(String, Vec<Diagnostic>), CliError> {
-        let lowering = self.compile_to_llvm_ir(ast, options, file_path, context)?;
-
-        let base_path = options.base_path.as_ref().ok_or_else(|| {
-            CliError::Compilation("Missing base path for binary output".to_string())
-        })?;
-
-        let obj_path = base_path.with_extension("o");
-        debug!(path = ?obj_path, "invoking llc");
-        let llc_result = BinaryCompiler::run_llc(&lowering.llvm_ir, &obj_path, options)?;
-
-        let binary_extension = if cfg!(windows) { "exe" } else { "out" };
-        let binary_path = base_path.with_extension(binary_extension);
-        debug!(path = ?binary_path, "linking final binary");
-        let link_result = BinaryCompiler::link_binary(&obj_path, &binary_path, options)?;
-
-        let mut diagnostics = lowering.diagnostics;
-        diagnostics.push(
-            Diagnostic::info(format!("Linked binary to {}", binary_path.display()))
-                .with_source_context(STAGE_BINARY),
-        );
-
-        let summary = format!(
-            "Binary compiled successfully:\n  LLVM IR: {}\n  Object: {}\n  Binary: {}\n  LLC: {}\n  Linker: {}",
-            lowering.llvm_ir.display(),
-            obj_path.display(),
-            binary_path.display(),
-            llc_result,
-            link_result
-        );
-
-        Ok((summary, diagnostics))
-    }
-
-    fn compile_to_llvm_ir(
-        &self,
-        ast: Node,
-        options: &PipelineOptions,
-        file_path: Option<&Path>,
-        mut context: CompilationContext,
-    ) -> Result<LoweringResult, CliError> {
+    ) -> Result<CompilationArtifacts, CliError> {
         let base_path = options.base_path.as_ref().ok_or_else(|| {
             CliError::Compilation("Missing base path for compilation".to_string())
         })?;
 
         let diagnostic_manager = DiagnosticManager::new();
 
-        let hir_report = self.run_hir_stage(&ast, context, options, file_path, base_path)?;
-        self.emit_diagnostics(
-            &hir_report.report.diagnostics,
-            hir_report.report.context,
-            options,
-        );
-        let (hir_program, updated_context) = hir_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
+        let hir_report = self.run_hir_stage(&ast, options, file_path, base_path)?;
+        let hir_program =
+            self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
 
-        let thir_report = self.run_thir_stage(hir_program, context, options, base_path)?;
-        self.emit_diagnostics(
-            &thir_report.report.diagnostics,
-            thir_report.report.context,
-            options,
-        );
-        let (thir_program, updated_context) = thir_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
+        let thir_report = self.run_thir_stage(hir_program, options, base_path)?;
+        let thir_program =
+            self.collect_stage(STAGE_HIR_TO_THIR, thir_report, &diagnostic_manager, options)?;
 
-        let const_report = self.run_const_eval_stage(thir_program, context, options, base_path)?;
-        self.emit_diagnostics(
-            &const_report.report.diagnostics,
-            const_report.report.context,
-            options,
-        );
-        let (const_artifacts, updated_context) = const_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
-
+        let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
         let ConstEvalArtifacts {
             thir_program,
             outcome: _const_outcome,
-        } = const_artifacts;
+        } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
 
-        let mir_report = self.run_mir_stage(thir_program, context, options, base_path)?;
-        self.emit_diagnostics(
-            &mir_report.report.diagnostics,
-            mir_report.report.context,
-            options,
-        );
-        let (mir_program, updated_context) = mir_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
+        let mir_report = self.run_mir_stage(thir_program, options, base_path)?;
+        let mir_program =
+            self.collect_stage(STAGE_THIR_TO_MIR, mir_report, &diagnostic_manager, options)?;
 
-        let lir_report = self.run_lir_stage(mir_program, context, options, base_path)?;
-        self.emit_diagnostics(
-            &lir_report.report.diagnostics,
-            lir_report.report.context,
-            options,
-        );
-        let (lir_program, updated_context) = lir_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
+        let lir_report = self.run_lir_stage(mir_program, options, base_path)?;
+        let lir_program =
+            self.collect_stage(STAGE_MIR_TO_LIR, lir_report, &diagnostic_manager, options)?;
 
-        let llvm_report = self.run_llvm_stage(lir_program, context, base_path)?;
-        self.emit_diagnostics(
-            &llvm_report.report.diagnostics,
-            llvm_report.report.context,
-            options,
-        );
-        let (llvm_ir, _context) = llvm_report.into_result(&diagnostic_manager)?;
+        let llvm_report = self.run_llvm_stage(lir_program, base_path)?;
+        let llvm_ir =
+            self.collect_stage(STAGE_LIR_TO_LLVM, llvm_report, &diagnostic_manager, options)?;
 
         let diagnostics = diagnostic_manager.get_diagnostics();
 
-        Ok(LoweringResult {
+        Ok(CompilationArtifacts {
             llvm_ir,
             diagnostics,
         })
@@ -422,11 +314,10 @@ impl Pipeline {
     fn run_const_eval_stage(
         &self,
         thir_program: thir::Program,
-        context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<ConstEvalArtifacts>, CliError> {
-        let serializer = context.serializer.clone().ok_or_else(|| {
+    ) -> Result<DiagnosticReport<ConstEvalArtifacts>, CliError> {
+        let serializer = self.serializer.clone().ok_or_else(|| {
             CliError::Compilation("No serializer registered for const-eval".to_string())
         })?;
         register_threadlocal_serializer(serializer.clone());
@@ -439,11 +330,7 @@ impl Pipeline {
             Err(e) => {
                 let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
                     .with_source_context(STAGE_CONST_EVAL);
-                return Ok(PipelineStageReport::failure(
-                    context,
-                    STAGE_CONST_EVAL,
-                    vec![diagnostic],
-                ));
+                return Ok(DiagnosticReport::failure(vec![diagnostic]));
             }
         };
 
@@ -456,24 +343,19 @@ impl Pipeline {
             }
         }
 
-        Ok(PipelineStageReport::success(
-            ConstEvalArtifacts {
-                thir_program,
-                outcome,
-            },
-            context,
-            STAGE_CONST_EVAL,
-        ))
+        Ok(DiagnosticReport::success(ConstEvalArtifacts {
+            thir_program,
+            outcome,
+        }))
     }
 
     fn run_hir_stage(
         &self,
         ast: &Node,
-        context: CompilationContext,
         options: &PipelineOptions,
         file_path: Option<&Path>,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<hir::Program>, CliError> {
+    ) -> Result<DiagnosticReport<hir::Program>, CliError> {
         let mut generator = match file_path {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
@@ -485,14 +367,10 @@ impl Pipeline {
 
         if matches!(ast, Node::Item(_)) {
             let diag = Diagnostic::error(
-                "Top-level items are not supported; provide a file or expression",
+                "Top-level items are not supported; provide a file or expression".to_string(),
             )
             .with_source_context(STAGE_AST_TO_HIR);
-            return Ok(PipelineStageReport::failure(
-                context,
-                STAGE_AST_TO_HIR,
-                vec![diag],
-            ));
+            return Ok(DiagnosticReport::failure(vec![diag]));
         }
 
         let result = match ast {
@@ -528,20 +406,14 @@ impl Pipeline {
                 }
 
                 let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(PipelineStageReport::success_with_diagnostics(
+                Ok(DiagnosticReport::success_with_diagnostics(
                     program,
-                    context,
-                    STAGE_AST_TO_HIR,
                     diagnostics,
                 ))
             }
             _ => {
                 let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(PipelineStageReport::failure(
-                    context,
-                    STAGE_AST_TO_HIR,
-                    diagnostics,
-                ))
+                Ok(DiagnosticReport::failure(diagnostics))
             }
         }
     }
@@ -549,10 +421,9 @@ impl Pipeline {
     fn run_thir_stage(
         &self,
         hir_program: hir::Program,
-        context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<thir::Program>, CliError> {
+    ) -> Result<DiagnosticReport<thir::Program>, CliError> {
         let mut generator = ThirGenerator::new();
         let result = generator.transform(hir_program);
         let diagnostic_manager = DiagnosticManager::new();
@@ -575,10 +446,8 @@ impl Pipeline {
                 }
 
                 let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(PipelineStageReport::success_with_diagnostics(
+                Ok(DiagnosticReport::success_with_diagnostics(
                     program,
-                    context,
-                    STAGE_HIR_TO_THIR,
                     diagnostics,
                 ))
             }
@@ -591,11 +460,7 @@ impl Pipeline {
                             .with_source_context(STAGE_HIR_TO_THIR),
                     );
                 }
-                Ok(PipelineStageReport::failure(
-                    context,
-                    STAGE_HIR_TO_THIR,
-                    diagnostics,
-                ))
+                Ok(DiagnosticReport::failure(diagnostics))
             }
         }
     }
@@ -603,10 +468,9 @@ impl Pipeline {
     fn run_mir_stage(
         &self,
         thir_program: thir::Program,
-        context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<mir::Program>, CliError> {
+    ) -> Result<DiagnosticReport<mir::Program>, CliError> {
         let mut generator = MirGenerator::new();
         let result = generator.transform(thir_program);
         let diagnostic_manager = DiagnosticManager::new();
@@ -629,10 +493,8 @@ impl Pipeline {
                 }
 
                 let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(PipelineStageReport::success_with_diagnostics(
+                Ok(DiagnosticReport::success_with_diagnostics(
                     program,
-                    context,
-                    STAGE_THIR_TO_MIR,
                     diagnostics,
                 ))
             }
@@ -645,11 +507,7 @@ impl Pipeline {
                             .with_source_context(STAGE_THIR_TO_MIR),
                     );
                 }
-                Ok(PipelineStageReport::failure(
-                    context,
-                    STAGE_THIR_TO_MIR,
-                    diagnostics,
-                ))
+                Ok(DiagnosticReport::failure(diagnostics))
             }
         }
     }
@@ -657,10 +515,9 @@ impl Pipeline {
     fn run_lir_stage(
         &self,
         mir_program: mir::Program,
-        context: CompilationContext,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<lir::LirProgram>, CliError> {
+    ) -> Result<DiagnosticReport<lir::LirProgram>, CliError> {
         let mut generator = LirGenerator::new();
         let result = generator.transform(mir_program);
         let diagnostic_manager = DiagnosticManager::new();
@@ -683,10 +540,8 @@ impl Pipeline {
                 }
 
                 let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(PipelineStageReport::success_with_diagnostics(
+                Ok(DiagnosticReport::success_with_diagnostics(
                     program,
-                    context,
-                    STAGE_MIR_TO_LIR,
                     diagnostics,
                 ))
             }
@@ -699,11 +554,7 @@ impl Pipeline {
                             .with_source_context(STAGE_MIR_TO_LIR),
                     );
                 }
-                Ok(PipelineStageReport::failure(
-                    context,
-                    STAGE_MIR_TO_LIR,
-                    diagnostics,
-                ))
+                Ok(DiagnosticReport::failure(diagnostics))
             }
         }
     }
@@ -711,9 +562,8 @@ impl Pipeline {
     fn run_llvm_stage(
         &self,
         lir_program: lir::LirProgram,
-        context: CompilationContext,
         base_path: &Path,
-    ) -> Result<PipelineStageReport<PathBuf>, CliError> {
+    ) -> Result<DiagnosticReport<PathBuf>, CliError> {
         let llvm_output = base_path.with_extension("ll");
         let llvm_config = fp_llvm::LlvmConfig::executable(&llvm_output);
         let llvm_compiler = fp_llvm::LlvmCompiler::new(llvm_config);
@@ -732,26 +582,20 @@ impl Pipeline {
             Ok(path) => path,
             Err(_) => {
                 let diagnostics = diagnostic_manager.get_diagnostics();
-                return Ok(PipelineStageReport::failure(
-                    context,
-                    STAGE_LIR_TO_LLVM,
-                    diagnostics,
-                ));
+                return Ok(DiagnosticReport::failure(diagnostics));
             }
         };
 
         let diagnostics = diagnostic_manager.get_diagnostics();
 
-        Ok(PipelineStageReport::success_with_diagnostics(
+        Ok(DiagnosticReport::success_with_diagnostics(
             llvm_ir,
-            context,
-            STAGE_LIR_TO_LLVM,
             diagnostics,
         ))
     }
 
     pub async fn execute(
-        &self,
+        &mut self,
         input: PipelineInput,
         config: &PipelineConfig,
     ) -> Result<PipelineOutput, CliError> {
@@ -760,7 +604,7 @@ impl Pipeline {
     }
 
     pub async fn execute_runtime(
-        &self,
+        &mut self,
         input: PipelineInput,
         runtime_name: &str,
     ) -> Result<RuntimeValue, CliError> {
@@ -797,80 +641,61 @@ impl Pipeline {
     async fn interpret_ast(
         &self,
         ast: &Node,
-        context: CompilationContext,
         options: &PipelineOptions,
         file_path: Option<&Path>,
     ) -> Result<Value, CliError> {
-        self.interpret_ast_with_mode(ast, context, options, file_path, InterpreterMode::Const)
-            .await
+        let (value, _) = self
+            .interpret_ast_with_mode(ast, options, file_path, InterpreterMode::Const)
+            .await?;
+        Ok(value)
     }
 
     async fn interpret_ast_runtime(
         &self,
         ast: &Node,
-        context: CompilationContext,
         _runtime_name: &str,
         options: &PipelineOptions,
         file_path: Option<&Path>,
     ) -> Result<RuntimeValue, CliError> {
-        let value = self
-            .interpret_ast_with_mode(ast, context, options, file_path, InterpreterMode::Runtime)
+        let (value, runtime_value) = self
+            .interpret_ast_with_mode(ast, options, file_path, InterpreterMode::Runtime)
             .await?;
-        Ok(value.to_runtime_owned())
+        Ok(runtime_value.unwrap_or_else(|| value.to_runtime_owned()))
     }
 
     async fn interpret_ast_with_mode(
         &self,
         ast: &Node,
-        mut context: CompilationContext,
         options: &PipelineOptions,
         file_path: Option<&Path>,
         mode: InterpreterMode,
-    ) -> Result<Value, CliError> {
+    ) -> Result<(Value, Option<RuntimeValue>), CliError> {
         let base_path = options.base_path.as_ref().ok_or_else(|| {
             CliError::Compilation("Missing base path for interpretation".to_string())
         })?;
 
         let diagnostic_manager = DiagnosticManager::new();
 
-        let hir_report = self.run_hir_stage(ast, context, options, file_path, base_path)?;
-        self.emit_diagnostics(
-            &hir_report.report.diagnostics,
-            hir_report.report.context,
-            options,
-        );
-        let (hir_program, updated_context) = hir_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
+        let hir_report = self.run_hir_stage(ast, options, file_path, base_path)?;
+        let hir_program =
+            self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
 
-        let thir_report = self.run_thir_stage(hir_program, context, options, base_path)?;
-        self.emit_diagnostics(
-            &thir_report.report.diagnostics,
-            thir_report.report.context,
-            options,
-        );
-        let (thir_program, updated_context) = thir_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
+        let thir_report = self.run_thir_stage(hir_program, options, base_path)?;
+        let thir_program =
+            self.collect_stage(STAGE_HIR_TO_THIR, thir_report, &diagnostic_manager, options)?;
 
-        let const_report = self.run_const_eval_stage(thir_program, context, options, base_path)?;
-        self.emit_diagnostics(
-            &const_report.report.diagnostics,
-            const_report.report.context,
-            options,
-        );
-        let (const_artifacts, updated_context) = const_report.into_result(&diagnostic_manager)?;
-        context = updated_context;
-
+        let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
         let ConstEvalArtifacts {
             thir_program,
             outcome,
-        } = const_artifacts;
+        } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
 
-        let serializer = context.serializer.clone().ok_or_else(|| {
+        let serializer = self.serializer.clone().ok_or_else(|| {
             CliError::Compilation(
                 "Frontend did not register serializer for interpretation".to_string(),
             )
         })?;
-        register_threadlocal_serializer(serializer);
+        register_threadlocal_serializer(serializer.clone());
 
         let mut interpreter = InterpretationOrchestrator::new(mode);
         let interpreter_diagnostics = Arc::new(DiagnosticManager::new());
@@ -879,10 +704,17 @@ impl Pipeline {
         let value =
             self.evaluate_program_entry(&thir_program, &mut interpreter, &outcome.values)?;
 
+        let runtime_value = if matches!(mode, InterpreterMode::Runtime) {
+            Some(interpreter.finalize_runtime_value(value.clone()))
+        } else {
+            None
+        };
+
         let interp_diags = interpreter_diagnostics.get_diagnostics();
         self.emit_diagnostics(&interp_diags, Some(STAGE_INTERPRET), options);
+        diagnostic_manager.add_diagnostics(interp_diags);
 
-        Ok(value)
+        Ok((value, runtime_value))
     }
 
     fn emit_diagnostics(
@@ -897,6 +729,25 @@ impl Pipeline {
 
         let display_options = self.diagnostic_display_options(options);
         DiagnosticManager::emit(diagnostics, stage_context, &display_options);
+    }
+
+    fn collect_stage<T>(
+        &self,
+        stage: &'static str,
+        report: DiagnosticReport<T>,
+        manager: &DiagnosticManager,
+        options: &PipelineOptions,
+    ) -> Result<T, CliError> {
+        let DiagnosticReport { value, diagnostics } = report;
+        self.emit_diagnostics(&diagnostics, Some(stage), options);
+        manager.add_diagnostics(diagnostics.clone());
+
+        value.ok_or_else(|| {
+            CliError::Compilation(format!(
+                "{} stage failed; see diagnostics for details",
+                stage
+            ))
+        })
     }
 
     fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
