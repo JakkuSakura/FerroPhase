@@ -3,6 +3,7 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, PipelineConfig, PipelineInput},
 };
+use fp_core::pretty::{PrettyOptions, pretty};
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -51,8 +52,11 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
 
     let ast = pipeline.parse_source_public(&source)?;
 
-    // Print the AST using Debug formatting for now
-    println!("{:#?}", ast);
+    let mut pretty_opts = PrettyOptions::default();
+    pretty_opts.show_types = false;
+    pretty_opts.show_spans = false;
+
+    println!("{}", pretty(ast.as_ref(), pretty_opts));
 
     Ok(())
 }

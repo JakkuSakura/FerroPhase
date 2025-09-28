@@ -7,7 +7,6 @@
 // - utils: Shared utilities and helper components
 
 pub mod error;
-pub mod ir;
 pub mod orchestrators;
 pub mod passes;
 pub mod queries;

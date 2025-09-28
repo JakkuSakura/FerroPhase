@@ -137,13 +137,16 @@ impl<'a> TypeInferencer<'a> {
                 };
 
                 let pat_var = self.infer_pattern(&local.pat)?;
-                if let Some(init_var) = init_var {
-                    self.unify(pat_var, init_var)?;
-                }
+                let has_annotation = local.ty.is_some();
                 if let Some(ty_expr) = &local.ty {
                     let annotated = self.generator.hir_ty_to_ty(ty_expr)?;
                     let annotated_var = self.type_from_hir_ty(&annotated)?;
                     self.unify(pat_var, annotated_var)?;
+                }
+                if let Some(init_var) = init_var {
+                    if !has_annotation {
+                        self.unify(pat_var, init_var)?;
+                    }
                 }
 
                 let _ = self.introduce_pattern_bindings(&local.pat)?;
@@ -169,16 +172,18 @@ impl<'a> TypeInferencer<'a> {
                     | hir::BinOp::Sub
                     | hir::BinOp::Mul
                     | hir::BinOp::Div
-                    | hir::BinOp::Rem
-                    | hir::BinOp::BitAnd
+                    | hir::BinOp::Rem => {
+                        self.unify(lhs_ty, rhs_ty)?;
+                        self.ensure_numeric(lhs_ty, "arithmetic operation")?;
+                        lhs_ty
+                    }
+                    hir::BinOp::BitAnd
                     | hir::BinOp::BitOr
                     | hir::BinOp::BitXor
                     | hir::BinOp::Shl
                     | hir::BinOp::Shr => {
-                        let num_ty = self.fresh_type_var();
-                        self.bind(num_ty, TypeTerm::Int(None))?;
-                        self.unify(lhs_ty, num_ty)?;
-                        self.unify(rhs_ty, num_ty)?;
+                        self.unify(lhs_ty, rhs_ty)?;
+                        self.ensure_integer(lhs_ty, "bitwise operation")?;
                         lhs_ty
                     }
                     hir::BinOp::Eq
@@ -353,10 +358,10 @@ impl<'a> TypeInferencer<'a> {
                     self.unify(owner_ty_var, expected_owner)?;
                     self.type_from_hir_ty(&field_ty)?
                 } else {
-                    return Err(crate::error::optimization_error(format!(
-                        "Unknown field `{}` on type {:?}",
-                        field_name, &resolved_owner_ty
-                    )));
+                    // Fall back to a fresh type variable when field metadata is unavailable.
+                    // Detyped HIR may omit structural layouts, so we remain permissive here.
+                    let fallback = self.fresh_type_var();
+                    fallback
                 }
             }
             ExprKind::Struct(path, fields) => {
@@ -783,6 +788,18 @@ impl<'a> TypeInferencer<'a> {
                 self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
                 Ok(())
             }
+            (Int(None), Uint(kind)) => {
+                let merged = Self::merge_uint_kinds(None, kind)?;
+                self.type_vars[left_root].kind = TypeVarKind::Bound(Uint(merged));
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
+            (Uint(kind), Int(None)) => {
+                let merged = Self::merge_uint_kinds(kind, None)?;
+                self.type_vars[left_root].kind = TypeVarKind::Bound(Uint(merged));
+                self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
+                Ok(())
+            }
             (Float(a), Float(b)) => {
                 let merged = Self::merge_float_kinds(a, b)?;
                 self.type_vars[left_root].kind = TypeVarKind::Bound(Float(merged));
@@ -1045,6 +1062,30 @@ impl<'a> TypeInferencer<'a> {
         }
 
         Ok(())
+    }
+
+    fn ensure_numeric(&mut self, var: TypeVarId, context: &str) -> Result<()> {
+        let ty = self.resolve_to_hir(var)?;
+        match ty.kind {
+            hir_types::TyKind::Int(_)
+            | hir_types::TyKind::Uint(_)
+            | hir_types::TyKind::Float(_) => Ok(()),
+            _ => Err(crate::error::optimization_error(format!(
+                "{} requires numeric operands, found {:?}",
+                context, ty
+            ))),
+        }
+    }
+
+    fn ensure_integer(&mut self, var: TypeVarId, context: &str) -> Result<()> {
+        let ty = self.resolve_to_hir(var)?;
+        match ty.kind {
+            hir_types::TyKind::Int(_) | hir_types::TyKind::Uint(_) => Ok(()),
+            _ => Err(crate::error::optimization_error(format!(
+                "{} requires integer operands, found {:?}",
+                context, ty
+            ))),
+        }
     }
 
     fn resolve_to_hir(&mut self, var: TypeVarId) -> Result<hir_types::Ty> {

@@ -14,10 +14,11 @@ use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport, DiagnosticTemplate,
 };
 use fp_core::hir::typed as thir;
-use fp_optimize::ir::{hir, lir, mir};
+use fp_core::pretty::{PrettyOptions, pretty};
+use fp_core::{hir, lir, mir};
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::transformations::{
-    HirGenerator, IrTransform, LirGenerator, MirGenerator, ThirGenerator,
+    HirGenerator, IrTransform, LirGenerator, MirGenerator, ThirDetyper, ThirGenerator,
 };
 use fp_optimize::{ConstEvaluationOrchestrator, InterpretationOrchestrator, InterpreterMode};
 use std::fs;
@@ -33,6 +34,15 @@ const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_LIR_TO_LLVM: &str = "lir→llvm";
 const STAGE_BINARY: &str = "binary";
 const STAGE_INTERPRET: &str = "interpret";
+const STAGE_THIR_TO_HIR_DETYPE: &str = "thir→hir(detyped)";
+const STAGE_DETYPED_HIR_TO_THIR: &str = "detyped-hir→thir";
+
+const EXT_HIR: &str = "hir";
+const EXT_THIR: &str = "thi";
+const EXT_CONST_THIR: &str = "tce";
+const EXT_DETYPED_HIR: &str = "dhi";
+const EXT_MIR: &str = "mir";
+const EXT_LIR: &str = "lir";
 
 pub use crate::config::PipelineConfig;
 #[derive(Debug)]
@@ -161,11 +171,14 @@ impl Pipeline {
         let parse_span = info_span!("pipeline.frontend", language = %language);
         let _enter_parse = parse_span.enter();
         let FrontendResult {
+            last: _last,
             ast: ast_node,
             serializer,
             snapshot,
         } = frontend.parse(&source, input_path.as_deref())?;
         drop(_enter_parse);
+
+        register_threadlocal_serializer(serializer.clone());
 
         self.serializer = Some(serializer.clone());
         self.frontend_snapshot = snapshot;
@@ -287,9 +300,25 @@ impl Pipeline {
 
         let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
         let ConstEvalArtifacts {
-            thir_program,
+            thir_program: evaluated_thir,
             outcome: _const_outcome,
         } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
+
+        let detype_report = self.run_detype_stage(evaluated_thir, options, base_path)?;
+        let detyped_hir = self.collect_stage(
+            STAGE_THIR_TO_HIR_DETYPE,
+            detype_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let thir_from_detyped = self.run_thir_stage(detyped_hir, options, base_path)?;
+        let thir_program = self.collect_stage(
+            STAGE_DETYPED_HIR_TO_THIR,
+            thir_from_detyped,
+            &diagnostic_manager,
+            options,
+        )?;
 
         let mir_report = self.run_mir_stage(thir_program, options, base_path)?;
         let mir_program =
@@ -335,13 +364,13 @@ impl Pipeline {
         };
 
         if options.save_intermediates {
-            if let Err(err) = fs::write(
-                base_path.with_extension("ethir"),
-                format!("{:#?}", thir_program),
-            ) {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+            let rendered = format!("{}", pretty(&thir_program, pretty_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_CONST_THIR), rendered) {
                 debug!(
                     error = %err,
-                    "failed to persist evaluated THIR (ethir) intermediate after const eval"
+                    "failed to persist evaluated THIR (tce) intermediate after const eval"
                 );
             }
         }
@@ -350,6 +379,36 @@ impl Pipeline {
             thir_program,
             outcome,
         }))
+    }
+
+    fn run_detype_stage(
+        &self,
+        thir_program: thir::Program,
+        options: &PipelineOptions,
+        base_path: &Path,
+    ) -> Result<DiagnosticReport<hir::Program>, CliError> {
+        let mut detyper = ThirDetyper::new();
+        match detyper.transform(thir_program) {
+            Ok(hir_program) => {
+                if options.save_intermediates {
+                    if let Err(err) = fs::write(
+                        base_path.with_extension(EXT_DETYPED_HIR),
+                        format!("{:#?}", hir_program),
+                    ) {
+                        debug!(
+                            error = %err,
+                            "failed to persist detyped HIR intermediate"
+                        );
+                    }
+                }
+                Ok(DiagnosticReport::success(hir_program))
+            }
+            Err(err) => {
+                let diagnostic = Diagnostic::error(format!("THIR→HIR detyping failed: {}", err))
+                    .with_source_context(STAGE_THIR_TO_HIR_DETYPE);
+                Ok(DiagnosticReport::failure(vec![diagnostic]))
+            }
+        }
     }
 
     fn run_hir_stage(
@@ -401,9 +460,10 @@ impl Pipeline {
         match result {
             Ok(program) if errors.is_empty() => {
                 if options.save_intermediates {
-                    if let Err(err) =
-                        fs::write(base_path.with_extension("hir"), format!("{:#?}", program))
-                    {
+                    let mut pretty_opts = PrettyOptions::default();
+                    pretty_opts.show_spans = options.debug.verbose;
+                    let rendered = format!("{}", pretty(&program, pretty_opts));
+                    if let Err(err) = fs::write(base_path.with_extension(EXT_HIR), rendered) {
                         debug!(error = %err, "failed to persist HIR intermediate");
                     }
                 }
@@ -441,9 +501,10 @@ impl Pipeline {
         match result {
             Ok(program) => {
                 if options.save_intermediates {
-                    if let Err(err) =
-                        fs::write(base_path.with_extension("thir"), format!("{:#?}", program))
-                    {
+                    let mut pretty_opts = PrettyOptions::default();
+                    pretty_opts.show_spans = options.debug.verbose;
+                    let rendered = format!("{}", pretty(&program, pretty_opts));
+                    if let Err(err) = fs::write(base_path.with_extension(EXT_THIR), rendered) {
                         debug!(error = %err, "failed to persist THIR intermediate");
                     }
                 }
@@ -488,9 +549,10 @@ impl Pipeline {
         match result {
             Ok(program) => {
                 if options.save_intermediates {
-                    if let Err(err) =
-                        fs::write(base_path.with_extension("mir"), format!("{:#?}", program))
-                    {
+                    let mut pretty_opts = PrettyOptions::default();
+                    pretty_opts.show_spans = options.debug.verbose;
+                    let rendered = format!("{}", pretty(&program, pretty_opts));
+                    if let Err(err) = fs::write(base_path.with_extension(EXT_MIR), rendered) {
                         debug!(error = %err, "failed to persist MIR intermediate");
                     }
                 }
@@ -535,9 +597,10 @@ impl Pipeline {
         match result {
             Ok(program) => {
                 if options.save_intermediates {
-                    if let Err(err) =
-                        fs::write(base_path.with_extension("lir"), format!("{:#?}", program))
-                    {
+                    let mut pretty_opts = PrettyOptions::default();
+                    pretty_opts.show_spans = options.debug.verbose;
+                    let rendered = format!("{}", pretty(&program, pretty_opts));
+                    if let Err(err) = fs::write(base_path.with_extension(EXT_LIR), rendered) {
                         debug!(error = %err, "failed to persist LIR intermediate");
                     }
                 }
@@ -631,7 +694,10 @@ impl Pipeline {
             .frontends
             .get(languages::FERROPHASE)
             .ok_or_else(|| CliError::Compilation("Rust frontend not registered".to_string()))?;
-        let FrontendResult { ast, .. } = frontend.parse(source, None)?;
+        let FrontendResult {
+            ast, serializer, ..
+        } = frontend.parse(source, None)?;
+        register_threadlocal_serializer(serializer);
 
         match ast {
             Node::Expr(expr) => Ok(Box::new(expr)),

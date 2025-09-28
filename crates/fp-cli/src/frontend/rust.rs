@@ -63,7 +63,8 @@ impl LanguageFrontend for RustFrontend {
         let serializer = Arc::new(RustPrinter::new());
 
         if let Some(path) = path {
-            let mut ast = Node::File(self.parse_file(&cleaned, path)?);
+            let last = Node::File(self.parse_file(&cleaned, path)?);
+            let mut ast = last.clone();
             normalize_last_to_ast(&mut ast);
             let snapshot = FrontendSnapshot {
                 language: self.language().to_string(),
@@ -72,6 +73,7 @@ impl LanguageFrontend for RustFrontend {
             };
 
             return Ok(FrontendResult {
+                last,
                 ast,
                 serializer,
                 snapshot: Some(snapshot),
@@ -79,10 +81,13 @@ impl LanguageFrontend for RustFrontend {
         }
 
         // Fall back to expression parsing when no explicit path is provided.
-        let mut ast = Node::Expr(*self.parse_expression(&cleaned)?);
+        let expr = self.parse_expression(&cleaned)?;
+        let last = Node::Expr(expr.as_ref().clone());
+        let mut ast = last.clone();
         normalize_last_to_ast(&mut ast);
 
         Ok(FrontendResult {
+            last,
             ast,
             serializer,
             snapshot: None,
