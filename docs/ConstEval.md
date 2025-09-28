@@ -135,7 +135,7 @@ Phase 2: evaluate const blocks, compute sizeof!(Point), append GeneratedPoint fi
 Phase 3: downstream passes verify generated definitions and prepare outputs for compilation or transpilation (outside the const-eval step).
 ```
 
-The updated THIR′ snapshot is persisted when `--save-intermediates` is enabled (e.g., `target/thir/...`). Later phases may emit additional artefacts (`.tast`, `.hir`, etc.) depending on the selected mode.
+The updated THIR′ snapshot is persisted when `--save-intermediates` is enabled (e.g., `target/ethir/...`). Later phases may emit additional artefacts (`.tast`, `.hir`, etc.) depending on the selected mode.
 
 ## Summary
 
@@ -147,7 +147,7 @@ Phase 2: evaluate const blocks, compute sizeof!(Point), append GeneratedPoint fi
 Phase 3: downstream passes verify generated definitions and prepare outputs for compilation or transpilation (outside the const-eval step).
 ```
 
-When `--save-intermediates` is enabled, const evaluation persists the updated THIR snapshot (`.thir`). Later phases may produce additional artefacts as needed.
+When `--save-intermediates` is enabled, const evaluation persists the updated THIR snapshot as `.ethir`. Later phases may produce additional artefacts as needed.
 
 ## Summary
 

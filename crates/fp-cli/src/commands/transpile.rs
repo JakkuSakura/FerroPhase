@@ -131,7 +131,7 @@ async fn transpile_file(
         TYPESCRIPT | "ts" => TranspileTarget::TypeScript,
         JAVASCRIPT | "js" => TranspileTarget::JavaScript,
         CSHARP | "cs" | "c#" => TranspileTarget::CSharp,
-        RUST | "rs" | "rust" => TranspileTarget::Rust,
+        RUST | "rs" => TranspileTarget::Rust,
         _ => {
             return Err(CliError::InvalidInput(format!(
                 "Unsupported target: {}",

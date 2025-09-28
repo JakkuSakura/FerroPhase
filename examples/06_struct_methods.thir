@@ -1018,1155 +1018,6 @@ Program {
     ],
     bodies: {
         BodyId(
-            2,
-        ): Body {
-            params: [
-                Param {
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Adt(
-                                    AdtDef {
-                                        did: 0,
-                                        variants: [
-                                            VariantDef {
-                                                def_id: 0,
-                                                ctor_def_id: None,
-                                                ident: "Point",
-                                                discr: Relative(
-                                                    0,
-                                                ),
-                                                fields: [
-                                                    FieldDef {
-                                                        did: 1,
-                                                        ident: "x",
-                                                        vis: Public,
-                                                    },
-                                                    FieldDef {
-                                                        did: 2,
-                                                        ident: "y",
-                                                        vis: Public,
-                                                    },
-                                                ],
-                                                ctor_kind: Const,
-                                                is_recovered: false,
-                                            },
-                                        ],
-                                        flags: AdtFlags(
-                                            IS_STRUCT,
-                                        ),
-                                        repr: ReprOptions {
-                                            int: None,
-                                            align: None,
-                                            pack: None,
-                                            flags: ReprFlags(
-                                                0x0,
-                                            ),
-                                            field_shuffle_seed: 0,
-                                        },
-                                    },
-                                    [],
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    pat: Some(
-                        Pat {
-                            thir_id: 27,
-                            kind: Binding {
-                                mutability: Not,
-                                name: "self",
-                                mode: ByValue,
-                                var: 0,
-                                ty: Ty {
-                                    kind: Ref(
-                                        ReStatic,
-                                        Ty {
-                                            kind: Adt(
-                                                AdtDef {
-                                                    did: 0,
-                                                    variants: [
-                                                        VariantDef {
-                                                            def_id: 0,
-                                                            ctor_def_id: None,
-                                                            ident: "Point",
-                                                            discr: Relative(
-                                                                0,
-                                                            ),
-                                                            fields: [
-                                                                FieldDef {
-                                                                    did: 1,
-                                                                    ident: "x",
-                                                                    vis: Public,
-                                                                },
-                                                                FieldDef {
-                                                                    did: 2,
-                                                                    ident: "y",
-                                                                    vis: Public,
-                                                                },
-                                                            ],
-                                                            ctor_kind: Const,
-                                                            is_recovered: false,
-                                                        },
-                                                    ],
-                                                    flags: AdtFlags(
-                                                        IS_STRUCT,
-                                                    ),
-                                                    repr: ReprOptions {
-                                                        int: None,
-                                                        align: None,
-                                                        pack: None,
-                                                        flags: ReprFlags(
-                                                            0x0,
-                                                        ),
-                                                        field_shuffle_seed: 0,
-                                                    },
-                                                },
-                                                [],
-                                            ),
-                                        },
-                                        Not,
-                                    ),
-                                },
-                            },
-                            ty: Ty {
-                                kind: Ref(
-                                    ReStatic,
-                                    Ty {
-                                        kind: Adt(
-                                            AdtDef {
-                                                did: 0,
-                                                variants: [
-                                                    VariantDef {
-                                                        def_id: 0,
-                                                        ctor_def_id: None,
-                                                        ident: "Point",
-                                                        discr: Relative(
-                                                            0,
-                                                        ),
-                                                        fields: [
-                                                            FieldDef {
-                                                                did: 1,
-                                                                ident: "x",
-                                                                vis: Public,
-                                                            },
-                                                            FieldDef {
-                                                                did: 2,
-                                                                ident: "y",
-                                                                vis: Public,
-                                                            },
-                                                        ],
-                                                        ctor_kind: Const,
-                                                        is_recovered: false,
-                                                    },
-                                                ],
-                                                flags: AdtFlags(
-                                                    IS_STRUCT,
-                                                ),
-                                                repr: ReprOptions {
-                                                    int: None,
-                                                    align: None,
-                                                    pack: None,
-                                                    flags: ReprFlags(
-                                                        0x0,
-                                                    ),
-                                                    field_shuffle_seed: 0,
-                                                },
-                                            },
-                                            [],
-                                        ),
-                                    },
-                                    Not,
-                                ),
-                            },
-                            span: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                        },
-                    ),
-                },
-                Param {
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Adt(
-                                    AdtDef {
-                                        did: 0,
-                                        variants: [
-                                            VariantDef {
-                                                def_id: 0,
-                                                ctor_def_id: None,
-                                                ident: "Point",
-                                                discr: Relative(
-                                                    0,
-                                                ),
-                                                fields: [
-                                                    FieldDef {
-                                                        did: 1,
-                                                        ident: "x",
-                                                        vis: Public,
-                                                    },
-                                                    FieldDef {
-                                                        did: 2,
-                                                        ident: "y",
-                                                        vis: Public,
-                                                    },
-                                                ],
-                                                ctor_kind: Const,
-                                                is_recovered: false,
-                                            },
-                                        ],
-                                        flags: AdtFlags(
-                                            IS_STRUCT,
-                                        ),
-                                        repr: ReprOptions {
-                                            int: None,
-                                            align: None,
-                                            pack: None,
-                                            flags: ReprFlags(
-                                                0x0,
-                                            ),
-                                            field_shuffle_seed: 0,
-                                        },
-                                    },
-                                    [],
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    pat: Some(
-                        Pat {
-                            thir_id: 28,
-                            kind: Binding {
-                                mutability: Not,
-                                name: "other",
-                                mode: ByValue,
-                                var: 1,
-                                ty: Ty {
-                                    kind: Ref(
-                                        ReStatic,
-                                        Ty {
-                                            kind: Adt(
-                                                AdtDef {
-                                                    did: 0,
-                                                    variants: [
-                                                        VariantDef {
-                                                            def_id: 0,
-                                                            ctor_def_id: None,
-                                                            ident: "Point",
-                                                            discr: Relative(
-                                                                0,
-                                                            ),
-                                                            fields: [
-                                                                FieldDef {
-                                                                    did: 1,
-                                                                    ident: "x",
-                                                                    vis: Public,
-                                                                },
-                                                                FieldDef {
-                                                                    did: 2,
-                                                                    ident: "y",
-                                                                    vis: Public,
-                                                                },
-                                                            ],
-                                                            ctor_kind: Const,
-                                                            is_recovered: false,
-                                                        },
-                                                    ],
-                                                    flags: AdtFlags(
-                                                        IS_STRUCT,
-                                                    ),
-                                                    repr: ReprOptions {
-                                                        int: None,
-                                                        align: None,
-                                                        pack: None,
-                                                        flags: ReprFlags(
-                                                            0x0,
-                                                        ),
-                                                        field_shuffle_seed: 0,
-                                                    },
-                                                },
-                                                [],
-                                            ),
-                                        },
-                                        Not,
-                                    ),
-                                },
-                            },
-                            ty: Ty {
-                                kind: Ref(
-                                    ReStatic,
-                                    Ty {
-                                        kind: Adt(
-                                            AdtDef {
-                                                did: 0,
-                                                variants: [
-                                                    VariantDef {
-                                                        def_id: 0,
-                                                        ctor_def_id: None,
-                                                        ident: "Point",
-                                                        discr: Relative(
-                                                            0,
-                                                        ),
-                                                        fields: [
-                                                            FieldDef {
-                                                                did: 1,
-                                                                ident: "x",
-                                                                vis: Public,
-                                                            },
-                                                            FieldDef {
-                                                                did: 2,
-                                                                ident: "y",
-                                                                vis: Public,
-                                                            },
-                                                        ],
-                                                        ctor_kind: Const,
-                                                        is_recovered: false,
-                                                    },
-                                                ],
-                                                flags: AdtFlags(
-                                                    IS_STRUCT,
-                                                ),
-                                                repr: ReprOptions {
-                                                    int: None,
-                                                    align: None,
-                                                    pack: None,
-                                                    flags: ReprFlags(
-                                                        0x0,
-                                                    ),
-                                                    field_shuffle_seed: 0,
-                                                },
-                                            },
-                                            [],
-                                        ),
-                                    },
-                                    Not,
-                                ),
-                            },
-                            span: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                        },
-                    ),
-                },
-            ],
-            value: Expr {
-                thir_id: 29,
-                kind: Block(
-                    Block {
-                        targeted_by_break: false,
-                        region: 0,
-                        span: Span {
-                            file: 0,
-                            lo: 0,
-                            hi: 0,
-                        },
-                        stmts: [
-                            Stmt {
-                                kind: Let {
-                                    remainder_scope: 0,
-                                    init_scope: 0,
-                                    pattern: Pat {
-                                        thir_id: 35,
-                                        kind: Binding {
-                                            mutability: Not,
-                                            name: "dx",
-                                            mode: ByValue,
-                                            var: 2,
-                                            ty: Ty {
-                                                kind: Int(
-                                                    I64,
-                                                ),
-                                            },
-                                        },
-                                        ty: Ty {
-                                            kind: Int(
-                                                I64,
-                                            ),
-                                        },
-                                        span: Span {
-                                            file: 0,
-                                            lo: 0,
-                                            hi: 0,
-                                        },
-                                    },
-                                    initializer: Some(
-                                        Expr {
-                                            thir_id: 30,
-                                            kind: Binary(
-                                                Sub,
-                                                Expr {
-                                                    thir_id: 31,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 32,
-                                                            kind: VarRef {
-                                                                id: 0,
-                                                            },
-                                                            ty: Ty {
-                                                                kind: Ref(
-                                                                    ReStatic,
-                                                                    Ty {
-                                                                        kind: Adt(
-                                                                            AdtDef {
-                                                                                did: 0,
-                                                                                variants: [
-                                                                                    VariantDef {
-                                                                                        def_id: 0,
-                                                                                        ctor_def_id: None,
-                                                                                        ident: "Point",
-                                                                                        discr: Relative(
-                                                                                            0,
-                                                                                        ),
-                                                                                        fields: [
-                                                                                            FieldDef {
-                                                                                                did: 1,
-                                                                                                ident: "x",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                            FieldDef {
-                                                                                                did: 2,
-                                                                                                ident: "y",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                        ],
-                                                                                        ctor_kind: Const,
-                                                                                        is_recovered: false,
-                                                                                    },
-                                                                                ],
-                                                                                flags: AdtFlags(
-                                                                                    IS_STRUCT,
-                                                                                ),
-                                                                                repr: ReprOptions {
-                                                                                    int: None,
-                                                                                    align: None,
-                                                                                    pack: None,
-                                                                                    flags: ReprFlags(
-                                                                                        0x0,
-                                                                                    ),
-                                                                                    field_shuffle_seed: 0,
-                                                                                },
-                                                                            },
-                                                                            [],
-                                                                        ),
-                                                                    },
-                                                                    Not,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 23,
-                                                                hi: 24,
-                                                            },
-                                                        },
-                                                        field_idx: 0,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I64,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 22,
-                                                        hi: 23,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 33,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 34,
-                                                            kind: VarRef {
-                                                                id: 1,
-                                                            },
-                                                            ty: Ty {
-                                                                kind: Ref(
-                                                                    ReStatic,
-                                                                    Ty {
-                                                                        kind: Adt(
-                                                                            AdtDef {
-                                                                                did: 0,
-                                                                                variants: [
-                                                                                    VariantDef {
-                                                                                        def_id: 0,
-                                                                                        ctor_def_id: None,
-                                                                                        ident: "Point",
-                                                                                        discr: Relative(
-                                                                                            0,
-                                                                                        ),
-                                                                                        fields: [
-                                                                                            FieldDef {
-                                                                                                did: 1,
-                                                                                                ident: "x",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                            FieldDef {
-                                                                                                did: 2,
-                                                                                                ident: "y",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                        ],
-                                                                                        ctor_kind: Const,
-                                                                                        is_recovered: false,
-                                                                                    },
-                                                                                ],
-                                                                                flags: AdtFlags(
-                                                                                    IS_STRUCT,
-                                                                                ),
-                                                                                repr: ReprOptions {
-                                                                                    int: None,
-                                                                                    align: None,
-                                                                                    pack: None,
-                                                                                    flags: ReprFlags(
-                                                                                        0x0,
-                                                                                    ),
-                                                                                    field_shuffle_seed: 0,
-                                                                                },
-                                                                            },
-                                                                            [],
-                                                                        ),
-                                                                    },
-                                                                    Not,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 25,
-                                                                hi: 26,
-                                                            },
-                                                        },
-                                                        field_idx: 0,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I64,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 24,
-                                                        hi: 25,
-                                                    },
-                                                },
-                                            ),
-                                            ty: Ty {
-                                                kind: Int(
-                                                    I64,
-                                                ),
-                                            },
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 21,
-                                                hi: 22,
-                                            },
-                                        },
-                                    ),
-                                    lint_level: 0,
-                                },
-                            },
-                            Stmt {
-                                kind: Let {
-                                    remainder_scope: 0,
-                                    init_scope: 0,
-                                    pattern: Pat {
-                                        thir_id: 41,
-                                        kind: Binding {
-                                            mutability: Not,
-                                            name: "dy",
-                                            mode: ByValue,
-                                            var: 3,
-                                            ty: Ty {
-                                                kind: Int(
-                                                    I64,
-                                                ),
-                                            },
-                                        },
-                                        ty: Ty {
-                                            kind: Int(
-                                                I64,
-                                            ),
-                                        },
-                                        span: Span {
-                                            file: 0,
-                                            lo: 0,
-                                            hi: 0,
-                                        },
-                                    },
-                                    initializer: Some(
-                                        Expr {
-                                            thir_id: 36,
-                                            kind: Binary(
-                                                Sub,
-                                                Expr {
-                                                    thir_id: 37,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 38,
-                                                            kind: VarRef {
-                                                                id: 0,
-                                                            },
-                                                            ty: Ty {
-                                                                kind: Ref(
-                                                                    ReStatic,
-                                                                    Ty {
-                                                                        kind: Adt(
-                                                                            AdtDef {
-                                                                                did: 0,
-                                                                                variants: [
-                                                                                    VariantDef {
-                                                                                        def_id: 0,
-                                                                                        ctor_def_id: None,
-                                                                                        ident: "Point",
-                                                                                        discr: Relative(
-                                                                                            0,
-                                                                                        ),
-                                                                                        fields: [
-                                                                                            FieldDef {
-                                                                                                did: 1,
-                                                                                                ident: "x",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                            FieldDef {
-                                                                                                did: 2,
-                                                                                                ident: "y",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                        ],
-                                                                                        ctor_kind: Const,
-                                                                                        is_recovered: false,
-                                                                                    },
-                                                                                ],
-                                                                                flags: AdtFlags(
-                                                                                    IS_STRUCT,
-                                                                                ),
-                                                                                repr: ReprOptions {
-                                                                                    int: None,
-                                                                                    align: None,
-                                                                                    pack: None,
-                                                                                    flags: ReprFlags(
-                                                                                        0x0,
-                                                                                    ),
-                                                                                    field_shuffle_seed: 0,
-                                                                                },
-                                                                            },
-                                                                            [],
-                                                                        ),
-                                                                    },
-                                                                    Not,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 28,
-                                                                hi: 29,
-                                                            },
-                                                        },
-                                                        field_idx: 1,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I64,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 27,
-                                                        hi: 28,
-                                                    },
-                                                },
-                                                Expr {
-                                                    thir_id: 39,
-                                                    kind: Field {
-                                                        base: Expr {
-                                                            thir_id: 40,
-                                                            kind: VarRef {
-                                                                id: 1,
-                                                            },
-                                                            ty: Ty {
-                                                                kind: Ref(
-                                                                    ReStatic,
-                                                                    Ty {
-                                                                        kind: Adt(
-                                                                            AdtDef {
-                                                                                did: 0,
-                                                                                variants: [
-                                                                                    VariantDef {
-                                                                                        def_id: 0,
-                                                                                        ctor_def_id: None,
-                                                                                        ident: "Point",
-                                                                                        discr: Relative(
-                                                                                            0,
-                                                                                        ),
-                                                                                        fields: [
-                                                                                            FieldDef {
-                                                                                                did: 1,
-                                                                                                ident: "x",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                            FieldDef {
-                                                                                                did: 2,
-                                                                                                ident: "y",
-                                                                                                vis: Public,
-                                                                                            },
-                                                                                        ],
-                                                                                        ctor_kind: Const,
-                                                                                        is_recovered: false,
-                                                                                    },
-                                                                                ],
-                                                                                flags: AdtFlags(
-                                                                                    IS_STRUCT,
-                                                                                ),
-                                                                                repr: ReprOptions {
-                                                                                    int: None,
-                                                                                    align: None,
-                                                                                    pack: None,
-                                                                                    flags: ReprFlags(
-                                                                                        0x0,
-                                                                                    ),
-                                                                                    field_shuffle_seed: 0,
-                                                                                },
-                                                                            },
-                                                                            [],
-                                                                        ),
-                                                                    },
-                                                                    Not,
-                                                                ),
-                                                            },
-                                                            span: Span {
-                                                                file: 18356164589870029453,
-                                                                lo: 30,
-                                                                hi: 31,
-                                                            },
-                                                        },
-                                                        field_idx: 1,
-                                                    },
-                                                    ty: Ty {
-                                                        kind: Int(
-                                                            I64,
-                                                        ),
-                                                    },
-                                                    span: Span {
-                                                        file: 18356164589870029453,
-                                                        lo: 29,
-                                                        hi: 30,
-                                                    },
-                                                },
-                                            ),
-                                            ty: Ty {
-                                                kind: Int(
-                                                    I64,
-                                                ),
-                                            },
-                                            span: Span {
-                                                file: 18356164589870029453,
-                                                lo: 26,
-                                                hi: 27,
-                                            },
-                                        },
-                                    ),
-                                    lint_level: 0,
-                                },
-                            },
-                            Stmt {
-                                kind: Expr(
-                                    Expr {
-                                        thir_id: 42,
-                                        kind: Binary(
-                                            Add,
-                                            Expr {
-                                                thir_id: 43,
-                                                kind: Binary(
-                                                    Mul,
-                                                    Expr {
-                                                        thir_id: 44,
-                                                        kind: VarRef {
-                                                            id: 2,
-                                                        },
-                                                        ty: Ty {
-                                                            kind: Int(
-                                                                I64,
-                                                            ),
-                                                        },
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 33,
-                                                            hi: 34,
-                                                        },
-                                                    },
-                                                    Expr {
-                                                        thir_id: 45,
-                                                        kind: VarRef {
-                                                            id: 2,
-                                                        },
-                                                        ty: Ty {
-                                                            kind: Int(
-                                                                I64,
-                                                            ),
-                                                        },
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 34,
-                                                            hi: 35,
-                                                        },
-                                                    },
-                                                ),
-                                                ty: Ty {
-                                                    kind: Int(
-                                                        I64,
-                                                    ),
-                                                },
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 32,
-                                                    hi: 33,
-                                                },
-                                            },
-                                            Expr {
-                                                thir_id: 46,
-                                                kind: Binary(
-                                                    Mul,
-                                                    Expr {
-                                                        thir_id: 47,
-                                                        kind: VarRef {
-                                                            id: 3,
-                                                        },
-                                                        ty: Ty {
-                                                            kind: Int(
-                                                                I64,
-                                                            ),
-                                                        },
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 36,
-                                                            hi: 37,
-                                                        },
-                                                    },
-                                                    Expr {
-                                                        thir_id: 48,
-                                                        kind: VarRef {
-                                                            id: 3,
-                                                        },
-                                                        ty: Ty {
-                                                            kind: Int(
-                                                                I64,
-                                                            ),
-                                                        },
-                                                        span: Span {
-                                                            file: 18356164589870029453,
-                                                            lo: 37,
-                                                            hi: 38,
-                                                        },
-                                                    },
-                                                ),
-                                                ty: Ty {
-                                                    kind: Int(
-                                                        I64,
-                                                    ),
-                                                },
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 35,
-                                                    hi: 36,
-                                                },
-                                            },
-                                        ),
-                                        ty: Ty {
-                                            kind: Int(
-                                                I64,
-                                            ),
-                                        },
-                                        span: Span {
-                                            file: 18356164589870029453,
-                                            lo: 31,
-                                            hi: 32,
-                                        },
-                                    },
-                                ),
-                            },
-                        ],
-                        expr: Some(
-                            Expr {
-                                thir_id: 49,
-                                kind: Binary(
-                                    Add,
-                                    Expr {
-                                        thir_id: 50,
-                                        kind: Binary(
-                                            Mul,
-                                            Expr {
-                                                thir_id: 51,
-                                                kind: VarRef {
-                                                    id: 2,
-                                                },
-                                                ty: Ty {
-                                                    kind: Int(
-                                                        I64,
-                                                    ),
-                                                },
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 40,
-                                                    hi: 41,
-                                                },
-                                            },
-                                            Expr {
-                                                thir_id: 52,
-                                                kind: VarRef {
-                                                    id: 2,
-                                                },
-                                                ty: Ty {
-                                                    kind: Int(
-                                                        I64,
-                                                    ),
-                                                },
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 41,
-                                                    hi: 42,
-                                                },
-                                            },
-                                        ),
-                                        ty: Ty {
-                                            kind: Int(
-                                                I64,
-                                            ),
-                                        },
-                                        span: Span {
-                                            file: 18356164589870029453,
-                                            lo: 39,
-                                            hi: 40,
-                                        },
-                                    },
-                                    Expr {
-                                        thir_id: 53,
-                                        kind: Binary(
-                                            Mul,
-                                            Expr {
-                                                thir_id: 54,
-                                                kind: VarRef {
-                                                    id: 3,
-                                                },
-                                                ty: Ty {
-                                                    kind: Int(
-                                                        I64,
-                                                    ),
-                                                },
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 43,
-                                                    hi: 44,
-                                                },
-                                            },
-                                            Expr {
-                                                thir_id: 55,
-                                                kind: VarRef {
-                                                    id: 3,
-                                                },
-                                                ty: Ty {
-                                                    kind: Int(
-                                                        I64,
-                                                    ),
-                                                },
-                                                span: Span {
-                                                    file: 18356164589870029453,
-                                                    lo: 44,
-                                                    hi: 45,
-                                                },
-                                            },
-                                        ),
-                                        ty: Ty {
-                                            kind: Int(
-                                                I64,
-                                            ),
-                                        },
-                                        span: Span {
-                                            file: 18356164589870029453,
-                                            lo: 42,
-                                            hi: 43,
-                                        },
-                                    },
-                                ),
-                                ty: Ty {
-                                    kind: Int(
-                                        I64,
-                                    ),
-                                },
-                                span: Span {
-                                    file: 18356164589870029453,
-                                    lo: 38,
-                                    hi: 39,
-                                },
-                            },
-                        ),
-                        safety_mode: Safe,
-                    },
-                ),
-                ty: Ty {
-                    kind: Int(
-                        I64,
-                    ),
-                },
-                span: Span {
-                    file: 18356164589870029453,
-                    lo: 20,
-                    hi: 21,
-                },
-            },
-            locals: [
-                LocalDecl {
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Adt(
-                                    AdtDef {
-                                        did: 0,
-                                        variants: [
-                                            VariantDef {
-                                                def_id: 0,
-                                                ctor_def_id: None,
-                                                ident: "Point",
-                                                discr: Relative(
-                                                    0,
-                                                ),
-                                                fields: [
-                                                    FieldDef {
-                                                        did: 1,
-                                                        ident: "x",
-                                                        vis: Public,
-                                                    },
-                                                    FieldDef {
-                                                        did: 2,
-                                                        ident: "y",
-                                                        vis: Public,
-                                                    },
-                                                ],
-                                                ctor_kind: Const,
-                                                is_recovered: false,
-                                            },
-                                        ],
-                                        flags: AdtFlags(
-                                            IS_STRUCT,
-                                        ),
-                                        repr: ReprOptions {
-                                            int: None,
-                                            align: None,
-                                            pack: None,
-                                            flags: ReprFlags(
-                                                0x0,
-                                            ),
-                                            field_shuffle_seed: 0,
-                                        },
-                                    },
-                                    [],
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                    internal: false,
-                },
-                LocalDecl {
-                    ty: Ty {
-                        kind: Ref(
-                            ReStatic,
-                            Ty {
-                                kind: Adt(
-                                    AdtDef {
-                                        did: 0,
-                                        variants: [
-                                            VariantDef {
-                                                def_id: 0,
-                                                ctor_def_id: None,
-                                                ident: "Point",
-                                                discr: Relative(
-                                                    0,
-                                                ),
-                                                fields: [
-                                                    FieldDef {
-                                                        did: 1,
-                                                        ident: "x",
-                                                        vis: Public,
-                                                    },
-                                                    FieldDef {
-                                                        did: 2,
-                                                        ident: "y",
-                                                        vis: Public,
-                                                    },
-                                                ],
-                                                ctor_kind: Const,
-                                                is_recovered: false,
-                                            },
-                                        ],
-                                        flags: AdtFlags(
-                                            IS_STRUCT,
-                                        ),
-                                        repr: ReprOptions {
-                                            int: None,
-                                            align: None,
-                                            pack: None,
-                                            flags: ReprFlags(
-                                                0x0,
-                                            ),
-                                            field_shuffle_seed: 0,
-                                        },
-                                    },
-                                    [],
-                                ),
-                            },
-                            Not,
-                        ),
-                    },
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                    internal: false,
-                },
-                LocalDecl {
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                    internal: false,
-                },
-                LocalDecl {
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                    internal: false,
-                },
-            ],
-        },
-        BodyId(
             1,
         ): Body {
             params: [
@@ -6490,125 +5341,6 @@ Program {
             ],
         },
         BodyId(
-            3,
-        ): Body {
-            params: [
-                Param {
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    pat: Some(
-                        Pat {
-                            thir_id: 61,
-                            kind: Binding {
-                                mutability: Not,
-                                name: "width",
-                                mode: ByValue,
-                                var: 0,
-                                ty: Ty {
-                                    kind: Int(
-                                        I64,
-                                    ),
-                                },
-                            },
-                            ty: Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            span: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                        },
-                    ),
-                },
-                Param {
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    pat: Some(
-                        Pat {
-                            thir_id: 62,
-                            kind: Binding {
-                                mutability: Not,
-                                name: "height",
-                                mode: ByValue,
-                                var: 1,
-                                ty: Ty {
-                                    kind: Int(
-                                        I64,
-                                    ),
-                                },
-                            },
-                            ty: Ty {
-                                kind: Int(
-                                    I64,
-                                ),
-                            },
-                            span: Span {
-                                file: 0,
-                                lo: 0,
-                                hi: 0,
-                            },
-                        },
-                    ),
-                },
-            ],
-            value: Expr {
-                thir_id: 63,
-                kind: Literal(
-                    Int(
-                        0,
-                        I32,
-                    ),
-                ),
-                ty: Ty {
-                    kind: Tuple(
-                        [],
-                    ),
-                },
-                span: Span {
-                    file: 18356164589870029453,
-                    lo: 47,
-                    hi: 48,
-                },
-            },
-            locals: [
-                LocalDecl {
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                    internal: false,
-                },
-                LocalDecl {
-                    ty: Ty {
-                        kind: Int(
-                            I64,
-                        ),
-                    },
-                    source_info: Span {
-                        file: 0,
-                        lo: 0,
-                        hi: 0,
-                    },
-                    internal: false,
-                },
-            ],
-        },
-        BodyId(
             4,
         ): Body {
             params: [
@@ -7001,6 +5733,1274 @@ Program {
                                 ),
                             },
                             Not,
+                        ),
+                    },
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                    internal: false,
+                },
+            ],
+        },
+        BodyId(
+            3,
+        ): Body {
+            params: [
+                Param {
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    pat: Some(
+                        Pat {
+                            thir_id: 61,
+                            kind: Binding {
+                                mutability: Not,
+                                name: "width",
+                                mode: ByValue,
+                                var: 0,
+                                ty: Ty {
+                                    kind: Int(
+                                        I64,
+                                    ),
+                                },
+                            },
+                            ty: Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            span: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                        },
+                    ),
+                },
+                Param {
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    pat: Some(
+                        Pat {
+                            thir_id: 62,
+                            kind: Binding {
+                                mutability: Not,
+                                name: "height",
+                                mode: ByValue,
+                                var: 1,
+                                ty: Ty {
+                                    kind: Int(
+                                        I64,
+                                    ),
+                                },
+                            },
+                            ty: Ty {
+                                kind: Int(
+                                    I64,
+                                ),
+                            },
+                            span: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                        },
+                    ),
+                },
+            ],
+            value: Expr {
+                thir_id: 63,
+                kind: Literal(
+                    Int(
+                        0,
+                        I32,
+                    ),
+                ),
+                ty: Ty {
+                    kind: Tuple(
+                        [],
+                    ),
+                },
+                span: Span {
+                    file: 18356164589870029453,
+                    lo: 47,
+                    hi: 48,
+                },
+            },
+            locals: [
+                LocalDecl {
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                    internal: false,
+                },
+                LocalDecl {
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                    internal: false,
+                },
+            ],
+        },
+        BodyId(
+            2,
+        ): Body {
+            params: [
+                Param {
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Adt(
+                                    AdtDef {
+                                        did: 0,
+                                        variants: [
+                                            VariantDef {
+                                                def_id: 0,
+                                                ctor_def_id: None,
+                                                ident: "Point",
+                                                discr: Relative(
+                                                    0,
+                                                ),
+                                                fields: [
+                                                    FieldDef {
+                                                        did: 1,
+                                                        ident: "x",
+                                                        vis: Public,
+                                                    },
+                                                    FieldDef {
+                                                        did: 2,
+                                                        ident: "y",
+                                                        vis: Public,
+                                                    },
+                                                ],
+                                                ctor_kind: Const,
+                                                is_recovered: false,
+                                            },
+                                        ],
+                                        flags: AdtFlags(
+                                            IS_STRUCT,
+                                        ),
+                                        repr: ReprOptions {
+                                            int: None,
+                                            align: None,
+                                            pack: None,
+                                            flags: ReprFlags(
+                                                0x0,
+                                            ),
+                                            field_shuffle_seed: 0,
+                                        },
+                                    },
+                                    [],
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    pat: Some(
+                        Pat {
+                            thir_id: 27,
+                            kind: Binding {
+                                mutability: Not,
+                                name: "self",
+                                mode: ByValue,
+                                var: 0,
+                                ty: Ty {
+                                    kind: Ref(
+                                        ReStatic,
+                                        Ty {
+                                            kind: Adt(
+                                                AdtDef {
+                                                    did: 0,
+                                                    variants: [
+                                                        VariantDef {
+                                                            def_id: 0,
+                                                            ctor_def_id: None,
+                                                            ident: "Point",
+                                                            discr: Relative(
+                                                                0,
+                                                            ),
+                                                            fields: [
+                                                                FieldDef {
+                                                                    did: 1,
+                                                                    ident: "x",
+                                                                    vis: Public,
+                                                                },
+                                                                FieldDef {
+                                                                    did: 2,
+                                                                    ident: "y",
+                                                                    vis: Public,
+                                                                },
+                                                            ],
+                                                            ctor_kind: Const,
+                                                            is_recovered: false,
+                                                        },
+                                                    ],
+                                                    flags: AdtFlags(
+                                                        IS_STRUCT,
+                                                    ),
+                                                    repr: ReprOptions {
+                                                        int: None,
+                                                        align: None,
+                                                        pack: None,
+                                                        flags: ReprFlags(
+                                                            0x0,
+                                                        ),
+                                                        field_shuffle_seed: 0,
+                                                    },
+                                                },
+                                                [],
+                                            ),
+                                        },
+                                        Not,
+                                    ),
+                                },
+                            },
+                            ty: Ty {
+                                kind: Ref(
+                                    ReStatic,
+                                    Ty {
+                                        kind: Adt(
+                                            AdtDef {
+                                                did: 0,
+                                                variants: [
+                                                    VariantDef {
+                                                        def_id: 0,
+                                                        ctor_def_id: None,
+                                                        ident: "Point",
+                                                        discr: Relative(
+                                                            0,
+                                                        ),
+                                                        fields: [
+                                                            FieldDef {
+                                                                did: 1,
+                                                                ident: "x",
+                                                                vis: Public,
+                                                            },
+                                                            FieldDef {
+                                                                did: 2,
+                                                                ident: "y",
+                                                                vis: Public,
+                                                            },
+                                                        ],
+                                                        ctor_kind: Const,
+                                                        is_recovered: false,
+                                                    },
+                                                ],
+                                                flags: AdtFlags(
+                                                    IS_STRUCT,
+                                                ),
+                                                repr: ReprOptions {
+                                                    int: None,
+                                                    align: None,
+                                                    pack: None,
+                                                    flags: ReprFlags(
+                                                        0x0,
+                                                    ),
+                                                    field_shuffle_seed: 0,
+                                                },
+                                            },
+                                            [],
+                                        ),
+                                    },
+                                    Not,
+                                ),
+                            },
+                            span: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                        },
+                    ),
+                },
+                Param {
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Adt(
+                                    AdtDef {
+                                        did: 0,
+                                        variants: [
+                                            VariantDef {
+                                                def_id: 0,
+                                                ctor_def_id: None,
+                                                ident: "Point",
+                                                discr: Relative(
+                                                    0,
+                                                ),
+                                                fields: [
+                                                    FieldDef {
+                                                        did: 1,
+                                                        ident: "x",
+                                                        vis: Public,
+                                                    },
+                                                    FieldDef {
+                                                        did: 2,
+                                                        ident: "y",
+                                                        vis: Public,
+                                                    },
+                                                ],
+                                                ctor_kind: Const,
+                                                is_recovered: false,
+                                            },
+                                        ],
+                                        flags: AdtFlags(
+                                            IS_STRUCT,
+                                        ),
+                                        repr: ReprOptions {
+                                            int: None,
+                                            align: None,
+                                            pack: None,
+                                            flags: ReprFlags(
+                                                0x0,
+                                            ),
+                                            field_shuffle_seed: 0,
+                                        },
+                                    },
+                                    [],
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    pat: Some(
+                        Pat {
+                            thir_id: 28,
+                            kind: Binding {
+                                mutability: Not,
+                                name: "other",
+                                mode: ByValue,
+                                var: 1,
+                                ty: Ty {
+                                    kind: Ref(
+                                        ReStatic,
+                                        Ty {
+                                            kind: Adt(
+                                                AdtDef {
+                                                    did: 0,
+                                                    variants: [
+                                                        VariantDef {
+                                                            def_id: 0,
+                                                            ctor_def_id: None,
+                                                            ident: "Point",
+                                                            discr: Relative(
+                                                                0,
+                                                            ),
+                                                            fields: [
+                                                                FieldDef {
+                                                                    did: 1,
+                                                                    ident: "x",
+                                                                    vis: Public,
+                                                                },
+                                                                FieldDef {
+                                                                    did: 2,
+                                                                    ident: "y",
+                                                                    vis: Public,
+                                                                },
+                                                            ],
+                                                            ctor_kind: Const,
+                                                            is_recovered: false,
+                                                        },
+                                                    ],
+                                                    flags: AdtFlags(
+                                                        IS_STRUCT,
+                                                    ),
+                                                    repr: ReprOptions {
+                                                        int: None,
+                                                        align: None,
+                                                        pack: None,
+                                                        flags: ReprFlags(
+                                                            0x0,
+                                                        ),
+                                                        field_shuffle_seed: 0,
+                                                    },
+                                                },
+                                                [],
+                                            ),
+                                        },
+                                        Not,
+                                    ),
+                                },
+                            },
+                            ty: Ty {
+                                kind: Ref(
+                                    ReStatic,
+                                    Ty {
+                                        kind: Adt(
+                                            AdtDef {
+                                                did: 0,
+                                                variants: [
+                                                    VariantDef {
+                                                        def_id: 0,
+                                                        ctor_def_id: None,
+                                                        ident: "Point",
+                                                        discr: Relative(
+                                                            0,
+                                                        ),
+                                                        fields: [
+                                                            FieldDef {
+                                                                did: 1,
+                                                                ident: "x",
+                                                                vis: Public,
+                                                            },
+                                                            FieldDef {
+                                                                did: 2,
+                                                                ident: "y",
+                                                                vis: Public,
+                                                            },
+                                                        ],
+                                                        ctor_kind: Const,
+                                                        is_recovered: false,
+                                                    },
+                                                ],
+                                                flags: AdtFlags(
+                                                    IS_STRUCT,
+                                                ),
+                                                repr: ReprOptions {
+                                                    int: None,
+                                                    align: None,
+                                                    pack: None,
+                                                    flags: ReprFlags(
+                                                        0x0,
+                                                    ),
+                                                    field_shuffle_seed: 0,
+                                                },
+                                            },
+                                            [],
+                                        ),
+                                    },
+                                    Not,
+                                ),
+                            },
+                            span: Span {
+                                file: 0,
+                                lo: 0,
+                                hi: 0,
+                            },
+                        },
+                    ),
+                },
+            ],
+            value: Expr {
+                thir_id: 29,
+                kind: Block(
+                    Block {
+                        targeted_by_break: false,
+                        region: 0,
+                        span: Span {
+                            file: 0,
+                            lo: 0,
+                            hi: 0,
+                        },
+                        stmts: [
+                            Stmt {
+                                kind: Let {
+                                    remainder_scope: 0,
+                                    init_scope: 0,
+                                    pattern: Pat {
+                                        thir_id: 35,
+                                        kind: Binding {
+                                            mutability: Not,
+                                            name: "dx",
+                                            mode: ByValue,
+                                            var: 2,
+                                            ty: Ty {
+                                                kind: Int(
+                                                    I64,
+                                                ),
+                                            },
+                                        },
+                                        ty: Ty {
+                                            kind: Int(
+                                                I64,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                    initializer: Some(
+                                        Expr {
+                                            thir_id: 30,
+                                            kind: Binary(
+                                                Sub,
+                                                Expr {
+                                                    thir_id: 31,
+                                                    kind: Field {
+                                                        base: Expr {
+                                                            thir_id: 32,
+                                                            kind: VarRef {
+                                                                id: 0,
+                                                            },
+                                                            ty: Ty {
+                                                                kind: Ref(
+                                                                    ReStatic,
+                                                                    Ty {
+                                                                        kind: Adt(
+                                                                            AdtDef {
+                                                                                did: 0,
+                                                                                variants: [
+                                                                                    VariantDef {
+                                                                                        def_id: 0,
+                                                                                        ctor_def_id: None,
+                                                                                        ident: "Point",
+                                                                                        discr: Relative(
+                                                                                            0,
+                                                                                        ),
+                                                                                        fields: [
+                                                                                            FieldDef {
+                                                                                                did: 1,
+                                                                                                ident: "x",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                            FieldDef {
+                                                                                                did: 2,
+                                                                                                ident: "y",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                        ],
+                                                                                        ctor_kind: Const,
+                                                                                        is_recovered: false,
+                                                                                    },
+                                                                                ],
+                                                                                flags: AdtFlags(
+                                                                                    IS_STRUCT,
+                                                                                ),
+                                                                                repr: ReprOptions {
+                                                                                    int: None,
+                                                                                    align: None,
+                                                                                    pack: None,
+                                                                                    flags: ReprFlags(
+                                                                                        0x0,
+                                                                                    ),
+                                                                                    field_shuffle_seed: 0,
+                                                                                },
+                                                                            },
+                                                                            [],
+                                                                        ),
+                                                                    },
+                                                                    Not,
+                                                                ),
+                                                            },
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 23,
+                                                                hi: 24,
+                                                            },
+                                                        },
+                                                        field_idx: 0,
+                                                    },
+                                                    ty: Ty {
+                                                        kind: Int(
+                                                            I64,
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 22,
+                                                        hi: 23,
+                                                    },
+                                                },
+                                                Expr {
+                                                    thir_id: 33,
+                                                    kind: Field {
+                                                        base: Expr {
+                                                            thir_id: 34,
+                                                            kind: VarRef {
+                                                                id: 1,
+                                                            },
+                                                            ty: Ty {
+                                                                kind: Ref(
+                                                                    ReStatic,
+                                                                    Ty {
+                                                                        kind: Adt(
+                                                                            AdtDef {
+                                                                                did: 0,
+                                                                                variants: [
+                                                                                    VariantDef {
+                                                                                        def_id: 0,
+                                                                                        ctor_def_id: None,
+                                                                                        ident: "Point",
+                                                                                        discr: Relative(
+                                                                                            0,
+                                                                                        ),
+                                                                                        fields: [
+                                                                                            FieldDef {
+                                                                                                did: 1,
+                                                                                                ident: "x",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                            FieldDef {
+                                                                                                did: 2,
+                                                                                                ident: "y",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                        ],
+                                                                                        ctor_kind: Const,
+                                                                                        is_recovered: false,
+                                                                                    },
+                                                                                ],
+                                                                                flags: AdtFlags(
+                                                                                    IS_STRUCT,
+                                                                                ),
+                                                                                repr: ReprOptions {
+                                                                                    int: None,
+                                                                                    align: None,
+                                                                                    pack: None,
+                                                                                    flags: ReprFlags(
+                                                                                        0x0,
+                                                                                    ),
+                                                                                    field_shuffle_seed: 0,
+                                                                                },
+                                                                            },
+                                                                            [],
+                                                                        ),
+                                                                    },
+                                                                    Not,
+                                                                ),
+                                                            },
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 25,
+                                                                hi: 26,
+                                                            },
+                                                        },
+                                                        field_idx: 0,
+                                                    },
+                                                    ty: Ty {
+                                                        kind: Int(
+                                                            I64,
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 24,
+                                                        hi: 25,
+                                                    },
+                                                },
+                                            ),
+                                            ty: Ty {
+                                                kind: Int(
+                                                    I64,
+                                                ),
+                                            },
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 21,
+                                                hi: 22,
+                                            },
+                                        },
+                                    ),
+                                    lint_level: 0,
+                                },
+                            },
+                            Stmt {
+                                kind: Let {
+                                    remainder_scope: 0,
+                                    init_scope: 0,
+                                    pattern: Pat {
+                                        thir_id: 41,
+                                        kind: Binding {
+                                            mutability: Not,
+                                            name: "dy",
+                                            mode: ByValue,
+                                            var: 3,
+                                            ty: Ty {
+                                                kind: Int(
+                                                    I64,
+                                                ),
+                                            },
+                                        },
+                                        ty: Ty {
+                                            kind: Int(
+                                                I64,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 0,
+                                            lo: 0,
+                                            hi: 0,
+                                        },
+                                    },
+                                    initializer: Some(
+                                        Expr {
+                                            thir_id: 36,
+                                            kind: Binary(
+                                                Sub,
+                                                Expr {
+                                                    thir_id: 37,
+                                                    kind: Field {
+                                                        base: Expr {
+                                                            thir_id: 38,
+                                                            kind: VarRef {
+                                                                id: 0,
+                                                            },
+                                                            ty: Ty {
+                                                                kind: Ref(
+                                                                    ReStatic,
+                                                                    Ty {
+                                                                        kind: Adt(
+                                                                            AdtDef {
+                                                                                did: 0,
+                                                                                variants: [
+                                                                                    VariantDef {
+                                                                                        def_id: 0,
+                                                                                        ctor_def_id: None,
+                                                                                        ident: "Point",
+                                                                                        discr: Relative(
+                                                                                            0,
+                                                                                        ),
+                                                                                        fields: [
+                                                                                            FieldDef {
+                                                                                                did: 1,
+                                                                                                ident: "x",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                            FieldDef {
+                                                                                                did: 2,
+                                                                                                ident: "y",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                        ],
+                                                                                        ctor_kind: Const,
+                                                                                        is_recovered: false,
+                                                                                    },
+                                                                                ],
+                                                                                flags: AdtFlags(
+                                                                                    IS_STRUCT,
+                                                                                ),
+                                                                                repr: ReprOptions {
+                                                                                    int: None,
+                                                                                    align: None,
+                                                                                    pack: None,
+                                                                                    flags: ReprFlags(
+                                                                                        0x0,
+                                                                                    ),
+                                                                                    field_shuffle_seed: 0,
+                                                                                },
+                                                                            },
+                                                                            [],
+                                                                        ),
+                                                                    },
+                                                                    Not,
+                                                                ),
+                                                            },
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 28,
+                                                                hi: 29,
+                                                            },
+                                                        },
+                                                        field_idx: 1,
+                                                    },
+                                                    ty: Ty {
+                                                        kind: Int(
+                                                            I64,
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 27,
+                                                        hi: 28,
+                                                    },
+                                                },
+                                                Expr {
+                                                    thir_id: 39,
+                                                    kind: Field {
+                                                        base: Expr {
+                                                            thir_id: 40,
+                                                            kind: VarRef {
+                                                                id: 1,
+                                                            },
+                                                            ty: Ty {
+                                                                kind: Ref(
+                                                                    ReStatic,
+                                                                    Ty {
+                                                                        kind: Adt(
+                                                                            AdtDef {
+                                                                                did: 0,
+                                                                                variants: [
+                                                                                    VariantDef {
+                                                                                        def_id: 0,
+                                                                                        ctor_def_id: None,
+                                                                                        ident: "Point",
+                                                                                        discr: Relative(
+                                                                                            0,
+                                                                                        ),
+                                                                                        fields: [
+                                                                                            FieldDef {
+                                                                                                did: 1,
+                                                                                                ident: "x",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                            FieldDef {
+                                                                                                did: 2,
+                                                                                                ident: "y",
+                                                                                                vis: Public,
+                                                                                            },
+                                                                                        ],
+                                                                                        ctor_kind: Const,
+                                                                                        is_recovered: false,
+                                                                                    },
+                                                                                ],
+                                                                                flags: AdtFlags(
+                                                                                    IS_STRUCT,
+                                                                                ),
+                                                                                repr: ReprOptions {
+                                                                                    int: None,
+                                                                                    align: None,
+                                                                                    pack: None,
+                                                                                    flags: ReprFlags(
+                                                                                        0x0,
+                                                                                    ),
+                                                                                    field_shuffle_seed: 0,
+                                                                                },
+                                                                            },
+                                                                            [],
+                                                                        ),
+                                                                    },
+                                                                    Not,
+                                                                ),
+                                                            },
+                                                            span: Span {
+                                                                file: 18356164589870029453,
+                                                                lo: 30,
+                                                                hi: 31,
+                                                            },
+                                                        },
+                                                        field_idx: 1,
+                                                    },
+                                                    ty: Ty {
+                                                        kind: Int(
+                                                            I64,
+                                                        ),
+                                                    },
+                                                    span: Span {
+                                                        file: 18356164589870029453,
+                                                        lo: 29,
+                                                        hi: 30,
+                                                    },
+                                                },
+                                            ),
+                                            ty: Ty {
+                                                kind: Int(
+                                                    I64,
+                                                ),
+                                            },
+                                            span: Span {
+                                                file: 18356164589870029453,
+                                                lo: 26,
+                                                hi: 27,
+                                            },
+                                        },
+                                    ),
+                                    lint_level: 0,
+                                },
+                            },
+                            Stmt {
+                                kind: Expr(
+                                    Expr {
+                                        thir_id: 42,
+                                        kind: Binary(
+                                            Add,
+                                            Expr {
+                                                thir_id: 43,
+                                                kind: Binary(
+                                                    Mul,
+                                                    Expr {
+                                                        thir_id: 44,
+                                                        kind: VarRef {
+                                                            id: 2,
+                                                        },
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I64,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 33,
+                                                            hi: 34,
+                                                        },
+                                                    },
+                                                    Expr {
+                                                        thir_id: 45,
+                                                        kind: VarRef {
+                                                            id: 2,
+                                                        },
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I64,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 34,
+                                                            hi: 35,
+                                                        },
+                                                    },
+                                                ),
+                                                ty: Ty {
+                                                    kind: Int(
+                                                        I64,
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 32,
+                                                    hi: 33,
+                                                },
+                                            },
+                                            Expr {
+                                                thir_id: 46,
+                                                kind: Binary(
+                                                    Mul,
+                                                    Expr {
+                                                        thir_id: 47,
+                                                        kind: VarRef {
+                                                            id: 3,
+                                                        },
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I64,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 36,
+                                                            hi: 37,
+                                                        },
+                                                    },
+                                                    Expr {
+                                                        thir_id: 48,
+                                                        kind: VarRef {
+                                                            id: 3,
+                                                        },
+                                                        ty: Ty {
+                                                            kind: Int(
+                                                                I64,
+                                                            ),
+                                                        },
+                                                        span: Span {
+                                                            file: 18356164589870029453,
+                                                            lo: 37,
+                                                            hi: 38,
+                                                        },
+                                                    },
+                                                ),
+                                                ty: Ty {
+                                                    kind: Int(
+                                                        I64,
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 35,
+                                                    hi: 36,
+                                                },
+                                            },
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I64,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 18356164589870029453,
+                                            lo: 31,
+                                            hi: 32,
+                                        },
+                                    },
+                                ),
+                            },
+                        ],
+                        expr: Some(
+                            Expr {
+                                thir_id: 49,
+                                kind: Binary(
+                                    Add,
+                                    Expr {
+                                        thir_id: 50,
+                                        kind: Binary(
+                                            Mul,
+                                            Expr {
+                                                thir_id: 51,
+                                                kind: VarRef {
+                                                    id: 2,
+                                                },
+                                                ty: Ty {
+                                                    kind: Int(
+                                                        I64,
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 40,
+                                                    hi: 41,
+                                                },
+                                            },
+                                            Expr {
+                                                thir_id: 52,
+                                                kind: VarRef {
+                                                    id: 2,
+                                                },
+                                                ty: Ty {
+                                                    kind: Int(
+                                                        I64,
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 41,
+                                                    hi: 42,
+                                                },
+                                            },
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I64,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 18356164589870029453,
+                                            lo: 39,
+                                            hi: 40,
+                                        },
+                                    },
+                                    Expr {
+                                        thir_id: 53,
+                                        kind: Binary(
+                                            Mul,
+                                            Expr {
+                                                thir_id: 54,
+                                                kind: VarRef {
+                                                    id: 3,
+                                                },
+                                                ty: Ty {
+                                                    kind: Int(
+                                                        I64,
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 43,
+                                                    hi: 44,
+                                                },
+                                            },
+                                            Expr {
+                                                thir_id: 55,
+                                                kind: VarRef {
+                                                    id: 3,
+                                                },
+                                                ty: Ty {
+                                                    kind: Int(
+                                                        I64,
+                                                    ),
+                                                },
+                                                span: Span {
+                                                    file: 18356164589870029453,
+                                                    lo: 44,
+                                                    hi: 45,
+                                                },
+                                            },
+                                        ),
+                                        ty: Ty {
+                                            kind: Int(
+                                                I64,
+                                            ),
+                                        },
+                                        span: Span {
+                                            file: 18356164589870029453,
+                                            lo: 42,
+                                            hi: 43,
+                                        },
+                                    },
+                                ),
+                                ty: Ty {
+                                    kind: Int(
+                                        I64,
+                                    ),
+                                },
+                                span: Span {
+                                    file: 18356164589870029453,
+                                    lo: 38,
+                                    hi: 39,
+                                },
+                            },
+                        ),
+                        safety_mode: Safe,
+                    },
+                ),
+                ty: Ty {
+                    kind: Int(
+                        I64,
+                    ),
+                },
+                span: Span {
+                    file: 18356164589870029453,
+                    lo: 20,
+                    hi: 21,
+                },
+            },
+            locals: [
+                LocalDecl {
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Adt(
+                                    AdtDef {
+                                        did: 0,
+                                        variants: [
+                                            VariantDef {
+                                                def_id: 0,
+                                                ctor_def_id: None,
+                                                ident: "Point",
+                                                discr: Relative(
+                                                    0,
+                                                ),
+                                                fields: [
+                                                    FieldDef {
+                                                        did: 1,
+                                                        ident: "x",
+                                                        vis: Public,
+                                                    },
+                                                    FieldDef {
+                                                        did: 2,
+                                                        ident: "y",
+                                                        vis: Public,
+                                                    },
+                                                ],
+                                                ctor_kind: Const,
+                                                is_recovered: false,
+                                            },
+                                        ],
+                                        flags: AdtFlags(
+                                            IS_STRUCT,
+                                        ),
+                                        repr: ReprOptions {
+                                            int: None,
+                                            align: None,
+                                            pack: None,
+                                            flags: ReprFlags(
+                                                0x0,
+                                            ),
+                                            field_shuffle_seed: 0,
+                                        },
+                                    },
+                                    [],
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                    internal: false,
+                },
+                LocalDecl {
+                    ty: Ty {
+                        kind: Ref(
+                            ReStatic,
+                            Ty {
+                                kind: Adt(
+                                    AdtDef {
+                                        did: 0,
+                                        variants: [
+                                            VariantDef {
+                                                def_id: 0,
+                                                ctor_def_id: None,
+                                                ident: "Point",
+                                                discr: Relative(
+                                                    0,
+                                                ),
+                                                fields: [
+                                                    FieldDef {
+                                                        did: 1,
+                                                        ident: "x",
+                                                        vis: Public,
+                                                    },
+                                                    FieldDef {
+                                                        did: 2,
+                                                        ident: "y",
+                                                        vis: Public,
+                                                    },
+                                                ],
+                                                ctor_kind: Const,
+                                                is_recovered: false,
+                                            },
+                                        ],
+                                        flags: AdtFlags(
+                                            IS_STRUCT,
+                                        ),
+                                        repr: ReprOptions {
+                                            int: None,
+                                            align: None,
+                                            pack: None,
+                                            flags: ReprFlags(
+                                                0x0,
+                                            ),
+                                            field_shuffle_seed: 0,
+                                        },
+                                    },
+                                    [],
+                                ),
+                            },
+                            Not,
+                        ),
+                    },
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                    internal: false,
+                },
+                LocalDecl {
+                    ty: Ty {
+                        kind: Int(
+                            I64,
+                        ),
+                    },
+                    source_info: Span {
+                        file: 0,
+                        lo: 0,
+                        hi: 0,
+                    },
+                    internal: false,
+                },
+                LocalDecl {
+                    ty: Ty {
+                        kind: Int(
+                            I64,
                         ),
                     },
                     source_info: Span {
