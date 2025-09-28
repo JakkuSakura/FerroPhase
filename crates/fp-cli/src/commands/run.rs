@@ -2,9 +2,12 @@
 
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{BExpr, RuntimeValue, Value};
+use fp_core::ast::{BExpr, RuntimeValue, Value, register_threadlocal_serializer};
+use fp_core::pretty::{PrettyOptions, pretty};
 use fp_rust::parser::RustParser;
+use fp_rust::printer::RustPrinter;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::info;
 
 /// Arguments for the run command
@@ -156,7 +159,17 @@ async fn interpret_ast_runtime(ast: &BExpr, runtime_name: &str) -> Result<Runtim
 }
 
 fn print_ast(ast: &BExpr) -> Result<()> {
-    println!("{} {:#?}", style("AST:").blue().bold(), ast);
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+
+    let mut pretty_opts = PrettyOptions::default();
+    pretty_opts.show_types = false;
+    pretty_opts.show_spans = false;
+
+    println!(
+        "{} {}",
+        style("AST:").blue().bold(),
+        pretty(ast.as_ref(), pretty_opts)
+    );
     Ok(())
 }
 

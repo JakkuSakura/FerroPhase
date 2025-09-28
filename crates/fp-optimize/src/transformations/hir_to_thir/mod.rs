@@ -127,65 +127,293 @@ impl ThirGenerator {
     /// Collect type information from HIR program
     fn collect_type_info(&mut self, hir_program: &hir::Program) -> Result<()> {
         for item in &hir_program.items {
-            if let hir::ItemKind::Struct(struct_def) = &item.kind {
-                self.type_context
-                    .declare_struct(item.def_id as hir_types::DefId, &struct_def.name);
-            }
+            self.predeclare_structs_item(item);
         }
 
         for item in &hir_program.items {
-            match &item.kind {
-                hir::ItemKind::Function(func) => {
-                    let fn_sig = self.build_fn_sig(&func.sig)?;
-                    self.type_context.register_function(
-                        item.def_id as hir_types::DefId,
-                        &func.sig.name,
-                        fn_sig,
-                    );
-                }
-                hir::ItemKind::Struct(struct_def) => {
-                    let fields = struct_def
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let ty = self.hir_ty_to_ty(&field.ty)?;
-                            Ok((field.name.clone(), ty))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-                    self.type_context
-                        .init_struct_fields(item.def_id as hir_types::DefId, fields);
-                }
-                hir::ItemKind::Const(const_def) => {
-                    let ty = self.hir_ty_to_ty(&const_def.ty)?;
-                    self.type_context.register_const(
-                        item.def_id as hir_types::DefId,
-                        &const_def.name,
-                        ty,
-                    );
-                }
-                hir::ItemKind::Impl(impl_block) => {
-                    let self_ty = self.hir_ty_to_ty(&impl_block.self_ty)?;
-                    let saved_self = self.current_self_ty.clone();
-                    self.current_self_ty = Some(self_ty.clone());
+            self.collect_item_type_info(item)?;
+        }
+        Ok(())
+    }
 
-                    if let Some(owner_def_id) = Self::type_def_id(&self_ty) {
-                        for impl_item in &impl_block.items {
-                            if let hir::ImplItemKind::Method(method) = &impl_item.kind {
-                                let fn_sig = self.build_fn_sig(&method.sig)?;
-                                self.type_context.register_method(
-                                    owner_def_id,
-                                    &method.sig.name,
-                                    fn_sig,
-                                );
+    fn predeclare_structs_item(&mut self, item: &hir::Item) {
+        if let hir::ItemKind::Struct(struct_def) = &item.kind {
+            self.type_context
+                .declare_struct(item.def_id as hir_types::DefId, &struct_def.name);
+        }
+
+        match &item.kind {
+            hir::ItemKind::Function(func) => {
+                if let Some(body) = &func.body {
+                    self.predeclare_structs_expr(&body.value);
+                }
+            }
+            hir::ItemKind::Impl(impl_block) => {
+                for impl_item in &impl_block.items {
+                    match &impl_item.kind {
+                        hir::ImplItemKind::Method(method) => {
+                            if let Some(body) = &method.body {
+                                self.predeclare_structs_expr(&body.value);
+                            }
+                        }
+                        hir::ImplItemKind::AssocConst(_) => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn predeclare_structs_expr(&mut self, expr: &hir::Expr) {
+        use hir::ExprKind;
+        match &expr.kind {
+            ExprKind::Block(block) => self.predeclare_structs_block(block),
+            ExprKind::If(cond, then_expr, else_expr) => {
+                self.predeclare_structs_expr(cond);
+                self.predeclare_structs_expr(then_expr);
+                if let Some(else_expr) = else_expr {
+                    self.predeclare_structs_expr(else_expr);
+                }
+            }
+            ExprKind::Binary(_, lhs, rhs) => {
+                self.predeclare_structs_expr(lhs);
+                self.predeclare_structs_expr(rhs);
+            }
+            ExprKind::Unary(_, inner) => self.predeclare_structs_expr(inner),
+            ExprKind::Call(callee, args) => {
+                self.predeclare_structs_expr(callee);
+                for arg in args {
+                    self.predeclare_structs_expr(arg);
+                }
+            }
+            ExprKind::MethodCall(receiver, _, args) => {
+                self.predeclare_structs_expr(receiver);
+                for arg in args {
+                    self.predeclare_structs_expr(arg);
+                }
+            }
+            ExprKind::FieldAccess(owner, _) => self.predeclare_structs_expr(owner),
+            ExprKind::Struct(_, fields) => {
+                for field in fields {
+                    self.predeclare_structs_expr(&field.expr);
+                }
+            }
+            ExprKind::Assign(lhs, rhs) => {
+                self.predeclare_structs_expr(lhs);
+                self.predeclare_structs_expr(rhs);
+            }
+            ExprKind::Return(value) | ExprKind::Break(value) => {
+                if let Some(expr) = value {
+                    self.predeclare_structs_expr(expr);
+                }
+            }
+            ExprKind::Loop(block) => self.predeclare_structs_block(block),
+            ExprKind::While(cond, block) => {
+                self.predeclare_structs_expr(cond);
+                self.predeclare_structs_block(block);
+            }
+            ExprKind::StdIoPrintln(println) => {
+                for arg in &println.format.args {
+                    self.predeclare_structs_expr(arg);
+                }
+                for kw in &println.format.kwargs {
+                    self.predeclare_structs_expr(&kw.value);
+                }
+            }
+            ExprKind::Let(_, _, init) => {
+                if let Some(expr) = init {
+                    self.predeclare_structs_expr(expr);
+                }
+            }
+            ExprKind::Path(_) | ExprKind::Literal(_) | ExprKind::Continue => {}
+        }
+    }
+
+    fn predeclare_structs_block(&mut self, block: &hir::Block) {
+        for stmt in &block.stmts {
+            self.predeclare_structs_stmt(stmt);
+        }
+        if let Some(expr) = &block.expr {
+            self.predeclare_structs_expr(expr);
+        }
+    }
+
+    fn predeclare_structs_stmt(&mut self, stmt: &hir::Stmt) {
+        match &stmt.kind {
+            hir::StmtKind::Local(local) => {
+                if let Some(init) = &local.init {
+                    self.predeclare_structs_expr(init);
+                }
+            }
+            hir::StmtKind::Item(item) => {
+                self.predeclare_structs_item(item);
+            }
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                self.predeclare_structs_expr(expr);
+            }
+        }
+    }
+
+    fn collect_item_type_info(&mut self, item: &hir::Item) -> Result<()> {
+        match &item.kind {
+            hir::ItemKind::Function(func) => {
+                let fn_sig = self.build_fn_sig(&func.sig)?;
+                self.type_context.register_function(
+                    item.def_id as hir_types::DefId,
+                    &func.sig.name,
+                    fn_sig,
+                );
+                if let Some(body) = &func.body {
+                    self.collect_body_type_info(body)?;
+                }
+            }
+            hir::ItemKind::Struct(struct_def) => {
+                let fields = struct_def
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let ty = self.hir_ty_to_ty(&field.ty)?;
+                        Ok((field.name.clone(), ty))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                self.type_context
+                    .init_struct_fields(item.def_id as hir_types::DefId, fields);
+            }
+            hir::ItemKind::Const(const_def) => {
+                let ty = self.hir_ty_to_ty(&const_def.ty)?;
+                self.type_context.register_const(
+                    item.def_id as hir_types::DefId,
+                    &const_def.name,
+                    ty,
+                );
+                self.collect_body_type_info(&const_def.body)?;
+            }
+            hir::ItemKind::Impl(impl_block) => {
+                let self_ty = self.hir_ty_to_ty(&impl_block.self_ty)?;
+                let saved_self = self.current_self_ty.clone();
+                self.current_self_ty = Some(self_ty.clone());
+
+                if let Some(owner_def_id) = Self::type_def_id(&self_ty) {
+                    for impl_item in &impl_block.items {
+                        if let hir::ImplItemKind::Method(method) = &impl_item.kind {
+                            let fn_sig = self.build_fn_sig(&method.sig)?;
+                            self.type_context.register_method(
+                                owner_def_id,
+                                &method.sig.name,
+                                fn_sig,
+                            );
+                            if let Some(body) = &method.body {
+                                self.collect_body_type_info(body)?;
                             }
                         }
                     }
-
-                    self.current_self_ty = saved_self;
                 }
+
+                self.current_self_ty = saved_self;
             }
         }
         Ok(())
+    }
+
+    fn collect_body_type_info(&mut self, body: &hir::Body) -> Result<()> {
+        self.collect_expr_type_info(&body.value)
+    }
+
+    fn collect_block_type_info(&mut self, block: &hir::Block) -> Result<()> {
+        for stmt in &block.stmts {
+            self.collect_stmt_type_info(stmt)?;
+        }
+        if let Some(expr) = &block.expr {
+            self.collect_expr_type_info(expr)?;
+        }
+        Ok(())
+    }
+
+    fn collect_stmt_type_info(&mut self, stmt: &hir::Stmt) -> Result<()> {
+        match &stmt.kind {
+            hir::StmtKind::Local(local) => {
+                if let Some(init) = &local.init {
+                    self.collect_expr_type_info(init)?;
+                }
+                Ok(())
+            }
+            hir::StmtKind::Item(item) => self.collect_item_type_info(item),
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                self.collect_expr_type_info(expr)
+            }
+        }
+    }
+
+    fn collect_expr_type_info(&mut self, expr: &hir::Expr) -> Result<()> {
+        use hir::ExprKind;
+        match &expr.kind {
+            ExprKind::Literal(_) | ExprKind::Path(_) | ExprKind::Continue => Ok(()),
+            ExprKind::Binary(_, lhs, rhs) => {
+                self.collect_expr_type_info(lhs)?;
+                self.collect_expr_type_info(rhs)
+            }
+            ExprKind::Unary(_, inner) => self.collect_expr_type_info(inner),
+            ExprKind::Call(callee, args) => {
+                self.collect_expr_type_info(callee)?;
+                for arg in args {
+                    self.collect_expr_type_info(arg)?;
+                }
+                Ok(())
+            }
+            ExprKind::MethodCall(receiver, _, args) => {
+                self.collect_expr_type_info(receiver)?;
+                for arg in args {
+                    self.collect_expr_type_info(arg)?;
+                }
+                Ok(())
+            }
+            ExprKind::FieldAccess(owner, _) => self.collect_expr_type_info(owner),
+            ExprKind::Struct(_, fields) => {
+                for field in fields {
+                    self.collect_expr_type_info(&field.expr)?;
+                }
+                Ok(())
+            }
+            ExprKind::If(cond, then_expr, else_expr) => {
+                self.collect_expr_type_info(cond)?;
+                self.collect_expr_type_info(then_expr)?;
+                if let Some(else_expr) = else_expr {
+                    self.collect_expr_type_info(else_expr)?;
+                }
+                Ok(())
+            }
+            ExprKind::Block(block) => self.collect_block_type_info(block),
+            ExprKind::StdIoPrintln(println) => {
+                for arg in &println.format.args {
+                    self.collect_expr_type_info(arg)?;
+                }
+                for kw in &println.format.kwargs {
+                    self.collect_expr_type_info(&kw.value)?;
+                }
+                Ok(())
+            }
+            ExprKind::Let(_, _, init) => {
+                if let Some(expr) = init {
+                    self.collect_expr_type_info(expr)?;
+                }
+                Ok(())
+            }
+            ExprKind::Assign(lhs, rhs) => {
+                self.collect_expr_type_info(lhs)?;
+                self.collect_expr_type_info(rhs)
+            }
+            ExprKind::Return(value) | ExprKind::Break(value) => {
+                if let Some(expr) = value {
+                    self.collect_expr_type_info(expr)?;
+                }
+                Ok(())
+            }
+            ExprKind::Loop(block) => self.collect_block_type_info(block),
+            ExprKind::While(cond, block) => {
+                self.collect_expr_type_info(cond)?;
+                self.collect_block_type_info(block)
+            }
+        }
     }
 
     fn build_fn_sig(&mut self, sig: &hir::FunctionSig) -> Result<hir_types::FnSig> {

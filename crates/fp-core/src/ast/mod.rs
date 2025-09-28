@@ -11,6 +11,7 @@ mod attr;
 mod deserialize;
 mod expr;
 mod item;
+mod pretty;
 mod serialize;
 mod value;
 
@@ -18,6 +19,12 @@ pub use attr::*;
 pub use expr::*;
 pub use item::*;
 pub use value::*;
+
+/// Placeholder alias so LAST callers can begin depending on a dedicated type.
+/// The alias intentionally points at the canonical AST until the lowered
+/// representation is split out.
+pub type Last = Node;
+pub type BLast = BExpr;
 common_struct! {
     pub struct File {
         pub path: PathBuf,

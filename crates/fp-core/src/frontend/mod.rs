@@ -1,4 +1,4 @@
-use crate::ast::{AstSerializer, Node};
+use crate::ast::{AstSerializer, Last, Node};
 use crate::error::Result;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,6 +17,7 @@ pub struct FrontendSnapshot {
 /// Result produced by a language frontend after normalising source code.
 #[derive(Clone)]
 pub struct FrontendResult {
+    pub last: Last,
     pub ast: Node,
     pub serializer: Arc<dyn AstSerializer>,
     pub snapshot: Option<FrontendSnapshot>,
