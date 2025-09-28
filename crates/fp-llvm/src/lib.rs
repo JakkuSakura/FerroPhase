@@ -11,6 +11,7 @@ use crate::debug_info::DebugInfoBuilder;
 use crate::linking::LinkerConfig;
 use crate::target::{TargetCodegen, TargetConfig};
 use anyhow::Context as AnyhowContext;
+use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 // use llvm_ir::Module; // Not needed currently
@@ -137,8 +138,14 @@ impl LlvmCompiler {
             None
         };
         let mut global_map = std::collections::HashMap::new();
-        for global in lir_program.globals.clone() {
-            global_map.insert(global.name.clone(), global.initializer.unwrap());
+        for global in &lir_program.globals {
+            let initializer = global.initializer.clone().ok_or_else(|| {
+                report_error(format!(
+                    "[lir→llvm] Global '{}' is missing an initializer before LLVM codegen",
+                    global.name
+                ))
+            })?;
+            global_map.insert(global.name.clone(), initializer);
         }
         let mut codegen = LirCodegen::new(&mut llvm_ctx, global_map);
 
