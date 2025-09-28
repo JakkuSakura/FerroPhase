@@ -94,3 +94,7 @@ pub fn get_threadlocal_serializer() -> Arc<dyn AstSerializer> {
             .clone()
     })
 }
+
+pub fn try_get_threadlocal_serializer() -> Option<Arc<dyn AstSerializer>> {
+    SERIALIZER.with(|s| s.borrow().clone())
+}

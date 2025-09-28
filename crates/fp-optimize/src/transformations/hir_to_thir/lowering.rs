@@ -801,14 +801,47 @@ impl ThirGenerator {
                     lint_level: 0,
                 }
             }
-            _ => {
-                return Err(crate::error::optimization_error(
-                    "Unsupported HIR statement during THIR lowering",
-                ));
-            }
+            hir::StmtKind::Item(item) => match item.kind {
+                hir::ItemKind::Const(const_def) => self.transform_const_stmt(const_def)?,
+                hir::ItemKind::Struct(_) => thir::StmtKind::Expr(self.create_unit_expr()),
+                _ => {
+                    return Err(crate::error::optimization_error(
+                        "Unsupported HIR statement during THIR lowering",
+                    ));
+                }
+            },
         };
 
         Ok(thir::Stmt { kind })
+    }
+
+    fn transform_const_stmt(&mut self, const_def: hir::Const) -> Result<thir::StmtKind> {
+        if !const_def.body.params.is_empty() {
+            return Err(crate::error::optimization_error(
+                "Const items with parameters are not supported in block scope",
+            ));
+        }
+
+        let binding_ty = self.hir_ty_to_ty(&const_def.ty)?;
+        let hir::Body {
+            hir_id: _,
+            params: _,
+            value,
+        } = const_def.body;
+
+        let mut initializer = self.transform_expr(value)?;
+        initializer.ty = binding_ty.clone();
+
+        let pattern =
+            self.create_binding_pattern(const_def.name.clone(), binding_ty.clone(), false);
+
+        Ok(thir::StmtKind::Let {
+            remainder_scope: 0,
+            init_scope: 0,
+            pattern,
+            initializer: Some(initializer),
+            lint_level: 0,
+        })
     }
 
     /// Transform HIR literal to THIR with type inference
@@ -1343,6 +1376,22 @@ impl ThirGenerator {
                 ty: ty.clone(),
             },
             ty,
+            span: Span::new(0, 0, 0),
+        }
+    }
+
+    fn create_unit_expr(&mut self) -> thir::Expr {
+        thir::Expr {
+            thir_id: self.next_id(),
+            kind: thir::ExprKind::Block(thir::Block {
+                targeted_by_break: false,
+                region: 0,
+                span: Span::new(0, 0, 0),
+                stmts: Vec::new(),
+                expr: None,
+                safety_mode: thir::BlockSafetyMode::Safe,
+            }),
+            ty: self.create_unit_type(),
             span: Span::new(0, 0, 0),
         }
     }
