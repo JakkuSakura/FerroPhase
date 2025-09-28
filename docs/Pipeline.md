@@ -103,7 +103,7 @@ flags for informational entries but always surfaces warnings and errors.
 ## Intermediates & Persistence
 
 When `save_intermediates` is enabled, each stage writes its artefact into the
-`base_path` with a conventional extension (`.ast`, `.hir`, `.thir`, `.tast`,
+`base_path` with a conventional extension (`.ast`, `.hir`, `.thir`, `.ethir`, `.tast`,
 `.mir`, `.lir`, `.ll`). The driver handles the IO so the stage helpers remain
 pure.
 

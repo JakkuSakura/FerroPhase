@@ -336,10 +336,13 @@ impl Pipeline {
 
         if options.save_intermediates {
             if let Err(err) = fs::write(
-                base_path.with_extension("thir"),
+                base_path.with_extension("ethir"),
                 format!("{:#?}", thir_program),
             ) {
-                debug!(error = %err, "failed to persist THIR intermediate after const eval");
+                debug!(
+                    error = %err,
+                    "failed to persist evaluated THIR (ethir) intermediate after const eval"
+                );
             }
         }
 
