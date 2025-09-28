@@ -22,6 +22,7 @@ pub struct LirGenerator {
     local_storage: HashMap<mir::LocalId, LocalStorage>,
     entry_allocas: Vec<lir::LirInstruction>,
     queued_instructions: Vec<lir::LirInstruction>,
+    name_counters: HashMap<String, usize>,
 }
 
 #[derive(Clone)]
@@ -47,6 +48,7 @@ impl LirGenerator {
             local_storage: HashMap::new(),
             entry_allocas: Vec::new(),
             queued_instructions: Vec::new(),
+            name_counters: HashMap::new(),
         }
     }
 
@@ -80,7 +82,7 @@ impl LirGenerator {
         // Reset generator state for new function
         self.reset_for_new_function();
 
-        let function_name = format!("func_{}", mir_func.body_id.0);
+        let function_name = self.mangle_function_name(&mir_func);
         let param_types: Vec<lir::LirType> = mir_func
             .sig
             .inputs
@@ -106,7 +108,6 @@ impl LirGenerator {
 
         // Transform MIR body if present
         if let Some(mir_body) = bodies.get(&mir_func.body_id) {
-            println!("MIR body: {:#?}", mir_body);
             // First pass: analyze const values
             self.analyze_const_values(mir_body)?;
             self.local_types = mir_body.locals.iter().map(|decl| decl.ty.clone()).collect();
@@ -149,6 +150,54 @@ impl LirGenerator {
 
         self.current_function = Some(lir_func.clone());
         Ok(lir_func)
+    }
+
+    fn mangle_function_name(&mut self, mir_func: &mir::Function) -> String {
+        let base = if !mir_func.path.is_empty() {
+            mir_func.path.join("::")
+        } else if !mir_func.name.is_empty() {
+            mir_func.name.clone()
+        } else {
+            "anonymous_fn".to_string()
+        };
+
+        let sanitized = Self::sanitize_symbol(&base);
+        let entry = self
+            .name_counters
+            .entry(sanitized.clone())
+            .or_insert(0_usize);
+        let suffix = *entry;
+        *entry += 1;
+
+        if suffix == 0 {
+            sanitized
+        } else {
+            format!("{sanitized}__{suffix}")
+        }
+    }
+
+    fn sanitize_symbol(name: &str) -> String {
+        let mut result = String::with_capacity(name.len());
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                result.push(ch);
+            } else {
+                result.push('_');
+            }
+        }
+
+        if result.is_empty() {
+            return "anonymous_fn".to_string();
+        }
+
+        if matches!(result.chars().next(), Some(c) if c.is_ascii_digit()) {
+            let mut prefixed = String::with_capacity(result.len() + 1);
+            prefixed.push('_');
+            prefixed.push_str(&result);
+            prefixed
+        } else {
+            result
+        }
     }
 
     /// Transform a MIR static to LIR global
@@ -272,6 +321,47 @@ impl LirGenerator {
                     id: instr_id,
                     kind: lir_kind,
                     type_hint,
+                    debug_info: None,
+                });
+
+                let result_value = lir::LirValue::Register(instr_id);
+                if has_storage {
+                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                        let store_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: store_id,
+                            kind: lir::LirInstructionKind::Store {
+                                value: result_value.clone(),
+                                address: storage.ptr_value.clone(),
+                                alignment: Some(storage.alignment),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        });
+                    }
+                }
+
+                self.register_map.insert(place.local, result_value);
+                Ok(instructions)
+            }
+            mir::Rvalue::UnaryOp(un_op, operand) => {
+                let operand_value = self.transform_operand(operand)?;
+                instructions.extend(self.take_queued_instructions());
+
+                let result_ty = self
+                    .lookup_place_type(place)
+                    .map(|ty| self.lir_type_from_ty(ty))
+                    .unwrap_or(lir::LirType::I64);
+
+                let instr_id = self.next_id();
+                let lir_kind =
+                    self.lower_unary_op(un_op.clone(), operand_value.clone(), &result_ty)?;
+
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind: lir_kind,
+                    type_hint: Some(result_ty.clone()),
                     debug_info: None,
                 });
 
@@ -443,10 +533,7 @@ impl LirGenerator {
                 }
             }
             mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::Fn(name, ty) => Ok(lir::LirValue::Global(
-                    name.clone(),
-                    self.lir_type_from_ty(ty),
-                )),
+                mir::ConstantKind::Fn(name, _ty) => Ok(lir::LirValue::Function(name.clone())),
                 mir::ConstantKind::Global(name, ty) => Ok(lir::LirValue::Global(
                     name.clone(),
                     self.lir_type_from_ty(ty),
@@ -759,7 +846,10 @@ impl LirGenerator {
         destination: &Option<(mir::Place, mir::BasicBlockId)>,
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
-        let function_value = self.transform_operand(func)?;
+        let mut function_value = self.transform_operand(func)?;
+        if let lir::LirValue::Global(name, _) = &function_value {
+            function_value = lir::LirValue::Function(name.clone());
+        }
         block.instructions.extend(self.take_queued_instructions());
         let mut lowered_args = Vec::with_capacity(args.len());
         for arg in args {
@@ -1046,6 +1136,26 @@ impl LirGenerator {
         }
     }
 
+    fn lower_unary_op(
+        &self,
+        op: mir::UnOp,
+        operand: lir::LirValue,
+        result_ty: &lir::LirType,
+    ) -> Result<lir::LirInstructionKind> {
+        match op {
+            mir::UnOp::Not => Ok(lir::LirInstructionKind::Not(operand)),
+            mir::UnOp::Neg => {
+                let zero = self.zero_value_for_lir_type(result_ty).ok_or_else(|| {
+                    crate::error::optimization_error(format!(
+                        "MIR→LIR: unsupported type {:?} for unary negation",
+                        result_ty
+                    ))
+                })?;
+                Ok(lir::LirInstructionKind::Sub(zero, operand))
+            }
+        }
+    }
+
     fn lower_cast(
         &self,
         cast_kind: mir::CastKind,
@@ -1108,6 +1218,24 @@ impl LirGenerator {
                 );
                 0
             }
+        }
+    }
+
+    fn zero_value_for_lir_type(&self, ty: &lir::LirType) -> Option<lir::LirValue> {
+        match ty {
+            lir::LirType::I1
+            | lir::LirType::I8
+            | lir::LirType::I16
+            | lir::LirType::I32
+            | lir::LirType::I64
+            | lir::LirType::I128 => Some(lir::LirValue::Constant(lir::LirConstant::Int(
+                0,
+                ty.clone(),
+            ))),
+            lir::LirType::F32 | lir::LirType::F64 => Some(lir::LirValue::Constant(
+                lir::LirConstant::Float(0.0, ty.clone()),
+            )),
+            _ => None,
         }
     }
 

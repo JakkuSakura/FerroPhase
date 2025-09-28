@@ -31,6 +31,9 @@ pub enum ItemKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
+    pub name: Symbol,
+    pub path: Vec<Symbol>,
+    pub def_id: Option<DefId>,
     pub sig: FunctionSig,
     pub body_id: Option<BodyId>,
     pub is_const: bool,

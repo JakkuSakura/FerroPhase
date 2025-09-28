@@ -39,6 +39,8 @@ pub struct ThirGenerator {
     inferred_expr_types: HashMap<hir::HirId, hir_types::Ty>,
     /// Inferred pattern types keyed by HIR id.
     inferred_pattern_types: HashMap<hir::HirId, hir_types::Ty>,
+    /// The `Self` type for the impl currently being lowered, if any.
+    current_self_ty: Option<hir_types::Ty>,
 }
 
 impl ThirGenerator {
@@ -56,6 +58,7 @@ impl ThirGenerator {
             next_local_id: 0,
             inferred_expr_types: HashMap::new(),
             inferred_pattern_types: HashMap::new(),
+            current_self_ty: None,
         }
     }
 
@@ -161,7 +164,11 @@ impl ThirGenerator {
                     );
                 }
                 hir::ItemKind::Impl(impl_block) => {
-                    if let Some(owner_def_id) = self.resolve_ty_def_id(&impl_block.self_ty)? {
+                    let self_ty = self.hir_ty_to_ty(&impl_block.self_ty)?;
+                    let saved_self = self.current_self_ty.clone();
+                    self.current_self_ty = Some(self_ty.clone());
+
+                    if let Some(owner_def_id) = Self::type_def_id(&self_ty) {
                         for impl_item in &impl_block.items {
                             if let hir::ImplItemKind::Method(method) = &impl_item.kind {
                                 let fn_sig = self.build_fn_sig(&method.sig)?;
@@ -173,6 +180,8 @@ impl ThirGenerator {
                             }
                         }
                     }
+
+                    self.current_self_ty = saved_self;
                 }
             }
         }
@@ -195,11 +204,6 @@ impl ThirGenerator {
             unsafety: hir_types::Unsafety::Normal,
             abi: hir_types::Abi::Rust,
         })
-    }
-
-    fn resolve_ty_def_id(&mut self, hir_ty: &hir::TypeExpr) -> Result<Option<hir_types::DefId>> {
-        let ty = self.hir_ty_to_ty(hir_ty)?;
-        Ok(Self::type_def_id(&ty))
     }
 
     fn type_def_id(ty: &hir_types::Ty) -> Option<hir_types::DefId> {

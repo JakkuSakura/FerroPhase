@@ -10,6 +10,7 @@ pub(super) struct TypeInferencer<'a> {
     env: HashMap<hir::HirId, TypeScheme>,
     scope_stack: Vec<Vec<hir::HirId>>,
     current_level: usize,
+    current_self_ty: Option<hir_types::Ty>,
 }
 
 type TypeVarId = usize;
@@ -62,7 +63,7 @@ enum SchemeType {
 }
 
 impl<'a> TypeInferencer<'a> {
-    pub fn new(generator: &'a mut ThirGenerator) -> Self {
+    pub fn new(generator: &'a mut ThirGenerator, current_self_ty: Option<hir_types::Ty>) -> Self {
         Self {
             generator,
             type_vars: Vec::new(),
@@ -72,6 +73,7 @@ impl<'a> TypeInferencer<'a> {
             env: HashMap::new(),
             scope_stack: Vec::new(),
             current_level: 0,
+            current_self_ty,
         }
     }
 
@@ -156,7 +158,6 @@ impl<'a> TypeInferencer<'a> {
 
     fn infer_expr(&mut self, expr: &hir::Expr) -> Result<TypeVarId> {
         use hir::ExprKind;
-        eprintln!("infer_expr kind {:?}", expr.kind);
         let ty = match &expr.kind {
             ExprKind::Literal(lit) => self.infer_literal(lit)?,
             ExprKind::Path(path) => self.infer_path(expr.hir_id, path)?,
@@ -200,6 +201,44 @@ impl<'a> TypeInferencer<'a> {
                     }
                 }
             }
+            ExprKind::Unary(op, value) => {
+                let value_ty = self.infer_expr(value)?;
+                match op {
+                    hir::UnOp::Neg => {
+                        let numeric = self.fresh_type_var();
+                        self.bind(numeric, TypeTerm::Int(None))?;
+                        self.unify(value_ty, numeric)?;
+                        value_ty
+                    }
+                    hir::UnOp::Not => {
+                        let bool_ty = self.fresh_type_var();
+                        self.bind(bool_ty, TypeTerm::Bool)?;
+                        self.unify(value_ty, bool_ty)?;
+                        bool_ty
+                    }
+                    hir::UnOp::Deref => {
+                        let resolved = self.resolve_to_hir(value_ty)?;
+                        match &resolved.kind {
+                            hir_types::TyKind::Ref(_, inner, _) => {
+                                let expected_ref = self.type_from_hir_ty(&resolved)?;
+                                self.unify(value_ty, expected_ref)?;
+                                self.type_from_hir_ty(inner.as_ref())?
+                            }
+                            hir_types::TyKind::RawPtr(ptr) => {
+                                let expected_ptr = self.type_from_hir_ty(&resolved)?;
+                                self.unify(value_ty, expected_ptr)?;
+                                self.type_from_hir_ty(ptr.ty.as_ref())?
+                            }
+                            _ => {
+                                return Err(crate::error::optimization_error(format!(
+                                    "Cannot dereference value of type {:?}",
+                                    resolved
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
             ExprKind::Assign(lhs, rhs) => {
                 let lhs_ty = self.infer_expr(lhs)?;
                 let rhs_ty = self.infer_expr(rhs)?;
@@ -226,10 +265,130 @@ impl<'a> TypeInferencer<'a> {
                             }
                             return self.type_from_hir_ty(sig.output.as_ref());
                         }
-                        return self.infer_call_args(args);
+                    }
+
+                    if let Some(method_sig) = self.lookup_associated_method_signature(path)? {
+                        for (arg_expr, expected_ty) in args.iter().zip(method_sig.inputs.iter()) {
+                            let arg_ty = self.infer_expr(arg_expr)?;
+                            let expected = self.type_from_hir_ty(expected_ty.as_ref())?;
+                            self.unify(arg_ty, expected)?;
+                        }
+                        return self.type_from_hir_ty(method_sig.output.as_ref());
                     }
                 }
                 self.infer_call_args(args)?
+            }
+            ExprKind::MethodCall(receiver, method, args) => {
+                let receiver_ty = self.infer_expr(receiver)?;
+                let resolved_receiver_ty = self.resolve_to_hir(receiver_ty)?;
+                if let Some(sig) = self
+                    .generator
+                    .type_context
+                    .lookup_method_signature(&resolved_receiver_ty, method)
+                    .cloned()
+                {
+                    if let Some(self_param) = sig.inputs.first() {
+                        let expected_self_ty = self_param.as_ref();
+                        match (&expected_self_ty.kind, &resolved_receiver_ty.kind) {
+                            (hir_types::TyKind::Ref(_, _, _), hir_types::TyKind::Ref(_, _, _))
+                            | (hir_types::TyKind::RawPtr(_), hir_types::TyKind::RawPtr(_)) => {
+                                let expected_self = self.type_from_hir_ty(expected_self_ty)?;
+                                self.unify(receiver_ty, expected_self)?;
+                            }
+                            (hir_types::TyKind::Ref(_, inner, _), _) => {
+                                let inner_var = self.type_from_hir_ty(inner.as_ref())?;
+                                self.unify(receiver_ty, inner_var)?;
+                            }
+                            (hir_types::TyKind::RawPtr(type_and_mut), _) => {
+                                let inner_var = self.type_from_hir_ty(type_and_mut.ty.as_ref())?;
+                                self.unify(receiver_ty, inner_var)?;
+                            }
+                            _ => {
+                                let expected_self = self.type_from_hir_ty(expected_self_ty)?;
+                                self.unify(receiver_ty, expected_self)?;
+                            }
+                        }
+                    }
+                    for (arg_expr, expected_ty) in args.iter().zip(sig.inputs.iter().skip(1)) {
+                        let arg_ty = self.infer_expr(arg_expr)?;
+                        let resolved_arg_ty = self.resolve_to_hir(arg_ty)?;
+                        let expected_hir_ty = expected_ty.as_ref();
+                        match (&expected_hir_ty.kind, &resolved_arg_ty.kind) {
+                            (hir_types::TyKind::Ref(_, _, _), hir_types::TyKind::Ref(_, _, _))
+                            | (hir_types::TyKind::RawPtr(_), hir_types::TyKind::RawPtr(_)) => {
+                                let expected = self.type_from_hir_ty(expected_hir_ty)?;
+                                self.unify(arg_ty, expected)?;
+                            }
+                            (hir_types::TyKind::Ref(_, inner, _), _) => {
+                                let expected = self.type_from_hir_ty(inner.as_ref())?;
+                                self.unify(arg_ty, expected)?;
+                            }
+                            (hir_types::TyKind::RawPtr(type_and_mut), _) => {
+                                let expected = self.type_from_hir_ty(type_and_mut.ty.as_ref())?;
+                                self.unify(arg_ty, expected)?;
+                            }
+                            _ => {
+                                let expected = self.type_from_hir_ty(expected_hir_ty)?;
+                                self.unify(arg_ty, expected)?;
+                            }
+                        }
+                    }
+                    self.type_from_hir_ty(sig.output.as_ref())?
+                } else {
+                    return Err(crate::error::optimization_error(format!(
+                        "Unknown method `{}` for type {:?}",
+                        method, &resolved_receiver_ty
+                    )));
+                }
+            }
+            ExprKind::FieldAccess(owner, field_name) => {
+                let owner_ty_var = self.infer_expr(owner)?;
+                let resolved_owner_ty = self.resolve_to_hir(owner_ty_var)?;
+                if let Some((_idx, field_ty)) = self
+                    .generator
+                    .type_context
+                    .lookup_field_info(&resolved_owner_ty, field_name)
+                {
+                    let expected_owner = self.type_from_hir_ty(&resolved_owner_ty)?;
+                    self.unify(owner_ty_var, expected_owner)?;
+                    self.type_from_hir_ty(&field_ty)?
+                } else {
+                    return Err(crate::error::optimization_error(format!(
+                        "Unknown field `{}` on type {:?}",
+                        field_name, &resolved_owner_ty
+                    )));
+                }
+            }
+            ExprKind::Struct(path, fields) => {
+                let struct_ty = if matches!(path.res, Some(hir::Res::SelfTy)) {
+                    self.current_self_ty.clone().ok_or_else(|| {
+                        crate::error::optimization_error(
+                            "`Self` used outside of an impl context".to_string(),
+                        )
+                    })?
+                } else {
+                    self.generator.infer_path_type(path)?
+                };
+
+                let struct_var = self.type_from_hir_ty(&struct_ty)?;
+                for field in fields {
+                    let value_ty = self.infer_expr(&field.expr)?;
+                    if let Some((_idx, expected_ty)) = self
+                        .generator
+                        .type_context
+                        .lookup_field_info(&struct_ty, field.name.as_str())
+                    {
+                        let expected = self.type_from_hir_ty(&expected_ty)?;
+                        self.unify(value_ty, expected)?;
+                    } else {
+                        return Err(crate::error::optimization_error(format!(
+                            "Unknown field `{}` on type {:?}",
+                            field.name.as_str(),
+                            &struct_ty
+                        )));
+                    }
+                }
+                struct_var
             }
             ExprKind::Block(block) => self.infer_block(block)?,
             ExprKind::StdIoPrintln(println) => {
@@ -326,6 +485,17 @@ impl<'a> TypeInferencer<'a> {
             }
         }
 
+        if matches!(path.res, Some(hir::Res::SelfTy)) {
+            let self_ty = self.current_self_ty.clone().ok_or_else(|| {
+                crate::error::optimization_error(
+                    "`Self` used outside of an impl context".to_string(),
+                )
+            })?;
+            let var = self.type_from_hir_ty(&self_ty)?;
+            self.expr_types.insert(hir_id, var);
+            return Ok(var);
+        }
+
         if let Some(hir::Res::Def(def_id)) = path.res {
             let const_ty = self
                 .generator
@@ -360,6 +530,52 @@ impl<'a> TypeInferencer<'a> {
         let unit = self.fresh_type_var();
         self.bind(unit, TypeTerm::Unit)?;
         Ok(unit)
+    }
+
+    fn lookup_associated_method_signature(
+        &mut self,
+        path: &hir::Path,
+    ) -> Result<Option<hir_types::FnSig>> {
+        if path.segments.len() < 2 {
+            return Ok(None);
+        }
+
+        let method_segment = path
+            .segments
+            .last()
+            .expect("path has at least two segments");
+        let owner_name = path.segments[..path.segments.len() - 1]
+            .iter()
+            .map(|seg| seg.name.clone())
+            .collect::<Vec<_>>()
+            .join("::");
+
+        if owner_name.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(def_id) = self
+            .generator
+            .type_context
+            .lookup_struct_def_id(&owner_name)
+        {
+            if let Some(owner_ty) = self
+                .generator
+                .type_context
+                .make_struct_ty_by_id(def_id, Vec::new())
+            {
+                if let Some(sig) = self
+                    .generator
+                    .type_context
+                    .lookup_method_signature(&owner_ty, &method_segment.name)
+                    .cloned()
+                {
+                    return Ok(Some(sig));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     fn infer_pattern(&mut self, pat: &hir::Pat) -> Result<TypeVarId> {
@@ -592,14 +808,10 @@ impl<'a> TypeInferencer<'a> {
                 self.type_vars[right_root].kind = TypeVarKind::Link(left_root);
                 Ok(())
             }
-            (lhs, rhs) => {
-                eprintln!("unify mismatch lhs={:?} rhs={:?}", lhs, rhs);
-                eprintln!("backtrace: {}", std::backtrace::Backtrace::capture());
-                Err(crate::error::optimization_error(format!(
-                    "Type mismatch during unification: {:?} vs {:?}",
-                    lhs, rhs
-                )))
-            }
+            (lhs, rhs) => Err(crate::error::optimization_error(format!(
+                "Type mismatch during unification: {:?} vs {:?}",
+                lhs, rhs
+            ))),
         }
     }
 
