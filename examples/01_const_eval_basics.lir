@@ -1,191 +1,72 @@
-LirProgram {
-    functions: [
-        LirFunction {
-            name: "func_0",
-            signature: LirFunctionSignature {
-                params: [],
-                return_type: Void,
-                is_variadic: false,
-            },
-            basic_blocks: [
-                LirBasicBlock {
-                    id: 0,
-                    label: Some(
-                        "bb0",
-                    ),
-                    instructions: [
-                        LirInstruction {
-                            id: 0,
-                            kind: Call {
-                                function: Global(
-                                    "std::io::println",
-                                    Void,
-                                ),
-                                args: [
-                                    Constant(
-                                        String(
-                                            "Config: buffer=4KB, connections=150, timeout=30000ms, debug=0",
-                                        ),
-                                    ),
-                                ],
-                                calling_convention: C,
-                                tail_call: false,
-                            },
-                            type_hint: None,
-                            debug_info: None,
-                        },
-                    ],
-                    terminator: Br(
-                        1,
-                    ),
-                    predecessors: [],
-                    successors: [
-                        1,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 1,
-                    label: Some(
-                        "bb1",
-                    ),
-                    instructions: [
-                        LirInstruction {
-                            id: 1,
-                            kind: Call {
-                                function: Global(
-                                    "std::io::println",
-                                    Void,
-                                ),
-                                args: [
-                                    Constant(
-                                        String(
-                                            "Computed: factorial=120, is_pow2=true",
-                                        ),
-                                    ),
-                                ],
-                                calling_convention: C,
-                                tail_call: false,
-                            },
-                            type_hint: None,
-                            debug_info: None,
-                        },
-                    ],
-                    terminator: Br(
-                        2,
-                    ),
-                    predecessors: [
-                        0,
-                    ],
-                    successors: [
-                        2,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 2,
-                    label: Some(
-                        "bb2",
-                    ),
-                    instructions: [],
-                    terminator: Return(
-                        None,
-                    ),
-                    predecessors: [
-                        1,
-                    ],
-                    successors: [],
-                },
-            ],
-            locals: [
-                LirLocal {
-                    id: 0,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 1,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 2,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 3,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 4,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 5,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 6,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 7,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 8,
-                    ty: I32,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 9,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 10,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 11,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 12,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-                LirLocal {
-                    id: 13,
-                    ty: Void,
-                    name: None,
-                    is_argument: false,
-                },
-            ],
-            stack_slots: [],
-            calling_convention: C,
-            linkage: Internal,
-        },
-    ],
-    globals: [],
-    type_definitions: [],
+lir::Program {
+    functions:
+        fn main() -> i32 [cc: c, linkage: internal] {
+            locals:
+                %0: i32
+                %1: i64
+                %2: i32
+                %3: i64
+                %4: i64
+                %5: i1
+                %6: i32
+                %7: i64
+                %8: i64
+                %9: i32
+                %10: i64
+                %11: i64
+                %12: i64
+                %13: i64
+                %14: i64
+                %15: i64
+                %16: i1
+                %17: i1
+                %18: i32
+                %19: i64
+                %20: i64
+                %21: void
+                %22: i64
+                %23: i32
+                %24: i32
+                %25: i64
+                %26: i64
+                %27: i32
+                %28: i32
+                %29: i32
+                %30: void
+                %31: i32
+                %32: void
+                %33: void
+            bb0 // label: bb0:
+                i97: %r97 = call c @std::io::println(c"=== Struct Operations ===")
+                i98: %r98 = call c @Point__new(i64 10, i64 20) : ptr i64
+                i99: %r99 = call c @Point__new(i64 5, i64 15) : ptr i64
+                i100: %r100 = load %r98 align 8 : i64
+                i101: %r101 = gep inbounds %r98 [i64 1] : ptr i64
+                i102: %r102 = load %r101 align 8 : i64
+                i103: %r103 = call c @std::io::println(c"p1 = (%lld, %lld)", %r100, %r102)
+                i104: %r104 = load %r99 align 8 : i64
+                i105: %r105 = gep inbounds %r99 [i64 1] : ptr i64
+                i106: %r106 = load %r105 align 8 : i64
+                i107: %r107 = call c @std::io::println(c"p2 = (%lld, %lld)", %r104, %r106)
+                i108: %r108 = call c @Point__translate(%r98, i64 3, i64 -4)
+                i109: %r109 = load %r98 align 8 : i64
+                i110: %r110 = gep inbounds %r98 [i64 1] : ptr i64
+                i111: %r111 = load %r110 align 8 : i64
+                i112: %r112 = call c @std::io::println(c"p1 after translate = (%lld, %lld)", %r109, %r111)
+                i113: %r113 = call c @Point__distance2(%r98, %r99) : i64
+                i114: %r114 = call c @std::io::println(c"Distance²(p1, p2) = %lld", %r113)
+                i115: %r115 = call c @Rectangle__new(i64 10, i64 5) : ptr i64
+                i116: %r116 = load %r115 align 8 : i64
+                i117: %r117 = gep inbounds %r115 [i64 1] : ptr i64
+                i118: %r118 = load %r117 align 8 : i64
+                i119: %r119 = call c @std::io::println(c"Rectangle: %lld×%lld", %r116, %r118)
+                i120: %r120 = call c @Rectangle__area(%r115) : i64
+                i121: %r121 = call c @std::io::println(c"  area = %lld", %r120)
+                i122: %r122 = call c @Rectangle__perimeter(%r115) : i64
+                i123: %r123 = call c @std::io::println(c"  perimeter = %lld", %r122)
+                i124: %r124 = call c @Rectangle__is_square(%r115) : i1
+                i125: %r125 = zext %r124 to i64 : i64
+                i126: %r126 = call c @std::io::println(c"  is_square = %lld", %r125)
+                terminator: ret void
+        }
 }

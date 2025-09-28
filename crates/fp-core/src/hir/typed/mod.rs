@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 pub mod ty;
 pub use ty::Ty;
+pub mod pretty;
 
 pub type ThirId = u32;
 pub type LocalId = u32;

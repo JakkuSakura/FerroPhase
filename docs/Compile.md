@@ -74,7 +74,7 @@ $ fp compile src/main.fp --emit ast --emit east
 Artifacts (paths depend on your configuration):
 - `target/tast/src_main.tast` – Evaluated typed AST snapshot (TAST)
 - `target/hir/src_main.hir` – HIR after lowering
-- `target/ethir/src_main.ethir` – Evaluated THIR snapshot after const evaluation
+- `target/tce/src_main.tce` – Evaluated THIR snapshot after const evaluation
 
 ## Building to Native (LLVM target)
 
@@ -94,7 +94,7 @@ Common flags:
 
 ```bash
 $ fp compile src/main.fp --emit thir --emit tast --emit mir
-$ cat target/ethir/src_main.ethir
+$ cat target/tce/src_main.tce
 $ cat target/tast/src_main.tast
 ```
 

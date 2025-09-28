@@ -1,0 +1,591 @@
+use std::fmt::{self, Formatter};
+
+use crate::pretty::{PrettyCtx, PrettyPrintable};
+
+use super::{
+    BinOp, Block, Body, Const, Expr, ExprKind, Function, GenericArg, GenericParamKind, Generics,
+    Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Program, Stmt, StmtKind, Struct,
+    TypeExpr, TypeExprKind, UnOp, Visibility,
+};
+
+impl PrettyPrintable for Program {
+    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+        ctx.writeln(f, "hir::Program {")?;
+        ctx.with_indent(|ctx| {
+            for (idx, item) in self.items.iter().enumerate() {
+                write_item(item, f, ctx)?;
+                if idx + 1 < self.items.len() {
+                    writeln!(f)?;
+                }
+            }
+            Ok(())
+        })?;
+        ctx.writeln(f, "}")
+    }
+}
+
+fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    match &item.kind {
+        ItemKind::Function(func) => write_function(item, func, f, ctx),
+        ItemKind::Struct(strukt) => write_struct(item, strukt, f, ctx),
+        ItemKind::Const(konst) => write_const(item, konst, f, ctx),
+        ItemKind::Impl(imp) => write_impl(item, imp, f, ctx),
+    }
+}
+
+fn write_function(
+    item: &Item,
+    func: &Function,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let vis = fmt_visibility(&item.visibility);
+    let const_flag = if func.is_const { "const " } else { "" };
+    let generics = fmt_generics(&func.sig.generics, ctx);
+    let params = fmt_params(&func.sig.inputs, ctx);
+    let ret = if ctx.options.show_types {
+        let ty = fmt_type_expr(&func.sig.output, ctx);
+        if ty.is_empty() {
+            String::new()
+        } else {
+            format!(" -> {}", ty)
+        }
+    } else {
+        String::new()
+    };
+
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+
+    let header = format!(
+        "{}{}fn {}{}({}){}{}",
+        vis,
+        const_flag,
+        func.sig.name,
+        generics,
+        params.join(", "),
+        ret,
+        span_suffix
+    );
+
+    if let Some(body) = &func.body {
+        ctx.writeln(f, format!("{} {{", header))?;
+        ctx.with_indent(|ctx| write_body(body, f, ctx))?;
+        ctx.writeln(f, "}")
+    } else {
+        ctx.writeln(f, format!("{};", header))
+    }
+}
+
+fn write_struct(
+    item: &Item,
+    strukt: &Struct,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let vis = fmt_visibility(&item.visibility);
+    let generics = fmt_generics(&strukt.generics, ctx);
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+
+    ctx.writeln(
+        f,
+        format!("{}struct {}{} {{", vis, strukt.name, generics) + &span_suffix,
+    )?;
+    ctx.with_indent(|ctx| {
+        for field in &strukt.fields {
+            let field_vis = fmt_visibility(&field.vis);
+            let ty = if ctx.options.show_types {
+                format!(": {}", fmt_type_expr(&field.ty, ctx))
+            } else {
+                String::new()
+            };
+            let mut line = format!("{}{}{}", field_vis, field.name, ty);
+            line.push(',');
+            ctx.writeln(f, line)?;
+        }
+        Ok(())
+    })?;
+    ctx.writeln(f, "}")
+}
+
+fn write_const(
+    item: &Item,
+    konst: &Const,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let vis = fmt_visibility(&item.visibility);
+    let ty = if ctx.options.show_types {
+        format!(": {}", fmt_type_expr(&konst.ty, ctx))
+    } else {
+        String::new()
+    };
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+
+    ctx.writeln(
+        f,
+        format!("{}const {}{} =", vis, konst.name, ty) + &span_suffix,
+    )?;
+    ctx.with_indent(|ctx| write_const_expr(&konst.body, f, ctx))
+}
+
+fn write_impl(
+    item: &Item,
+    imp: &Impl,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let vis = fmt_visibility(&item.visibility);
+    let self_ty = if ctx.options.show_types {
+        fmt_type_expr(&imp.self_ty, ctx)
+    } else {
+        String::from("<impl>")
+    };
+
+    let trait_part = imp
+        .trait_ty
+        .as_ref()
+        .filter(|_| ctx.options.show_types)
+        .map(|path| format!("{} for ", fmt_type_expr(path, ctx)))
+        .unwrap_or_default();
+
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+
+    ctx.writeln(
+        f,
+        format!("{}impl {}{} {{", vis, trait_part, self_ty) + &span_suffix,
+    )?;
+    ctx.with_indent(|ctx| {
+        for (idx, impl_item) in imp.items.iter().enumerate() {
+            match &impl_item.kind {
+                ImplItemKind::Method(func) => write_impl_method(func, f, ctx)?,
+                ImplItemKind::AssocConst(konst) => write_impl_const(konst, f, ctx)?,
+            }
+            if idx + 1 < imp.items.len() {
+                writeln!(f)?;
+            }
+        }
+        Ok(())
+    })?;
+    ctx.writeln(f, "}")
+}
+
+fn write_body(body: &Body, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    if ctx.options.show_types && !body.params.is_empty() {
+        let params = body
+            .params
+            .iter()
+            .map(|param| format_param(param, ctx))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ctx.writeln(f, format!("// params: [{}]", params))?;
+    }
+
+    write_expr(&body.value, f, ctx)
+}
+
+fn write_const_expr(body: &Body, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    match &body.value.kind {
+        ExprKind::Block(block) => write_block(block, f, ctx),
+        _ => ctx.writeln(f, format!("{};", format_expr_inline(&body.value, ctx))),
+    }
+}
+
+fn write_impl_method(
+    func: &Function,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
+    let generics = fmt_generics(&func.sig.generics, ctx);
+    let params = fmt_params(&func.sig.inputs, ctx);
+    let ret = if ctx.options.show_types {
+        let ty = fmt_type_expr(&func.sig.output, ctx);
+        if ty.is_empty() {
+            String::new()
+        } else {
+            format!(" -> {}", ty)
+        }
+    } else {
+        String::new()
+    };
+
+    let header = format!(
+        "fn {}{}({}){}",
+        func.sig.name,
+        generics,
+        params.join(", "),
+        ret
+    );
+
+    if let Some(body) = &func.body {
+        ctx.writeln(f, format!("{} {{", header))?;
+        ctx.with_indent(|ctx| write_body(body, f, ctx))?;
+        ctx.writeln(f, "}")
+    } else {
+        ctx.writeln(f, format!("{};", header))
+    }
+}
+
+fn write_impl_const(konst: &Const, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    let ty = if ctx.options.show_types {
+        format!(": {}", fmt_type_expr(&konst.ty, ctx))
+    } else {
+        String::new()
+    };
+
+    ctx.writeln(f, format!("const {}{} =", konst.name, ty))?;
+    ctx.with_indent(|ctx| write_const_expr(&konst.body, f, ctx))
+}
+
+fn write_block(block: &Block, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    ctx.writeln(f, "{")?;
+    ctx.with_indent(|ctx| {
+        for stmt in &block.stmts {
+            write_stmt(stmt, f, ctx)?;
+        }
+        if let Some(expr) = &block.expr {
+            write_expr(expr, f, ctx)?;
+        }
+        Ok(())
+    })?;
+    ctx.writeln(f, "}")
+}
+
+fn write_stmt(stmt: &Stmt, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    match &stmt.kind {
+        StmtKind::Local(local) => {
+            let pat = format_pat(&local.pat, ctx);
+            let ty = if ctx.options.show_types {
+                local
+                    .ty
+                    .as_ref()
+                    .map(|ty| format!(": {}", fmt_type_expr(ty, ctx)))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let init = local
+                .init
+                .as_ref()
+                .map(|expr| format!(" = {}", format_expr_inline(expr, ctx)))
+                .unwrap_or_default();
+            ctx.writeln(f, format!("let {}{}{};", pat, ty, init))
+        }
+        StmtKind::Item(item) => write_item(item, f, ctx),
+        StmtKind::Expr(expr) => write_expr(expr, f, ctx),
+        StmtKind::Semi(expr) => ctx.writeln(f, format!("{};", format_expr_inline(expr, ctx))),
+    }
+}
+
+fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    match &expr.kind {
+        ExprKind::Block(block) => write_block(block, f, ctx),
+        ExprKind::If(cond, then_branch, else_branch) => {
+            ctx.writeln(f, format!("if ({})", format_expr_inline(cond, ctx)))?;
+            ctx.with_indent(|ctx| write_expr(then_branch, f, ctx))?;
+            if let Some(else_expr) = else_branch {
+                ctx.writeln(f, "else")?;
+                ctx.with_indent(|ctx| write_expr(else_expr, f, ctx))?;
+            }
+            Ok(())
+        }
+        ExprKind::Loop(block) => {
+            ctx.writeln(f, "loop")?;
+            ctx.with_indent(|ctx| write_block(block, f, ctx))
+        }
+        ExprKind::While(cond, block) => {
+            ctx.writeln(f, format!("while ({})", format_expr_inline(cond, ctx)))?;
+            ctx.with_indent(|ctx| write_block(block, f, ctx))
+        }
+        ExprKind::Return(value) => {
+            let suffix = value
+                .as_ref()
+                .map(|expr| format!(" {}", format_expr_inline(expr, ctx)))
+                .unwrap_or_default();
+            ctx.writeln(f, format!("return{};", suffix))
+        }
+        ExprKind::Break(value) => {
+            let suffix = value
+                .as_ref()
+                .map(|expr| format!(" {}", format_expr_inline(expr, ctx)))
+                .unwrap_or_default();
+            ctx.writeln(f, format!("break{};", suffix))
+        }
+        ExprKind::Continue => ctx.writeln(f, "continue;"),
+        _ => ctx.writeln(f, format_expr_inline(expr, ctx)),
+    }
+}
+
+fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
+    match &expr.kind {
+        ExprKind::Literal(lit) => format_lit(lit),
+        ExprKind::Path(path) => fmt_path(path, ctx),
+        ExprKind::Binary(op, lhs, rhs) => format!(
+            "({} {} {})",
+            format_expr_inline(lhs, ctx),
+            fmt_bin_op(op),
+            format_expr_inline(rhs, ctx)
+        ),
+        ExprKind::Unary(op, inner) => {
+            format!("({}{})", fmt_un_op(op), format_expr_inline(inner, ctx))
+        }
+        ExprKind::Call(callee, args) => {
+            let args = args
+                .iter()
+                .map(|arg| format_expr_inline(arg, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({})", format_expr_inline(callee, ctx), args)
+        }
+        ExprKind::MethodCall(receiver, name, args) => {
+            let args = args
+                .iter()
+                .map(|arg| format_expr_inline(arg, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}.{}({})", format_expr_inline(receiver, ctx), name, args)
+        }
+        ExprKind::FieldAccess(base, field) => {
+            format!("{}.{}", format_expr_inline(base, ctx), field)
+        }
+        ExprKind::Struct(path, fields) => {
+            let fields = fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, format_expr_inline(&field.expr, ctx)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} {{ {} }}", fmt_path(path, ctx), fields)
+        }
+        ExprKind::StdIoPrintln(print) => {
+            let arg_count = print.format.args.len() + print.format.kwargs.len();
+            let newline = if print.newline { "" } else { " (no newline)" };
+            format!("println!({} args{})", arg_count, newline)
+        }
+        ExprKind::Let(pat, ty, value) => {
+            let pat_str = format_pat(pat, ctx);
+            let ty_str = if ctx.options.show_types {
+                format!(": {}", fmt_type_expr(ty, ctx))
+            } else {
+                String::new()
+            };
+            let value_str = value
+                .as_ref()
+                .map(|expr| format!(" = {}", format_expr_inline(expr, ctx)))
+                .unwrap_or_default();
+            format!("let {}{}{}", pat_str, ty_str, value_str)
+        }
+        ExprKind::Assign(lhs, rhs) => format!(
+            "{} = {}",
+            format_expr_inline(lhs, ctx),
+            format_expr_inline(rhs, ctx)
+        ),
+        ExprKind::Return(value) => format!(
+            "return{}",
+            value
+                .as_ref()
+                .map(|expr| format!(" {}", format_expr_inline(expr, ctx)))
+                .unwrap_or_default()
+        ),
+        ExprKind::Break(value) => format!(
+            "break{}",
+            value
+                .as_ref()
+                .map(|expr| format!(" {}", format_expr_inline(expr, ctx)))
+                .unwrap_or_default()
+        ),
+        ExprKind::Continue => "continue".into(),
+        ExprKind::Loop(_) | ExprKind::If(_, _, _) | ExprKind::Block(_) | ExprKind::While(_, _) => {
+            "<control-flow>".into()
+        }
+    }
+}
+
+fn format_lit(lit: &Lit) -> String {
+    match lit {
+        Lit::Bool(value) => value.to_string(),
+        Lit::Integer(value) => value.to_string(),
+        Lit::Float(value) => value.to_string(),
+        Lit::Str(value) => format!("\"{}\"", value),
+        Lit::Char(value) => format!("'{}'", value),
+    }
+}
+
+fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
+    match &pat.kind {
+        PatKind::Wild => "_".into(),
+        PatKind::Binding { name, mutable } => {
+            if *mutable {
+                format!("mut {}", name)
+            } else {
+                name.clone()
+            }
+        }
+        PatKind::Struct(path, fields) => {
+            let fields = fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, format_pat(&field.pat, ctx)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} {{ {} }}", fmt_path(path, ctx), fields)
+        }
+        PatKind::Tuple(parts) => {
+            let parts = parts
+                .iter()
+                .map(|pat| format_pat(pat, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({})", parts)
+        }
+        PatKind::Lit(lit) => format_lit(lit),
+    }
+}
+
+fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
+    let mut segments = Vec::new();
+    for segment in &path.segments {
+        let mut text = segment.name.clone();
+        if let Some(args) = &segment.args {
+            let args = args
+                .args
+                .iter()
+                .map(|arg| match arg {
+                    GenericArg::Type(ty) => fmt_type_expr(ty, ctx),
+                    GenericArg::Const(expr) => format_expr_inline(expr, ctx),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            text.push_str(&format!("<{}>", args));
+        }
+        segments.push(text);
+    }
+    segments.join("::")
+}
+
+fn fmt_generics(generics: &Generics, ctx: &PrettyCtx<'_>) -> String {
+    if generics.params.is_empty() {
+        return String::new();
+    }
+
+    let params = generics
+        .params
+        .iter()
+        .map(|param| match &param.kind {
+            GenericParamKind::Type { default } => {
+                if ctx.options.show_types {
+                    if let Some(default) = default {
+                        format!("{} = {}", param.name, fmt_type_expr(default, ctx))
+                    } else {
+                        param.name.clone()
+                    }
+                } else {
+                    param.name.clone()
+                }
+            }
+            GenericParamKind::Const { ty } => {
+                if ctx.options.show_types {
+                    format!("const {}: {}", param.name, fmt_type_expr(ty, ctx))
+                } else {
+                    format!("const {}", param.name)
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("<{}>", params)
+}
+
+fn fmt_params(params: &[super::Param], ctx: &PrettyCtx<'_>) -> Vec<String> {
+    params
+        .iter()
+        .map(|param| format_param(param, ctx))
+        .collect()
+}
+
+fn format_param(param: &super::Param, ctx: &PrettyCtx<'_>) -> String {
+    let pat = format_pat(&param.pat, ctx);
+    if ctx.options.show_types {
+        let ty = fmt_type_expr(&param.ty, ctx);
+        format!("{}: {}", pat, ty)
+    } else {
+        pat
+    }
+}
+
+fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
+    match &ty.kind {
+        TypeExprKind::Primitive(prim) => prim.to_string(),
+        TypeExprKind::Path(path) => fmt_path(path, ctx),
+        TypeExprKind::Tuple(elems) => {
+            let elems = elems
+                .iter()
+                .map(|elem| fmt_type_expr(elem, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({})", elems)
+        }
+        TypeExprKind::Array(elem, len) => {
+            let len_str = len
+                .as_ref()
+                .map(|expr| format_expr_inline(expr, ctx))
+                .unwrap_or_else(|| "_".into());
+            format!("[{}; {}]", fmt_type_expr(elem, ctx), len_str)
+        }
+        TypeExprKind::Ptr(inner) => format!("*{}", fmt_type_expr(inner, ctx)),
+        TypeExprKind::Ref(inner) => format!("&{}", fmt_type_expr(inner, ctx)),
+        TypeExprKind::Never => "!".into(),
+        TypeExprKind::Infer => "_".into(),
+    }
+}
+
+fn fmt_visibility(vis: &Visibility) -> &'static str {
+    match vis {
+        Visibility::Public => "pub ",
+        Visibility::Private => "",
+    }
+}
+
+fn fmt_bin_op(op: &BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Rem => "%",
+        BinOp::And => "&&",
+        BinOp::Or => "||",
+        BinOp::BitXor => "^",
+        BinOp::BitAnd => "&",
+        BinOp::BitOr => "|",
+        BinOp::Shl => "<<",
+        BinOp::Shr => ">>",
+        BinOp::Eq => "==",
+        BinOp::Ne => "!=",
+        BinOp::Lt => "<",
+        BinOp::Le => "<=",
+        BinOp::Gt => ">",
+        BinOp::Ge => ">=",
+    }
+}
+
+fn fmt_un_op(op: &UnOp) -> &'static str {
+    match op {
+        UnOp::Not => "!",
+        UnOp::Neg => "-",
+        UnOp::Deref => "*",
+    }
+}

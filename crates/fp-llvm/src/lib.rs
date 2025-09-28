@@ -2,6 +2,7 @@ pub mod codegen;
 pub mod context;
 pub mod debug_info;
 pub mod linking;
+pub mod pretty;
 pub mod stdlib;
 pub mod target;
 

@@ -1,5 +1,6 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 
+pub mod pretty;
 pub mod ty;
 pub use ty::Ty;
 pub type LirType = Ty;

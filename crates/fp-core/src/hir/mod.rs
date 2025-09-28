@@ -1,6 +1,7 @@
 use crate::ast::TypePrimitive;
 use std::collections::HashMap;
 
+pub mod pretty;
 pub mod ty;
 pub mod typed;
 

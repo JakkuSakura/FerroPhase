@@ -1,10 +1,10 @@
 thir::Program {
     items:
-        fn main::main() -> <??> [body: body0] : <??>
+        fn main::main() -> () [body: body0] : <??>
     bodies:
         body0 (params: 0, locals: 7) {
             locals:
-                _0: u64
+                _0: usize
                 _1: i32
                 _2: u64
                 _3: i64
