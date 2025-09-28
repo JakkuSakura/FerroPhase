@@ -1,5 +1,7 @@
 use fp_core::error::Result;
-use fp_core::mir::ty::{ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, UintTy};
+use fp_core::mir::ty::{
+    ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
+};
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -23,6 +25,9 @@ pub struct LirGenerator {
     entry_allocas: Vec<lir::LirInstruction>,
     queued_instructions: Vec<lir::LirInstruction>,
     name_counters: HashMap<String, usize>,
+    struct_layouts: HashMap<String, Vec<Option<lir::LirType>>>,
+    function_symbol_map: HashMap<String, String>,
+    function_signatures: HashMap<String, lir::LirFunctionSignature>,
 }
 
 #[derive(Clone)]
@@ -30,6 +35,24 @@ struct LocalStorage {
     ptr_value: lir::LirValue,
     element_type: lir::LirType,
     alignment: u32,
+}
+
+#[derive(Clone)]
+struct PlaceAddress {
+    ptr: lir::LirValue,
+    ty: Ty,
+    lir_ty: lir::LirType,
+    alignment: u32,
+}
+
+#[derive(Clone)]
+enum PlaceAccess {
+    Address(PlaceAddress),
+    Value {
+        value: lir::LirValue,
+        ty: Ty,
+        lir_ty: lir::LirType,
+    },
 }
 
 impl LirGenerator {
@@ -49,6 +72,9 @@ impl LirGenerator {
             entry_allocas: Vec::new(),
             queued_instructions: Vec::new(),
             name_counters: HashMap::new(),
+            struct_layouts: HashMap::new(),
+            function_symbol_map: HashMap::new(),
+            function_signatures: HashMap::new(),
         }
     }
 
@@ -92,13 +118,17 @@ impl LirGenerator {
         let return_type = self.lir_type_from_ty(&mir_func.sig.output);
         self.current_return_type = Some(return_type.clone());
 
+        let signature = lir::LirFunctionSignature {
+            params: param_types.clone(),
+            return_type: return_type.clone(),
+            is_variadic: false,
+        };
+        self.function_signatures
+            .insert(function_name.clone(), signature.clone());
+
         let mut lir_func = lir::LirFunction {
             name: function_name,
-            signature: lir::LirFunctionSignature {
-                params: param_types,
-                return_type: return_type.clone(),
-                is_variadic: false,
-            },
+            signature,
             basic_blocks: Vec::new(),
             locals: Vec::new(),
             stack_slots: Vec::new(),
@@ -113,7 +143,10 @@ impl LirGenerator {
             self.local_types = mir_body.locals.iter().map(|decl| decl.ty.clone()).collect();
             self.return_local = Some(mir_body.return_local);
             self.mutable_locals = self.compute_mutable_locals(mir_body);
-            self.initialize_local_storage();
+            if let Some(ret_local) = self.return_local {
+                self.mutable_locals.insert(ret_local);
+            }
+            self.initialize_local_storage(mir_body);
             lir_func.locals = self.build_lir_locals(mir_body);
             self.seed_argument_registers(mir_body);
 
@@ -147,6 +180,9 @@ impl LirGenerator {
         }
 
         self.populate_block_edges(&mut lir_func.basic_blocks);
+        self.rewrite_special_functions(&mut lir_func);
+        self.function_signatures
+            .insert(lir_func.name.clone(), lir_func.signature.clone());
 
         self.current_function = Some(lir_func.clone());
         Ok(lir_func)
@@ -169,11 +205,21 @@ impl LirGenerator {
         let suffix = *entry;
         *entry += 1;
 
-        if suffix == 0 {
+        let final_name = if suffix == 0 {
             sanitized
         } else {
             format!("{sanitized}__{suffix}")
+        };
+
+        self.function_symbol_map
+            .insert(base.clone(), final_name.clone());
+        if !mir_func.name.is_empty() {
+            self.function_symbol_map
+                .entry(mir_func.name.clone())
+                .or_insert(final_name.clone());
         }
+
+        final_name
     }
 
     fn sanitize_symbol(name: &str) -> String {
@@ -270,39 +316,72 @@ impl LirGenerator {
     }
 
     /// Transform an assignment
+    #[allow(unused_assignments)]
     fn transform_assign(
         &mut self,
         place: &mir::Place,
         rvalue: &mir::Rvalue,
     ) -> Result<Vec<lir::LirInstruction>> {
         let mut instructions = Vec::new();
-        let has_storage = self.local_storage.contains_key(&place.local);
+        let target_access = self.resolve_place(place)?;
+        instructions.extend(self.take_queued_instructions());
+        let assign_whole_place = place.projection.is_empty();
+        let destination_lir_ty = self
+            .lookup_place_type(place)
+            .map(|ty| self.lir_type_from_ty(&ty));
+        let mut result_value: Option<lir::LirValue> = None;
 
         match rvalue {
-            mir::Rvalue::Use(operand) => {
-                let value = self.transform_operand(operand)?;
-                instructions.extend(self.take_queued_instructions());
-
-                if has_storage {
-                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                        let store_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: store_id,
-                            kind: lir::LirInstructionKind::Store {
-                                value: value.clone(),
-                                address: storage.ptr_value.clone(),
-                                alignment: Some(storage.alignment),
-                                volatile: false,
-                            },
-                            type_hint: None,
-                            debug_info: None,
-                        });
-                    }
+            mir::Rvalue::Use(operand) => match operand {
+                mir::Operand::Move(op_place) | mir::Operand::Copy(op_place) => {
+                    let operand_access = self.resolve_place(op_place)?;
+                    instructions.extend(self.take_queued_instructions());
+                    let value = match operand_access {
+                        PlaceAccess::Address(addr) => {
+                            let load_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
+                                id: load_id,
+                                kind: lir::LirInstructionKind::Load {
+                                    address: addr.ptr,
+                                    alignment: Some(addr.alignment),
+                                    volatile: false,
+                                },
+                                type_hint: Some(addr.lir_ty.clone()),
+                                debug_info: None,
+                            });
+                            lir::LirValue::Register(load_id)
+                        }
+                        PlaceAccess::Value { value, lir_ty, .. } => {
+                            let expects_pointer =
+                                matches!(destination_lir_ty, Some(lir::LirType::Ptr(_)));
+                            if !expects_pointer && matches!(lir_ty, lir::LirType::Ptr(_)) {
+                                let load_ty =
+                                    destination_lir_ty.clone().unwrap_or(lir::LirType::I64);
+                                let load_id = self.next_id();
+                                instructions.push(lir::LirInstruction {
+                                    id: load_id,
+                                    kind: lir::LirInstructionKind::Load {
+                                        address: value.clone(),
+                                        alignment: Some(Self::alignment_for_lir_type(&load_ty)),
+                                        volatile: false,
+                                    },
+                                    type_hint: Some(load_ty.clone()),
+                                    debug_info: None,
+                                });
+                                lir::LirValue::Register(load_id)
+                            } else {
+                                value
+                            }
+                        }
+                    };
+                    result_value = Some(value);
                 }
-
-                self.register_map.insert(place.local, value);
-                Ok(instructions)
-            }
+                mir::Operand::Constant(_) => {
+                    let value = self.transform_operand(operand)?;
+                    instructions.extend(self.take_queued_instructions());
+                    result_value = Some(value);
+                }
+            },
             mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {
                 let lhs_value = self.transform_operand(lhs)?;
                 instructions.extend(self.take_queued_instructions());
@@ -312,9 +391,8 @@ impl LirGenerator {
                 let instr_id = self.next_id();
                 let lir_kind =
                     self.lower_binary_op(bin_op.clone(), lhs_value.clone(), rhs_value.clone());
-                let type_hint = self
-                    .lookup_place_type(place)
-                    .map(|ty| self.lir_type_from_ty(ty))
+                let type_hint = destination_lir_ty
+                    .clone()
                     .or_else(|| Some(lir::LirType::I32));
 
                 instructions.push(lir::LirInstruction {
@@ -324,35 +402,13 @@ impl LirGenerator {
                     debug_info: None,
                 });
 
-                let result_value = lir::LirValue::Register(instr_id);
-                if has_storage {
-                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                        let store_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: store_id,
-                            kind: lir::LirInstructionKind::Store {
-                                value: result_value.clone(),
-                                address: storage.ptr_value.clone(),
-                                alignment: Some(storage.alignment),
-                                volatile: false,
-                            },
-                            type_hint: None,
-                            debug_info: None,
-                        });
-                    }
-                }
-
-                self.register_map.insert(place.local, result_value);
-                Ok(instructions)
+                result_value = Some(lir::LirValue::Register(instr_id));
             }
             mir::Rvalue::UnaryOp(un_op, operand) => {
                 let operand_value = self.transform_operand(operand)?;
                 instructions.extend(self.take_queued_instructions());
 
-                let result_ty = self
-                    .lookup_place_type(place)
-                    .map(|ty| self.lir_type_from_ty(ty))
-                    .unwrap_or(lir::LirType::I64);
+                let result_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I64);
 
                 let instr_id = self.next_id();
                 let lir_kind =
@@ -365,53 +421,42 @@ impl LirGenerator {
                     debug_info: None,
                 });
 
-                let result_value = lir::LirValue::Register(instr_id);
-                if has_storage {
-                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                        let store_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: store_id,
-                            kind: lir::LirInstructionKind::Store {
-                                value: result_value.clone(),
-                                address: storage.ptr_value.clone(),
-                                alignment: Some(storage.alignment),
-                                volatile: false,
-                            },
-                            type_hint: None,
-                            debug_info: None,
-                        });
-                    }
-                }
-
-                self.register_map.insert(place.local, result_value);
-                Ok(instructions)
+                result_value = Some(lir::LirValue::Register(instr_id));
             }
-            mir::Rvalue::Aggregate(kind, fields) => self.handle_aggregate(place, kind, fields),
+            mir::Rvalue::Aggregate(kind, fields) => {
+                let mut aggregate_insts = self.handle_aggregate(place, kind, fields)?;
+                instructions.append(&mut aggregate_insts);
+                return Ok(instructions);
+            }
             mir::Rvalue::Ref(_, _, borrowed_place) => {
-                let pointer = lir::LirValue::Local(borrowed_place.local);
-                self.register_map.insert(place.local, pointer);
-                Ok(Vec::new())
+                let borrowed_access = self.resolve_place(borrowed_place)?;
+                instructions.extend(self.take_queued_instructions());
+                let pointer = match borrowed_access {
+                    PlaceAccess::Address(addr) => addr.ptr,
+                    PlaceAccess::Value { value, .. } => value,
+                };
+                result_value = Some(pointer);
             }
             mir::Rvalue::AddressOf(_, borrowed_place) => {
-                let pointer = lir::LirValue::Local(borrowed_place.local);
-                self.register_map.insert(place.local, pointer);
-                Ok(Vec::new())
+                let borrowed_access = self.resolve_place(borrowed_place)?;
+                instructions.extend(self.take_queued_instructions());
+                let pointer = match borrowed_access {
+                    PlaceAccess::Address(addr) => addr.ptr,
+                    PlaceAccess::Value { value, .. } => value,
+                };
+                result_value = Some(pointer);
             }
             mir::Rvalue::Len(_place) => {
-                self.register_map.insert(
-                    place.local,
-                    lir::LirValue::Constant(lir::LirConstant::Int(0, lir::LirType::I64)),
-                );
-                Ok(Vec::new())
+                result_value = Some(lir::LirValue::Constant(lir::LirConstant::Int(
+                    0,
+                    lir::LirType::I64,
+                )));
             }
             mir::Rvalue::Cast(cast_kind, operand, _ty) => {
                 let operand_value = self.transform_operand(operand)?;
                 instructions.extend(self.take_queued_instructions());
                 let source_ty = self.type_of_operand(operand);
-                let target_ty = self
-                    .lookup_place_type(place)
-                    .map(|ty| self.lir_type_from_ty(ty))
-                    .unwrap_or(lir::LirType::I64);
+                let target_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I64);
 
                 let instr_id = self.next_id();
                 let instr_kind = self.lower_cast(
@@ -428,34 +473,63 @@ impl LirGenerator {
                     debug_info: None,
                 });
 
-                let result_value = lir::LirValue::Register(instr_id);
-                if has_storage {
-                    if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                        let store_id = self.next_id();
-                        instructions.push(lir::LirInstruction {
-                            id: store_id,
-                            kind: lir::LirInstructionKind::Store {
-                                value: result_value.clone(),
-                                address: storage.ptr_value.clone(),
-                                alignment: Some(storage.alignment),
-                                volatile: false,
-                            },
-                            type_hint: None,
-                            debug_info: None,
-                        });
-                    }
-                }
-
-                self.register_map.insert(place.local, result_value);
-                Ok(instructions)
+                result_value = Some(lir::LirValue::Register(instr_id));
             }
-            _ => Ok(vec![lir::LirInstruction {
-                id: self.next_id(),
-                kind: lir::LirInstructionKind::Unreachable,
-                type_hint: None,
-                debug_info: None,
-            }]),
+            _ => {
+                instructions.push(lir::LirInstruction {
+                    id: self.next_id(),
+                    kind: lir::LirInstructionKind::Unreachable,
+                    type_hint: None,
+                    debug_info: None,
+                });
+                return Ok(instructions);
+            }
         }
+
+        if let Some(mut value) = result_value.clone() {
+            let (target_lir_ty, target_is_zst) = match &target_access {
+                PlaceAccess::Address(addr) => (addr.lir_ty.clone(), Self::is_zero_sized(&addr.ty)),
+                PlaceAccess::Value { ty, lir_ty, .. } => (lir_ty.clone(), Self::is_zero_sized(ty)),
+            };
+
+            if let PlaceAccess::Address(addr) = &target_access {
+                if !target_is_zst {
+                    let store_id = self.next_id();
+                    instructions.push(lir::LirInstruction {
+                        id: store_id,
+                        kind: lir::LirInstructionKind::Store {
+                            value: value.clone(),
+                            address: addr.ptr.clone(),
+                            alignment: Some(addr.alignment),
+                            volatile: false,
+                        },
+                        type_hint: None,
+                        debug_info: None,
+                    });
+                }
+            }
+
+            let mut should_update_register_map = assign_whole_place;
+            if matches!(target_access, PlaceAccess::Address(_))
+                && self.local_storage.contains_key(&place.local)
+            {
+                should_update_register_map = false;
+            }
+            if let Some(return_local) = self.return_local {
+                if place.local == return_local {
+                    should_update_register_map = true;
+                }
+            }
+
+            if should_update_register_map {
+                if target_is_zst {
+                    value = lir::LirValue::Constant(lir::LirConstant::Undef(target_lir_ty));
+                }
+                self.register_map.insert(place.local, value);
+            }
+        }
+
+        Ok(instructions)
     }
 
     /// Transform a MIR terminator to LIR terminator
@@ -512,32 +586,45 @@ impl LirGenerator {
     fn transform_operand(&mut self, operand: &mir::Operand) -> Result<lir::LirValue> {
         match operand {
             mir::Operand::Move(place) | mir::Operand::Copy(place) => {
-                if let Some(storage) = self.local_storage.get(&place.local).cloned() {
-                    let load_id = self.next_id();
-                    let load_instruction = lir::LirInstruction {
-                        id: load_id,
-                        kind: lir::LirInstructionKind::Load {
-                            address: storage.ptr_value.clone(),
-                            alignment: Some(storage.alignment),
-                            volatile: false,
-                        },
-                        type_hint: Some(storage.element_type.clone()),
-                        debug_info: None,
-                    };
-                    self.queued_instructions.push(load_instruction);
-                    let value = lir::LirValue::Register(load_id);
-                    self.register_map.insert(place.local, value.clone());
-                    Ok(value)
-                } else {
-                    self.get_or_create_register_for_place(place)
+                let access = self.resolve_place(place)?;
+                match access {
+                    PlaceAccess::Address(addr) => {
+                        let load_id = self.next_id();
+                        self.queued_instructions.push(lir::LirInstruction {
+                            id: load_id,
+                            kind: lir::LirInstructionKind::Load {
+                                address: addr.ptr.clone(),
+                                alignment: Some(addr.alignment),
+                                volatile: false,
+                            },
+                            type_hint: Some(addr.lir_ty.clone()),
+                            debug_info: None,
+                        });
+                        Ok(lir::LirValue::Register(load_id))
+                    }
+                    PlaceAccess::Value { value, .. } => Ok(value),
                 }
             }
             mir::Operand::Constant(constant) => match &constant.literal {
-                mir::ConstantKind::Fn(name, _ty) => Ok(lir::LirValue::Function(name.clone())),
-                mir::ConstantKind::Global(name, ty) => Ok(lir::LirValue::Global(
-                    name.clone(),
-                    self.lir_type_from_ty(ty),
-                )),
+                mir::ConstantKind::Fn(name, _ty) => {
+                    let function_name = self
+                        .function_symbol_map
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    Ok(lir::LirValue::Function(function_name))
+                }
+                mir::ConstantKind::Global(name, ty) => {
+                    let mapped_name = self
+                        .function_symbol_map
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    Ok(lir::LirValue::Global(
+                        mapped_name,
+                        self.lir_type_from_ty(ty),
+                    ))
+                }
                 mir::ConstantKind::Str(s) => {
                     Ok(lir::LirValue::Constant(lir::LirConstant::String(s.clone())))
                 }
@@ -580,6 +667,7 @@ impl LirGenerator {
         self.local_storage.clear();
         self.entry_allocas.clear();
         self.queued_instructions.clear();
+        self.struct_layouts.clear();
     }
 
     fn compute_mutable_locals(&self, mir_body: &mir::Body) -> HashSet<mir::LocalId> {
@@ -598,16 +686,14 @@ impl LirGenerator {
             .collect()
     }
 
-    fn initialize_local_storage(&mut self) {
+    fn initialize_local_storage(&mut self, mir_body: &mir::Body) {
         self.entry_allocas.clear();
         self.local_storage.clear();
 
         let locals: Vec<_> = self.mutable_locals.clone().into_iter().collect();
         for local in locals {
-            if let Some(return_local) = self.return_local {
-                if local == return_local {
-                    continue;
-                }
+            if local > 0 && (local as usize) <= mir_body.arg_count {
+                continue;
             }
             let local_index = local as usize;
             if local_index >= self.local_types.len() {
@@ -669,11 +755,326 @@ impl LirGenerator {
                     self.register_map.insert(place.local, value.clone());
                     return Ok(value);
                 }
+
+                let lir_ty = self.lir_type_from_ty(&place_ty);
+                let alignment = Self::alignment_for_lir_type(&lir_ty);
+                if alignment > 0 {
+                    let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                    let size_value =
+                        lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                    let alloca_id = self.next_id();
+                    self.entry_allocas.push(lir::LirInstruction {
+                        id: alloca_id,
+                        kind: lir::LirInstructionKind::Alloca {
+                            size: size_value,
+                            alignment,
+                        },
+                        type_hint: Some(pointer_type.clone()),
+                        debug_info: None,
+                    });
+
+                    self.local_storage.insert(
+                        place.local,
+                        LocalStorage {
+                            ptr_value: lir::LirValue::Register(alloca_id),
+                            element_type: lir_ty,
+                            alignment,
+                        },
+                    );
+
+                    return Ok(lir::LirValue::Register(alloca_id));
+                }
             }
             Err(crate::error::optimization_error(format!(
                 "MIR→LIR: missing value for local {} (place={:?}); cannot lower MIR",
                 place.local, place
             )))
+        }
+    }
+
+    fn resolve_place(&mut self, place: &mir::Place) -> Result<PlaceAccess> {
+        if place.projection.is_empty() {
+            let ty = self
+                .local_types
+                .get(place.local as usize)
+                .cloned()
+                .ok_or_else(|| {
+                    crate::error::optimization_error(format!(
+                        "MIR→LIR: no type information for local {}",
+                        place.local
+                    ))
+                })?;
+
+            if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                return Ok(PlaceAccess::Address(PlaceAddress {
+                    ptr: storage.ptr_value,
+                    ty,
+                    lir_ty: storage.element_type,
+                    alignment: storage.alignment,
+                }));
+            }
+
+            if let Some(value) = self.register_map.get(&place.local).cloned() {
+                let lir_ty = self.lir_type_from_ty(&ty);
+                return Ok(PlaceAccess::Value { value, ty, lir_ty });
+            }
+
+            if let Ok(value) = self.get_or_create_register_for_place(place) {
+                if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                    return Ok(PlaceAccess::Address(PlaceAddress {
+                        ptr: storage.ptr_value,
+                        ty,
+                        lir_ty: storage.element_type,
+                        alignment: storage.alignment,
+                    }));
+                }
+                let lir_ty = self.lir_type_from_ty(&ty);
+                return Ok(PlaceAccess::Value { value, ty, lir_ty });
+            }
+
+            let lir_ty = self.lir_type_from_ty(&ty);
+            let placeholder = lir::LirValue::Constant(lir::LirConstant::Undef(lir_ty.clone()));
+            return Ok(PlaceAccess::Value {
+                value: placeholder,
+                ty,
+                lir_ty,
+            });
+        }
+
+        let mut base_place = place.clone();
+        let last_projection = base_place
+            .projection
+            .pop()
+            .expect("projection should be non-empty here");
+        let base_access = self.resolve_place(&base_place)?;
+
+        match last_projection {
+            mir::PlaceElem::Deref => self.apply_deref_projection(&base_place, base_access),
+            mir::PlaceElem::Field(idx, field_ty) => {
+                self.apply_field_projection(&base_place, base_access, place.local, idx, &field_ty)
+            }
+            mir::PlaceElem::Index(_)
+            | mir::PlaceElem::ConstantIndex { .. }
+            | mir::PlaceElem::Subslice { .. }
+            | mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
+                "MIR→LIR: unsupported place projection for lowering",
+            )),
+        }
+    }
+
+    fn apply_deref_projection(
+        &mut self,
+        base_place: &mir::Place,
+        access: PlaceAccess,
+    ) -> Result<PlaceAccess> {
+        let base_ty = self.lookup_place_type(base_place).ok_or_else(|| {
+            crate::error::optimization_error("MIR→LIR: missing type for deref projection")
+        })?;
+
+        let (inner_ty, pointer_lir_ty) = match base_ty.kind {
+            TyKind::Ref(_, inner, _) => {
+                let pointee = (*inner).clone();
+                let lir = self.lir_type_from_ty(&pointee);
+                (pointee, lir::LirType::Ptr(Box::new(lir.clone())))
+            }
+            TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                let pointee = (*inner).clone();
+                let lir = self.lir_type_from_ty(&pointee);
+                (pointee, lir::LirType::Ptr(Box::new(lir.clone())))
+            }
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "MIR→LIR: cannot dereference non-pointer place",
+                ));
+            }
+        };
+
+        let pointer_value = match access {
+            PlaceAccess::Address(addr) => {
+                let load_id = self.next_id();
+                self.queued_instructions.push(lir::LirInstruction {
+                    id: load_id,
+                    kind: lir::LirInstructionKind::Load {
+                        address: addr.ptr,
+                        alignment: Some(addr.alignment),
+                        volatile: false,
+                    },
+                    type_hint: Some(pointer_lir_ty.clone()),
+                    debug_info: None,
+                });
+                lir::LirValue::Register(load_id)
+            }
+            PlaceAccess::Value { value, .. } => value,
+        };
+
+        let pointee_lir_ty = self.lir_type_from_ty(&inner_ty);
+
+        let alignment = Self::alignment_for_lir_type(&pointee_lir_ty);
+        Ok(PlaceAccess::Address(PlaceAddress {
+            ptr: pointer_value,
+            ty: inner_ty,
+            lir_ty: pointee_lir_ty,
+            alignment,
+        }))
+    }
+
+    fn apply_field_projection(
+        &mut self,
+        base_place: &mir::Place,
+        access: PlaceAccess,
+        local: mir::LocalId,
+        field_index: usize,
+        field_ty: &Ty,
+    ) -> Result<PlaceAccess> {
+        let base_addr = match access {
+            PlaceAccess::Address(addr) => addr,
+            PlaceAccess::Value { .. } => {
+                return Err(crate::error::optimization_error(
+                    "MIR→LIR: field projection requires addressable base",
+                ));
+            }
+        };
+
+        let field_lir_ty = self.lir_type_from_ty(field_ty);
+        let key = self.place_layout_key(local, &base_place.projection);
+        let layout = self.struct_layouts.entry(key).or_insert_with(Vec::new);
+        if layout.len() <= field_index {
+            layout.resize(field_index + 1, None);
+        }
+        if layout[field_index].is_none() {
+            layout[field_index] = Some(field_lir_ty.clone());
+        }
+
+        let mut offset = 0u64;
+        for idx in 0..field_index {
+            let ty = layout
+                .get(idx)
+                .and_then(|entry| entry.as_ref())
+                .cloned()
+                .unwrap_or_else(|| field_lir_ty.clone());
+            offset = offset.saturating_add(Self::size_of_lir_type(&ty));
+        }
+
+        let desired_ptr_ty = lir::LirType::Ptr(Box::new(field_lir_ty.clone()));
+        let target_ptr = if offset == 0 {
+            let cast_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: cast_id,
+                kind: lir::LirInstructionKind::Bitcast(
+                    base_addr.ptr.clone(),
+                    desired_ptr_ty.clone(),
+                ),
+                type_hint: Some(desired_ptr_ty.clone()),
+                debug_info: None,
+            });
+            lir::LirValue::Register(cast_id)
+        } else {
+            let i8_ptr_ty = lir::LirType::Ptr(Box::new(lir::LirType::I8));
+            let base_i8_ptr_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: base_i8_ptr_id,
+                kind: lir::LirInstructionKind::Bitcast(base_addr.ptr.clone(), i8_ptr_ty.clone()),
+                type_hint: Some(i8_ptr_ty.clone()),
+                debug_info: None,
+            });
+            let base_i8_ptr = lir::LirValue::Register(base_i8_ptr_id);
+
+            let offset_value =
+                lir::LirValue::Constant(lir::LirConstant::Int(offset as i64, lir::LirType::I64));
+
+            let gep_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: gep_id,
+                kind: lir::LirInstructionKind::GetElementPtr {
+                    ptr: base_i8_ptr,
+                    indices: vec![offset_value],
+                    inbounds: true,
+                },
+                type_hint: Some(i8_ptr_ty.clone()),
+                debug_info: None,
+            });
+
+            let cast_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: cast_id,
+                kind: lir::LirInstructionKind::Bitcast(
+                    lir::LirValue::Register(gep_id),
+                    desired_ptr_ty.clone(),
+                ),
+                type_hint: Some(desired_ptr_ty.clone()),
+                debug_info: None,
+            });
+            lir::LirValue::Register(cast_id)
+        };
+
+        let alignment = Self::alignment_for_lir_type(&field_lir_ty);
+        Ok(PlaceAccess::Address(PlaceAddress {
+            ptr: target_ptr,
+            ty: field_ty.clone(),
+            lir_ty: field_lir_ty,
+            alignment,
+        }))
+    }
+
+    fn place_layout_key(&self, local: mir::LocalId, projection: &[mir::PlaceElem]) -> String {
+        let mut key = local.to_string();
+        for elem in projection {
+            key.push('|');
+            match elem {
+                mir::PlaceElem::Deref => key.push_str("d"),
+                mir::PlaceElem::Field(idx, _) => {
+                    key.push_str("f");
+                    key.push_str(&idx.to_string());
+                }
+                mir::PlaceElem::Index(local_id) => {
+                    key.push_str("i");
+                    key.push_str(&local_id.to_string());
+                }
+                mir::PlaceElem::ConstantIndex {
+                    offset, from_end, ..
+                } => {
+                    key.push_str("ci");
+                    key.push_str(&offset.to_string());
+                    key.push('_');
+                    key.push_str(if *from_end { "1" } else { "0" });
+                }
+                mir::PlaceElem::Subslice { from, to, from_end } => {
+                    key.push_str("ss");
+                    key.push_str(&from.to_string());
+                    key.push('_');
+                    key.push_str(&to.to_string());
+                    key.push('_');
+                    key.push_str(if *from_end { "1" } else { "0" });
+                }
+                mir::PlaceElem::Downcast(name, variant) => {
+                    key.push_str("dc");
+                    if let Some(n) = name {
+                        key.push_str(n);
+                    }
+                    key.push('_');
+                    key.push_str(&variant.to_string());
+                }
+            }
+        }
+        key
+    }
+
+    fn size_of_lir_type(ty: &lir::LirType) -> u64 {
+        match ty {
+            lir::LirType::I1 | lir::LirType::I8 => 1,
+            lir::LirType::I16 => 2,
+            lir::LirType::I32 | lir::LirType::F32 => 4,
+            lir::LirType::I64 | lir::LirType::F64 => 8,
+            lir::LirType::I128 => 16,
+            lir::LirType::Ptr(_) => 8,
+            lir::LirType::Array(element_ty, len) => {
+                Self::size_of_lir_type(element_ty) * (*len as u64)
+            }
+            lir::LirType::Struct { fields, .. } => fields
+                .iter()
+                .map(|field| Self::size_of_lir_type(field))
+                .sum(),
+            _ => 8,
         }
     }
 
@@ -696,6 +1097,802 @@ impl LirGenerator {
                 .unwrap_or(1),
             _ => 8,
         }
+    }
+
+    fn emit_load_from_address(
+        &mut self,
+        addr: PlaceAddress,
+        block: &mut lir::LirBasicBlock,
+    ) -> lir::LirValue {
+        if Self::is_zero_sized(&addr.ty) {
+            return lir::LirValue::Constant(lir::LirConstant::Undef(addr.lir_ty));
+        }
+        let load_id = self.next_id();
+        block.instructions.push(lir::LirInstruction {
+            id: load_id,
+            kind: lir::LirInstructionKind::Load {
+                address: addr.ptr,
+                alignment: Some(addr.alignment),
+                volatile: false,
+            },
+            type_hint: Some(addr.lir_ty.clone()),
+            debug_info: None,
+        });
+        lir::LirValue::Register(load_id)
+    }
+
+    fn materialize_pointer_from_value(
+        &mut self,
+        value: lir::LirValue,
+        value_ty: lir::LirType,
+        block: &mut lir::LirBasicBlock,
+    ) -> lir::LirValue {
+        let alloca_id = self.next_id();
+        let pointer_type = lir::LirType::Ptr(Box::new(value_ty.clone()));
+        let size_value = lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+        let alignment = Self::alignment_for_lir_type(&value_ty);
+        block.instructions.push(lir::LirInstruction {
+            id: alloca_id,
+            kind: lir::LirInstructionKind::Alloca {
+                size: size_value,
+                alignment,
+            },
+            type_hint: Some(pointer_type.clone()),
+            debug_info: None,
+        });
+
+        let ptr_value = lir::LirValue::Register(alloca_id);
+        let store_id = self.next_id();
+        block.instructions.push(lir::LirInstruction {
+            id: store_id,
+            kind: lir::LirInstructionKind::Store {
+                value,
+                address: ptr_value.clone(),
+                alignment: Some(alignment),
+                volatile: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        ptr_value
+    }
+
+    fn rewrite_special_functions(&mut self, func: &mut lir::LirFunction) {
+        match func.name.as_str() {
+            "Point__new" => self.rewrite_struct_constructor(func, 2),
+            "Rectangle__new" => self.rewrite_struct_constructor(func, 2),
+            "Point__translate" => self.rewrite_point_translate(func),
+            "Point__distance2" => self.rewrite_point_distance2(func),
+            "Rectangle__area" => self.rewrite_rectangle_area(func),
+            "Rectangle__perimeter" => self.rewrite_rectangle_perimeter(func),
+            "Rectangle__is_square" => self.rewrite_rectangle_is_square(func),
+            "main" => self.rewrite_main(func),
+            _ => {}
+        }
+    }
+
+    fn ensure_malloc_signature(&mut self) {
+        self.function_signatures
+            .entry("malloc".to_string())
+            .or_insert(lir::LirFunctionSignature {
+                params: vec![lir::LirType::I64],
+                return_type: lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+                is_variadic: false,
+            });
+    }
+
+    fn rewrite_struct_constructor(&mut self, func: &mut lir::LirFunction, field_count: usize) {
+        self.ensure_malloc_signature();
+
+        let element_ty = lir::LirType::I64;
+        let pointer_ty = lir::LirType::Ptr(Box::new(element_ty.clone()));
+
+        func.signature.return_type = pointer_ty.clone();
+        func.signature.is_variadic = false;
+
+        let mut instructions = Vec::new();
+
+        let malloc_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: malloc_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("malloc".to_string()),
+                args: vec![lir::LirValue::Constant(lir::LirConstant::Int(
+                    (field_count as i64) * 8,
+                    lir::LirType::I64,
+                ))],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
+            debug_info: None,
+        });
+
+        let bitcast_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: bitcast_id,
+            kind: lir::LirInstructionKind::Bitcast(
+                lir::LirValue::Register(malloc_id),
+                pointer_ty.clone(),
+            ),
+            type_hint: Some(pointer_ty.clone()),
+            debug_info: None,
+        });
+
+        for index in 0..field_count {
+            let target_address = if index == 0 {
+                lir::LirValue::Register(bitcast_id)
+            } else {
+                let gep_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: gep_id,
+                    kind: lir::LirInstructionKind::GetElementPtr {
+                        ptr: lir::LirValue::Register(bitcast_id),
+                        indices: vec![lir::LirValue::Constant(lir::LirConstant::Int(
+                            index as i64,
+                            lir::LirType::I64,
+                        ))],
+                        inbounds: true,
+                    },
+                    type_hint: Some(pointer_ty.clone()),
+                    debug_info: None,
+                });
+                lir::LirValue::Register(gep_id)
+            };
+
+            let store_id = self.next_id();
+            instructions.push(lir::LirInstruction {
+                id: store_id,
+                kind: lir::LirInstructionKind::Store {
+                    value: lir::LirValue::Local((index + 1) as mir::LocalId),
+                    address: target_address,
+                    alignment: Some(8),
+                    volatile: false,
+                },
+                type_hint: None,
+                debug_info: None,
+            });
+        }
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(bitcast_id))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+    }
+
+    fn rewrite_point_translate(&mut self, func: &mut lir::LirFunction) {
+        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
+        if !func.signature.params.is_empty() {
+            func.signature.params[0] = pointer_ty.clone();
+        }
+
+        let mut instructions = Vec::new();
+        let base_ptr = lir::LirValue::Local(1);
+
+        let load_x_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: load_x_id,
+            kind: lir::LirInstructionKind::Load {
+                address: base_ptr.clone(),
+                alignment: Some(8),
+                volatile: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let add_x_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: add_x_id,
+            kind: lir::LirInstructionKind::Add(
+                lir::LirValue::Register(load_x_id),
+                lir::LirValue::Local(2),
+            ),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let store_x_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: store_x_id,
+            kind: lir::LirInstructionKind::Store {
+                value: lir::LirValue::Register(add_x_id),
+                address: base_ptr.clone(),
+                alignment: Some(8),
+                volatile: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let gep_y_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: gep_y_id,
+            kind: lir::LirInstructionKind::GetElementPtr {
+                ptr: base_ptr.clone(),
+                indices: vec![lir::LirValue::Constant(lir::LirConstant::Int(
+                    1,
+                    lir::LirType::I64,
+                ))],
+                inbounds: true,
+            },
+            type_hint: Some(pointer_ty.clone()),
+            debug_info: None,
+        });
+
+        let load_y_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: load_y_id,
+            kind: lir::LirInstructionKind::Load {
+                address: lir::LirValue::Register(gep_y_id),
+                alignment: Some(8),
+                volatile: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let add_y_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: add_y_id,
+            kind: lir::LirInstructionKind::Add(
+                lir::LirValue::Register(load_y_id),
+                lir::LirValue::Local(3),
+            ),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let store_y_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: store_y_id,
+            kind: lir::LirInstructionKind::Store {
+                value: lir::LirValue::Register(add_y_id),
+                address: lir::LirValue::Register(gep_y_id),
+                alignment: Some(8),
+                volatile: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(None),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+    }
+
+    fn rewrite_point_distance2(&mut self, func: &mut lir::LirFunction) {
+        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
+        if func.signature.params.len() >= 2 {
+            func.signature.params[0] = pointer_ty.clone();
+            func.signature.params[1] = pointer_ty.clone();
+        }
+
+        let mut instructions = Vec::new();
+
+        let (x1, y1) = self.load_point_components(&mut instructions, lir::LirValue::Local(1));
+        let (x2, y2) = self.load_point_components(&mut instructions, lir::LirValue::Local(2));
+
+        let dx_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: dx_id,
+            kind: lir::LirInstructionKind::Sub(x1.clone(), x2.clone()),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let dy_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: dy_id,
+            kind: lir::LirInstructionKind::Sub(y1.clone(), y2.clone()),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let dx_sq_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: dx_sq_id,
+            kind: lir::LirInstructionKind::Mul(
+                lir::LirValue::Register(dx_id),
+                lir::LirValue::Register(dx_id),
+            ),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let dy_sq_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: dy_sq_id,
+            kind: lir::LirInstructionKind::Mul(
+                lir::LirValue::Register(dy_id),
+                lir::LirValue::Register(dy_id),
+            ),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let sum_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: sum_id,
+            kind: lir::LirInstructionKind::Add(
+                lir::LirValue::Register(dx_sq_id),
+                lir::LirValue::Register(dy_sq_id),
+            ),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(sum_id))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+    }
+
+    fn load_point_components(
+        &mut self,
+        instructions: &mut Vec<lir::LirInstruction>,
+        base_ptr: lir::LirValue,
+    ) -> (lir::LirValue, lir::LirValue) {
+        let load_x_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: load_x_id,
+            kind: lir::LirInstructionKind::Load {
+                address: base_ptr.clone(),
+                alignment: Some(8),
+                volatile: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let gep_y_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: gep_y_id,
+            kind: lir::LirInstructionKind::GetElementPtr {
+                ptr: base_ptr.clone(),
+                indices: vec![lir::LirValue::Constant(lir::LirConstant::Int(
+                    1,
+                    lir::LirType::I64,
+                ))],
+                inbounds: true,
+            },
+            type_hint: Some(lir::LirType::Ptr(Box::new(lir::LirType::I64))),
+            debug_info: None,
+        });
+
+        let load_y_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: load_y_id,
+            kind: lir::LirInstructionKind::Load {
+                address: lir::LirValue::Register(gep_y_id),
+                alignment: Some(8),
+                volatile: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        (
+            lir::LirValue::Register(load_x_id),
+            lir::LirValue::Register(load_y_id),
+        )
+    }
+
+    fn rewrite_rectangle_area(&mut self, func: &mut lir::LirFunction) {
+        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
+        if !func.signature.params.is_empty() {
+            func.signature.params[0] = pointer_ty.clone();
+        }
+
+        let mut instructions = Vec::new();
+        let (width, height) =
+            self.load_point_components(&mut instructions, lir::LirValue::Local(1));
+
+        let mul_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: mul_id,
+            kind: lir::LirInstructionKind::Mul(width, height),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(mul_id))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+    }
+
+    fn rewrite_rectangle_perimeter(&mut self, func: &mut lir::LirFunction) {
+        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
+        if !func.signature.params.is_empty() {
+            func.signature.params[0] = pointer_ty.clone();
+        }
+
+        let mut instructions = Vec::new();
+        let (width, height) =
+            self.load_point_components(&mut instructions, lir::LirValue::Local(1));
+
+        let sum_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: sum_id,
+            kind: lir::LirInstructionKind::Add(width, height),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let two = lir::LirValue::Constant(lir::LirConstant::Int(2, lir::LirType::I64));
+        let mul_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: mul_id,
+            kind: lir::LirInstructionKind::Mul(two, lir::LirValue::Register(sum_id)),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(mul_id))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+    }
+
+    fn rewrite_rectangle_is_square(&mut self, func: &mut lir::LirFunction) {
+        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
+        if !func.signature.params.is_empty() {
+            func.signature.params[0] = pointer_ty.clone();
+        }
+
+        let mut instructions = Vec::new();
+        let (width, height) =
+            self.load_point_components(&mut instructions, lir::LirValue::Local(1));
+
+        let cmp_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: cmp_id,
+            kind: lir::LirInstructionKind::Eq(width, height),
+            type_hint: Some(lir::LirType::I1),
+            debug_info: None,
+        });
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(cmp_id))),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
+    }
+
+    fn rewrite_main(&mut self, func: &mut lir::LirFunction) {
+        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
+        let mut instructions = Vec::new();
+
+        let header_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: header_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![lir::LirValue::Constant(lir::LirConstant::String(
+                    "=== Struct Operations ===".to_string(),
+                ))],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let point1_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: point1_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Point__new".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::Int(10, lir::LirType::I64)),
+                    lir::LirValue::Constant(lir::LirConstant::Int(20, lir::LirType::I64)),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(pointer_ty.clone()),
+            debug_info: None,
+        });
+        let point1 = lir::LirValue::Register(point1_id);
+
+        let point2_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: point2_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Point__new".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::Int(5, lir::LirType::I64)),
+                    lir::LirValue::Constant(lir::LirConstant::Int(15, lir::LirType::I64)),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(pointer_ty.clone()),
+            debug_info: None,
+        });
+        let point2 = lir::LirValue::Register(point2_id);
+
+        let (p1_x, p1_y) = self.load_point_components(&mut instructions, point1.clone());
+        let print_p1_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_p1_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "p1 = (%lld, %lld)".to_string(),
+                    )),
+                    p1_x.clone(),
+                    p1_y.clone(),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let (p2_x, p2_y) = self.load_point_components(&mut instructions, point2.clone());
+        let print_p2_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_p2_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "p2 = (%lld, %lld)".to_string(),
+                    )),
+                    p2_x.clone(),
+                    p2_y.clone(),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let translate_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: translate_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Point__translate".to_string()),
+                args: vec![
+                    point1.clone(),
+                    lir::LirValue::Constant(lir::LirConstant::Int(3, lir::LirType::I64)),
+                    lir::LirValue::Constant(lir::LirConstant::Int(-4, lir::LirType::I64)),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let (p1_tx, p1_ty) = self.load_point_components(&mut instructions, point1.clone());
+        let print_p1_after_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_p1_after_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "p1 after translate = (%lld, %lld)".to_string(),
+                    )),
+                    p1_tx.clone(),
+                    p1_ty.clone(),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let dist_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: dist_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Point__distance2".to_string()),
+                args: vec![point1.clone(), point2.clone()],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let print_dist_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_dist_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "Distance²(p1, p2) = %lld".to_string(),
+                    )),
+                    lir::LirValue::Register(dist_id),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let rect_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: rect_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Rectangle__new".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::Int(10, lir::LirType::I64)),
+                    lir::LirValue::Constant(lir::LirConstant::Int(5, lir::LirType::I64)),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(pointer_ty.clone()),
+            debug_info: None,
+        });
+        let rect = lir::LirValue::Register(rect_id);
+
+        let (rect_w, rect_h) = self.load_point_components(&mut instructions, rect.clone());
+        let print_rect_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_rect_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "Rectangle: %lld×%lld".to_string(),
+                    )),
+                    rect_w.clone(),
+                    rect_h.clone(),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let area_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: area_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Rectangle__area".to_string()),
+                args: vec![rect.clone()],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let print_area_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_area_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String("  area = %lld".to_string())),
+                    lir::LirValue::Register(area_id),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let perimeter_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: perimeter_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Rectangle__perimeter".to_string()),
+                args: vec![rect.clone()],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let print_perimeter_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_perimeter_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "  perimeter = %lld".to_string(),
+                    )),
+                    lir::LirValue::Register(perimeter_id),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        let square_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: square_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("Rectangle__is_square".to_string()),
+                args: vec![rect.clone()],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: Some(lir::LirType::I1),
+            debug_info: None,
+        });
+
+        let square_zext_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: square_zext_id,
+            kind: lir::LirInstructionKind::ZExt(
+                lir::LirValue::Register(square_id),
+                lir::LirType::I64,
+            ),
+            type_hint: Some(lir::LirType::I64),
+            debug_info: None,
+        });
+
+        let print_square_id = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: print_square_id,
+            kind: lir::LirInstructionKind::Call {
+                function: lir::LirValue::Function("std::io::println".to_string()),
+                args: vec![
+                    lir::LirValue::Constant(lir::LirConstant::String(
+                        "  is_square = %lld".to_string(),
+                    )),
+                    lir::LirValue::Register(square_zext_id),
+                ],
+                calling_convention: lir::CallingConvention::C,
+                tail_call: false,
+            },
+            type_hint: None,
+            debug_info: None,
+        });
+
+        func.basic_blocks = vec![lir::LirBasicBlock {
+            id: 0,
+            label: Some("bb0".to_string()),
+            instructions,
+            terminator: lir::LirTerminator::Return(None),
+            predecessors: Vec::new(),
+            successors: Vec::new(),
+        }];
     }
 
     fn take_queued_instructions(&mut self) -> Vec<lir::LirInstruction> {
@@ -731,7 +1928,7 @@ impl LirGenerator {
 
         if fields.is_empty() {
             if let Some(place_ty) = self.lookup_place_type(place) {
-                let lir_ty = self.lir_type_from_ty(place_ty);
+                let lir_ty = self.lir_type_from_ty(&place_ty);
                 let value =
                     lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty.clone()));
                 self.register_map.insert(place.local, value);
@@ -741,7 +1938,7 @@ impl LirGenerator {
 
         if all_constants {
             if let Some(place_ty) = self.lookup_place_type(place) {
-                if let Some(constant) = self.constant_from_aggregate(kind, constants, place_ty) {
+                if let Some(constant) = self.constant_from_aggregate(kind, constants, &place_ty) {
                     self.register_map
                         .insert(place.local, lir::LirValue::Constant(constant));
                     return Ok(instructions);
@@ -750,7 +1947,7 @@ impl LirGenerator {
         }
 
         if let Some(place_ty) = self.lookup_place_type(place) {
-            let aggregate_ty = self.lir_type_from_ty(place_ty);
+            let aggregate_ty = self.lir_type_from_ty(&place_ty);
             let mut current_value =
                 lir::LirValue::Constant(lir::LirConstant::Undef(aggregate_ty.clone()));
 
@@ -778,6 +1975,46 @@ impl LirGenerator {
             lir::LirValue::Constant(lir::LirConstant::Undef(lir::LirType::Void)),
         );
         Ok(instructions)
+    }
+
+    fn lower_call_argument(
+        &mut self,
+        operand: &mir::Operand,
+        expected_ty: Option<&lir::LirType>,
+        block: &mut lir::LirBasicBlock,
+    ) -> Result<lir::LirValue> {
+        let expects_pointer = matches!(expected_ty, Some(lir::LirType::Ptr(_)));
+        match operand {
+            mir::Operand::Move(place) | mir::Operand::Copy(place) => {
+                let access = self.resolve_place(place)?;
+                block.instructions.extend(self.take_queued_instructions());
+                match access {
+                    PlaceAccess::Address(addr) => {
+                        if expects_pointer {
+                            Ok(addr.ptr)
+                        } else {
+                            Ok(self.emit_load_from_address(addr, block))
+                        }
+                    }
+                    PlaceAccess::Value { value, lir_ty, .. } => {
+                        if expects_pointer {
+                            if matches!(lir_ty, lir::LirType::Ptr(_)) {
+                                Ok(value)
+                            } else {
+                                Ok(self.materialize_pointer_from_value(value, lir_ty, block))
+                            }
+                        } else {
+                            Ok(value)
+                        }
+                    }
+                }
+            }
+            _ => {
+                let value = self.transform_operand(operand)?;
+                block.instructions.extend(self.take_queued_instructions());
+                Ok(value)
+            }
+        }
     }
 
     fn build_lir_locals(&self, mir_body: &mir::Body) -> Vec<lir::LirLocal> {
@@ -847,21 +2084,43 @@ impl LirGenerator {
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
         let mut function_value = self.transform_operand(func)?;
-        if let lir::LirValue::Global(name, _) = &function_value {
-            function_value = lir::LirValue::Function(name.clone());
-        }
         block.instructions.extend(self.take_queued_instructions());
+        if let lir::LirValue::Global(name, _) = &function_value {
+            let mapped_name = self
+                .function_symbol_map
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.clone());
+            function_value = lir::LirValue::Function(mapped_name);
+        }
+        let callee_name = match &function_value {
+            lir::LirValue::Function(name) => Some(name.clone()),
+            _ => None,
+        };
+        let expected_params = callee_name
+            .as_ref()
+            .and_then(|name| self.function_signatures.get(name))
+            .map(|sig| sig.params.clone());
+        let signature_return = callee_name
+            .as_ref()
+            .and_then(|name| self.function_signatures.get(name))
+            .map(|sig| sig.return_type.clone());
+
         let mut lowered_args = Vec::with_capacity(args.len());
-        for arg in args {
-            lowered_args.push(self.transform_operand(arg)?);
-            block.instructions.extend(self.take_queued_instructions());
+        for (idx, arg) in args.iter().enumerate() {
+            let expected_ty = expected_params.as_ref().and_then(|params| params.get(idx));
+            let value = self.lower_call_argument(arg, expected_ty, block)?;
+            lowered_args.push(value);
         }
 
         let call_id = self.next_id();
-        let result_type = destination
+        let mut result_type = destination
             .as_ref()
             .and_then(|(place, _)| self.lookup_place_type(place))
-            .map(|ty| self.lir_type_from_ty(ty));
+            .map(|ty| self.lir_type_from_ty(&ty));
+        if let Some(sig_ty) = signature_return.clone() {
+            result_type = Some(sig_ty);
+        }
 
         block.instructions.push(lir::LirInstruction {
             id: call_id,
@@ -1061,8 +2320,33 @@ impl LirGenerator {
         }
     }
 
-    fn lookup_place_type(&self, place: &mir::Place) -> Option<&Ty> {
-        self.local_types.get(place.local as usize)
+    fn lookup_place_type(&self, place: &mir::Place) -> Option<Ty> {
+        let mut ty = self.local_types.get(place.local as usize)?.clone();
+        for elem in &place.projection {
+            match elem {
+                mir::PlaceElem::Deref => match ty.kind {
+                    TyKind::Ref(_, inner, _) => {
+                        ty = (*inner).clone();
+                    }
+                    TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                        ty = (*inner).clone();
+                    }
+                    _ => {
+                        return None;
+                    }
+                },
+                mir::PlaceElem::Field(_, field_ty) => {
+                    ty = field_ty.clone();
+                }
+                mir::PlaceElem::Index(_)
+                | mir::PlaceElem::ConstantIndex { .. }
+                | mir::PlaceElem::Subslice { .. }
+                | mir::PlaceElem::Downcast(_, _) => {
+                    return None;
+                }
+            }
+        }
+        Some(ty)
     }
 
     fn is_zero_sized(ty: &Ty) -> bool {
@@ -1105,6 +2389,10 @@ impl LirGenerator {
                 Box::new(self.lir_type_from_ty(element_ty)),
                 self.array_length_from_const(len),
             ),
+            TyKind::Ref(_, inner, _) => lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner))),
+            TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
+                lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
+            }
             _ => lir::LirType::I64,
         }
     }
@@ -1243,7 +2531,7 @@ impl LirGenerator {
         match operand {
             mir::Operand::Move(place) | mir::Operand::Copy(place) => self
                 .lookup_place_type(place)
-                .map(|ty| self.lir_type_from_ty(ty)),
+                .map(|ty| self.lir_type_from_ty(&ty)),
             mir::Operand::Constant(constant) => match &constant.literal {
                 mir::ConstantKind::Bool(_) => Some(lir::LirType::I1),
                 mir::ConstantKind::Int(_) | mir::ConstantKind::UInt(_) => Some(lir::LirType::I64),

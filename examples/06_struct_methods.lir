@@ -7,7 +7,9 @@ LirProgram {
                     I64,
                     I64,
                 ],
-                return_type: I64,
+                return_type: Ptr(
+                    I64,
+                ),
                 is_variadic: false,
             },
             basic_blocks: [
@@ -16,14 +18,110 @@ LirProgram {
                     label: Some(
                         "bb0",
                     ),
-                    instructions: [],
-                    terminator: Return(
-                        Some(
-                            Constant(
-                                Int(
-                                    0,
+                    instructions: [
+                        LirInstruction {
+                            id: 2,
+                            kind: Call {
+                                function: Function(
+                                    "malloc",
+                                ),
+                                args: [
+                                    Constant(
+                                        Int(
+                                            16,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I8,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 3,
+                            kind: Bitcast(
+                                Register(
+                                    2,
+                                ),
+                                Ptr(
                                     I64,
                                 ),
+                            ),
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 4,
+                            kind: Store {
+                                value: Local(
+                                    1,
+                                ),
+                                address: Register(
+                                    3,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 5,
+                            kind: GetElementPtr {
+                                ptr: Register(
+                                    3,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 6,
+                            kind: Store {
+                                value: Local(
+                                    2,
+                                ),
+                                address: Register(
+                                    5,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        Some(
+                            Register(
+                                3,
                             ),
                         ),
                     ),
@@ -77,7 +175,9 @@ LirProgram {
             name: "Point__translate",
             signature: LirFunctionSignature {
                 params: [
-                    I64,
+                    Ptr(
+                        I64,
+                    ),
                     I64,
                     I64,
                 ],
@@ -92,28 +192,10 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 0,
-                            kind: Alloca {
-                                size: Constant(
-                                    Int(
-                                        1,
-                                        I32,
-                                    ),
-                                ),
-                                alignment: 8,
-                            },
-                            type_hint: Some(
-                                Ptr(
-                                    I64,
-                                ),
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 1,
+                            id: 29,
                             kind: Load {
-                                address: Register(
-                                    0,
+                                address: Local(
+                                    1,
                                 ),
                                 alignment: Some(
                                     8,
@@ -126,10 +208,10 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 2,
+                            id: 30,
                             kind: Add(
                                 Register(
-                                    1,
+                                    29,
                                 ),
                                 Local(
                                     2,
@@ -141,13 +223,13 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 3,
+                            id: 31,
                             kind: Store {
                                 value: Register(
-                                    2,
+                                    30,
                                 ),
-                                address: Register(
-                                    0,
+                                address: Local(
+                                    1,
                                 ),
                                 alignment: Some(
                                     8,
@@ -158,10 +240,33 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 4,
+                            id: 32,
+                            kind: GetElementPtr {
+                                ptr: Local(
+                                    1,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 33,
                             kind: Load {
                                 address: Register(
-                                    0,
+                                    32,
                                 ),
                                 alignment: Some(
                                     8,
@@ -174,10 +279,10 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 5,
+                            id: 34,
                             kind: Add(
                                 Register(
-                                    4,
+                                    33,
                                 ),
                                 Local(
                                     3,
@@ -189,13 +294,13 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 6,
+                            id: 35,
                             kind: Store {
                                 value: Register(
-                                    5,
+                                    34,
                                 ),
                                 address: Register(
-                                    0,
+                                    32,
                                 ),
                                 alignment: Some(
                                     8,
@@ -222,7 +327,9 @@ LirProgram {
                 },
                 LirLocal {
                     id: 1,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: true,
                 },
@@ -240,7 +347,9 @@ LirProgram {
                 },
                 LirLocal {
                     id: 4,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: false,
                 },
@@ -307,8 +416,12 @@ LirProgram {
             name: "Point__distance2",
             signature: LirFunctionSignature {
                 params: [
-                    I64,
-                    I64,
+                    Ptr(
+                        I64,
+                    ),
+                    Ptr(
+                        I64,
+                    ),
                 ],
                 return_type: I64,
                 is_variadic: false,
@@ -321,58 +434,123 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 7,
-                            kind: Sub(
-                                Local(
+                            id: 97,
+                            kind: Load {
+                                address: Local(
                                     1,
                                 ),
-                                Local(
-                                    2,
+                                alignment: Some(
+                                    8,
                                 ),
-                            ),
+                                volatile: false,
+                            },
                             type_hint: Some(
                                 I64,
                             ),
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 8,
-                            kind: Sub(
-                                Local(
+                            id: 98,
+                            kind: GetElementPtr {
+                                ptr: Local(
                                     1,
                                 ),
-                                Local(
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 99,
+                            kind: Load {
+                                address: Register(
+                                    98,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 100,
+                            kind: Load {
+                                address: Local(
                                     2,
                                 ),
-                            ),
-                            type_hint: Some(
-                                I64,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 9,
-                            kind: Mul(
-                                Register(
-                                    7,
-                                ),
-                                Register(
-                                    7,
-                                ),
-                            ),
-                            type_hint: Some(
-                                I64,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 10,
-                            kind: Mul(
-                                Register(
+                                alignment: Some(
                                     8,
                                 ),
-                                Register(
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 101,
+                            kind: GetElementPtr {
+                                ptr: Local(
+                                    2,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 102,
+                            kind: Load {
+                                address: Register(
+                                    101,
+                                ),
+                                alignment: Some(
                                     8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 103,
+                            kind: Sub(
+                                Register(
+                                    97,
+                                ),
+                                Register(
+                                    100,
                                 ),
                             ),
                             type_hint: Some(
@@ -381,58 +559,58 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 11,
+                            id: 104,
+                            kind: Sub(
+                                Register(
+                                    99,
+                                ),
+                                Register(
+                                    102,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 105,
+                            kind: Mul(
+                                Register(
+                                    103,
+                                ),
+                                Register(
+                                    103,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 106,
+                            kind: Mul(
+                                Register(
+                                    104,
+                                ),
+                                Register(
+                                    104,
+                                ),
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 107,
                             kind: Add(
                                 Register(
-                                    9,
+                                    105,
                                 ),
                                 Register(
-                                    10,
-                                ),
-                            ),
-                            type_hint: Some(
-                                I64,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 12,
-                            kind: Mul(
-                                Register(
-                                    7,
-                                ),
-                                Register(
-                                    7,
-                                ),
-                            ),
-                            type_hint: Some(
-                                I64,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 13,
-                            kind: Mul(
-                                Register(
-                                    8,
-                                ),
-                                Register(
-                                    8,
-                                ),
-                            ),
-                            type_hint: Some(
-                                I64,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 14,
-                            kind: Add(
-                                Register(
-                                    12,
-                                ),
-                                Register(
-                                    13,
+                                    106,
                                 ),
                             ),
                             type_hint: Some(
@@ -444,7 +622,7 @@ LirProgram {
                     terminator: Return(
                         Some(
                             Register(
-                                14,
+                                107,
                             ),
                         ),
                     ),
@@ -461,25 +639,33 @@ LirProgram {
                 },
                 LirLocal {
                     id: 1,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: true,
                 },
                 LirLocal {
                     id: 2,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: true,
                 },
                 LirLocal {
                     id: 3,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: false,
                 },
                 LirLocal {
                     id: 4,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: false,
                 },
@@ -579,7 +765,9 @@ LirProgram {
                     I64,
                     I64,
                 ],
-                return_type: I64,
+                return_type: Ptr(
+                    I64,
+                ),
                 is_variadic: false,
             },
             basic_blocks: [
@@ -588,14 +776,110 @@ LirProgram {
                     label: Some(
                         "bb0",
                     ),
-                    instructions: [],
-                    terminator: Return(
-                        Some(
-                            Constant(
-                                Int(
-                                    0,
+                    instructions: [
+                        LirInstruction {
+                            id: 110,
+                            kind: Call {
+                                function: Function(
+                                    "malloc",
+                                ),
+                                args: [
+                                    Constant(
+                                        Int(
+                                            16,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                calling_convention: C,
+                                tail_call: false,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I8,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 111,
+                            kind: Bitcast(
+                                Register(
+                                    110,
+                                ),
+                                Ptr(
                                     I64,
                                 ),
+                            ),
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 112,
+                            kind: Store {
+                                value: Local(
+                                    1,
+                                ),
+                                address: Register(
+                                    111,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 113,
+                            kind: GetElementPtr {
+                                ptr: Register(
+                                    111,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 114,
+                            kind: Store {
+                                value: Local(
+                                    2,
+                                ),
+                                address: Register(
+                                    113,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: None,
+                            debug_info: None,
+                        },
+                    ],
+                    terminator: Return(
+                        Some(
+                            Register(
+                                111,
                             ),
                         ),
                     ),
@@ -649,7 +933,9 @@ LirProgram {
             name: "Rectangle__area",
             signature: LirFunctionSignature {
                 params: [
-                    I64,
+                    Ptr(
+                        I64,
+                    ),
                 ],
                 return_type: I64,
                 is_variadic: false,
@@ -662,13 +948,68 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 15,
-                            kind: Mul(
-                                Local(
+                            id: 129,
+                            kind: Load {
+                                address: Local(
                                     1,
                                 ),
-                                Local(
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 130,
+                            kind: GetElementPtr {
+                                ptr: Local(
                                     1,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 131,
+                            kind: Load {
+                                address: Register(
+                                    130,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 132,
+                            kind: Mul(
+                                Register(
+                                    129,
+                                ),
+                                Register(
+                                    131,
                                 ),
                             ),
                             type_hint: Some(
@@ -680,7 +1021,7 @@ LirProgram {
                     terminator: Return(
                         Some(
                             Register(
-                                15,
+                                132,
                             ),
                         ),
                     ),
@@ -697,13 +1038,17 @@ LirProgram {
                 },
                 LirLocal {
                     id: 1,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: true,
                 },
                 LirLocal {
                     id: 2,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: false,
                 },
@@ -734,7 +1079,9 @@ LirProgram {
             name: "Rectangle__perimeter",
             signature: LirFunctionSignature {
                 params: [
-                    I64,
+                    Ptr(
+                        I64,
+                    ),
                 ],
                 return_type: I64,
                 is_variadic: false,
@@ -747,13 +1094,68 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 16,
-                            kind: Add(
-                                Local(
+                            id: 154,
+                            kind: Load {
+                                address: Local(
                                     1,
                                 ),
-                                Local(
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 155,
+                            kind: GetElementPtr {
+                                ptr: Local(
                                     1,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 156,
+                            kind: Load {
+                                address: Register(
+                                    155,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 157,
+                            kind: Add(
+                                Register(
+                                    154,
+                                ),
+                                Register(
+                                    156,
                                 ),
                             ),
                             type_hint: Some(
@@ -762,7 +1164,7 @@ LirProgram {
                             debug_info: None,
                         },
                         LirInstruction {
-                            id: 17,
+                            id: 158,
                             kind: Mul(
                                 Constant(
                                     Int(
@@ -771,7 +1173,7 @@ LirProgram {
                                     ),
                                 ),
                                 Register(
-                                    16,
+                                    157,
                                 ),
                             ),
                             type_hint: Some(
@@ -783,7 +1185,7 @@ LirProgram {
                     terminator: Return(
                         Some(
                             Register(
-                                17,
+                                158,
                             ),
                         ),
                     ),
@@ -800,13 +1202,17 @@ LirProgram {
                 },
                 LirLocal {
                     id: 1,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: true,
                 },
                 LirLocal {
                     id: 2,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: false,
                 },
@@ -849,7 +1255,9 @@ LirProgram {
             name: "Rectangle__is_square",
             signature: LirFunctionSignature {
                 params: [
-                    I64,
+                    Ptr(
+                        I64,
+                    ),
                 ],
                 return_type: I1,
                 is_variadic: false,
@@ -862,13 +1270,68 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 18,
-                            kind: Eq(
-                                Local(
+                            id: 173,
+                            kind: Load {
+                                address: Local(
                                     1,
                                 ),
-                                Local(
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 174,
+                            kind: GetElementPtr {
+                                ptr: Local(
                                     1,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 175,
+                            kind: Load {
+                                address: Register(
+                                    174,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 176,
+                            kind: Eq(
+                                Register(
+                                    173,
+                                ),
+                                Register(
+                                    175,
                                 ),
                             ),
                             type_hint: Some(
@@ -880,7 +1343,7 @@ LirProgram {
                     terminator: Return(
                         Some(
                             Register(
-                                18,
+                                176,
                             ),
                         ),
                     ),
@@ -897,13 +1360,17 @@ LirProgram {
                 },
                 LirLocal {
                     id: 1,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: true,
                 },
                 LirLocal {
                     id: 2,
-                    ty: I64,
+                    ty: Ptr(
+                        I64,
+                    ),
                     name: None,
                     is_argument: false,
                 },
@@ -945,7 +1412,7 @@ LirProgram {
                     ),
                     instructions: [
                         LirInstruction {
-                            id: 19,
+                            id: 254,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -963,26 +1430,11 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        1,
-                    ),
-                    predecessors: [],
-                    successors: [
-                        1,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 1,
-                    label: Some(
-                        "bb1",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 20,
+                            id: 255,
                             kind: Call {
                                 function: Function(
-                                    "Point::new",
+                                    "Point__new",
                                 ),
                                 args: [
                                     Constant(
@@ -1002,32 +1454,17 @@ LirProgram {
                                 tail_call: false,
                             },
                             type_hint: Some(
-                                I64,
+                                Ptr(
+                                    I64,
+                                ),
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        2,
-                    ),
-                    predecessors: [
-                        0,
-                    ],
-                    successors: [
-                        2,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 2,
-                    label: Some(
-                        "bb2",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 21,
+                            id: 256,
                             kind: Call {
                                 function: Function(
-                                    "Point::new",
+                                    "Point__new",
                                 ),
                                 args: [
                                     Constant(
@@ -1047,29 +1484,69 @@ LirProgram {
                                 tail_call: false,
                             },
                             type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 257,
+                            kind: Load {
+                                address: Register(
+                                    255,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
                                 I64,
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        3,
-                    ),
-                    predecessors: [
-                        1,
-                    ],
-                    successors: [
-                        3,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 3,
-                    label: Some(
-                        "bb3",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 22,
+                            id: 258,
+                            kind: GetElementPtr {
+                                ptr: Register(
+                                    255,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 259,
+                            kind: Load {
+                                address: Register(
+                                    258,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 260,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1081,10 +1558,10 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        20,
+                                        257,
                                     ),
                                     Register(
-                                        20,
+                                        259,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1093,25 +1570,63 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        4,
-                    ),
-                    predecessors: [
-                        2,
-                    ],
-                    successors: [
-                        4,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 4,
-                    label: Some(
-                        "bb4",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 23,
+                            id: 261,
+                            kind: Load {
+                                address: Register(
+                                    256,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 262,
+                            kind: GetElementPtr {
+                                ptr: Register(
+                                    256,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 263,
+                            kind: Load {
+                                address: Register(
+                                    262,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 264,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1123,10 +1638,10 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        21,
+                                        261,
                                     ),
                                     Register(
-                                        21,
+                                        263,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1135,53 +1650,15 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        5,
-                    ),
-                    predecessors: [
-                        3,
-                    ],
-                    successors: [
-                        5,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 5,
-                    label: Some(
-                        "bb5",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 24,
-                            kind: Sub(
-                                Constant(
-                                    Int(
-                                        0,
-                                        I64,
-                                    ),
-                                ),
-                                Constant(
-                                    Int(
-                                        4,
-                                        I64,
-                                    ),
-                                ),
-                            ),
-                            type_hint: Some(
-                                I64,
-                            ),
-                            debug_info: None,
-                        },
-                        LirInstruction {
-                            id: 25,
+                            id: 265,
                             kind: Call {
                                 function: Function(
-                                    "translate",
+                                    "Point__translate",
                                 ),
                                 args: [
                                     Register(
-                                        20,
+                                        255,
                                     ),
                                     Constant(
                                         Int(
@@ -1189,8 +1666,11 @@ LirProgram {
                                             I64,
                                         ),
                                     ),
-                                    Register(
-                                        24,
+                                    Constant(
+                                        Int(
+                                            -4,
+                                            I64,
+                                        ),
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1199,25 +1679,63 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        6,
-                    ),
-                    predecessors: [
-                        4,
-                    ],
-                    successors: [
-                        6,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 6,
-                    label: Some(
-                        "bb6",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 26,
+                            id: 266,
+                            kind: Load {
+                                address: Register(
+                                    255,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 267,
+                            kind: GetElementPtr {
+                                ptr: Register(
+                                    255,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 268,
+                            kind: Load {
+                                address: Register(
+                                    267,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 269,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1229,10 +1747,10 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        20,
+                                        266,
                                     ),
                                     Register(
-                                        20,
+                                        268,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1241,35 +1759,18 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        7,
-                    ),
-                    predecessors: [
-                        5,
-                    ],
-                    successors: [
-                        7,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 7,
-                    label: Some(
-                        "bb7",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 27,
+                            id: 270,
                             kind: Call {
                                 function: Function(
-                                    "distance2",
+                                    "Point__distance2",
                                 ),
                                 args: [
                                     Register(
-                                        20,
+                                        255,
                                     ),
                                     Register(
-                                        21,
+                                        256,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1280,25 +1781,8 @@ LirProgram {
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        8,
-                    ),
-                    predecessors: [
-                        6,
-                    ],
-                    successors: [
-                        8,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 8,
-                    label: Some(
-                        "bb8",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 28,
+                            id: 271,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1310,7 +1794,7 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        27,
+                                        270,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1319,28 +1803,11 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        9,
-                    ),
-                    predecessors: [
-                        7,
-                    ],
-                    successors: [
-                        9,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 9,
-                    label: Some(
-                        "bb9",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 29,
+                            id: 272,
                             kind: Call {
                                 function: Function(
-                                    "Rectangle::new",
+                                    "Rectangle__new",
                                 ),
                                 args: [
                                     Constant(
@@ -1360,29 +1827,69 @@ LirProgram {
                                 tail_call: false,
                             },
                             type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 273,
+                            kind: Load {
+                                address: Register(
+                                    272,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
                                 I64,
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        10,
-                    ),
-                    predecessors: [
-                        8,
-                    ],
-                    successors: [
-                        10,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 10,
-                    label: Some(
-                        "bb10",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 30,
+                            id: 274,
+                            kind: GetElementPtr {
+                                ptr: Register(
+                                    272,
+                                ),
+                                indices: [
+                                    Constant(
+                                        Int(
+                                            1,
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                inbounds: true,
+                            },
+                            type_hint: Some(
+                                Ptr(
+                                    I64,
+                                ),
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 275,
+                            kind: Load {
+                                address: Register(
+                                    274,
+                                ),
+                                alignment: Some(
+                                    8,
+                                ),
+                                volatile: false,
+                            },
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 276,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1394,10 +1901,10 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        29,
+                                        273,
                                     ),
                                     Register(
-                                        29,
+                                        275,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1406,32 +1913,15 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        11,
-                    ),
-                    predecessors: [
-                        9,
-                    ],
-                    successors: [
-                        11,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 11,
-                    label: Some(
-                        "bb11",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 31,
+                            id: 277,
                             kind: Call {
                                 function: Function(
-                                    "area",
+                                    "Rectangle__area",
                                 ),
                                 args: [
                                     Register(
-                                        29,
+                                        272,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1442,25 +1932,8 @@ LirProgram {
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        12,
-                    ),
-                    predecessors: [
-                        10,
-                    ],
-                    successors: [
-                        12,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 12,
-                    label: Some(
-                        "bb12",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 32,
+                            id: 278,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1472,7 +1945,7 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        31,
+                                        277,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1481,32 +1954,15 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        13,
-                    ),
-                    predecessors: [
-                        11,
-                    ],
-                    successors: [
-                        13,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 13,
-                    label: Some(
-                        "bb13",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 33,
+                            id: 279,
                             kind: Call {
                                 function: Function(
-                                    "perimeter",
+                                    "Rectangle__perimeter",
                                 ),
                                 args: [
                                     Register(
-                                        29,
+                                        272,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1517,25 +1973,8 @@ LirProgram {
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        14,
-                    ),
-                    predecessors: [
-                        12,
-                    ],
-                    successors: [
-                        14,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 14,
-                    label: Some(
-                        "bb14",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 34,
+                            id: 280,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1547,7 +1986,7 @@ LirProgram {
                                         ),
                                     ),
                                     Register(
-                                        33,
+                                        279,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1556,32 +1995,15 @@ LirProgram {
                             type_hint: None,
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        15,
-                    ),
-                    predecessors: [
-                        13,
-                    ],
-                    successors: [
-                        15,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 15,
-                    label: Some(
-                        "bb15",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 35,
+                            id: 281,
                             kind: Call {
                                 function: Function(
-                                    "is_square",
+                                    "Rectangle__is_square",
                                 ),
                                 args: [
                                     Register(
-                                        29,
+                                        272,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1592,25 +2014,21 @@ LirProgram {
                             ),
                             debug_info: None,
                         },
-                    ],
-                    terminator: Br(
-                        16,
-                    ),
-                    predecessors: [
-                        14,
-                    ],
-                    successors: [
-                        16,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 16,
-                    label: Some(
-                        "bb16",
-                    ),
-                    instructions: [
                         LirInstruction {
-                            id: 36,
+                            id: 282,
+                            kind: ZExt(
+                                Register(
+                                    281,
+                                ),
+                                I64,
+                            ),
+                            type_hint: Some(
+                                I64,
+                            ),
+                            debug_info: None,
+                        },
+                        LirInstruction {
+                            id: 283,
                             kind: Call {
                                 function: Function(
                                     "std::io::println",
@@ -1618,11 +2036,11 @@ LirProgram {
                                 args: [
                                     Constant(
                                         String(
-                                            "  is_square = %d",
+                                            "  is_square = %lld",
                                         ),
                                     ),
                                     Register(
-                                        35,
+                                        282,
                                     ),
                                 ],
                                 calling_convention: C,
@@ -1632,28 +2050,10 @@ LirProgram {
                             debug_info: None,
                         },
                     ],
-                    terminator: Br(
-                        17,
-                    ),
-                    predecessors: [
-                        15,
-                    ],
-                    successors: [
-                        17,
-                    ],
-                },
-                LirBasicBlock {
-                    id: 17,
-                    label: Some(
-                        "bb17",
-                    ),
-                    instructions: [],
                     terminator: Return(
                         None,
                     ),
-                    predecessors: [
-                        16,
-                    ],
+                    predecessors: [],
                     successors: [],
                 },
             ],

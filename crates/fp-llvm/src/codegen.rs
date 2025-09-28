@@ -470,6 +470,57 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
                 self.record_result(instr_id, ty_hint.clone(), result_name);
             }
+            lir::LirInstructionKind::Bitcast(value, target_ty) => {
+                let operand = self.convert_lir_value_to_operand(value)?;
+                let llvm_target_ty = self.convert_lir_type_to_llvm(target_ty.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_bitcast(operand, llvm_target_ty, &format!("bitcast_{}", instr_id))
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(target_ty), result_name);
+            }
+            lir::LirInstructionKind::ZExt(value, target_ty) => {
+                let operand = self.convert_lir_value_to_operand(value)?;
+                let llvm_target_ty = self.convert_lir_type_to_llvm(target_ty.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_zext(operand, llvm_target_ty, &format!("zext_{}", instr_id))
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(target_ty), result_name);
+            }
+            lir::LirInstructionKind::GetElementPtr {
+                ptr,
+                indices,
+                inbounds,
+            } => {
+                let base_operand = self.convert_lir_value_to_operand(ptr)?;
+                let mut llvm_indices = Vec::with_capacity(indices.len());
+                for index in indices {
+                    llvm_indices.push(self.convert_lir_value_to_operand(index)?);
+                }
+                let element_lir_type = ty_hint
+                    .clone()
+                    .and_then(|ty| match ty {
+                        lir::LirType::Ptr(inner) => Some(*inner),
+                        _ => None,
+                    })
+                    .unwrap_or(lir::LirType::I8);
+                let element_type = self.convert_lir_type_to_llvm(element_lir_type.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_gep(
+                        base_operand,
+                        element_type,
+                        llvm_indices,
+                        inbounds,
+                        &format!("gep_{}", instr_id),
+                    )
+                    .map_err(fp_core::error::Error::from)?;
+                let result_ty = ty_hint
+                    .clone()
+                    .or_else(|| Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))));
+                self.record_result(instr_id, result_ty, result_name);
+            }
             lir::LirInstructionKind::Call {
                 function,
                 args,
@@ -515,6 +566,12 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirValue::Global(name, _) => Some(name.clone()),
             _ => None,
         };
+
+        if let Some(name) = &function_name {
+            debug!("[fp-llvm] lowering call to {}", name);
+        } else {
+            debug!("[fp-llvm] lowering call to <expr>");
+        }
 
         if let Some(logical_name) = function_name.as_ref() {
             if let Some(resolved) = self.resolve_intrinsic(logical_name) {
