@@ -391,10 +391,11 @@ impl Pipeline {
         match detyper.transform(thir_program) {
             Ok(hir_program) => {
                 if options.save_intermediates {
-                    if let Err(err) = fs::write(
-                        base_path.with_extension(EXT_DETYPED_HIR),
-                        format!("{:#?}", hir_program),
-                    ) {
+                    let mut pretty_opts = PrettyOptions::default();
+                    pretty_opts.show_spans = options.debug.verbose;
+                    let rendered = format!("{}", pretty(&hir_program, pretty_opts));
+                    if let Err(err) = fs::write(base_path.with_extension(EXT_DETYPED_HIR), rendered)
+                    {
                         debug!(
                             error = %err,
                             "failed to persist detyped HIR intermediate"

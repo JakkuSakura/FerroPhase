@@ -224,6 +224,8 @@ impl ThirGenerator {
         let saved_next_local_id = self.next_local_id;
 
         self.local_scopes.push(HashMap::new());
+        self.local_const_inits.push(HashMap::new());
+        self.local_const_inits.push(HashMap::new());
         self.current_locals = Vec::new();
         self.next_local_id = 0;
 
@@ -296,6 +298,9 @@ impl ThirGenerator {
                                 ty,
                             )
                         }
+                    } else if let Some(init_expr) = self.lookup_local_const_init(&base_name) {
+                        let inlined = self.transform_expr(init_expr)?;
+                        (inlined.kind, inlined.ty)
                     } else {
                         (
                             thir::ExprKind::Path(thir::ItemRef {
@@ -489,6 +494,15 @@ impl ThirGenerator {
                         .and_then(|id| self.const_init_map.get(&id));
 
                     if let Some(init) = init_expr {
+                        if let hir::ExprKind::Struct(_path, fields) = &init.kind {
+                            if let Some(field) =
+                                fields.iter().find(|f| f.name.to_string() == field_name)
+                            {
+                                let thir_expr = self.transform_expr(field.expr.clone())?;
+                                return Ok(thir_expr);
+                            }
+                        }
+                    } else if let Some(init) = self.lookup_local_const_init(&base_name) {
                         if let hir::ExprKind::Struct(_path, fields) = &init.kind {
                             if let Some(field) =
                                 fields.iter().find(|f| f.name.to_string() == field_name)
@@ -723,6 +737,7 @@ impl ThirGenerator {
             Ok(stmts) => stmts,
             Err(err) => {
                 self.local_scopes.pop();
+                self.local_const_inits.pop();
                 return Err(err);
             }
         };
@@ -733,6 +748,7 @@ impl ThirGenerator {
             .transpose()?;
 
         self.local_scopes.pop();
+        self.local_const_inits.pop();
 
         Ok(thir::Block {
             targeted_by_break: false,
@@ -828,6 +844,10 @@ impl ThirGenerator {
             params: _,
             value,
         } = const_def.body;
+
+        if let Some(scope) = self.local_const_inits.last_mut() {
+            scope.insert(const_def.name.clone(), value.clone());
+        }
 
         let mut initializer = self.transform_expr(value)?;
         initializer.ty = binding_ty.clone();
