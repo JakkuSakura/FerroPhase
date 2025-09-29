@@ -29,6 +29,8 @@ pub struct ThirGenerator {
     const_symbols: HashMap<hir_types::DefId, thir::BodyId>,
     /// Map constant names to their original HIR initializer expression for inlining
     const_init_map: HashMap<hir_types::DefId, hir::Expr>,
+    /// Stack of block-local const initializers keyed by identifier.
+    local_const_inits: Vec<HashMap<String, hir::Expr>>,
     /// Track local variable bindings within nested scopes.
     local_scopes: Vec<HashMap<String, (thir::LocalId, thir::Ty)>>,
     /// Accumulated THIR local declarations for the current body being lowered.
@@ -53,6 +55,7 @@ impl ThirGenerator {
             next_body_id: 0,
             const_symbols: HashMap::new(),
             const_init_map: HashMap::new(),
+            local_const_inits: Vec::new(),
             local_scopes: Vec::new(),
             current_locals: Vec::new(),
             next_local_id: 0,
@@ -118,6 +121,15 @@ impl ThirGenerator {
 
     pub(super) fn lookup_expr_ty(&self, hir_id: hir::HirId) -> Option<&hir_types::Ty> {
         self.inferred_expr_types.get(&hir_id)
+    }
+
+    fn lookup_local_const_init(&self, name: &str) -> Option<hir::Expr> {
+        for scope in self.local_const_inits.iter().rev() {
+            if let Some(expr) = scope.get(name) {
+                return Some(expr.clone());
+            }
+        }
+        None
     }
 
     pub(super) fn lookup_pattern_ty(&self, hir_id: hir::HirId) -> Option<&hir_types::Ty> {

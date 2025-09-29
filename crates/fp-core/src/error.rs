@@ -11,7 +11,7 @@ pub struct SyntaxError {}
 pub enum Error {
     #[error("Syntax error: {0:?}")]
     SyntaxError(Span, SyntaxError),
-    #[error("Diagnostic error: {0:?}")]
+    #[error("{0}")]
     Diagnostic(Diagnostic),
     #[error("Runtime error: {0}")]
     RuntimeError(crate::ast::RuntimeError),

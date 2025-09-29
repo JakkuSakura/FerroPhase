@@ -6,9 +6,10 @@ use fp_core::intrinsics::{
 };
 use fp_core::{error::Result, lir};
 use llvm_ir::constant::Float;
+use llvm_ir::instruction::{And, LShr, Or, SRem, Shl, Xor};
 use llvm_ir::module::{DLLStorageClass, GlobalVariable, Linkage, ThreadLocalMode, Visibility};
 use llvm_ir::predicates::IntPredicate;
-use llvm_ir::types::FPType;
+use llvm_ir::types::{FPType, Typed};
 use llvm_ir::*;
 // use llvm_ir::instruction::Call; // Not needed currently
 use fp_core::tracing::debug;
@@ -361,13 +362,29 @@ impl<'ctx> LirCodegen<'ctx> {
         let ty_hint = lir_instr.type_hint.clone();
         match lir_instr.kind {
             lir::LirInstructionKind::Add(lhs, rhs) => {
-                let lhs_operand = self.convert_lir_value_to_operand(lhs)?;
-                let rhs_operand = self.convert_lir_value_to_operand(rhs)?;
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("add_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("add_{}_rhs", instr_id),
+                    )?;
+                }
                 let result_name = self
                     .llvm_ctx
                     .build_add(lhs_operand, rhs_operand, &format!("add_{}", lir_instr.id))
                     .map_err(fp_core::error::Error::from)?;
-                self.record_result(instr_id, ty_hint.clone(), result_name);
+                self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Eq(lhs, rhs) => {
                 self.lower_int_cmp(IntPredicate::EQ, lhs, rhs, instr_id, ty_hint.clone())?;
@@ -388,31 +405,298 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.lower_int_cmp(IntPredicate::SGE, lhs, rhs, instr_id, ty_hint.clone())?;
             }
             lir::LirInstructionKind::Sub(lhs, rhs) => {
-                let lhs_operand = self.convert_lir_value_to_operand(lhs)?;
-                let rhs_operand = self.convert_lir_value_to_operand(rhs)?;
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("sub_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("sub_{}_rhs", instr_id),
+                    )?;
+                }
                 let result_name = self
                     .llvm_ctx
                     .build_sub(lhs_operand, rhs_operand, &format!("sub_{}", lir_instr.id))
                     .map_err(fp_core::error::Error::from)?;
-                self.record_result(instr_id, ty_hint.clone(), result_name);
+                self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Mul(lhs, rhs) => {
-                let lhs_operand = self.convert_lir_value_to_operand(lhs)?;
-                let rhs_operand = self.convert_lir_value_to_operand(rhs)?;
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("mul_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("mul_{}_rhs", instr_id),
+                    )?;
+                }
                 let result_name = self
                     .llvm_ctx
                     .build_mul(lhs_operand, rhs_operand, &format!("mul_{}", lir_instr.id))
                     .map_err(fp_core::error::Error::from)?;
-                self.record_result(instr_id, ty_hint.clone(), result_name);
+                self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Div(lhs, rhs) => {
-                let lhs_operand = self.convert_lir_value_to_operand(lhs)?;
-                let rhs_operand = self.convert_lir_value_to_operand(rhs)?;
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("div_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("div_{}_rhs", instr_id),
+                    )?;
+                }
                 let result_name = self
                     .llvm_ctx
                     .build_udiv(lhs_operand, rhs_operand, &format!("div_{}", lir_instr.id))
                     .map_err(fp_core::error::Error::from)?;
-                self.record_result(instr_id, ty_hint.clone(), result_name);
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::Rem(lhs, rhs) => {
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("rem_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("rem_{}_rhs", instr_id),
+                    )?;
+                }
+                let result_name = Name::Name(Box::new(format!("srem_{}", instr_id)));
+                let instruction = Instruction::SRem(SRem {
+                    operand0: lhs_operand,
+                    operand1: rhs_operand,
+                    dest: result_name.clone(),
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::And(lhs, rhs) => {
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("and_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("and_{}_rhs", instr_id),
+                    )?;
+                }
+                let result_name = Name::Name(Box::new(format!("and_{}", instr_id)));
+                let instruction = Instruction::And(And {
+                    operand0: lhs_operand,
+                    operand1: rhs_operand,
+                    dest: result_name.clone(),
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::Or(lhs, rhs) => {
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("or_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("or_{}_rhs", instr_id),
+                    )?;
+                }
+                let result_name = Name::Name(Box::new(format!("or_{}", instr_id)));
+                let instruction = Instruction::Or(Or {
+                    operand0: lhs_operand,
+                    operand1: rhs_operand,
+                    dest: result_name.clone(),
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::Xor(lhs, rhs) => {
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("xor_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("xor_{}_rhs", instr_id),
+                    )?;
+                }
+                let result_name = Name::Name(Box::new(format!("xor_{}", instr_id)));
+                let instruction = Instruction::Xor(Xor {
+                    operand0: lhs_operand,
+                    operand1: rhs_operand,
+                    dest: result_name.clone(),
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::Shl(lhs, rhs) => {
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("shl_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("shl_{}_rhs", instr_id),
+                    )?;
+                }
+                let result_name = Name::Name(Box::new(format!("shl_{}", instr_id)));
+                let instruction = Instruction::Shl(Shl {
+                    operand0: lhs_operand,
+                    operand1: rhs_operand,
+                    dest: result_name.clone(),
+                    nuw: false,
+                    nsw: false,
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::Shr(lhs, rhs) => {
+                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
+                let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+                if matches!(llvm_result_ty, Type::IntegerType { .. }) {
+                    lhs_operand = self.coerce_integer_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("lshr_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_integer_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        false,
+                        &format!("lshr_{}_rhs", instr_id),
+                    )?;
+                }
+                let result_name = Name::Name(Box::new(format!("lshr_{}", instr_id)));
+                let instruction = Instruction::LShr(LShr {
+                    operand0: lhs_operand,
+                    operand1: rhs_operand,
+                    dest: result_name.clone(),
+                    exact: false,
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
+            }
+            lir::LirInstructionKind::Not(value) => {
+                let operand = self.convert_lir_value_to_operand(value.clone())?;
+                let result_ty = ty_hint
+                    .clone()
+                    .or_else(|| self.lir_type_from_value(&value))
+                    .unwrap_or(lir::LirType::I1);
+
+                let invert_const = match &result_ty {
+                    lir::LirType::I1 => lir::LirConstant::Bool(true),
+                    lir::LirType::I8 => lir::LirConstant::Int(-1, lir::LirType::I8),
+                    lir::LirType::I16 => lir::LirConstant::Int(-1, lir::LirType::I16),
+                    lir::LirType::I32 => lir::LirConstant::Int(-1, lir::LirType::I32),
+                    lir::LirType::I64 => lir::LirConstant::Int(-1, lir::LirType::I64),
+                    lir::LirType::I128 => lir::LirConstant::Int(-1, lir::LirType::I128),
+                    _ => lir::LirConstant::Int(-1, lir::LirType::I64),
+                };
+                let invert_const_ref = self.convert_lir_constant_to_llvm_mut(invert_const)?;
+                let const_operand = self.llvm_ctx.operand_from_constant(invert_const_ref);
+                let result_name = Name::Name(Box::new(format!("not_{}", instr_id)));
+                let instruction = Instruction::Xor(Xor {
+                    operand0: operand,
+                    operand1: const_operand,
+                    dest: result_name.clone(),
+                    debugloc: None,
+                });
+                self.llvm_ctx
+                    .add_instruction(instruction)
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Load {
                 address,
@@ -1427,6 +1711,16 @@ impl<'ctx> LirCodegen<'ctx> {
                 Ok(self.llvm_ctx.operand_from_constant(llvm_constant))
             }
             lir::LirValue::Global(name, ty) => {
+                if self.function_signatures.contains_key(&name) {
+                    return self.convert_lir_value_to_operand(lir::LirValue::Function(name));
+                }
+
+                let runtime_target = self.map_std_function_to_runtime(&name);
+                if CStdLib::is_stdlib_function(&runtime_target) {
+                    return self
+                        .convert_lir_value_to_operand(lir::LirValue::Function(runtime_target));
+                }
+
                 if let Some(lir_constant) = self.global_const_map.get(&name) {
                     let llvm_constant = self.convert_lir_constant_to_llvm(lir_constant.clone())?;
                     tracing::debug!("LLVM: Found global '{}' in const map, using value", name);
@@ -1439,15 +1733,38 @@ impl<'ctx> LirCodegen<'ctx> {
                 )))
             }
             lir::LirValue::Function(name) => {
-                let llvm_name = self.llvm_symbol_for(&name);
+                let runtime_name = self.map_std_function_to_runtime(&name);
+                let llvm_name = self.llvm_symbol_for(&runtime_name);
 
-                let fn_ty = if let Some(signature) = self.function_signatures.get(&name) {
+                let fn_ty = if let Some(signature) = self.function_signatures.get(&runtime_name) {
                     self.function_type_from_signature(signature.clone())?
                 } else if let Some(existing) = self.llvm_ctx.get_function(&llvm_name) {
                     self.llvm_ctx.module.types.func_type(
                         existing.return_type.clone(),
                         existing.parameters.iter().map(|p| p.ty.clone()).collect(),
                         existing.is_var_arg,
+                    )
+                } else if let Some(runtime_decl) =
+                    CStdLib::get_function_decl(&runtime_name, &self.llvm_ctx.module.types)
+                {
+                    if !self
+                        .llvm_ctx
+                        .module
+                        .functions
+                        .iter()
+                        .any(|f| f.name == runtime_decl.name)
+                    {
+                        self.llvm_ctx.module.functions.push(runtime_decl.clone());
+                    }
+
+                    self.llvm_ctx.module.types.func_type(
+                        runtime_decl.return_type.clone(),
+                        runtime_decl
+                            .parameters
+                            .iter()
+                            .map(|p| p.ty.clone())
+                            .collect(),
+                        runtime_decl.is_var_arg,
                     )
                 } else {
                     return Err(report_error(format!(
@@ -1542,6 +1859,110 @@ impl<'ctx> LirCodegen<'ctx> {
                 // Use the immutable path for non-string constants
                 self.convert_lir_constant_to_llvm(other)
             }
+        }
+    }
+
+    fn infer_binary_result_type(
+        &self,
+        ty_hint: Option<lir::LirType>,
+        lhs: &lir::LirValue,
+        rhs: &lir::LirValue,
+    ) -> lir::LirType {
+        ty_hint
+            .or_else(|| self.lir_type_from_value(lhs))
+            .or_else(|| self.lir_type_from_value(rhs))
+            .unwrap_or(lir::LirType::I32)
+    }
+
+    fn coerce_integer_operand(
+        &mut self,
+        operand: Operand,
+        target_type: &Type,
+        signed: bool,
+        tag: &str,
+    ) -> Result<Operand> {
+        let target_bits = match target_type {
+            Type::IntegerType { bits } => *bits,
+            _ => return Ok(operand),
+        };
+
+        let operand_ty_ref = operand.get_type(&self.llvm_ctx.module.types);
+        let operand_ty = operand_ty_ref.as_ref();
+        let operand_bits = match operand_ty {
+            Type::IntegerType { bits } => *bits,
+            _ => return Ok(operand),
+        };
+
+        if operand_bits == target_bits {
+            return Ok(operand);
+        }
+
+        let target_type_clone = Type::IntegerType { bits: target_bits };
+        let name = if operand_bits < target_bits {
+            if signed {
+                self
+                    .llvm_ctx
+                    .build_sext(
+                        operand,
+                        target_type_clone.clone(),
+                        &format!("{}_sext", tag),
+                    )
+                    .map_err(fp_core::error::Error::from)?
+            } else {
+                self
+                    .llvm_ctx
+                    .build_zext(
+                        operand,
+                        target_type_clone.clone(),
+                        &format!("{}_zext", tag),
+                    )
+                    .map_err(fp_core::error::Error::from)?
+            }
+        } else {
+            self
+                .llvm_ctx
+                .build_trunc(
+                    operand,
+                    target_type_clone.clone(),
+                    &format!("{}_trunc", tag),
+                )
+                .map_err(fp_core::error::Error::from)?
+        };
+
+        Ok(Operand::LocalOperand {
+            name,
+            ty: self
+                .llvm_ctx
+                .module
+                .types
+                .get_for_type(&target_type_clone),
+        })
+    }
+
+    fn lir_type_from_value(&self, value: &lir::LirValue) -> Option<lir::LirType> {
+        match value {
+            lir::LirValue::Register(id) => self.value_map.get(id).map(|(_, ty)| ty.clone()),
+            lir::LirValue::Constant(c) => Some(Self::lir_type_from_constant(c)),
+            lir::LirValue::Global(_, ty) => Some(ty.clone()),
+            lir::LirValue::Undef(ty) => Some(ty.clone()),
+            lir::LirValue::Null(ty) => Some(ty.clone()),
+            _ => None,
+        }
+    }
+
+    fn lir_type_from_constant(constant: &lir::LirConstant) -> lir::LirType {
+        match constant {
+            lir::LirConstant::Int(_, ty) => ty.clone(),
+            lir::LirConstant::UInt(_, ty) => ty.clone(),
+            lir::LirConstant::Float(_, ty) => ty.clone(),
+            lir::LirConstant::Bool(_) => lir::LirType::I1,
+            lir::LirConstant::String(_) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            lir::LirConstant::Array(elements, elem_ty) => {
+                lir::LirType::Array(Box::new(elem_ty.clone()), elements.len() as u64)
+            }
+            lir::LirConstant::Struct(_, ty) => ty.clone(),
+            lir::LirConstant::Null(ty) => ty.clone(),
+            lir::LirConstant::Undef(ty) => ty.clone(),
         }
     }
 

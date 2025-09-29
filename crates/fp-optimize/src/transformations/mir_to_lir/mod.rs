@@ -180,7 +180,6 @@ impl LirGenerator {
         }
 
         self.populate_block_edges(&mut lir_func.basic_blocks);
-        self.rewrite_special_functions(&mut lir_func);
         self.function_signatures
             .insert(lir_func.name.clone(), lir_func.signature.clone());
 
@@ -275,17 +274,21 @@ impl LirGenerator {
             successors: Vec::new(),
         };
 
-        if bb_id == 0 && !self.entry_allocas.is_empty() {
-            lir_block.instructions.extend(self.entry_allocas.clone());
-            self.entry_allocas.clear();
-        }
-
         // Transform all MIR statements into LIR instructions
         for stmt in &bb_data.statements {
+            if bb_id == 0 && !self.entry_allocas.is_empty() {
+                lir_block.instructions.extend(self.entry_allocas.clone());
+                self.entry_allocas.clear();
+            }
             let lir_insts = self.transform_statement(stmt)?;
             for inst in lir_insts {
                 lir_block.instructions.push(inst);
             }
+        }
+
+        if bb_id == 0 && !self.entry_allocas.is_empty() {
+            lir_block.instructions.extend(self.entry_allocas.clone());
+            self.entry_allocas.clear();
         }
 
         // Transform the terminator
@@ -492,8 +495,28 @@ impl LirGenerator {
                 PlaceAccess::Value { ty, lir_ty, .. } => (lir_ty.clone(), Self::is_zero_sized(ty)),
             };
 
+            if !target_is_zst {
+                let value_is_zst_constant = matches!(
+                    value,
+                    lir::LirValue::Constant(lir::LirConstant::Struct(ref fields, _))
+                        if fields.is_empty()
+                ) || matches!(
+                    value,
+                    lir::LirValue::Constant(lir::LirConstant::Undef(ref ty))
+                        if matches!(ty, lir::LirType::Void)
+                );
+
+                if value_is_zst_constant {
+                    value = self
+                        .zero_value_for_lir_type(&target_lir_ty)
+                        .unwrap_or_else(|| lir::LirValue::Undef(target_lir_ty.clone()));
+                }
+            }
+
             if let PlaceAccess::Address(addr) = &target_access {
-                if !target_is_zst {
+                if matches!(value, lir::LirValue::Function(_)) {
+                    self.local_storage.remove(&place.local);
+                } else if !target_is_zst {
                     let store_id = self.next_id();
                     instructions.push(lir::LirInstruction {
                         id: store_id,
@@ -519,6 +542,10 @@ impl LirGenerator {
                 if place.local == return_local {
                     should_update_register_map = true;
                 }
+            }
+
+            if matches!(value, lir::LirValue::Function(_)) {
+                should_update_register_map = true;
             }
 
             if should_update_register_map {
@@ -620,6 +647,13 @@ impl LirGenerator {
                         .get(name)
                         .cloned()
                         .unwrap_or_else(|| name.clone());
+                    if self.function_signatures.contains_key(&mapped_name) {
+                        return Ok(lir::LirValue::Function(mapped_name));
+                    }
+                    let runtime_target = self.map_std_function_to_runtime(&mapped_name);
+                    if runtime_target != mapped_name {
+                        return Ok(lir::LirValue::Function(runtime_target));
+                    }
                     Ok(lir::LirValue::Global(
                         mapped_name,
                         self.lir_type_from_ty(ty),
@@ -763,7 +797,7 @@ impl LirGenerator {
                     let size_value =
                         lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
                     let alloca_id = self.next_id();
-                    self.entry_allocas.push(lir::LirInstruction {
+                    self.queued_instructions.push(lir::LirInstruction {
                         id: alloca_id,
                         kind: lir::LirInstructionKind::Alloca {
                             size: size_value,
@@ -1158,743 +1192,6 @@ impl LirGenerator {
         ptr_value
     }
 
-    fn rewrite_special_functions(&mut self, func: &mut lir::LirFunction) {
-        match func.name.as_str() {
-            "Point__new" => self.rewrite_struct_constructor(func, 2),
-            "Rectangle__new" => self.rewrite_struct_constructor(func, 2),
-            "Point__translate" => self.rewrite_point_translate(func),
-            "Point__distance2" => self.rewrite_point_distance2(func),
-            "Rectangle__area" => self.rewrite_rectangle_area(func),
-            "Rectangle__perimeter" => self.rewrite_rectangle_perimeter(func),
-            "Rectangle__is_square" => self.rewrite_rectangle_is_square(func),
-            "main" => self.rewrite_main(func),
-            _ => {}
-        }
-    }
-
-    fn ensure_malloc_signature(&mut self) {
-        self.function_signatures
-            .entry("malloc".to_string())
-            .or_insert(lir::LirFunctionSignature {
-                params: vec![lir::LirType::I64],
-                return_type: lir::LirType::Ptr(Box::new(lir::LirType::I8)),
-                is_variadic: false,
-            });
-    }
-
-    fn rewrite_struct_constructor(&mut self, func: &mut lir::LirFunction, field_count: usize) {
-        self.ensure_malloc_signature();
-
-        let element_ty = lir::LirType::I64;
-        let pointer_ty = lir::LirType::Ptr(Box::new(element_ty.clone()));
-
-        func.signature.return_type = pointer_ty.clone();
-        func.signature.is_variadic = false;
-
-        let mut instructions = Vec::new();
-
-        let malloc_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: malloc_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("malloc".to_string()),
-                args: vec![lir::LirValue::Constant(lir::LirConstant::Int(
-                    (field_count as i64) * 8,
-                    lir::LirType::I64,
-                ))],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
-            debug_info: None,
-        });
-
-        let bitcast_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: bitcast_id,
-            kind: lir::LirInstructionKind::Bitcast(
-                lir::LirValue::Register(malloc_id),
-                pointer_ty.clone(),
-            ),
-            type_hint: Some(pointer_ty.clone()),
-            debug_info: None,
-        });
-
-        for index in 0..field_count {
-            let target_address = if index == 0 {
-                lir::LirValue::Register(bitcast_id)
-            } else {
-                let gep_id = self.next_id();
-                instructions.push(lir::LirInstruction {
-                    id: gep_id,
-                    kind: lir::LirInstructionKind::GetElementPtr {
-                        ptr: lir::LirValue::Register(bitcast_id),
-                        indices: vec![lir::LirValue::Constant(lir::LirConstant::Int(
-                            index as i64,
-                            lir::LirType::I64,
-                        ))],
-                        inbounds: true,
-                    },
-                    type_hint: Some(pointer_ty.clone()),
-                    debug_info: None,
-                });
-                lir::LirValue::Register(gep_id)
-            };
-
-            let store_id = self.next_id();
-            instructions.push(lir::LirInstruction {
-                id: store_id,
-                kind: lir::LirInstructionKind::Store {
-                    value: lir::LirValue::Local((index + 1) as mir::LocalId),
-                    address: target_address,
-                    alignment: Some(8),
-                    volatile: false,
-                },
-                type_hint: None,
-                debug_info: None,
-            });
-        }
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(bitcast_id))),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
-    fn rewrite_point_translate(&mut self, func: &mut lir::LirFunction) {
-        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
-        if !func.signature.params.is_empty() {
-            func.signature.params[0] = pointer_ty.clone();
-        }
-
-        let mut instructions = Vec::new();
-        let base_ptr = lir::LirValue::Local(1);
-
-        let load_x_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: load_x_id,
-            kind: lir::LirInstructionKind::Load {
-                address: base_ptr.clone(),
-                alignment: Some(8),
-                volatile: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let add_x_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: add_x_id,
-            kind: lir::LirInstructionKind::Add(
-                lir::LirValue::Register(load_x_id),
-                lir::LirValue::Local(2),
-            ),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let store_x_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: store_x_id,
-            kind: lir::LirInstructionKind::Store {
-                value: lir::LirValue::Register(add_x_id),
-                address: base_ptr.clone(),
-                alignment: Some(8),
-                volatile: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let gep_y_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: gep_y_id,
-            kind: lir::LirInstructionKind::GetElementPtr {
-                ptr: base_ptr.clone(),
-                indices: vec![lir::LirValue::Constant(lir::LirConstant::Int(
-                    1,
-                    lir::LirType::I64,
-                ))],
-                inbounds: true,
-            },
-            type_hint: Some(pointer_ty.clone()),
-            debug_info: None,
-        });
-
-        let load_y_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: load_y_id,
-            kind: lir::LirInstructionKind::Load {
-                address: lir::LirValue::Register(gep_y_id),
-                alignment: Some(8),
-                volatile: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let add_y_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: add_y_id,
-            kind: lir::LirInstructionKind::Add(
-                lir::LirValue::Register(load_y_id),
-                lir::LirValue::Local(3),
-            ),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let store_y_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: store_y_id,
-            kind: lir::LirInstructionKind::Store {
-                value: lir::LirValue::Register(add_y_id),
-                address: lir::LirValue::Register(gep_y_id),
-                alignment: Some(8),
-                volatile: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(None),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
-    fn rewrite_point_distance2(&mut self, func: &mut lir::LirFunction) {
-        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
-        if func.signature.params.len() >= 2 {
-            func.signature.params[0] = pointer_ty.clone();
-            func.signature.params[1] = pointer_ty.clone();
-        }
-
-        let mut instructions = Vec::new();
-
-        let (x1, y1) = self.load_point_components(&mut instructions, lir::LirValue::Local(1));
-        let (x2, y2) = self.load_point_components(&mut instructions, lir::LirValue::Local(2));
-
-        let dx_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: dx_id,
-            kind: lir::LirInstructionKind::Sub(x1.clone(), x2.clone()),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let dy_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: dy_id,
-            kind: lir::LirInstructionKind::Sub(y1.clone(), y2.clone()),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let dx_sq_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: dx_sq_id,
-            kind: lir::LirInstructionKind::Mul(
-                lir::LirValue::Register(dx_id),
-                lir::LirValue::Register(dx_id),
-            ),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let dy_sq_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: dy_sq_id,
-            kind: lir::LirInstructionKind::Mul(
-                lir::LirValue::Register(dy_id),
-                lir::LirValue::Register(dy_id),
-            ),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let sum_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: sum_id,
-            kind: lir::LirInstructionKind::Add(
-                lir::LirValue::Register(dx_sq_id),
-                lir::LirValue::Register(dy_sq_id),
-            ),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(sum_id))),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
-    fn load_point_components(
-        &mut self,
-        instructions: &mut Vec<lir::LirInstruction>,
-        base_ptr: lir::LirValue,
-    ) -> (lir::LirValue, lir::LirValue) {
-        let load_x_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: load_x_id,
-            kind: lir::LirInstructionKind::Load {
-                address: base_ptr.clone(),
-                alignment: Some(8),
-                volatile: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let gep_y_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: gep_y_id,
-            kind: lir::LirInstructionKind::GetElementPtr {
-                ptr: base_ptr.clone(),
-                indices: vec![lir::LirValue::Constant(lir::LirConstant::Int(
-                    1,
-                    lir::LirType::I64,
-                ))],
-                inbounds: true,
-            },
-            type_hint: Some(lir::LirType::Ptr(Box::new(lir::LirType::I64))),
-            debug_info: None,
-        });
-
-        let load_y_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: load_y_id,
-            kind: lir::LirInstructionKind::Load {
-                address: lir::LirValue::Register(gep_y_id),
-                alignment: Some(8),
-                volatile: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        (
-            lir::LirValue::Register(load_x_id),
-            lir::LirValue::Register(load_y_id),
-        )
-    }
-
-    fn rewrite_rectangle_area(&mut self, func: &mut lir::LirFunction) {
-        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
-        if !func.signature.params.is_empty() {
-            func.signature.params[0] = pointer_ty.clone();
-        }
-
-        let mut instructions = Vec::new();
-        let (width, height) =
-            self.load_point_components(&mut instructions, lir::LirValue::Local(1));
-
-        let mul_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: mul_id,
-            kind: lir::LirInstructionKind::Mul(width, height),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(mul_id))),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
-    fn rewrite_rectangle_perimeter(&mut self, func: &mut lir::LirFunction) {
-        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
-        if !func.signature.params.is_empty() {
-            func.signature.params[0] = pointer_ty.clone();
-        }
-
-        let mut instructions = Vec::new();
-        let (width, height) =
-            self.load_point_components(&mut instructions, lir::LirValue::Local(1));
-
-        let sum_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: sum_id,
-            kind: lir::LirInstructionKind::Add(width, height),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let two = lir::LirValue::Constant(lir::LirConstant::Int(2, lir::LirType::I64));
-        let mul_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: mul_id,
-            kind: lir::LirInstructionKind::Mul(two, lir::LirValue::Register(sum_id)),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(mul_id))),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
-    fn rewrite_rectangle_is_square(&mut self, func: &mut lir::LirFunction) {
-        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
-        if !func.signature.params.is_empty() {
-            func.signature.params[0] = pointer_ty.clone();
-        }
-
-        let mut instructions = Vec::new();
-        let (width, height) =
-            self.load_point_components(&mut instructions, lir::LirValue::Local(1));
-
-        let cmp_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: cmp_id,
-            kind: lir::LirInstructionKind::Eq(width, height),
-            type_hint: Some(lir::LirType::I1),
-            debug_info: None,
-        });
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(Some(lir::LirValue::Register(cmp_id))),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
-    fn rewrite_main(&mut self, func: &mut lir::LirFunction) {
-        let pointer_ty = lir::LirType::Ptr(Box::new(lir::LirType::I64));
-        let mut instructions = Vec::new();
-
-        let header_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: header_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![lir::LirValue::Constant(lir::LirConstant::String(
-                    "=== Struct Operations ===".to_string(),
-                ))],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let point1_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: point1_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Point__new".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::Int(10, lir::LirType::I64)),
-                    lir::LirValue::Constant(lir::LirConstant::Int(20, lir::LirType::I64)),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(pointer_ty.clone()),
-            debug_info: None,
-        });
-        let point1 = lir::LirValue::Register(point1_id);
-
-        let point2_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: point2_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Point__new".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::Int(5, lir::LirType::I64)),
-                    lir::LirValue::Constant(lir::LirConstant::Int(15, lir::LirType::I64)),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(pointer_ty.clone()),
-            debug_info: None,
-        });
-        let point2 = lir::LirValue::Register(point2_id);
-
-        let (p1_x, p1_y) = self.load_point_components(&mut instructions, point1.clone());
-        let print_p1_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_p1_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "p1 = (%lld, %lld)".to_string(),
-                    )),
-                    p1_x.clone(),
-                    p1_y.clone(),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let (p2_x, p2_y) = self.load_point_components(&mut instructions, point2.clone());
-        let print_p2_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_p2_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "p2 = (%lld, %lld)".to_string(),
-                    )),
-                    p2_x.clone(),
-                    p2_y.clone(),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let translate_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: translate_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Point__translate".to_string()),
-                args: vec![
-                    point1.clone(),
-                    lir::LirValue::Constant(lir::LirConstant::Int(3, lir::LirType::I64)),
-                    lir::LirValue::Constant(lir::LirConstant::Int(-4, lir::LirType::I64)),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let (p1_tx, p1_ty) = self.load_point_components(&mut instructions, point1.clone());
-        let print_p1_after_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_p1_after_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "p1 after translate = (%lld, %lld)".to_string(),
-                    )),
-                    p1_tx.clone(),
-                    p1_ty.clone(),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let dist_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: dist_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Point__distance2".to_string()),
-                args: vec![point1.clone(), point2.clone()],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let print_dist_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_dist_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "Distance²(p1, p2) = %lld".to_string(),
-                    )),
-                    lir::LirValue::Register(dist_id),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let rect_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: rect_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Rectangle__new".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::Int(10, lir::LirType::I64)),
-                    lir::LirValue::Constant(lir::LirConstant::Int(5, lir::LirType::I64)),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(pointer_ty.clone()),
-            debug_info: None,
-        });
-        let rect = lir::LirValue::Register(rect_id);
-
-        let (rect_w, rect_h) = self.load_point_components(&mut instructions, rect.clone());
-        let print_rect_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_rect_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "Rectangle: %lld×%lld".to_string(),
-                    )),
-                    rect_w.clone(),
-                    rect_h.clone(),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let area_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: area_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Rectangle__area".to_string()),
-                args: vec![rect.clone()],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let print_area_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_area_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String("  area = %lld".to_string())),
-                    lir::LirValue::Register(area_id),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let perimeter_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: perimeter_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Rectangle__perimeter".to_string()),
-                args: vec![rect.clone()],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let print_perimeter_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_perimeter_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "  perimeter = %lld".to_string(),
-                    )),
-                    lir::LirValue::Register(perimeter_id),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        let square_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: square_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("Rectangle__is_square".to_string()),
-                args: vec![rect.clone()],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: Some(lir::LirType::I1),
-            debug_info: None,
-        });
-
-        let square_zext_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: square_zext_id,
-            kind: lir::LirInstructionKind::ZExt(
-                lir::LirValue::Register(square_id),
-                lir::LirType::I64,
-            ),
-            type_hint: Some(lir::LirType::I64),
-            debug_info: None,
-        });
-
-        let print_square_id = self.next_id();
-        instructions.push(lir::LirInstruction {
-            id: print_square_id,
-            kind: lir::LirInstructionKind::Call {
-                function: lir::LirValue::Function("std::io::println".to_string()),
-                args: vec![
-                    lir::LirValue::Constant(lir::LirConstant::String(
-                        "  is_square = %lld".to_string(),
-                    )),
-                    lir::LirValue::Register(square_zext_id),
-                ],
-                calling_convention: lir::CallingConvention::C,
-                tail_call: false,
-            },
-            type_hint: None,
-            debug_info: None,
-        });
-
-        func.basic_blocks = vec![lir::LirBasicBlock {
-            id: 0,
-            label: Some("bb0".to_string()),
-            instructions,
-            terminator: lir::LirTerminator::Return(None),
-            predecessors: Vec::new(),
-            successors: Vec::new(),
-        }];
-    }
-
     fn take_queued_instructions(&mut self) -> Vec<lir::LirInstruction> {
         std::mem::take(&mut self.queued_instructions)
     }
@@ -2085,14 +1382,8 @@ impl LirGenerator {
     ) -> Result<lir::LirTerminator> {
         let mut function_value = self.transform_operand(func)?;
         block.instructions.extend(self.take_queued_instructions());
-        if let lir::LirValue::Global(name, _) = &function_value {
-            let mapped_name = self
-                .function_symbol_map
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| name.clone());
-            function_value = lir::LirValue::Function(mapped_name);
-        }
+
+        function_value = self.normalize_callee_value(func, function_value);
         let callee_name = match &function_value {
             lir::LirValue::Function(name) => Some(name.clone()),
             _ => None,
@@ -2159,6 +1450,93 @@ impl LirGenerator {
         }
 
         Ok(lir::LirTerminator::Return(None))
+    }
+
+    fn normalize_callee_value(
+        &mut self,
+        func_operand: &mir::Operand,
+        value: lir::LirValue,
+    ) -> lir::LirValue {
+        match value {
+            lir::LirValue::Register(id) => {
+                if let Some(place) = Self::operand_place(func_operand) {
+                    if let Some(lir::LirValue::Function(name)) = self.register_map.get(&place.local)
+                    {
+                        return lir::LirValue::Function(self.resolve_function_symbol(name));
+                    }
+                }
+                lir::LirValue::Register(id)
+            }
+            lir::LirValue::Global(name, _) => {
+                lir::LirValue::Function(self.resolve_function_symbol(&name))
+            }
+            lir::LirValue::Function(name) => {
+                lir::LirValue::Function(self.resolve_function_symbol(&name))
+            }
+            other => other,
+        }
+    }
+
+    fn resolve_function_symbol(&self, name: &str) -> String {
+        let logical = self
+            .function_symbol_map
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+
+        if self.function_signatures.contains_key(&logical) {
+            return logical;
+        }
+
+        let runtime = self.map_std_function_to_runtime(&logical);
+        if runtime != logical {
+            return runtime;
+        }
+
+        logical
+    }
+
+    fn operand_place(operand: &mir::Operand) -> Option<&mir::Place> {
+        match operand {
+            mir::Operand::Move(place) | mir::Operand::Copy(place) => Some(place),
+            _ => None,
+        }
+    }
+
+    fn map_std_function_to_runtime(&self, fn_name: &str) -> String {
+        match fn_name {
+            // I/O helpers map to C stdio calls
+            "println" | "println!" | "std::io::println" => "printf".to_string(),
+            "print" | "print!" | "std::io::print" => "printf".to_string(),
+            "eprint" | "eprint!" | "std::io::eprint" => "fprintf".to_string(),
+            "eprintln" | "eprintln!" | "std::io::eprintln" => "fprintf".to_string(),
+
+            // Memory management wrappers
+            "std::alloc::alloc" => "malloc".to_string(),
+            "std::alloc::dealloc" => "free".to_string(),
+            "std::alloc::realloc" => "realloc".to_string(),
+
+            // Basic math (libm)
+            "std::f64::sin" => "sin".to_string(),
+            "std::f64::cos" => "cos".to_string(),
+            "std::f64::tan" => "tan".to_string(),
+            "std::f64::sqrt" => "sqrt".to_string(),
+            "std::f64::pow" => "pow".to_string(),
+            "std::f32::sin" => "sinf".to_string(),
+            "std::f32::cos" => "cosf".to_string(),
+            "std::f32::tan" => "tanf".to_string(),
+            "std::f32::sqrt" => "sqrtf".to_string(),
+            "std::f32::pow" => "powf".to_string(),
+
+            // String utilities
+            "std::str::len" => "strlen".to_string(),
+            "std::str::cmp" => "strcmp".to_string(),
+
+            // System helpers
+            "std::process::exit" => "exit".to_string(),
+
+            _ => fn_name.to_string(),
+        }
     }
 
     fn prepare_return_value(&self) -> Option<lir::LirValue> {
