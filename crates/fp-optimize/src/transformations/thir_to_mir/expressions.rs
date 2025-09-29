@@ -1,6 +1,7 @@
 use super::*;
 use crate::error::optimization_error;
 use fp_core::hir::typed::ty::TyKind as ThirTyKind;
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 
 impl MirGenerator {
     pub(super) fn transform_expr(
@@ -84,6 +85,43 @@ impl MirGenerator {
                     block: current_bb,
                 })
             }
+            thir::ExprKind::IntrinsicCall(call) => match call.kind {
+                IntrinsicCallKind::ConstBlock => match call.payload {
+                    IntrinsicCallPayload::Args { args } => {
+                        let body_expr = args.into_iter().next().ok_or_else(|| {
+                            optimization_error("const block intrinsic expects a body expression")
+                        })?;
+                        self.transform_expr(body_expr, current_bb)
+                    }
+                    _ => Err(optimization_error(
+                        "const block intrinsic must use positional args payload",
+                    )),
+                },
+                IntrinsicCallKind::DebugAssertions => {
+                    let temp_local = self.create_local_from_thir(&expr.ty);
+                    let place = mir::Place::from_local(temp_local);
+                    let bool_value = self.debug_assertions_enabled;
+                    self.add_statement_to_block(
+                        current_bb,
+                        mir::Statement {
+                            kind: mir::StatementKind::Assign(
+                                place.clone(),
+                                mir::Rvalue::Use(self.bool_operand(bool_value, expr.span)),
+                            ),
+                            source_info: expr.span,
+                        },
+                    );
+
+                    Ok(ExprOutcome {
+                        place,
+                        block: current_bb,
+                    })
+                }
+                other => Err(optimization_error(format!(
+                    "Unsupported intrinsic {:?} during MIR lowering",
+                    other
+                ))),
+            },
             thir::ExprKind::Binary(op, lhs, rhs) => {
                 let ExprOutcome {
                     place: lhs_place,

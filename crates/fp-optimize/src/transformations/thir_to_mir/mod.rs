@@ -27,6 +27,7 @@ pub struct MirGenerator {
     local_decls: Vec<mir::LocalDecl>,
     loop_stack: Vec<LoopContext>,
     current_return_local: Option<mir::LocalId>,
+    debug_assertions_enabled: bool,
 }
 
 struct ExprOutcome {
@@ -52,7 +53,12 @@ impl MirGenerator {
             local_decls: Vec::new(),
             loop_stack: Vec::new(),
             current_return_local: None,
+            debug_assertions_enabled: true,
         }
+    }
+
+    pub fn set_debug_assertions(&mut self, enabled: bool) {
+        self.debug_assertions_enabled = enabled;
     }
 
     /// Transform a THIR program to MIR

@@ -2,6 +2,7 @@ hir::Program {
     pub fn main() -> _ {
         {
             let BUFFER_SIZE: u64 = 4096;
+            std::Println(1 args)
             let MAX_CONNECTIONS: i32 = 150;
             let TIMEOUT_MS: u64 = 30000;
             let FACTORIAL_5: i64 = 120;
