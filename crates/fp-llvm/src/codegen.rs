@@ -1,8 +1,9 @@
 use crate::context::LlvmContext;
-use crate::intrinsics::CRuntimeIntrinsics;
+use crate::intrinsics::{self as llvm_intrinsics, CRuntimeIntrinsics};
 use fp_core::diagnostics::report_error_with_context;
 use fp_core::intrinsics::{
-    self, BackendFlavor, CallAbi, CallArgStrategy, ResolvedCall, ResolvedIntrinsic,
+    self as core_intrinsics, BackendFlavor, CallAbi, CallArgStrategy, ResolvedCall,
+    ResolvedIntrinsic,
 };
 use fp_core::{
     error::{Error, Result},
@@ -906,19 +907,13 @@ impl<'ctx> LirCodegen<'ctx> {
                 }
             }
 
-            let runtime_target = self.map_intrinsic_to_runtime(logical_name);
-            let append_newline = matches!(
-                logical_name.as_str(),
-                "println" | "println!" | "std::io::println" | "print" | "std::io::print"
-            );
-            if CRuntimeIntrinsics::is_runtime_intrinsic(&runtime_target) {
-                return self.lower_runtime_call(
+            if let Some(spec) = llvm_intrinsics::runtime_call_spec(logical_name) {
+                let resolved_call = spec.as_resolved_call();
+                return self.lower_intrinsic_call(
                     instr_id,
                     ty_hint,
-                    runtime_target,
-                    append_newline,
+                    resolved_call,
                     args,
-                    calling_convention,
                     tail_call,
                 );
             }
@@ -1050,8 +1045,8 @@ impl<'ctx> LirCodegen<'ctx> {
     }
 
     fn resolve_intrinsic(&self, logical_name: &str) -> Option<ResolvedIntrinsic> {
-        let kind = intrinsics::identify_symbol(logical_name)?;
-        intrinsics::default_resolver()
+        let kind = core_intrinsics::identify_symbol(logical_name)?;
+        core_intrinsics::default_resolver()
             .resolve(&(kind, self.backend_flavor))
             .cloned()
     }
@@ -1627,45 +1622,6 @@ impl<'ctx> LirCodegen<'ctx> {
         Ok(operand)
     }
 
-    /// Map intrinsic functions to their runtime implementations
-    fn map_intrinsic_to_runtime(&self, fn_name: &str) -> String {
-        match fn_name {
-            // I/O functions
-            "println" | "println!" | "std::io::println" => "printf".to_string(),
-            "print" | "print!" | "std::io::print" => "printf".to_string(),
-            "eprint" | "eprint!" | "std::io::eprint" => "fprintf".to_string(),
-            "eprintln" | "eprintln!" | "std::io::eprintln" => "fprintf".to_string(),
-
-            // Memory management functions
-            "std::alloc::alloc" => "malloc".to_string(),
-            "std::alloc::dealloc" => "free".to_string(),
-            "std::alloc::realloc" => "realloc".to_string(),
-
-            // Math functions (map to libm)
-            "std::f64::sin" => "sin".to_string(),
-            "std::f64::cos" => "cos".to_string(),
-            "std::f64::tan" => "tan".to_string(),
-            "std::f64::sqrt" => "sqrt".to_string(),
-            "std::f64::pow" => "pow".to_string(),
-            "std::f32::sin" => "sinf".to_string(),
-            "std::f32::cos" => "cosf".to_string(),
-            "std::f32::tan" => "tanf".to_string(),
-            "std::f32::sqrt" => "sqrtf".to_string(),
-            "std::f32::pow" => "powf".to_string(),
-
-            // String functions
-            "std::str::len" => "strlen".to_string(),
-            "std::str::cmp" => "strcmp".to_string(),
-
-            // Process functions
-            "std::process::exit" => "exit".to_string(),
-            "std::process::abort" => "abort".to_string(),
-
-            // For unknown functions, return as-is
-            _ => fn_name.to_string(),
-        }
-    }
-
     /// Generate LLVM IR for a LIR terminator
     fn generate_terminator(&mut self, lir_term: lir::LirTerminator) -> Result<()> {
         tracing::debug!("Terminator type: {:?}", std::mem::discriminant(&lir_term));
@@ -1761,10 +1717,13 @@ impl<'ctx> LirCodegen<'ctx> {
                     return self.convert_lir_value_to_operand(lir::LirValue::Function(name));
                 }
 
-                let runtime_target = self.map_intrinsic_to_runtime(&name);
-                if CRuntimeIntrinsics::is_runtime_intrinsic(&runtime_target) {
-                    return self
-                        .convert_lir_value_to_operand(lir::LirValue::Function(runtime_target));
+                if let Some(spec) = llvm_intrinsics::runtime_call_spec(&name) {
+                    let runtime_name = spec.callee;
+                    if CRuntimeIntrinsics::is_runtime_intrinsic(runtime_name) {
+                        return self.convert_lir_value_to_operand(lir::LirValue::Function(
+                            runtime_name.to_string(),
+                        ));
+                    }
                 }
 
                 if let Some(lir_constant) = self.global_const_map.get(&name) {
@@ -1779,10 +1738,14 @@ impl<'ctx> LirCodegen<'ctx> {
                 ))
             }
             lir::LirValue::Function(name) => {
-                let runtime_name = self.map_intrinsic_to_runtime(&name);
-                let llvm_name = self.llvm_symbol_for(&runtime_name);
+                let canonical_name = if let Some(spec) = llvm_intrinsics::runtime_call_spec(&name) {
+                    spec.callee.to_string()
+                } else {
+                    name.clone()
+                };
+                let llvm_name = self.llvm_symbol_for(&canonical_name);
 
-                let fn_ty = if let Some(signature) = self.function_signatures.get(&runtime_name) {
+                let fn_ty = if let Some(signature) = self.function_signatures.get(&canonical_name) {
                     self.function_type_from_signature(signature.clone())?
                 } else if let Some(existing) = self.llvm_ctx.get_function(&llvm_name) {
                     self.llvm_ctx.module.types.func_type(
@@ -1791,7 +1754,7 @@ impl<'ctx> LirCodegen<'ctx> {
                         existing.is_var_arg,
                     )
                 } else if let Some(runtime_decl) = CRuntimeIntrinsics::get_intrinsic_decl(
-                    &runtime_name,
+                    &canonical_name,
                     &self.llvm_ctx.module.types,
                 ) {
                     if !self
