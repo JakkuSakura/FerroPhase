@@ -5,8 +5,16 @@
 //! this module is to host the shared vocabulary so every consumer speaks the same
 //! language before we introduce the backend-specific resolver.
 
+mod catalog;
+
 use std::collections::HashMap;
 use std::sync::LazyLock;
+
+pub use catalog::{
+    all_specs as intrinsic_specs, lookup_backend_behaviour, lookup_call as lookup_runtime_call,
+    lookup_spec as lookup_intrinsic_spec, IntrinsicBackendBehaviour, IntrinsicBackendSpec,
+    IntrinsicSpec, ResolvedCallSpec,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StdIntrinsic {
@@ -37,7 +45,7 @@ pub enum BackendFlavor {
     TranspileJavascript,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntrinsicArgKind {
     /// Pass the value unchanged.
     Value,
@@ -45,7 +53,7 @@ pub enum IntrinsicArgKind {
     FormatString,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntrinsicArg {
     pub kind: IntrinsicArgKind,
 }
@@ -60,7 +68,7 @@ impl IntrinsicArg {
     };
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallAbi {
     Default,
     CVariadic,
@@ -71,7 +79,7 @@ pub enum CallArgStrategy {
     Passthrough,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntrinsicReturnKind {
     Void,
     SameAsArgument(usize),
@@ -128,21 +136,22 @@ impl IntrinsicResolver {
 
 pub static DEFAULT_RESOLVER: LazyLock<IntrinsicResolver> = LazyLock::new(|| {
     let mut resolver = IntrinsicResolver::new();
-    resolver.register(
-        (
-            IntrinsicKind::Std(StdIntrinsic::IoPrintln),
-            BackendFlavor::Llvm,
-        ),
-        ResolvedIntrinsic::Call(ResolvedCall {
-            callee: "printf",
-            abi: CallAbi::CVariadic,
-            variadic: true,
-            append_newline_to_first_string: true,
-            arg_strategy: CallArgStrategy::Passthrough,
-            args: Vec::new(),
-            return_kind: IntrinsicReturnKind::Void,
-        }),
-    );
+
+    for spec in catalog::all_specs() {
+        for backend in spec.backends {
+            let value = match backend.behaviour {
+                catalog::IntrinsicBackendBehaviour::Call(call) => {
+                    ResolvedIntrinsic::Call(call.as_resolved_call())
+                }
+                catalog::IntrinsicBackendBehaviour::Unsupported(message) => {
+                    ResolvedIntrinsic::Unsupported(message.to_string())
+                }
+            };
+
+            resolver.register((spec.kind, backend.backend), value);
+        }
+    }
+
     resolver
 });
 
@@ -151,10 +160,5 @@ pub fn default_resolver() -> &'static IntrinsicResolver {
 }
 
 pub fn identify_symbol(symbol: &str) -> Option<IntrinsicKind> {
-    match symbol {
-        "std::io::println" => Some(IntrinsicKind::Std(StdIntrinsic::IoPrintln)),
-        "std::io::print" => Some(IntrinsicKind::Std(StdIntrinsic::IoPrint)),
-        "std::builtins::size_of" => Some(IntrinsicKind::Builtin(BuiltinIntrinsic::SizeOf)),
-        _ => None,
-    }
+    catalog::lookup_spec(symbol).map(|spec| spec.kind)
 }
