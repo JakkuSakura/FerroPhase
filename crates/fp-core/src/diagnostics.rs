@@ -180,6 +180,26 @@ where
     }
 }
 
+impl<T> Display for Diagnostic<T>
+where
+    T: Clone + Display,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)?;
+
+        if let Some(code) = &self.code {
+            write!(f, " [{}]", code)?;
+        }
+
+        if !self.suggestions.is_empty() {
+            let hints = self.suggestions.join("; ");
+            write!(f, " (hints: {})", hints)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DiagnosticReport<T, M = String>
 where

@@ -1,7 +1,7 @@
 use llvm_ir::constant::Float;
 use llvm_ir::function::{CallingConvention, Parameter};
 use llvm_ir::instruction::{
-    Add, Alloca, BitCast, GetElementPtr, ICmp, Load, Mul, Store, Sub, UDiv, ZExt,
+    Add, Alloca, BitCast, GetElementPtr, ICmp, Load, Mul, SExt, Store, Sub, Trunc, UDiv, ZExt,
 };
 use llvm_ir::module::{DLLStorageClass, DataLayout, Linkage, Visibility};
 use llvm_ir::predicates::IntPredicate;
@@ -366,6 +366,44 @@ impl LlvmContext {
     ) -> Result<Name, String> {
         let name = Name::Name(Box::new(result_name.to_string()));
         let instruction = Instruction::ZExt(ZExt {
+            operand,
+            to_type: self.module.types.get_for_type(&to_type),
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    /// Sign-extend a value to a wider integer type
+    pub fn build_sext(
+        &mut self,
+        operand: Operand,
+        to_type: Type,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::SExt(SExt {
+            operand,
+            to_type: self.module.types.get_for_type(&to_type),
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    /// Truncate an integer value to a narrower type
+    pub fn build_trunc(
+        &mut self,
+        operand: Operand,
+        to_type: Type,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::Trunc(Trunc {
             operand,
             to_type: self.module.types.get_for_type(&to_type),
             dest: name.clone(),
@@ -870,6 +908,60 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 format_operand(&mul.operand1)
             )
         }
+        llvm_ir::Instruction::And(and) => {
+            format!(
+                "{} = and {} {}, {}",
+                format_value_name(&and.dest),
+                format_type(&get_operand_type(&and.operand0)),
+                format_operand(&and.operand0),
+                format_operand(&and.operand1)
+            )
+        }
+        llvm_ir::Instruction::Or(or_instr) => {
+            format!(
+                "{} = or {} {}, {}",
+                format_value_name(&or_instr.dest),
+                format_type(&get_operand_type(&or_instr.operand0)),
+                format_operand(&or_instr.operand0),
+                format_operand(&or_instr.operand1)
+            )
+        }
+        llvm_ir::Instruction::Xor(xor) => {
+            format!(
+                "{} = xor {} {}, {}",
+                format_value_name(&xor.dest),
+                format_type(&get_operand_type(&xor.operand0)),
+                format_operand(&xor.operand0),
+                format_operand(&xor.operand1)
+            )
+        }
+        llvm_ir::Instruction::Shl(shl) => {
+            format!(
+                "{} = shl {} {}, {}",
+                format_value_name(&shl.dest),
+                format_type(&get_operand_type(&shl.operand0)),
+                format_operand(&shl.operand0),
+                format_operand(&shl.operand1)
+            )
+        }
+        llvm_ir::Instruction::LShr(lshr) => {
+            format!(
+                "{} = lshr {} {}, {}",
+                format_value_name(&lshr.dest),
+                format_type(&get_operand_type(&lshr.operand0)),
+                format_operand(&lshr.operand0),
+                format_operand(&lshr.operand1)
+            )
+        }
+        llvm_ir::Instruction::AShr(ashr) => {
+            format!(
+                "{} = ashr {} {}, {}",
+                format_value_name(&ashr.dest),
+                format_type(&get_operand_type(&ashr.operand0)),
+                format_operand(&ashr.operand0),
+                format_operand(&ashr.operand1)
+            )
+        }
         llvm_ir::Instruction::UDiv(div) => {
             format!(
                 "{} = udiv {} {}, {}",
@@ -877,6 +969,33 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 format_type(&get_operand_type(&div.operand0)),
                 format_operand(&div.operand0),
                 format_operand(&div.operand1)
+            )
+        }
+        llvm_ir::Instruction::SDiv(div) => {
+            format!(
+                "{} = sdiv {} {}, {}",
+                format_value_name(&div.dest),
+                format_type(&get_operand_type(&div.operand0)),
+                format_operand(&div.operand0),
+                format_operand(&div.operand1)
+            )
+        }
+        llvm_ir::Instruction::SRem(srem) => {
+            format!(
+                "{} = srem {} {}, {}",
+                format_value_name(&srem.dest),
+                format_type(&get_operand_type(&srem.operand0)),
+                format_operand(&srem.operand0),
+                format_operand(&srem.operand1)
+            )
+        }
+        llvm_ir::Instruction::URem(urem) => {
+            format!(
+                "{} = urem {} {}, {}",
+                format_value_name(&urem.dest),
+                format_type(&get_operand_type(&urem.operand0)),
+                format_operand(&urem.operand0),
+                format_operand(&urem.operand1)
             )
         }
         llvm_ir::Instruction::ZExt(zext) => {

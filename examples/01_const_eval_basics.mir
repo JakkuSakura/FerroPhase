@@ -2,7 +2,7 @@ mir::Program {
     items:
         fn main::main() -> i32 [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 34 }
+        body0 { arg_count: 0, locals: 30 }
             return_local: _0
             locals:
                 _0: i32
@@ -29,16 +29,12 @@ mir::Program {
                 _21: ()
                 _22: i64
                 _23: i32
-                _24: i32
-                _25: i64
-                _26: i64
+                _24: i64
+                _25: u64
+                _26: ()
                 _27: i32
-                _28: i32
-                _29: i32
-                _30: ()
-                _31: i32
-                _32: ()
-                _33: ()
+                _28: ()
+                _29: ()
             blocks:
                 bb0:
                     s0: _8 = const Constant { span: Span { file: 958031099278485038, lo: 3, hi: 4 }, user_ty: None, literal: Int(4096) }
@@ -70,17 +66,13 @@ mir::Program {
                     s1: _22 = const Constant { span: Span { file: 958031099278485038, lo: 41, hi: 42 }, user_ty: None, literal: Int(0) }
                     s2: _7 = move _22
                     s3: _23 = const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Int(I32) }) }
-                    s4: _24 = move _7
-                    s5: _25 = const Constant { span: Span { file: 958031099278485038, lo: 50, hi: 51 }, user_ty: None, literal: Int(1024) }
-                    s6: _26 = Div(move _24, move _25)
-                    s7: _27 = move _7
-                    s8: _28 = move _7
-                    s9: _29 = move _7
-                    terminator: call move _23(const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Str("Config: buffer=%luKB, connections=%d, timeout=%llums, debug=%d") }, move _26, move _27, move _28, move _29) -> _30 then bb4
+                    s4: _24 = const Constant { span: Span { file: 958031099278485038, lo: 50, hi: 51 }, user_ty: None, literal: Int(1024) }
+                    s5: _25 = Div(move _1, move _24)
+                    terminator: call move _23(const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Str("Config: buffer=%luKB, connections=%d, timeout=%llums, debug=%d") }, move _25, move _2, move _3, move _6) -> _26 then bb4
                 bb4:
-                    s0: _31 = const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Int(I32) }) }
-                    terminator: call move _31(const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Str("Computed: factorial=%lld, is_pow2=%d") }, move _4, move _5) -> _32 then bb5
+                    s0: _27 = const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Int(I32) }) }
+                    terminator: call move _27(const Constant { span: Span { file: 0, lo: 0, hi: 0 }, user_ty: None, literal: Str("Computed: factorial=%lld, is_pow2=%d") }, move _4, move _5) -> _28 then bb5
                 bb5:
-                    s0: _0 = move _33
+                    s0: _0 = move _29
                     terminator: return
 }
