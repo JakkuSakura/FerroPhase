@@ -224,14 +224,21 @@ impl ThirGenerator {
                 self.predeclare_structs_expr(cond);
                 self.predeclare_structs_block(block);
             }
-            ExprKind::StdIoPrintln(println) => {
-                for arg in &println.format.args {
-                    self.predeclare_structs_expr(arg);
+            ExprKind::IntrinsicCall(call) => match &call.payload {
+                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                    for arg in &template.args {
+                        self.predeclare_structs_expr(arg);
+                    }
+                    for kw in &template.kwargs {
+                        self.predeclare_structs_expr(&kw.value);
+                    }
                 }
-                for kw in &println.format.kwargs {
-                    self.predeclare_structs_expr(&kw.value);
+                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                    for arg in args {
+                        self.predeclare_structs_expr(arg);
+                    }
                 }
-            }
+            },
             ExprKind::Let(_, _, init) => {
                 if let Some(expr) = init {
                     self.predeclare_structs_expr(expr);
@@ -395,15 +402,23 @@ impl ThirGenerator {
                 Ok(())
             }
             ExprKind::Block(block) => self.collect_block_type_info(block),
-            ExprKind::StdIoPrintln(println) => {
-                for arg in &println.format.args {
-                    self.collect_expr_type_info(arg)?;
+            ExprKind::IntrinsicCall(call) => match &call.payload {
+                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                    for arg in &template.args {
+                        self.collect_expr_type_info(arg)?;
+                    }
+                    for kw in &template.kwargs {
+                        self.collect_expr_type_info(&kw.value)?;
+                    }
+                    Ok(())
                 }
-                for kw in &println.format.kwargs {
-                    self.collect_expr_type_info(&kw.value)?;
+                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                    for arg in args {
+                        self.collect_expr_type_info(arg)?;
+                    }
+                    Ok(())
                 }
-                Ok(())
-            }
+            },
             ExprKind::Let(_, _, init) => {
                 if let Some(expr) = init {
                     self.collect_expr_type_info(expr)?;

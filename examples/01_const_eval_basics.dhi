@@ -10,8 +10,8 @@ hir::Program {
             {
             }
             let DEFAULT_CONFIG: Config = 0;
-            std::io::println("Config: buffer=%luKB, connections=%d, timeout=%llums, debug=%d", (BUFFER_SIZE / 1024), MAX_CONNECTIONS, TIMEOUT_MS, DEBUG_LEVEL)
-            std::io::println("Computed: factorial=%lld, is_pow2=%d", FACTORIAL_5, IS_POWER_OF_TWO)
+            std::Println(4 args)
+            std::Println(2 args)
         }
     }
 }

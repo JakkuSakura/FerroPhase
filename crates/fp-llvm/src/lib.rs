@@ -1,9 +1,9 @@
 pub mod codegen;
 pub mod context;
 pub mod debug_info;
+pub mod intrinsics;
 pub mod linking;
 pub mod pretty;
-pub mod stdlib;
 pub mod target;
 
 use crate::codegen::LirCodegen;

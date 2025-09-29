@@ -334,8 +334,27 @@ pub fn diagnostic_manager() -> Arc<DiagnosticManager> {
 }
 
 pub fn report_error(message: impl Into<String>) -> crate::error::Error {
-    let diagnostic = Diagnostic::error(message.into());
-    println!("[diagnostic] {}", diagnostic.message);
+    report_error_impl(None, message.into())
+}
+
+pub fn report_error_with_context(
+    context: impl Into<String>,
+    message: impl Into<String>,
+) -> crate::error::Error {
+    report_error_impl(Some(context.into()), message.into())
+}
+
+fn report_error_impl(context: Option<String>, message: String) -> crate::error::Error {
+    let mut diagnostic = Diagnostic::error(message.clone());
+    if let Some(ctx) = context.as_ref() {
+        diagnostic = diagnostic.with_source_context(ctx.clone());
+    }
+
+    match context.as_ref() {
+        Some(ctx) => println!("[diagnostic] [{}] {}", ctx, message),
+        None => println!("[diagnostic] {}", message),
+    }
+
     diagnostic_manager().error(diagnostic.clone());
     crate::error::Error::diagnostic(diagnostic)
 }

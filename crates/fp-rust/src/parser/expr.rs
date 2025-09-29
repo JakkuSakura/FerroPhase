@@ -6,6 +6,7 @@ use fp_core::ast::*;
 use fp_core::bail;
 use fp_core::error::Result;
 use fp_core::id::Ident;
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::utils::anybox::AnyBox;
 use itertools::Itertools;
@@ -426,14 +427,16 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
 
     // Handle empty println!()
     if tokens_str.trim().is_empty() {
-        let println_expr = Expr::StdIoPrintln(ExprStdIoPrintln {
-            format: ExprFormatString {
-                parts: vec![FormatTemplatePart::Literal(String::new())],
-                args: Vec::new(),
-                kwargs: Vec::new(),
+        let println_expr = Expr::IntrinsicCall(ExprIntrinsicCall::new(
+            IntrinsicCallKind::Println,
+            IntrinsicCallPayload::Format {
+                template: ExprFormatString {
+                    parts: vec![FormatTemplatePart::Literal(String::new())],
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
             },
-            newline: true,
-        });
+        ));
         return Ok(println_expr);
     }
 
@@ -461,10 +464,10 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
                             kwargs: Vec::new(), // No named args for now
                         };
 
-                        return Ok(Expr::StdIoPrintln(ExprStdIoPrintln {
-                            format,
-                            newline: true,
-                        }));
+                        return Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+                            IntrinsicCallKind::Println,
+                            IntrinsicCallPayload::Format { template: format },
+                        )));
                     }
                 }
             }

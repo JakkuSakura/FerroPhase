@@ -1,4 +1,5 @@
 use crate::CliError;
+use fp_core::ast::typed as tast;
 use fp_core::ast::{AstSerializer, Node};
 use fp_rust::printer::RustPrinter;
 use quote::quote;
@@ -8,8 +9,10 @@ pub struct CodeGenerator;
 
 impl CodeGenerator {
     /// Generate Rust code from AST
-    pub fn generate_rust_code(ast: &Node) -> Result<String, CliError> {
+    pub fn generate_rust_code(program: &tast::Program) -> Result<String, CliError> {
         let printer = RustPrinter::new();
+
+        let ast = program.root();
 
         match ast {
             Node::Expr(expr) => {

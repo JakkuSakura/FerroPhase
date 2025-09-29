@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::intrinsics::{IntrinsicCall, IntrinsicCallPayload as GenericIntrinsicCallPayload};
+
 pub mod ty;
 pub use ty::Ty;
 pub mod pretty;
@@ -131,6 +133,7 @@ pub enum ExprKind {
         args: Vec<Expr>,
         from_hir_call: bool,
     },
+    IntrinsicCall(ThirIntrinsicCall),
     Deref(Box<Expr>),
     Index(Box<Expr>, Box<Expr>),
     Field {
@@ -206,6 +209,41 @@ pub struct Block {
     pub expr: Option<Box<Expr>>,
     pub safety_mode: BlockSafetyMode,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormatString {
+    pub parts: Vec<FormatTemplatePart>,
+    pub args: Vec<Expr>,
+    pub kwargs: Vec<FormatKwArg>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormatTemplatePart {
+    Literal(String),
+    Placeholder(FormatPlaceholder),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormatPlaceholder {
+    pub arg_ref: FormatArgRef,
+    pub format_spec: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormatArgRef {
+    Implicit,
+    Positional(usize),
+    Named(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FormatKwArg {
+    pub name: String,
+    pub value: Expr,
+}
+
+pub type ThirIntrinsicCall = IntrinsicCall<ThirIntrinsicCallPayload>;
+pub type ThirIntrinsicCallPayload = GenericIntrinsicCallPayload<Expr, FormatString>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemRef {

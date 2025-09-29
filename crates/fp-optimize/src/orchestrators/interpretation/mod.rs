@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::optimization_error;
+use crate::transformations::thir::format::build_printf_format;
 
 macro_rules! propagate_flow {
     ($value:expr) => {
@@ -384,6 +385,75 @@ impl InterpretationOrchestrator {
             }
             EK::Call { fun, args, .. } => {
                 self.evaluate_call(fun, args, program, ctx, locals, const_values)
+            }
+            EK::IntrinsicCall(call) => {
+                use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+
+                match call.kind {
+                    IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                        let template = match &call.payload {
+                            IntrinsicCallPayload::Format { template } => template,
+                            IntrinsicCallPayload::Args { .. } => {
+                                return Err(optimization_error(
+                                    "print intrinsics require format payload",
+                                ))
+                            }
+                        };
+
+                        let mut evaluated_args = Vec::with_capacity(template.args.len());
+                        for arg in &template.args {
+                            let value = propagate_flow!(self.evaluate_expr(
+                                arg,
+                                program,
+                                ctx,
+                                locals,
+                                const_values,
+                            )?);
+                            evaluated_args.push(value);
+                        }
+
+                        let format_literal = build_printf_format(
+                            template,
+                            &template.args,
+                            matches!(call.kind, IntrinsicCallKind::Println),
+                        );
+                        let mut printf_args = Vec::with_capacity(evaluated_args.len() + 1);
+                        printf_args.push(Value::string(format_literal));
+                        printf_args.extend(evaluated_args.into_iter());
+
+                        self.perform_print(
+                            matches!(call.kind, IntrinsicCallKind::Println),
+                            &printf_args,
+                            ctx,
+                        )
+                        .map(EvalFlow::Value)
+                    }
+                    IntrinsicCallKind::Len => {
+                        let arg_expr = match &call.payload {
+                            IntrinsicCallPayload::Args { args } => {
+                                args.first().ok_or_else(|| {
+                                    optimization_error("len intrinsic expects one argument")
+                                })?
+                            }
+                            IntrinsicCallPayload::Format { .. } => {
+                                return Err(optimization_error(
+                                    "len intrinsic should not carry format payload",
+                                ))
+                            }
+                        };
+
+                        let value = propagate_flow!(self.evaluate_expr(
+                            arg_expr,
+                            program,
+                            ctx,
+                            locals,
+                            const_values,
+                        )?);
+
+                        let result = self.perform_strlen(&[value])?;
+                        Ok(EvalFlow::Value(result))
+                    }
+                }
             }
             EK::Scope { value, .. } => {
                 self.evaluate_expr(value, program, ctx, locals, const_values)

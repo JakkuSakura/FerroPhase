@@ -1,10 +1,13 @@
 use crate::context::LlvmContext;
-use crate::stdlib::CStdLib;
-use fp_core::diagnostics::report_error;
+use crate::intrinsics::CRuntimeIntrinsics;
+use fp_core::diagnostics::report_error_with_context;
 use fp_core::intrinsics::{
     self, BackendFlavor, CallAbi, CallArgStrategy, ResolvedCall, ResolvedIntrinsic,
 };
-use fp_core::{error::Result, lir};
+use fp_core::{
+    error::{Error, Result},
+    lir,
+};
 use llvm_ir::constant::Float;
 use llvm_ir::instruction::{And, LShr, Or, SRem, Shl, Xor};
 use llvm_ir::module::{DLLStorageClass, GlobalVariable, Linkage, ThreadLocalMode, Visibility};
@@ -39,6 +42,21 @@ pub struct LirCodegen<'ctx> {
 }
 
 impl<'ctx> LirCodegen<'ctx> {
+    fn attach_context(&self, err: Error, context: impl Into<String>) -> Error {
+        match err {
+            Error::Diagnostic(diag) => {
+                let diag = if diag.source_context.is_none() {
+                    diag.with_source_context(LOG_AREA.to_string())
+                } else {
+                    diag
+                };
+                let diag = diag.with_suggestion(context.into());
+                Error::diagnostic(diag)
+            }
+            other => other,
+        }
+    }
+
     /// Create a new LIR code generator
     pub fn new(
         llvm_ctx: &'ctx mut LlvmContext,
@@ -113,11 +131,12 @@ impl<'ctx> LirCodegen<'ctx> {
                 num_globals,
                 global.name
             );
-            self.generate_global(global).map_err(|e| {
-                report_error(format!(
-                    "{} Failed to generate global {} at step: {}",
-                    LOG_AREA, i, e
-                ))
+            let global_name = global.name.clone();
+            self.generate_global(global).map_err(|err| {
+                self.attach_context(
+                    err,
+                    format!("while generating global '{}' (index {})", global_name, i),
+                )
             })?;
         }
 
@@ -130,11 +149,14 @@ impl<'ctx> LirCodegen<'ctx> {
                 num_functions,
                 function_name
             );
-            self.generate_function(function).map_err(|e| {
-                report_error(format!(
-                    "{} Failed to generate function {} '{}' at step: {}",
-                    LOG_AREA, i, function_name, e
-                ))
+            self.generate_function(function).map_err(|err| {
+                self.attach_context(
+                    err,
+                    format!(
+                        "while generating function '{}' (index {})",
+                        function_name, i
+                    ),
+                )
             })?;
         }
 
@@ -181,10 +203,10 @@ impl<'ctx> LirCodegen<'ctx> {
             let ty = self.get_type_from_constant(&llvm_constant)?.into();
             (ty, Some(llvm_constant))
         } else {
-            return Err(report_error(format!(
-                "{} Global variable '{}' must have an initializer",
-                LOG_AREA, global.name
-            )));
+            return Err(report_error_with_context(
+                LOG_AREA,
+                format!("Global variable '{}' must have an initializer", global.name),
+            ));
         };
 
         let global_var = GlobalVariable {
@@ -221,6 +243,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
         // Convert parameter types
         debug!("LLVM: Converting parameter types for {}", lir_func.name);
+        let func_name_for_params = lir_func.name.clone();
         let param_types: Vec<Type> = lir_func
             .signature
             .params
@@ -228,12 +251,12 @@ impl<'ctx> LirCodegen<'ctx> {
             .enumerate()
             .map(|(i, param)| {
                 debug!("LLVM: Converting param {} type: {:?}", i, param);
-                self.convert_lir_type_to_llvm(param.clone()).map_err(|e| {
-                    report_error(format!(
-                        "{} Failed to convert parameter {} type: {}",
-                        LOG_AREA, i, e
-                    ))
-                })
+                let context = format!(
+                    "while converting parameter {} of function '{}'",
+                    i, func_name_for_params
+                );
+                self.convert_lir_type_to_llvm(param.clone())
+                    .map_err(|err| self.attach_context(err, context))
             })
             .collect::<Result<Vec<_>>>()?;
         debug!(
@@ -250,10 +273,17 @@ impl<'ctx> LirCodegen<'ctx> {
         if lir_func.name == "main" && matches!(return_lir_type, lir::LirType::Void) {
             return_lir_type = lir::LirType::I32;
         }
+        let func_name_for_return = lir_func.name.clone();
         let return_type = self
             .convert_lir_type_to_llvm(return_lir_type.clone())
-            .map_err(|e| {
-                report_error(format!("{} Failed to convert return type: {}", LOG_AREA, e))
+            .map_err(|err| {
+                self.attach_context(
+                    err,
+                    format!(
+                        "while converting return type of function '{}'",
+                        func_name_for_return
+                    ),
+                )
             })?;
         debug!("LLVM: Converted return type successfully");
 
@@ -292,11 +322,16 @@ impl<'ctx> LirCodegen<'ctx> {
                 "LLVM: Processing basic block {}: {:?}",
                 i, basic_block.label
             );
-            self.generate_basic_block(basic_block).map_err(|e| {
-                report_error(format!(
-                    "{} Failed to generate basic block {}: {}",
-                    LOG_AREA, i, e
-                ))
+            let block_id = basic_block.id;
+            let block_label = basic_block.label.clone();
+            self.generate_basic_block(basic_block).map_err(|err| {
+                self.attach_context(
+                    err,
+                    format!(
+                        "while generating basic block {} ({:?}) of function '{}'",
+                        block_id, block_label, function_name
+                    ),
+                )
             })?;
         }
 
@@ -321,10 +356,9 @@ impl<'ctx> LirCodegen<'ctx> {
         self.block_map
             .insert(lir_block.id, Name::Name(Box::new(block_name.clone())));
 
-        let func_name = self
-            .llvm_ctx
-            .current_function()
-            .ok_or_else(|| report_error(format!("{} No current function set", LOG_AREA)))?;
+        let func_name = self.llvm_ctx.current_function().ok_or_else(|| {
+            report_error_with_context(LOG_AREA, "No current function set".to_string())
+        })?;
 
         // Add the basic block to the function
         let function = self
@@ -333,7 +367,9 @@ impl<'ctx> LirCodegen<'ctx> {
             .functions
             .iter_mut()
             .find(|f| f.name == func_name)
-            .ok_or_else(|| report_error(format!("{} Current function not found", LOG_AREA)))?;
+            .ok_or_else(|| {
+                report_error_with_context(LOG_AREA, "Current function not found".to_string())
+            })?;
 
         function.basic_blocks.push(basic_block);
         debug!("LLVM: Created LLVM BasicBlock: {}", block_name);
@@ -870,12 +906,12 @@ impl<'ctx> LirCodegen<'ctx> {
                 }
             }
 
-            let runtime_target = self.map_std_function_to_runtime(logical_name);
+            let runtime_target = self.map_intrinsic_to_runtime(logical_name);
             let append_newline = matches!(
                 logical_name.as_str(),
                 "println" | "println!" | "std::io::println" | "print" | "std::io::print"
             );
-            if CStdLib::is_stdlib_function(&runtime_target) {
+            if CRuntimeIntrinsics::is_runtime_intrinsic(&runtime_target) {
                 return self.lower_runtime_call(
                     instr_id,
                     ty_hint,
@@ -908,13 +944,14 @@ impl<'ctx> LirCodegen<'ctx> {
         calling_convention: lir::CallingConvention,
         tail_call: bool,
     ) -> Result<instruction::Call> {
-        let runtime_decl = CStdLib::get_function_decl(&runtime_name, &self.llvm_ctx.module.types)
-            .ok_or_else(|| {
-            report_error(format!(
-                "{} Unknown runtime function '{}'",
-                LOG_AREA, runtime_name
-            ))
-        })?;
+        let runtime_decl =
+            CRuntimeIntrinsics::get_intrinsic_decl(&runtime_name, &self.llvm_ctx.module.types)
+                .ok_or_else(|| {
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown runtime function '{}'", runtime_name),
+                    )
+                })?;
 
         let return_type = runtime_decl.return_type.clone();
         let param_type_refs: Vec<TypeRef> = runtime_decl
@@ -1041,10 +1078,13 @@ impl<'ctx> LirCodegen<'ctx> {
             .iter()
             .find(|f| f.name == function_name)
             .ok_or_else(|| {
-                report_error(format!(
-                    "{} Unable to find LLVM function record for '{}'",
-                    LOG_AREA, function_name
-                ))
+                report_error_with_context(
+                    LOG_AREA,
+                    format!(
+                        "Unable to find LLVM function record for '{}'",
+                        function_name
+                    ),
+                )
             })?
             .clone();
 
@@ -1052,10 +1092,13 @@ impl<'ctx> LirCodegen<'ctx> {
         for local in locals {
             if local.is_argument {
                 let param = param_iter.next().ok_or_else(|| {
-                    report_error(format!(
-                        "{} Not enough LLVM parameters to map local argument {} in '{}'",
-                        LOG_AREA, local.id, function_name
-                    ))
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!(
+                            "Not enough LLVM parameters to map local argument {} in '{}'",
+                            local.id, function_name
+                        ),
+                    )
                 })?;
 
                 let operand = Operand::LocalOperand {
@@ -1082,10 +1125,10 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirValue::Function(name) => (name.clone(), None),
             lir::LirValue::Global(name, _) => (name.clone(), None),
             other => {
-                return Err(report_error(format!(
-                    "{} Unsupported call target in LLVM lowering: {:?}",
-                    LOG_AREA, other
-                )));
+                return Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("Unsupported call target in LLVM lowering: {:?}", other),
+                ));
             }
         };
 
@@ -1109,10 +1152,13 @@ impl<'ctx> LirCodegen<'ctx> {
             let mut inferred = Vec::with_capacity(args.len());
             for (index, arg) in args.iter().enumerate() {
                 let ty = self.lir_value_type(arg).ok_or_else(|| {
-                    report_error(format!(
-                        "{} Unable to determine type for argument {} in call to '{}'",
-                        LOG_AREA, index, function_name
-                    ))
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!(
+                            "Unable to determine type for argument {} in call to '{}'",
+                            index, function_name
+                        ),
+                    )
                 })?;
                 inferred.push(ty);
             }
@@ -1581,8 +1627,8 @@ impl<'ctx> LirCodegen<'ctx> {
         Ok(operand)
     }
 
-    /// Map std library functions to their runtime implementations
-    fn map_std_function_to_runtime(&self, fn_name: &str) -> String {
+    /// Map intrinsic functions to their runtime implementations
+    fn map_intrinsic_to_runtime(&self, fn_name: &str) -> String {
         match fn_name {
             // I/O functions
             "println" | "println!" | "std::io::println" => "printf".to_string(),
@@ -1676,10 +1722,10 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
             }
             term => {
-                return Err(report_error(format!(
-                    "{} Unimplemented LIR terminator: {:?}",
-                    LOG_AREA, term
-                )));
+                return Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("Unimplemented LIR terminator: {:?}", term),
+                ));
             }
         }
 
@@ -1700,10 +1746,10 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .operand_from_name_and_type(name.clone(), &llvm_ty))
                 } else {
-                    Err(report_error(format!(
-                        "{} Unknown register {} encountered during codegen",
-                        LOG_AREA, reg_id
-                    )))
+                    Err(report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown register {} encountered during codegen", reg_id),
+                    ))
                 }
             }
             lir::LirValue::Constant(constant) => {
@@ -1715,8 +1761,8 @@ impl<'ctx> LirCodegen<'ctx> {
                     return self.convert_lir_value_to_operand(lir::LirValue::Function(name));
                 }
 
-                let runtime_target = self.map_std_function_to_runtime(&name);
-                if CStdLib::is_stdlib_function(&runtime_target) {
+                let runtime_target = self.map_intrinsic_to_runtime(&name);
+                if CRuntimeIntrinsics::is_runtime_intrinsic(&runtime_target) {
                     return self
                         .convert_lir_value_to_operand(lir::LirValue::Function(runtime_target));
                 }
@@ -1727,13 +1773,13 @@ impl<'ctx> LirCodegen<'ctx> {
                     return Ok(self.llvm_ctx.operand_from_constant(llvm_constant));
                 }
 
-                Err(report_error(format!(
-                    "{} Global variable '{}' of type {:?} not found",
-                    LOG_AREA, name, ty
-                )))
+                Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("Global variable '{}' of type {:?} not found", name, ty),
+                ))
             }
             lir::LirValue::Function(name) => {
-                let runtime_name = self.map_std_function_to_runtime(&name);
+                let runtime_name = self.map_intrinsic_to_runtime(&name);
                 let llvm_name = self.llvm_symbol_for(&runtime_name);
 
                 let fn_ty = if let Some(signature) = self.function_signatures.get(&runtime_name) {
@@ -1744,9 +1790,10 @@ impl<'ctx> LirCodegen<'ctx> {
                         existing.parameters.iter().map(|p| p.ty.clone()).collect(),
                         existing.is_var_arg,
                     )
-                } else if let Some(runtime_decl) =
-                    CStdLib::get_function_decl(&runtime_name, &self.llvm_ctx.module.types)
-                {
+                } else if let Some(runtime_decl) = CRuntimeIntrinsics::get_intrinsic_decl(
+                    &runtime_name,
+                    &self.llvm_ctx.module.types,
+                ) {
                     if !self
                         .llvm_ctx
                         .module
@@ -1767,10 +1814,13 @@ impl<'ctx> LirCodegen<'ctx> {
                         runtime_decl.is_var_arg,
                     )
                 } else {
-                    return Err(report_error(format!(
-                        "{} Unknown function reference '{}' encountered during codegen",
-                        LOG_AREA, name
-                    )));
+                    return Err(report_error_with_context(
+                        LOG_AREA,
+                        format!(
+                            "Unknown function reference '{}' encountered during codegen",
+                            name
+                        ),
+                    ));
                 };
 
                 Ok(Operand::ConstantOperand(ConstantRef::new(
@@ -1785,10 +1835,10 @@ impl<'ctx> LirCodegen<'ctx> {
                     return Ok(op.clone());
                 }
 
-                Err(report_error(format!(
-                    "{} Unknown local: {}",
-                    LOG_AREA, local_id
-                )))
+                Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("Unknown local: {}", local_id),
+                ))
             }
             lir::LirValue::StackSlot(slot_id) => {
                 // For now, treat stack slots like registers
@@ -1798,10 +1848,10 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .operand_from_name_and_type(name.clone(), &llvm_ty))
                 } else {
-                    Err(report_error(format!(
-                        "{} Unknown stack slot: {}",
-                        LOG_AREA, slot_id
-                    )))
+                    Err(report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown stack slot: {}", slot_id),
+                    ))
                 }
             }
             lir::LirValue::Undef(_ty) => {
@@ -1832,18 +1882,21 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirConstant::Float(value, ty) => match ty {
                 lir::LirType::F32 => Ok(self.llvm_ctx.const_f32(value as f32)),
                 lir::LirType::F64 => Ok(self.llvm_ctx.const_f64(value)),
-                other => Err(report_error(format!(
-                    "{} Unsupported floating-point type {:?} for LLVM constant",
-                    LOG_AREA, other
-                ))),
+                other => Err(report_error_with_context(
+                    LOG_AREA,
+                    format!(
+                        "Unsupported floating-point type {:?} for LLVM constant",
+                        other
+                    ),
+                )),
             },
             lir::LirConstant::Bool(value) => Ok(self.llvm_ctx.const_bool(value)),
             lir::LirConstant::String(s) => {
                 // Defer to mutable self method via interior mutability workaround
-                Err(report_error(format!(
-                    "{} String constant requires mutable context: {}",
-                    LOG_AREA, s
-                )))
+                Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("String constant requires mutable context: {}", s),
+                ))
             }
             _ => Err("Unsupported LIR constant in LLVM conversion".into()),
         }
@@ -1900,27 +1953,16 @@ impl<'ctx> LirCodegen<'ctx> {
         let target_type_clone = Type::IntegerType { bits: target_bits };
         let name = if operand_bits < target_bits {
             if signed {
-                self
-                    .llvm_ctx
-                    .build_sext(
-                        operand,
-                        target_type_clone.clone(),
-                        &format!("{}_sext", tag),
-                    )
+                self.llvm_ctx
+                    .build_sext(operand, target_type_clone.clone(), &format!("{}_sext", tag))
                     .map_err(fp_core::error::Error::from)?
             } else {
-                self
-                    .llvm_ctx
-                    .build_zext(
-                        operand,
-                        target_type_clone.clone(),
-                        &format!("{}_zext", tag),
-                    )
+                self.llvm_ctx
+                    .build_zext(operand, target_type_clone.clone(), &format!("{}_zext", tag))
                     .map_err(fp_core::error::Error::from)?
             }
         } else {
-            self
-                .llvm_ctx
+            self.llvm_ctx
                 .build_trunc(
                     operand,
                     target_type_clone.clone(),
@@ -1931,11 +1973,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
         Ok(Operand::LocalOperand {
             name,
-            ty: self
-                .llvm_ctx
-                .module
-                .types
-                .get_for_type(&target_type_clone),
+            ty: self.llvm_ctx.module.types.get_for_type(&target_type_clone),
         })
     }
 
@@ -1976,10 +2014,10 @@ impl<'ctx> LirCodegen<'ctx> {
                 32 => self.llvm_ctx.module.types.i32(),
                 64 => self.llvm_ctx.module.types.i64(),
                 other => {
-                    return Err(report_error(format!(
-                        "{} Unsupported integer bit width {} for LLVM constant",
-                        LOG_AREA, other
-                    )))
+                    return Err(report_error_with_context(
+                        LOG_AREA,
+                        format!("Unsupported integer bit width {} for LLVM constant", other),
+                    ))
                 }
             },
             Constant::Float(Float::Single(_)) => self.llvm_ctx.module.types.fp(FPType::Single),
@@ -1993,10 +2031,10 @@ impl<'ctx> LirCodegen<'ctx> {
                 .types
                 .array_of(element_type.clone(), elements.len()),
             other => {
-                return Err(report_error(format!(
-                    "{} Unsupported LLVM constant for type inference: {:?}",
-                    LOG_AREA, other
-                )))
+                return Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("Unsupported LLVM constant for type inference: {:?}", other),
+                ))
             }
         };
 

@@ -3,8 +3,8 @@ use std::fmt::{self, Formatter};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
-    Body, BodyId, Const, Expr, ExprKind, Function, Impl, ImplItemKind, Item, ItemKind, Lit,
-    Mutability, Pat, PatKind, Program, Struct, Ty, VariantData,
+    Body, BodyId, Const, Expr, ExprKind, FormatTemplatePart, Function, Impl, ImplItemKind, Item,
+    ItemKind, Lit, Mutability, Pat, PatKind, Program, Struct, Ty, VariantData,
 };
 
 impl PrettyPrintable for Program {
@@ -249,6 +249,30 @@ fn summarize_expr(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .join(", ");
             format!("call({}, [{}])", summarize_simple(fun, ctx), args)
         }
+        ExprKind::IntrinsicCall(call) => match &call.payload {
+            crate::intrinsics::IntrinsicCallPayload::Format { template } => {
+                let args = template
+                    .args
+                    .iter()
+                    .map(|arg| summarize_simple(arg, ctx))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "std::{:?}({}, [{}])",
+                    call.kind,
+                    summarize_format_parts(&template.parts),
+                    args
+                )
+            }
+            crate::intrinsics::IntrinsicCallPayload::Args { args } => {
+                let args = args
+                    .iter()
+                    .map(|arg| summarize_simple(arg, ctx))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("std::{:?}([{}])", call.kind, args)
+            }
+        },
         ExprKind::Borrow { borrow_kind, arg } => {
             format!("borrow({:?}, {})", borrow_kind, summarize_simple(arg, ctx))
         }
@@ -319,6 +343,17 @@ fn summarize_lit(lit: &Lit) -> String {
         Lit::Str(s) => format!("\"{}\"", s),
         other => format!("{:?}", other),
     }
+}
+
+fn summarize_format_parts(parts: &[FormatTemplatePart]) -> String {
+    let mut buf = String::new();
+    for part in parts {
+        match part {
+            FormatTemplatePart::Literal(text) => buf.push_str(text),
+            FormatTemplatePart::Placeholder(_) => buf.push_str("{..}"),
+        }
+    }
+    buf
 }
 
 fn summarize_pat(pat: &Pat) -> String {
