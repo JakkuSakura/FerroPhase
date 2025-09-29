@@ -208,6 +208,59 @@ impl BackendThirMaterializer {
                     span,
                 }
             }
+            IntrinsicCallKind::ConstBlock => {
+                let args = match payload {
+                    IntrinsicCallPayload::Args { mut args } => {
+                        for arg in &mut args {
+                            self.materialize_expr(arg);
+                        }
+                        args
+                    }
+                    _ => unreachable!("const block intrinsic expects args payload"),
+                };
+
+                let result_ty = args
+                    .first()
+                    .map(|expr| expr.ty.clone())
+                    .unwrap_or_else(|| self.create_unit_type());
+
+                thir::Expr {
+                    thir_id,
+                    kind: ExprKind::IntrinsicCall(thir::ThirIntrinsicCall {
+                        kind,
+                        payload: IntrinsicCallPayload::Args { args },
+                    }),
+                    ty: result_ty,
+                    span,
+                }
+            }
+            IntrinsicCallKind::DebugAssertions => thir::Expr {
+                thir_id,
+                kind: ExprKind::IntrinsicCall(thir::ThirIntrinsicCall { kind, payload }),
+                ty: self.create_bool_type(),
+                span,
+            },
+            IntrinsicCallKind::Input => {
+                let args = match payload {
+                    IntrinsicCallPayload::Args { mut args } => {
+                        for arg in &mut args {
+                            self.materialize_expr(arg);
+                        }
+                        args
+                    }
+                    _ => Vec::new(),
+                };
+
+                thir::Expr {
+                    thir_id,
+                    kind: ExprKind::IntrinsicCall(thir::ThirIntrinsicCall {
+                        kind,
+                        payload: IntrinsicCallPayload::Args { args },
+                    }),
+                    ty: self.create_string_type(),
+                    span,
+                }
+            }
         }
     }
 
@@ -262,6 +315,10 @@ impl BackendThirMaterializer {
                 mutbl: Mutability::Not,
             }),
         }
+    }
+
+    fn create_bool_type(&self) -> Ty {
+        Ty { kind: TyKind::Bool }
     }
 
     fn create_usize_type(&self) -> Ty {

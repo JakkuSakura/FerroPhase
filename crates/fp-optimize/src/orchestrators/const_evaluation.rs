@@ -41,6 +41,10 @@ impl ConstEvaluationOrchestrator {
         self
     }
 
+    pub fn set_debug_assertions(&mut self, enabled: bool) {
+        self.interpreter.set_debug_assertions(enabled);
+    }
+
     pub fn evaluate(
         &mut self,
         program: &thir::Program,
