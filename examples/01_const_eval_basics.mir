@@ -2,7 +2,7 @@ mir::Program {
     items:
         fn main::main() -> i32 [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 30 }
+        body0 { arg_count: 0, locals: 32 }
             return_local: _0
             locals:
                 _0: i32
@@ -14,64 +14,70 @@ mir::Program {
                 _6: i32
                 _7: i64
                 _8: u64
-                _9: i32
-                _10: u64
-                _11: i64
-                _12: i64
-                _13: u64
-                _14: u64
-                _15: i64
-                _16: bool
-                _17: bool
-                _18: i32
-                _19: i64
-                _20: i64
-                _21: ()
+                _9: ()
+                _10: ()
+                _11: i32
+                _12: u64
+                _13: i64
+                _14: i64
+                _15: u64
+                _16: u64
+                _17: i64
+                _18: bool
+                _19: bool
+                _20: i32
+                _21: i64
                 _22: i64
                 _23: ()
                 _24: i64
-                _25: u64
-                _26: ()
-                _27: ()
+                _25: ()
+                _26: i64
+                _27: u64
                 _28: ()
                 _29: ()
+                _30: ()
+                _31: ()
             blocks:
                 bb0:
                     s0: _8 = const Constant { span: Span { file: 958031099278485038, lo: 3, hi: 4 }, user_ty: None, literal: Int(4096) }
                     s1: _1 = move _8
-                    s2: _9 = const Constant { span: Span { file: 958031099278485038, lo: 7, hi: 8 }, user_ty: None, literal: Int(150) }
-                    s3: _2 = move _9
-                    s4: _10 = const Constant { span: Span { file: 958031099278485038, lo: 11, hi: 12 }, user_ty: None, literal: Int(30000) }
-                    s5: _3 = move _10
-                    s6: _11 = const Constant { span: Span { file: 958031099278485038, lo: 15, hi: 16 }, user_ty: None, literal: Int(120) }
-                    s7: _4 = move _11
-                    s8: _12 = const Constant { span: Span { file: 958031099278485038, lo: 32, hi: 33 }, user_ty: None, literal: Int(1) }
-                    s9: _13 = Sub(move _1, move _12)
-                    s10: _14 = BitAnd(move _1, move _13)
-                    s11: _15 = const Constant { span: Span { file: 958031099278485038, lo: 33, hi: 34 }, user_ty: None, literal: Int(0) }
-                    s12: _16 = Eq(move _14, move _15)
-                    s13: _5 = move _16
-                    terminator: switch move _17 [1 -> bb1] otherwise -> bb2
+                    s2: _9 = const Constant { span: Span { file: 958031099278485038, lo: 6, hi: 7 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _9(const Constant { span: Span { file: 958031099278485038, lo: 6, hi: 7 }, user_ty: None, literal: Str("Buffer size: %llu Bytes\n") }, move _1) -> _10 then bb1
                 bb1:
-                    s0: _19 = const Constant { span: Span { file: 958031099278485038, lo: 37, hi: 38 }, user_ty: None, literal: Int(2) }
-                    s1: _18 = move _19
-                    terminator: goto -> bb3
+                    s0: _11 = const Constant { span: Span { file: 958031099278485038, lo: 9, hi: 10 }, user_ty: None, literal: Int(150) }
+                    s1: _2 = move _11
+                    s2: _12 = const Constant { span: Span { file: 958031099278485038, lo: 13, hi: 14 }, user_ty: None, literal: Int(30000) }
+                    s3: _3 = move _12
+                    s4: _13 = const Constant { span: Span { file: 958031099278485038, lo: 17, hi: 18 }, user_ty: None, literal: Int(120) }
+                    s5: _4 = move _13
+                    s6: _14 = const Constant { span: Span { file: 958031099278485038, lo: 34, hi: 35 }, user_ty: None, literal: Int(1) }
+                    s7: _15 = Sub(move _1, move _14)
+                    s8: _16 = BitAnd(move _1, move _15)
+                    s9: _17 = const Constant { span: Span { file: 958031099278485038, lo: 35, hi: 36 }, user_ty: None, literal: Int(0) }
+                    s10: _18 = Eq(move _16, move _17)
+                    s11: _5 = move _18
+                    s12: _19 = const Constant { span: Span { file: 958031099278485038, lo: 38, hi: 39 }, user_ty: None, literal: Bool(true) }
+                    terminator: switch move _19 [1 -> bb2] otherwise -> bb3
                 bb2:
-                    s0: _20 = const Constant { span: Span { file: 958031099278485038, lo: 38, hi: 39 }, user_ty: None, literal: Int(0) }
-                    s1: _18 = move _20
-                    terminator: goto -> bb3
+                    s0: _21 = const Constant { span: Span { file: 958031099278485038, lo: 39, hi: 40 }, user_ty: None, literal: Int(2) }
+                    s1: _20 = move _21
+                    terminator: goto -> bb4
                 bb3:
-                    s0: _6 = move _18
-                    s1: _22 = const Constant { span: Span { file: 958031099278485038, lo: 41, hi: 42 }, user_ty: None, literal: Int(0) }
-                    s2: _7 = move _22
-                    s3: _23 = const Constant { span: Span { file: 958031099278485038, lo: 46, hi: 47 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    s4: _24 = const Constant { span: Span { file: 958031099278485038, lo: 50, hi: 51 }, user_ty: None, literal: Int(1024) }
-                    s5: _25 = Div(move _1, move _24)
-                    terminator: call move _23(const Constant { span: Span { file: 958031099278485038, lo: 46, hi: 47 }, user_ty: None, literal: Str("Config: buffer=%lluKB, connections=%d, timeout=%llums, debug=%d\n") }, move _25, move _2, move _3, move _6) -> _26 then bb4
+                    s0: _22 = const Constant { span: Span { file: 958031099278485038, lo: 40, hi: 41 }, user_ty: None, literal: Int(0) }
+                    s1: _20 = move _22
+                    terminator: goto -> bb4
                 bb4:
-                    s0: _27 = const Constant { span: Span { file: 958031099278485038, lo: 57, hi: 58 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    terminator: call move _27(const Constant { span: Span { file: 958031099278485038, lo: 57, hi: 58 }, user_ty: None, literal: Str("Computed: factorial=%lld, is_pow2=%d\n") }, move _4, move _5) -> _28 then bb5
+                    s0: _6 = move _20
+                    s1: _24 = const Constant { span: Span { file: 958031099278485038, lo: 43, hi: 44 }, user_ty: None, literal: Int(0) }
+                    s2: _7 = move _24
+                    s3: _25 = const Constant { span: Span { file: 958031099278485038, lo: 48, hi: 49 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    s4: _26 = const Constant { span: Span { file: 958031099278485038, lo: 52, hi: 53 }, user_ty: None, literal: Int(1024) }
+                    s5: _27 = Div(move _1, move _26)
+                    terminator: call move _25(const Constant { span: Span { file: 958031099278485038, lo: 48, hi: 49 }, user_ty: None, literal: Str("Config: buffer=%lluKB, connections=%d, timeout=%llums, debug=%d\n") }, move _27, move _2, move _3, move _6) -> _28 then bb5
                 bb5:
-                    s0: _0 = move _29
+                    s0: _29 = const Constant { span: Span { file: 958031099278485038, lo: 59, hi: 60 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _29(const Constant { span: Span { file: 958031099278485038, lo: 59, hi: 60 }, user_ty: None, literal: Str("Computed: factorial=%lld, is_pow2=%d\n") }, move _4, move _5) -> _30 then bb6
+                bb6:
+                    s0: _0 = move _31
                     terminator: return
 }
