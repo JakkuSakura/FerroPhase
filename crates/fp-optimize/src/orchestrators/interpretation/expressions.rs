@@ -511,14 +511,42 @@ impl InterpretationOrchestrator {
                 .ok_or_else(|| optimization_error(format!("could not find {:?} in context", n))),
             Expr::Value(n) => self.interpret_value(n, ctx, resolve),
             Expr::Block(n) => self.interpret_block(n, ctx),
-            Expr::StdIoPrintln(print) => {
-                let formatted = self.interpret_format_string(&print.format, ctx)?;
-                let mut text = self.value_to_string(&formatted)?;
-                if print.newline {
-                    text.push('\n');
+            Expr::IntrinsicCall(call) => {
+                use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+
+                match call.kind {
+                    IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                        let template = match &call.payload {
+                            IntrinsicCallPayload::Format { template } => template,
+                            IntrinsicCallPayload::Args { .. } => {
+                                return Err(optimization_error(
+                                    "print intrinsics require format payload",
+                                ))
+                            }
+                        };
+                        let formatted = self.interpret_format_string(template, ctx)?;
+                        let mut text = self.value_to_string(&formatted)?;
+                        if matches!(call.kind, IntrinsicCallKind::Println) {
+                            text.push('\n');
+                        }
+                        ctx.root().print_str(text);
+                        Ok(Value::unit())
+                    }
+                    IntrinsicCallKind::Len => {
+                        let arg_expr = match &call.payload {
+                            IntrinsicCallPayload::Args { args } => args.first().ok_or_else(|| {
+                                optimization_error("len intrinsic expects a single argument")
+                            })?,
+                            IntrinsicCallPayload::Format { .. } => {
+                                return Err(optimization_error(
+                                    "len intrinsic should not use format payload",
+                                ))
+                            }
+                        };
+                        let value = self.interpret_expr(arg_expr, ctx)?;
+                        self.perform_strlen(&[value])
+                    }
                 }
-                ctx.root().print_str(text);
-                Ok(Value::unit())
             }
             Expr::Match(c) => self.interpret_cond(c, ctx),
             Expr::Invoke(invoke) => self.interpret_invoke(invoke, ctx),

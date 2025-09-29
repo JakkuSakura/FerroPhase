@@ -216,6 +216,21 @@ fn collect_expr_dependencies(
                 collect_expr_dependencies(arg, index, deps);
             }
         }
+        thir::ExprKind::IntrinsicCall(call) => match &call.payload {
+            fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                for arg in &template.args {
+                    collect_expr_dependencies(arg, index, deps);
+                }
+                for kw in &template.kwargs {
+                    collect_expr_dependencies(&kw.value, index, deps);
+                }
+            }
+            fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                for arg in args {
+                    collect_expr_dependencies(arg, index, deps);
+                }
+            }
+        },
         thir::ExprKind::Index(base, idx) => {
             collect_expr_dependencies(base, index, deps);
             collect_expr_dependencies(idx, index, deps);

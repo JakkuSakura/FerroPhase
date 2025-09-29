@@ -31,7 +31,7 @@ impl HirGenerator {
                 hir::ExprKind::Literal(hir::Lit::Bool(false))
             }
             Expr::FormatString(format_str) => self.transform_format_string_to_hir(format_str)?,
-            Expr::StdIoPrintln(println) => self.transform_std_io_println_to_hir(println)?,
+            Expr::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
             Expr::Reference(reference) => {
                 return self.transform_expr_to_hir(reference.referee.as_ref());
             }
@@ -324,8 +324,8 @@ impl HirGenerator {
                 ))
             }
             ast::ExprInvokeTarget::Function(locator) => {
-                if let Some(std_println) = ast::ExprStdIoPrintln::from_invoke(invoke) {
-                    return self.transform_std_io_println_to_hir(&std_println);
+                if let Some(intrinsic_call) = ast::intrinsic_call_from_invoke(invoke) {
+                    return self.transform_intrinsic_call_to_hir(&intrinsic_call);
                 }
 
                 let func_expr = hir::Expr {
@@ -598,70 +598,91 @@ impl HirGenerator {
         &mut self,
         format_str: &ast::ExprFormatString,
     ) -> Result<hir::ExprKind> {
-        self.transform_std_io_println_to_hir(&ast::ExprStdIoPrintln {
-            format: format_str.clone(),
-            newline: true,
-        })
+        let call = ast::ExprIntrinsicCall::new(
+            fp_core::intrinsics::IntrinsicCallKind::Println,
+            fp_core::intrinsics::IntrinsicCallPayload::Format {
+                template: format_str.clone(),
+            },
+        );
+        self.transform_intrinsic_call_to_hir(&call)
     }
 
-    pub(super) fn transform_std_io_println_to_hir(
+    pub(super) fn transform_intrinsic_call_to_hir(
         &mut self,
-        println: &ast::ExprStdIoPrintln,
+        call: &ast::ExprIntrinsicCall,
     ) -> Result<hir::ExprKind> {
-        tracing::debug!(
-            "Lowering std::io::println with {} template parts and {} captured args",
-            println.format.parts.len(),
-            println.format.args.len()
-        );
+        use fp_core::intrinsics::IntrinsicCallPayload;
 
-        if !println.format.kwargs.is_empty() {
-            return Err(crate::error::optimization_error(
-                "Named arguments for println! are not yet supported",
-            ));
-        }
-
-        let mut parts = Vec::new();
-        for part in &println.format.parts {
-            let converted = match part {
-                ast::FormatTemplatePart::Literal(text) => {
-                    hir::FormatTemplatePart::Literal(text.clone())
+        let payload = match &call.payload {
+            IntrinsicCallPayload::Format { template } => {
+                if !template.kwargs.is_empty() {
+                    return Err(crate::error::optimization_error(
+                        "Named arguments for std format helpers are not yet supported",
+                    ));
                 }
-                ast::FormatTemplatePart::Placeholder(ph) => {
-                    let arg_ref = match &ph.arg_ref {
-                        ast::FormatArgRef::Implicit => hir::FormatArgRef::Implicit,
-                        ast::FormatArgRef::Positional(idx) => hir::FormatArgRef::Positional(*idx),
-                        ast::FormatArgRef::Named(name) => hir::FormatArgRef::Named(name.clone()),
-                    };
 
-                    hir::FormatTemplatePart::Placeholder(hir::FormatPlaceholder {
-                        arg_ref,
-                        format_spec: ph.format_spec.clone(),
+                let parts = template
+                    .parts
+                    .iter()
+                    .map(|part| match part {
+                        ast::FormatTemplatePart::Literal(text) => {
+                            hir::FormatTemplatePart::Literal(text.clone())
+                        }
+                        ast::FormatTemplatePart::Placeholder(ph) => {
+                            let arg_ref = match &ph.arg_ref {
+                                ast::FormatArgRef::Implicit => hir::FormatArgRef::Implicit,
+                                ast::FormatArgRef::Positional(idx) => {
+                                    hir::FormatArgRef::Positional(*idx)
+                                }
+                                ast::FormatArgRef::Named(name) => {
+                                    hir::FormatArgRef::Named(name.clone())
+                                }
+                            };
+
+                            hir::FormatTemplatePart::Placeholder(hir::FormatPlaceholder {
+                                arg_ref,
+                                format_spec: ph.format_spec.clone(),
+                            })
+                        }
                     })
+                    .collect();
+
+                let args = template
+                    .args
+                    .iter()
+                    .map(|arg| self.transform_expr_to_hir(arg))
+                    .collect::<Result<Vec<_>>>()?;
+
+                let kwargs = template
+                    .kwargs
+                    .iter()
+                    .map(|kwarg| {
+                        Ok(hir::FormatKwArg {
+                            name: kwarg.name.clone(),
+                            value: self.transform_expr_to_hir(&kwarg.value)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                IntrinsicCallPayload::Format {
+                    template: hir::FormatString {
+                        parts,
+                        args,
+                        kwargs,
+                    },
                 }
-            };
-            parts.push(converted);
-        }
-
-        let mut args = Vec::new();
-        for arg in &println.format.args {
-            args.push(self.transform_expr_to_hir(arg)?);
-        }
-
-        let mut kwargs = Vec::new();
-        for kwarg in &println.format.kwargs {
-            kwargs.push(hir::FormatKwArg {
-                name: kwarg.name.clone(),
-                value: self.transform_expr_to_hir(&kwarg.value)?,
-            });
-        }
-
-        Ok(hir::ExprKind::StdIoPrintln(hir::StdIoPrintln {
-            format: hir::FormatString {
-                parts,
-                args,
-                kwargs,
+            }
+            IntrinsicCallPayload::Args { args } => IntrinsicCallPayload::Args {
+                args: args
+                    .iter()
+                    .map(|arg| self.transform_expr_to_hir(arg))
+                    .collect::<Result<Vec<_>>>()?,
             },
-            newline: println.newline,
+        };
+
+        Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+            kind: call.kind,
+            payload,
         }))
     }
 

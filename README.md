@@ -35,7 +35,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 ## Architecture at a Glance
 
 - Shared frontend normalizes surface languages before const evaluation.
-- Language-specific standard libraries are imported at the LAST layer and immediately re-railed into a canonical, language-agnostic `std` package as part of the LAST → AST conversion so every downstream stage sees the same primitives.
+- Language-specific intrinsic helpers are imported at the LAST layer and immediately re-railed into a canonical, language-agnostic `std` package as part of the LAST → AST conversion so every downstream stage sees the same primitives.
 - Deterministic comptime interpreter produces a canonical EAST snapshot that every backend consumes.
 - Type system phases:
   - `AstType`: flexible descriptors for inference and generation.
@@ -61,5 +61,5 @@ fp transpile src/service.fp --target rust --emit east
 - `docs/Design.md` – pipeline and execution modes
 - `docs/Types.md` – phased type system
 - `docs/ConstEval.md` – const evaluation semantics
-- `docs/StdLib.md` – standard library normalisation across languages
+- `docs/Intrinsics.md` – intrinsic normalisation across languages
 - `examples/` – end-to-end scenarios (flat, renumbered catalog)

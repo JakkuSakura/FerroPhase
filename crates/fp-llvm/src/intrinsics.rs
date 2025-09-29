@@ -1,7 +1,7 @@
-//! C Standard Library Function Declarations for LLVM IR Generation
+//! C Runtime Intrinsic Declarations for LLVM IR Generation
 //!
-//! This module provides declarations for C standard library functions that
-//! FerroPhase std library functions map to at runtime.
+//! This module provides declarations for the C runtime functions that
+//! FerroPhase intrinsics map to at runtime.
 
 use llvm_ir::function::{CallingConvention, Function, Parameter};
 use llvm_ir::module::{DLLStorageClass, Linkage, Visibility};
@@ -123,11 +123,11 @@ macro_rules! declare_c_func {
 }
 
 /// C Standard Library function declarations manager
-pub struct CStdLib;
+pub struct CRuntimeIntrinsics;
 
-impl CStdLib {
-    /// Get function declaration for a C standard library function
-    pub fn get_function_decl(fn_name: &str, types: &Types) -> Option<Function> {
+impl CRuntimeIntrinsics {
+    /// Get the declaration for a C runtime intrinsic
+    pub fn get_intrinsic_decl(fn_name: &str, types: &Types) -> Option<Function> {
         match fn_name {
             // I/O functions
             "puts" => Some(Self::declare_puts(types)),
@@ -182,8 +182,8 @@ impl CStdLib {
         }
     }
 
-    /// Check if a function name is a known C stdlib function
-    pub fn is_stdlib_function(fn_name: &str) -> bool {
+    /// Check if a function name is a known C runtime intrinsic
+    pub fn is_runtime_intrinsic(fn_name: &str) -> bool {
         matches!(
             fn_name,
             // I/O functions

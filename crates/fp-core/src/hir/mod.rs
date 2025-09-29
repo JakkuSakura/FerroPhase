@@ -1,4 +1,5 @@
 use crate::ast::TypePrimitive;
+use crate::intrinsics::{IntrinsicCall, IntrinsicCallPayload as GenericIntrinsicCallPayload};
 use std::collections::HashMap;
 
 pub mod pretty;
@@ -126,7 +127,7 @@ pub enum ExprKind {
     Struct(Path, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Block(Block),
-    StdIoPrintln(StdIoPrintln),
+    IntrinsicCall(IntrinsicCallExpr),
     Let(Pat, Box<TypeExpr>, Option<Box<Expr>>),
     Assign(Box<Expr>, Box<Expr>),
     Return(Option<Box<Expr>>),
@@ -175,11 +176,8 @@ pub struct FormatKwArg {
     pub value: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct StdIoPrintln {
-    pub format: FormatString,
-    pub newline: bool,
-}
+pub type IntrinsicCallExpr = IntrinsicCall<HirIntrinsicCallPayload>;
+pub type HirIntrinsicCallPayload = GenericIntrinsicCallPayload<Expr, FormatString>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
