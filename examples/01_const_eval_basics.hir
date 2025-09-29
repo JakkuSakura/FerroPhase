@@ -21,8 +21,8 @@ hir::Program {
             }
             const DEFAULT_CONFIG: Config =
                 Config { buffer_size: BUFFER_SIZE, max_connections: MAX_CONNECTIONS, timeout_ms: TIMEOUT_MS, debug_level: DEBUG_LEVEL };
-            println!(4 args);
-            println!(2 args);
+            std::Println(4 args);
+            std::Println(2 args);
         }
     }
 }

@@ -371,11 +371,15 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .join(", ");
             format!("{} {{ {} }}", fmt_path(path, ctx), fields)
         }
-        ExprKind::StdIoPrintln(print) => {
-            let arg_count = print.format.args.len() + print.format.kwargs.len();
-            let newline = if print.newline { "" } else { " (no newline)" };
-            format!("println!({} args{})", arg_count, newline)
-        }
+        ExprKind::IntrinsicCall(call) => match &call.payload {
+            crate::intrinsics::IntrinsicCallPayload::Format { template } => {
+                let arg_count = template.args.len() + template.kwargs.len();
+                format!("std::{:?}({} args)", call.kind, arg_count)
+            }
+            crate::intrinsics::IntrinsicCallPayload::Args { args } => {
+                format!("std::{:?}({} args)", call.kind, args.len())
+            }
+        },
         ExprKind::Let(pat, ty, value) => {
             let pat_str = format_pat(pat, ctx);
             let ty_str = if ctx.options.show_types {

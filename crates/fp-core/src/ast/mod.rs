@@ -13,6 +13,7 @@ mod expr;
 mod item;
 mod pretty;
 mod serialize;
+pub mod typed;
 mod value;
 
 pub use attr::*;

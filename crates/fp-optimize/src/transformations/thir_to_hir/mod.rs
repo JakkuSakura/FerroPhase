@@ -338,6 +338,26 @@ impl ThirDetyper {
                     .collect::<Result<Vec<_>>>()?;
                 hir::ExprKind::Call(callee, args)
             }
+            thir::ExprKind::IntrinsicCall(call) => {
+                use fp_core::intrinsics::IntrinsicCallPayload;
+
+                let payload = match &call.payload {
+                    IntrinsicCallPayload::Format { template } => IntrinsicCallPayload::Format {
+                        template: self.detype_format_string(template, ctx)?,
+                    },
+                    IntrinsicCallPayload::Args { args } => IntrinsicCallPayload::Args {
+                        args: args
+                            .iter()
+                            .map(|expr| self.detype_expr(expr, ctx))
+                            .collect::<Result<Vec<_>>>()?,
+                    },
+                };
+
+                hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                    kind: call.kind,
+                    payload,
+                })
+            }
             thir::ExprKind::Block(block) => hir::ExprKind::Block(self.detype_block(block, ctx)?),
             thir::ExprKind::If {
                 cond,
@@ -433,6 +453,59 @@ impl ThirDetyper {
         };
 
         Ok(hir::Expr { hir_id, kind, span })
+    }
+
+    fn detype_format_string(
+        &mut self,
+        format: &thir::FormatString,
+        ctx: &mut BodyContext,
+    ) -> Result<hir::FormatString> {
+        let parts = format
+            .parts
+            .iter()
+            .map(|part| match part {
+                thir::FormatTemplatePart::Literal(text) => {
+                    Ok(hir::FormatTemplatePart::Literal(text.clone()))
+                }
+                thir::FormatTemplatePart::Placeholder(placeholder) => {
+                    let arg_ref = match &placeholder.arg_ref {
+                        thir::FormatArgRef::Implicit => hir::FormatArgRef::Implicit,
+                        thir::FormatArgRef::Positional(idx) => hir::FormatArgRef::Positional(*idx),
+                        thir::FormatArgRef::Named(name) => hir::FormatArgRef::Named(name.clone()),
+                    };
+
+                    Ok(hir::FormatTemplatePart::Placeholder(
+                        hir::FormatPlaceholder {
+                            arg_ref,
+                            format_spec: placeholder.format_spec.clone(),
+                        },
+                    ))
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let args = format
+            .args
+            .iter()
+            .map(|expr| self.detype_expr(expr, ctx))
+            .collect::<Result<Vec<_>>>()?;
+
+        let kwargs = format
+            .kwargs
+            .iter()
+            .map(|kw| {
+                Ok(hir::FormatKwArg {
+                    name: kw.name.clone(),
+                    value: self.detype_expr(&kw.value, ctx)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(hir::FormatString {
+            parts,
+            args,
+            kwargs,
+        })
     }
 
     fn detype_block(&mut self, block: &thir::Block, ctx: &mut BodyContext) -> Result<hir::Block> {

@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::intrinsics::IntrinsicCallKind;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -404,41 +405,34 @@ impl ThirGenerator {
                 let block_ty = self.infer_block_type(&block_thir)?;
                 (thir::ExprKind::Block(block_thir), block_ty)
             }
-            hir::ExprKind::StdIoPrintln(println) => {
-                let func_expr = self.make_std_io_println_path_expr();
+            hir::ExprKind::IntrinsicCall(call) => {
+                use fp_core::intrinsics::IntrinsicCallPayload;
 
-                let hir::StdIoPrintln { format, newline } = println;
-                let hir::FormatString {
-                    parts,
-                    args: format_args,
-                    kwargs,
-                } = format;
+                let payload = match &call.payload {
+                    IntrinsicCallPayload::Format { template } => IntrinsicCallPayload::Format {
+                        template: self.transform_format_string(template.clone())?,
+                    },
+                    IntrinsicCallPayload::Args { args } => IntrinsicCallPayload::Args {
+                        args: args
+                            .iter()
+                            .map(|arg| self.transform_expr(arg.clone()))
+                            .collect::<Result<Vec<_>>>()?,
+                    },
+                };
 
-                if !kwargs.is_empty() {
-                    return Err(crate::error::optimization_error(
-                        "Named arguments for println! are not yet supported during lowering",
-                    ));
-                }
-
-                let mut transformed_args = Vec::new();
-                for arg in format_args {
-                    transformed_args.push(self.transform_expr(arg)?);
-                }
-
-                let format_literal =
-                    self.build_printf_format(&parts, &transformed_args, newline)?;
-
-                let mut args = Vec::new();
-                args.push(self.make_string_literal_expr(format_literal));
-                args.extend(transformed_args.into_iter());
+                let ty = match call.kind {
+                    IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                        self.create_unit_type()
+                    }
+                    IntrinsicCallKind::Len => self.create_usize_type(),
+                };
 
                 (
-                    thir::ExprKind::Call {
-                        fun: Box::new(func_expr),
-                        args,
-                        from_hir_call: true,
-                    },
-                    self.create_unit_type(),
+                    thir::ExprKind::IntrinsicCall(thir::ThirIntrinsicCall {
+                        kind: call.kind,
+                        payload,
+                    }),
+                    ty,
                 )
             }
             hir::ExprKind::Unary(op, expr) => {
@@ -1182,6 +1176,10 @@ impl ThirGenerator {
         hir_types::Ty::int(hir_types::IntTy::I32)
     }
 
+    pub(super) fn create_usize_type(&self) -> hir_types::Ty {
+        hir_types::Ty::uint(hir_types::UintTy::Usize)
+    }
+
     pub(super) fn create_string_type(&self) -> hir_types::Ty {
         // Simplified string type representation
         hir_types::Ty {
@@ -1192,117 +1190,54 @@ impl ThirGenerator {
         }
     }
 
-    fn make_string_literal_expr(&mut self, template: String) -> thir::Expr {
-        thir::Expr {
-            thir_id: self.next_id(),
-            kind: thir::ExprKind::Literal(thir::Lit::Str(template)),
-            ty: self.create_string_type(),
-            span: Span::new(0, 0, 0),
+    fn transform_format_string(&mut self, format: hir::FormatString) -> Result<thir::FormatString> {
+        if !format.kwargs.is_empty() {
+            return Err(crate::error::optimization_error(
+                "Named arguments for println! are not yet supported during lowering",
+            ));
         }
+
+        let parts = format
+            .parts
+            .into_iter()
+            .map(|part| self.transform_format_part(part))
+            .collect::<Result<Vec<_>>>()?;
+
+        let args = format
+            .args
+            .into_iter()
+            .map(|arg| self.transform_expr(arg))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(thir::FormatString {
+            parts,
+            args,
+            kwargs: Vec::new(),
+        })
     }
 
-    fn make_std_io_println_path_expr(&mut self) -> thir::Expr {
-        let name = "std::io::println".to_string();
-        let def_id = self.type_context.lookup_value_def_id(&name);
-        thir::Expr {
-            thir_id: self.next_id(),
-            kind: thir::ExprKind::Path(thir::ItemRef { name, def_id }),
-            ty: self.create_unit_type(),
-            span: Span::new(0, 0, 0),
-        }
-    }
-
-    fn build_printf_format(
+    fn transform_format_part(
         &self,
-        parts: &[hir::FormatTemplatePart],
-        args: &[thir::Expr],
-        newline: bool,
-    ) -> Result<String> {
-        let mut result = String::new();
-        let mut implicit_index = 0usize;
-
-        for part in parts {
-            match part {
-                hir::FormatTemplatePart::Literal(text) => result.push_str(text),
-                hir::FormatTemplatePart::Placeholder(placeholder) => {
-                    let arg_index = match &placeholder.arg_ref {
-                        hir::FormatArgRef::Implicit => {
-                            let current = implicit_index;
-                            implicit_index += 1;
-                            current
-                        }
-                        hir::FormatArgRef::Positional(index) => *index,
+        part: hir::FormatTemplatePart,
+    ) -> Result<thir::FormatTemplatePart> {
+        Ok(match part {
+            hir::FormatTemplatePart::Literal(text) => thir::FormatTemplatePart::Literal(text),
+            hir::FormatTemplatePart::Placeholder(placeholder) => {
+                thir::FormatTemplatePart::Placeholder(thir::FormatPlaceholder {
+                    arg_ref: match placeholder.arg_ref {
+                        hir::FormatArgRef::Implicit => thir::FormatArgRef::Implicit,
+                        hir::FormatArgRef::Positional(idx) => thir::FormatArgRef::Positional(idx),
                         hir::FormatArgRef::Named(name) => {
                             return Err(crate::error::optimization_error(format!(
-                                "Named argument '{}' is not supported in println! lowering",
+                                "Named argument '{}' is not yet supported during lowering",
                                 name
                             )));
                         }
-                    };
-
-                    let arg_expr = args.get(arg_index).ok_or_else(|| {
-                        crate::error::optimization_error(format!(
-                            "Format placeholder references missing argument at index {}",
-                            arg_index
-                        ))
-                    })?;
-
-                    let spec = if let Some(spec) = &placeholder.format_spec {
-                        if spec.starts_with('%') {
-                            spec.clone()
-                        } else {
-                            return Err(crate::error::optimization_error(format!(
-                                "Unsupported format specification '{}'; expected printf-style spec",
-                                spec
-                            )));
-                        }
-                    } else {
-                        self.infer_printf_spec(&arg_expr.ty)?
-                    };
-
-                    result.push_str(&spec);
-                }
+                    },
+                    format_spec: placeholder.format_spec,
+                })
             }
-        }
-
-        let _ = newline; // Backend appends newline for println-style calls when needed.
-
-        Ok(result)
-    }
-
-    fn infer_printf_spec(&self, ty: &hir_types::Ty) -> Result<String> {
-        let spec = match &ty.kind {
-            hir_types::TyKind::Bool => "%d".to_string(),
-            hir_types::TyKind::Char => "%c".to_string(),
-            hir_types::TyKind::Int(int_ty) => match int_ty {
-                hir_types::IntTy::I8 => "%hhd".to_string(),
-                hir_types::IntTy::I16 => "%hd".to_string(),
-                hir_types::IntTy::I32 => "%d".to_string(),
-                hir_types::IntTy::I64 => "%lld".to_string(),
-                hir_types::IntTy::I128 => "%lld".to_string(),
-                hir_types::IntTy::Isize => "%ld".to_string(),
-            },
-            hir_types::TyKind::Uint(uint_ty) => match uint_ty {
-                hir_types::UintTy::U8 => "%hhu".to_string(),
-                hir_types::UintTy::U16 => "%hu".to_string(),
-                hir_types::UintTy::U32 => "%u".to_string(),
-                hir_types::UintTy::U64 => "%llu".to_string(),
-                hir_types::UintTy::U128 => "%llu".to_string(),
-                hir_types::UintTy::Usize => "%lu".to_string(),
-            },
-            hir_types::TyKind::Float(float_ty) => match float_ty {
-                hir_types::FloatTy::F32 => "%f".to_string(),
-                hir_types::FloatTy::F64 => "%f".to_string(),
-            },
-            other => {
-                return Err(crate::error::optimization_error(format!(
-                    "Cannot infer printf spec for type {:?}",
-                    other
-                )))
-            }
-        };
-
-        Ok(spec)
+        })
     }
 
     pub(super) fn create_wildcard_pattern(&mut self) -> thir::Pat {
