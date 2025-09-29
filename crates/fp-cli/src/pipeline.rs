@@ -711,6 +711,7 @@ impl Pipeline {
         base_path: &Path,
     ) -> Result<DiagnosticReport<mir::Program>, CliError> {
         let mut generator = MirGenerator::new();
+        generator.set_debug_assertions(!options.release);
         let result = generator.transform(thir_program);
         let diagnostic_manager = DiagnosticManager::new();
 

@@ -3,6 +3,7 @@ hir::Program {
         {
             const BUFFER_SIZE: usize =
                 (1024 * 4);
+            std::Println(1 args);
             const MAX_CONNECTIONS: i32 =
                 (100 + 50);
             const TIMEOUT_MS: u64 =
