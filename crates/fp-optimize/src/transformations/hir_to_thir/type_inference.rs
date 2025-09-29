@@ -396,13 +396,34 @@ impl<'a> TypeInferencer<'a> {
                 struct_var
             }
             ExprKind::Block(block) => self.infer_block(block)?,
-            ExprKind::StdIoPrintln(println) => {
-                for arg in &println.format.args {
-                    let _ = self.infer_expr(arg)?;
+            ExprKind::IntrinsicCall(call) => {
+                use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+
+                match call.kind {
+                    IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                        if let IntrinsicCallPayload::Format { template } = &call.payload {
+                            for arg in &template.args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                            for kw in &template.kwargs {
+                                let _ = self.infer_expr(&kw.value)?;
+                            }
+                        }
+                        let unit = self.fresh_type_var();
+                        self.bind(unit, TypeTerm::Unit)?;
+                        unit
+                    }
+                    IntrinsicCallKind::Len => {
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            if let Some(arg) = args.first() {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        let int = self.fresh_type_var();
+                        self.bind(int, TypeTerm::Uint(Some(hir_types::UintTy::Usize)))?;
+                        int
+                    }
                 }
-                let unit = self.fresh_type_var();
-                self.bind(unit, TypeTerm::Unit)?;
-                unit
             }
             ExprKind::If(cond, then_expr, else_expr) => {
                 let cond_ty = self.infer_expr(cond)?;

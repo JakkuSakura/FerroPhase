@@ -8,17 +8,20 @@ use crate::frontend::{
 use crate::languages;
 use crate::languages::detect_source_language;
 use fp_core::ast::register_threadlocal_serializer;
+use fp_core::ast::typed as tast;
 use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport, DiagnosticTemplate,
 };
 use fp_core::hir::typed as thir;
+use fp_core::intrinsics::BackendFlavor;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir, mir};
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::transformations::{
-    HirGenerator, IrTransform, LirGenerator, MirGenerator, ThirDetyper, ThirGenerator,
+    BackendThirMaterializer, HirGenerator, IrTransform, LirGenerator, MirGenerator,
+    SymbolicThirNormalizer, TastResugar, ThirDetyper, ThirGenerator,
 };
 use fp_optimize::{ConstEvaluationOrchestrator, InterpretationOrchestrator, InterpreterMode};
 use std::fs;
@@ -29,20 +32,29 @@ use tracing::{debug, info_span};
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
 const STAGE_HIR_TO_THIR: &str = "hir→thir";
+const STAGE_THIR_NORMALIZE: &str = "thir→thir(normalize)";
 const STAGE_THIR_TO_MIR: &str = "thir→mir";
+const STAGE_THIR_TO_TAST: &str = "thir→tast";
 const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_LIR_TO_LLVM: &str = "lir→llvm";
 const STAGE_BINARY: &str = "binary";
 const STAGE_INTERPRET: &str = "interpret";
 const STAGE_THIR_TO_HIR_DETYPE: &str = "thir→hir(detyped)";
 const STAGE_DETYPED_HIR_TO_THIR: &str = "detyped-hir→thir";
+const STAGE_THIR_MATERIALIZE_LLVM: &str = "thir→thir(materialize:llvm)";
+const STAGE_THIR_MATERIALIZE_INTERP: &str = "thir→thir(materialize:interp)";
+const STAGE_THIR_MATERIALIZE_RUST: &str = "thir→thir(materialize:rust)";
+const STAGE_THIR_MATERIALIZE_JS: &str = "thir→thir(materialize:javascript)";
 
 const EXT_HIR: &str = "hir";
 const EXT_THIR: &str = "thi";
+const EXT_THIR_SYMBOLIC: &str = "tsym";
+const EXT_THIR_MATERIALIZED: &str = "tmat";
 const EXT_CONST_THIR: &str = "tce";
 const EXT_DETYPED_HIR: &str = "dhi";
 const EXT_MIR: &str = "mir";
 const EXT_LIR: &str = "lir";
+const EXT_TAST: &str = "tast";
 
 pub use crate::config::PipelineConfig;
 #[derive(Debug)]
@@ -56,6 +68,15 @@ pub enum PipelineOutput {
     Value(Value),
     RuntimeValue(RuntimeValue),
     Code(String),
+}
+
+fn materialize_stage_label(backend: BackendFlavor) -> &'static str {
+    match backend {
+        BackendFlavor::Llvm => STAGE_THIR_MATERIALIZE_LLVM,
+        BackendFlavor::Interpreter => STAGE_THIR_MATERIALIZE_INTERP,
+        BackendFlavor::TranspileRust => STAGE_THIR_MATERIALIZE_RUST,
+        BackendFlavor::TranspileJavascript => STAGE_THIR_MATERIALIZE_JS,
+    }
 }
 
 struct CompilationArtifacts {
@@ -185,10 +206,66 @@ impl Pipeline {
 
         match options.target {
             PipelineTarget::Rust => {
+                let base_path = options.base_path.as_ref().ok_or_else(|| {
+                    CliError::Compilation("Missing base path for transpilation".to_string())
+                })?;
+
+                let diagnostic_manager = DiagnosticManager::new();
+
+                let hir_report =
+                    self.run_hir_stage(&ast_node, &options, input_path.as_deref(), base_path)?;
+                let hir_program = self.collect_stage(
+                    STAGE_AST_TO_HIR,
+                    hir_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let thir_report = self.run_thir_stage(hir_program, &options, base_path)?;
+                let thir_program = self.collect_stage(
+                    STAGE_HIR_TO_THIR,
+                    thir_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let thir_norm_report =
+                    self.run_thir_normalize_stage(thir_program, &options, base_path)?;
+                let thir_program = self.collect_stage(
+                    STAGE_THIR_NORMALIZE,
+                    thir_norm_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let const_report = self.run_const_eval_stage(thir_program, &options, base_path)?;
+                let ConstEvalArtifacts {
+                    thir_program: evaluated_thir,
+                    outcome: _,
+                } = self.collect_stage(
+                    STAGE_CONST_EVAL,
+                    const_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let tast_report =
+                    self.run_tast_stage(&ast_node, &evaluated_thir, &options, base_path)?;
+                let tast_program = self.collect_stage(
+                    STAGE_THIR_TO_TAST,
+                    tast_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
                 let rust_span = info_span!("pipeline.codegen", target = "rust");
                 let _enter_rust = rust_span.enter();
-                let rust_code = CodeGenerator::generate_rust_code(&ast_node)?;
+                let rust_code = CodeGenerator::generate_rust_code(&tast_program)?;
                 drop(_enter_rust);
+
+                let diagnostics = diagnostic_manager.get_diagnostics();
+                self.emit_diagnostics(&diagnostics, None, &options);
+
                 Ok(PipelineOutput::Code(rust_code))
             }
             PipelineTarget::Interpret => {
@@ -298,6 +375,14 @@ impl Pipeline {
         let thir_program =
             self.collect_stage(STAGE_HIR_TO_THIR, thir_report, &diagnostic_manager, options)?;
 
+        let thir_norm_report = self.run_thir_normalize_stage(thir_program, options, base_path)?;
+        let thir_program = self.collect_stage(
+            STAGE_THIR_NORMALIZE,
+            thir_norm_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
         let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
         let ConstEvalArtifacts {
             thir_program: evaluated_thir,
@@ -316,6 +401,23 @@ impl Pipeline {
         let thir_program = self.collect_stage(
             STAGE_DETYPED_HIR_TO_THIR,
             thir_from_detyped,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let thir_norm_report = self.run_thir_normalize_stage(thir_program, options, base_path)?;
+        let thir_program = self.collect_stage(
+            STAGE_THIR_NORMALIZE,
+            thir_norm_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let thir_materialized_report =
+            self.run_thir_materialize_stage(thir_program, BackendFlavor::Llvm, options, base_path)?;
+        let thir_program = self.collect_stage(
+            materialize_stage_label(BackendFlavor::Llvm),
+            thir_materialized_report,
             &diagnostic_manager,
             options,
         )?;
@@ -528,6 +630,77 @@ impl Pipeline {
                 Ok(DiagnosticReport::failure(diagnostics))
             }
         }
+    }
+
+    fn run_thir_normalize_stage(
+        &self,
+        thir_program: thir::Program,
+        options: &PipelineOptions,
+        base_path: &Path,
+    ) -> Result<DiagnosticReport<thir::Program>, CliError> {
+        let mut normalizer = SymbolicThirNormalizer::new();
+        let program = normalizer.normalize(thir_program);
+
+        if options.save_intermediates {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+            let rendered = format!("{}", pretty(&program, pretty_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_THIR_SYMBOLIC), rendered) {
+                debug!(
+                    error = %err,
+                    "failed to persist symbolic THIR intermediate"
+                );
+            }
+        }
+
+        Ok(DiagnosticReport::success(program))
+    }
+
+    fn run_thir_materialize_stage(
+        &self,
+        thir_program: thir::Program,
+        backend: BackendFlavor,
+        options: &PipelineOptions,
+        base_path: &Path,
+    ) -> Result<DiagnosticReport<thir::Program>, CliError> {
+        let mut materializer = BackendThirMaterializer::new(backend);
+        let program = materializer.materialize(thir_program);
+
+        if options.save_intermediates {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+            let rendered = format!("{}", pretty(&program, pretty_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_THIR_MATERIALIZED), rendered) {
+                debug!(
+                    error = %err,
+                    "failed to persist materialised THIR intermediate"
+                );
+            }
+        }
+
+        Ok(DiagnosticReport::success(program))
+    }
+
+    fn run_tast_stage(
+        &self,
+        original_ast: &Node,
+        thir_program: &thir::Program,
+        options: &PipelineOptions,
+        base_path: &Path,
+    ) -> Result<DiagnosticReport<tast::Program>, CliError> {
+        let mut resugar = TastResugar::new();
+        let program = resugar.resugar(original_ast, thir_program);
+
+        if options.save_intermediates {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+            let rendered = format!("{}", pretty(&program, pretty_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_TAST), rendered) {
+                debug!(error = %err, "failed to persist TAST intermediate");
+            }
+        }
+
+        Ok(DiagnosticReport::success(program))
     }
 
     fn run_mir_stage(
@@ -754,11 +927,32 @@ impl Pipeline {
         let thir_program =
             self.collect_stage(STAGE_HIR_TO_THIR, thir_report, &diagnostic_manager, options)?;
 
+        let thir_norm_report = self.run_thir_normalize_stage(thir_program, options, base_path)?;
+        let thir_program = self.collect_stage(
+            STAGE_THIR_NORMALIZE,
+            thir_norm_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
         let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
         let ConstEvalArtifacts {
             thir_program,
             outcome,
         } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
+
+        let thir_materialized_report = self.run_thir_materialize_stage(
+            thir_program,
+            BackendFlavor::Interpreter,
+            options,
+            base_path,
+        )?;
+        let thir_program = self.collect_stage(
+            materialize_stage_label(BackendFlavor::Interpreter),
+            thir_materialized_report,
+            &diagnostic_manager,
+            options,
+        )?;
 
         let serializer = self.serializer.clone().ok_or_else(|| {
             CliError::Compilation(

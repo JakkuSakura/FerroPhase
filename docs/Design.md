@@ -14,44 +14,47 @@ efficiency in later optimization and code generation.
 
 #### Core Pipeline Stages
 
-- **Frontend**: Source Language → CST (Concrete Syntax Tree, optional for parsing details) → LAST (Language-specific
-  AST, e.g., Python or FerroPhase nodes) → AST (Unified, language-agnostic AST). The LAST → AST transition is where
-  each language’s built-in library is rewritten into a canonical, language-agnostic `std` package so that everything
-  downstream consumes the same primitives.
-- **Desugaring & Typing**: AST → HIR (High-level IR, structured for inference) → THIR (Typed HIR built with Algorithm W
-  inference).
+- **Frontend**: Source Language → CST (Concrete Syntax Tree, optional for parsing details) → LAST (language-specific
+  AST) → AST (unified, language-agnostic AST) → HIR. Frontends keep their own library surfaces; no canonicalisation is
+  required at this stage beyond carrying enough metadata for later passes.
+- **Symbolic THIR Normalisation**: HIR → THIR(raw) → THIR(symbolic). A reusable `ThirTransformer`-based normaliser
+  (see `crates/fp-optimize/src/transformations/thir/`) canonicalises language-specific helpers into the shared
+  `std::…` vocabulary, producing a backend-agnostic typed IR.
+- **Desugaring & Typing**: The symbolic THIR already carries Algorithm W inference results and acts as the common input
+  to interpretation, transpilation, and code generation.
 - **Typed Interpretation**: Compile-time/runtime evaluation operates on THIR, producing an evaluated THIR′ that records
   const-eval effects and intrinsic mutations.
 - **Resugaring & Emission**: THIR′ → TAST (Typed AST with source-like structure) → LAST′ (language-specific ASTs for
   transpilers) and, for native targets, re-projection through HIR → THIR → MIR → LIR → LLVM/bytecode backends.
 
-### Standard Library Normalisation
+### Intrinsic Normalisation
 
-Different frontends ship different standard libraries, but the rest of the compiler expects a single, consistent view
-of core services (collections, strings, IO shims, etc.). The convergence process happens immediately after LAST is
-constructed:
+Different frontends surface their own intrinsic vocabularies, but the rest of the compiler expects a single, consistent
+view of core services (collections, strings, IO shims, etc.). Convergence now happens once per programme on the typed IR:
 
-1. **Capture** – LAST nodes record which native modules or prelude bindings were pulled in (for example, Python’s
-   `__builtins__`, JavaScript host globals, or FerroPhase’s structural helpers) and tag them with canonical intents.
-2. **Rewrite** – while producing the unified AST, those intents are remapped onto the canonical `std` hierarchy. The
-   AST therefore references only language-agnostic modules such as `std::string`, `std::iter`, or `std::intrinsics`.
-3. **Propagation** – HIR, THIR, TAST, MIR, and LIR simply reuse the canonical package; no later stage needs to know
-   which frontend supplied the definitions.
-4. **Realisation** – emitters translate the canonical `std` back into the appropriate target form: high-level
-   transpilers re-introduce surface imports, whereas low-level backends map calls to runtime helpers or LLVM intrinsics.
+1. **Capture** – frontends record which native modules or prelude bindings were pulled in (Python’s `__builtins__`, JS
+   host globals, FerroPhase helpers, …) as they emit the raw THIR.
+2. **Symbolic rewrite** – the **ThirNormalizer** (`ThirTransformer`-based) walks that raw THIR and rewrites recognised
+   helpers into the canonical `std` hierarchy. The result is a backend-agnostic symbolic THIR snapshot.
+3. **Backend materialisation** – when a target flavour is chosen, a second THIR transformer clones the symbolic tree
+   and replaces the canonical intrinsics with backend-specific runtime calls (e.g., `printf`, interpreter closures,
+   transpiler surface forms). The initial materialiser lives next to the normaliser in
+   `crates/fp-optimize/src/transformations/thir/`.
+4. **Propagation** – downstream stages (typed interpretation, MIR/LIR lowering, transpilers) consume the materialised
+   clone that matches their backend. Identity flavours (notably the interpreter) can re-use the symbolic snapshot.
 
-Because the mapping is completed before typed interpretation runs, every downstream optimisation and diagnostic treats
-`std` like any other user-defined module. Adding a new frontend only requires defining the mapping from its native
-library surface into the shared `std` vocabulary.
+Because normalisation happens once on symbolic THIR, every downstream optimisation and diagnostic treats these
+intrinsics like any other user-defined module. Adding a new frontend only requires teaching the normaliser how to observe
+its helpers; new backends simply register a materialisation flavour in the resolver.
 
 #### Execution Modes and Their Flows
 
 | Mode                             | Key Flow                                                                                                                                                                                                                             | Purpose and Characteristics                                                                                                                                                                                                                                                                                            |
 |----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Compile**                      | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (comptime) → TAST → re-project (HIR → THIR) → MIR → LIR → LLVM/WASM                                                                                                      | Full native/web compilation. Typed interpretation folds consts and applies intrinsics on THIR before optimisation stages consume the evaluated program.                                                                                                                           |
-| **Interpret (Runtime)**          | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (runtime)                                                                                                                                                                | Direct execution with principal types and spans. No MIR/LIR lowering; ideal for REPLs and scripting tools.                                                                                                                                                                       |
-| **Bytecode / VM**                | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (comptime) → TAST → re-project (HIR → THIR) → MIR → LIR → Custom Bytecode → VM                                                                                            | Generates portable bytecode while reusing typed interpretation. Evaluated TAST feeds a second lowering, enabling debug metadata and stepped execution.                                                                                                                           |
-| **Transpile (Surface)**          | Frontend → Annotated AST → HIR → THIR → Typed Interpretation (comptime) → TAST → Language-specific LAST′ → Codegen                                                                                                                      | Produces readable Rust/TypeScript/etc. outputs. Resugared TAST retains THIR types, so transpilers emit explicit signatures and folded constants without extra inference passes.                                                                                                   |
+| **Compile**                      | Frontend → Annotated AST → HIR → THIR(raw) → THIR(sym) → Typed Interpretation (comptime) → TAST → re-project (HIR → THIR(sym) → THIR(mat target)) → MIR → LIR → LLVM/WASM                                                              | Full native/web compilation. Symbolic THIR feeds typed interpretation; during the re-projection step we materialise per-target THIR before lowering to MIR/LIR.                                                                                                                     |
+| **Interpret (Runtime)**          | Frontend → Annotated AST → HIR → THIR(raw) → THIR(sym) → (identity materialisation) → Typed Interpretation (runtime)                                                                                                                   | Direct execution with principal types and spans. The interpreter uses the symbolic THIR (materialiser identity); no MIR/LIR lowering, ideal for REPLs and scripting tools.                                                                                                         |
+| **Bytecode / VM**                | Frontend → Annotated AST → HIR → THIR(raw) → THIR(sym) → Typed Interpretation (comptime) → TAST → re-project (HIR → THIR(sym) → THIR(mat bytecode)) → MIR → LIR → Custom Bytecode → VM                                                  | Generates portable bytecode while reusing typed interpretation. Materialised THIR for the bytecode backend drives MIR/LIR before emission, enabling debug metadata and stepped execution.                                                                                           |
+| **Transpile (Surface)**          | Frontend → Annotated AST → HIR → THIR(raw) → THIR(sym) → Typed Interpretation (comptime) → TAST → Language-specific materialised THIR → LAST′ → Codegen                                                                                | Produces readable Rust/TypeScript/etc. outputs. After typed interpretation the transpiler materialises THIR for the target language, then re-sugars into LAST′ while retaining explicit types and folded constants.                                                                |
 
 Typed interpretation centralises const folding and intrinsic execution on THIR. The resulting typed effects are recorded
 and replayed during resugaring and re-projection so every downstream stage observes the same evaluated program.

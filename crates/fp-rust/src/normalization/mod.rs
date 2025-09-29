@@ -148,7 +148,7 @@ fn normalize_expr(expr: &mut Expr) {
         Expr::SplatDict(dict) => normalize_expr(dict.dict.as_mut()),
         Expr::Closured(closured) => normalize_bexpr(&mut closured.expr),
         Expr::Item(item) => normalize_item(item.as_mut()),
-        Expr::StdIoPrintln(_) | Expr::Id(_) | Expr::Any(_) => {}
+        Expr::IntrinsicCall(_) | Expr::Id(_) | Expr::Any(_) => {}
     }
 }
 

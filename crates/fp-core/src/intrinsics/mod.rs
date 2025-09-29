@@ -102,6 +102,9 @@ pub struct IntrinsicResolver {
     entries: HashMap<ResolverKey, ResolvedIntrinsic>,
 }
 
+pub mod calls;
+pub use calls::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
+
 impl IntrinsicResolver {
     pub fn new() -> Self {
         Self {

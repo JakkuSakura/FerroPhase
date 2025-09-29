@@ -2,8 +2,8 @@
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-macosx15.0.0"
 
-@.str.0 = constant [63 x i8] c"Config: buffer=%luKB, connections=%d, timeout=%llums, debug=%d\00", align 1
-@.str.1 = constant [37 x i8] c"Computed: factorial=%lld, is_pow2=%d\00", align 1
+@.str.0 = constant [64 x i8] [i8 67, i8 111, i8 110, i8 102, i8 105, i8 103, i8 58, i8 32, i8 98, i8 117, i8 102, i8 102, i8 101, i8 114, i8 61, i8 37, i8 108, i8 117, i8 75, i8 66, i8 44, i8 32, i8 99, i8 111, i8 110, i8 110, i8 101, i8 99, i8 116, i8 105, i8 111, i8 110, i8 115, i8 61, i8 37, i8 100, i8 44, i8 32, i8 116, i8 105, i8 109, i8 101, i8 111, i8 117, i8 116, i8 61, i8 37, i8 108, i8 108, i8 117, i8 109, i8 115, i8 44, i8 32, i8 100, i8 101, i8 98, i8 117, i8 103, i8 61, i8 37, i8 100, i8 10, i8 0], align 1
+@.str.1 = constant [38 x i8] [i8 67, i8 111, i8 109, i8 112, i8 117, i8 116, i8 101, i8 100, i8 58, i8 32, i8 102, i8 97, i8 99, i8 116, i8 111, i8 114, i8 105, i8 97, i8 108, i8 61, i8 37, i8 108, i8 108, i8 100, i8 44, i8 32, i8 105, i8 115, i8 95, i8 112, i8 111, i8 119, i8 50, i8 61, i8 37, i8 100, i8 10, i8 0], align 1
 declare i32 @printf(ptr, ...)
 define i32 @main() {
 bb0:
@@ -59,17 +59,17 @@ bb1:
   %alloca_47 = alloca i64, align 8
   store i64 2, ptr %alloca_47
   %load_49 = load i64, ptr %alloca_47
-  store i64 %load_49, ptr %alloca_0
+  store i64 %load_49, ptr %alloca_1
   br label %bb3
 bb2:
   %alloca_51 = alloca i64, align 8
   store i64 0, ptr %alloca_51
   %load_53 = load i64, ptr %alloca_51
-  store i64 %load_53, ptr %alloca_0
+  store i64 %load_53, ptr %alloca_1
   br label %bb3
 bb3:
   %alloca_55 = alloca i32, align 4
-  %load_56 = load i32, ptr %alloca_0
+  %load_56 = load i32, ptr %alloca_1
   store i32 %load_56, ptr %alloca_55
   %alloca_58 = alloca i64, align 8
   store i64 0, ptr %alloca_58
@@ -97,7 +97,7 @@ bb4:
   call i32 (ptr, ...) @printf(ptr @.str.1, i64 %load_77, i1 %load_78)
   br label %bb5
 bb5:
-  store i32 0, ptr %alloca_1
+  store i32 0, ptr %alloca_0
   ret i32 0
 }
 
