@@ -3,7 +3,9 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::Result;
 use fp_core::hir::typed as thir;
+use fp_core::ops::format_value_with_spec;
 use std::collections::HashMap;
+use std::io::{self, Write};
 use std::sync::Arc;
 
 use crate::error::optimization_error;
@@ -114,6 +116,7 @@ struct InterpreterConfig {
     abort_on_error: bool,
     intrinsics: IntrinsicRegistry,
     runtime_environment: RuntimeEnvironment,
+    debug_assertions: bool,
 }
 
 impl InterpreterConfig {
@@ -124,11 +127,20 @@ impl InterpreterConfig {
             abort_on_error: true,
             intrinsics: IntrinsicRegistry::new(),
             runtime_environment: RuntimeEnvironment::new(mode),
+            debug_assertions: true,
         }
     }
 
     fn set_diagnostics(&mut self, diagnostics: Option<Arc<DiagnosticManager>>) {
         self.diagnostics = diagnostics;
+    }
+
+    fn set_debug_assertions(&mut self, enabled: bool) {
+        self.debug_assertions = enabled;
+    }
+
+    fn debug_assertions(&self) -> bool {
+        self.debug_assertions
     }
 
     fn store_local(&mut self, id: thir::LocalId, value: &Value) {
@@ -222,6 +234,10 @@ impl InterpretationOrchestrator {
 
     pub fn set_diagnostics(&mut self, manager: Option<Arc<DiagnosticManager>>) {
         self.config.set_diagnostics(manager);
+    }
+
+    pub fn set_debug_assertions(&mut self, enabled: bool) {
+        self.config.set_debug_assertions(enabled);
     }
 
     pub fn set_abort_on_error(&mut self, abort: bool) {
@@ -451,6 +467,47 @@ impl InterpretationOrchestrator {
                         )?);
 
                         let result = self.perform_strlen(&[value])?;
+                        Ok(EvalFlow::Value(result))
+                    }
+                    IntrinsicCallKind::ConstBlock => {
+                        let arg_expr = match &call.payload {
+                            IntrinsicCallPayload::Args { args } => {
+                                args.first().ok_or_else(|| {
+                                    optimization_error("const block intrinsic expects a body")
+                                })?
+                            }
+                            _ => {
+                                return Err(optimization_error(
+                                    "const block intrinsic must use args payload",
+                                ))
+                            }
+                        };
+
+                        self.evaluate_expr(arg_expr, program, ctx, locals, const_values)
+                    }
+                    IntrinsicCallKind::DebugAssertions => {
+                        Ok(EvalFlow::Value(Value::bool(self.config.debug_assertions())))
+                    }
+                    IntrinsicCallKind::Input => {
+                        let prompt = match &call.payload {
+                            IntrinsicCallPayload::Args { args } => {
+                                if let Some(expr) = args.first() {
+                                    let value = propagate_flow!(self.evaluate_expr(
+                                        expr,
+                                        program,
+                                        ctx,
+                                        locals,
+                                        const_values,
+                                    )?);
+                                    Some(self.value_to_string(&value)?)
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => None,
+                        };
+
+                        let result = self.read_input(prompt)?;
                         Ok(EvalFlow::Value(result))
                     }
                 }
@@ -777,6 +834,33 @@ impl InterpretationOrchestrator {
         }
         ctx.print_str(rendered);
         Ok(Value::unit())
+    }
+
+    fn value_to_string(&self, value: &Value) -> Result<String> {
+        format_value_with_spec(value, None)
+    }
+
+    fn read_input(&self, prompt: Option<String>) -> Result<Value> {
+        if let Some(prompt) = prompt {
+            print!("{}", prompt);
+            io::stdout()
+                .flush()
+                .map_err(|err| optimization_error(err.to_string()))?;
+        }
+
+        let mut buffer = String::new();
+        io::stdin()
+            .read_line(&mut buffer)
+            .map_err(|err| optimization_error(err.to_string()))?;
+
+        if buffer.ends_with('\n') {
+            buffer.pop();
+            if buffer.ends_with('\r') {
+                buffer.pop();
+            }
+        }
+
+        Ok(Value::string(buffer))
     }
 
     fn perform_strlen(&self, args: &[Value]) -> Result<Value> {

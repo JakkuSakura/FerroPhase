@@ -117,6 +117,10 @@ struct CompileArgs {
     #[arg(short, long)]
     debug: bool,
 
+    /// Treat build as release (disables debug assertions)
+    #[arg(long)]
+    release: bool,
+
     /// Additional include directories
     #[arg(short = 'I', long)]
     include: Vec<PathBuf>,
@@ -331,6 +335,7 @@ async fn main() -> Result<()> {
                 output: args.output,
                 opt_level: args.opt_level,
                 debug: args.debug,
+                release: args.release,
                 include: args.include,
                 define: args.define,
                 exec: args.exec,
