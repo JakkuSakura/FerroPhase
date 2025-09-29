@@ -52,50 +52,49 @@ bb0:
   %load_42 = load i1, ptr %alloca_36
   store i1 %load_42, ptr %alloca_41
   %alloca_44 = alloca i1, align 1
-  store i1 0, ptr %alloca_44
-  %load_46 = load i1, ptr %alloca_44
-  br i1 %load_46, label %bb1, label %bb2
+  %load_45 = load i1, ptr %alloca_44
+  br i1 %load_45, label %bb1, label %bb2
 bb1:
-  %alloca_47 = alloca i64, align 8
-  store i64 2, ptr %alloca_47
-  %load_49 = load i64, ptr %alloca_47
-  store i64 %load_49, ptr %alloca_1
+  %alloca_46 = alloca i64, align 8
+  store i64 2, ptr %alloca_46
+  %load_48 = load i64, ptr %alloca_46
+  store i64 %load_48, ptr %alloca_0
   br label %bb3
 bb2:
-  %alloca_51 = alloca i64, align 8
-  store i64 0, ptr %alloca_51
-  %load_53 = load i64, ptr %alloca_51
-  store i64 %load_53, ptr %alloca_1
+  %alloca_50 = alloca i64, align 8
+  store i64 0, ptr %alloca_50
+  %load_52 = load i64, ptr %alloca_50
+  store i64 %load_52, ptr %alloca_0
   br label %bb3
 bb3:
-  %alloca_55 = alloca i32, align 4
-  %load_56 = load i32, ptr %alloca_1
-  store i32 %load_56, ptr %alloca_55
-  %alloca_58 = alloca i64, align 8
-  store i64 0, ptr %alloca_58
-  %alloca_60 = alloca i64, align 8
-  %load_61 = load i64, ptr %alloca_58
-  store i64 %load_61, ptr %alloca_60
-  %alloca_63 = alloca i64, align 8
-  store i64 1024, ptr %alloca_63
-  %alloca_65 = alloca i64, align 8
-  %load_66 = load i64, ptr %alloca_4
-  %load_67 = load i64, ptr %alloca_63
-  %div_68 = udiv i64 %load_66, %load_67
-  store i64 %div_68, ptr %alloca_65
-  %load_70 = load i64, ptr %alloca_65
-  %load_71 = load i32, ptr %alloca_9
-  %load_72 = load i64, ptr %alloca_14
-  %load_73 = load i32, ptr %alloca_55
-  call i32 (ptr, ...) @printf(ptr @.str.0, i64 %load_70, i32 %load_71, i64 %load_72, i32 %load_73)
+  %alloca_54 = alloca i32, align 4
+  %load_55 = load i32, ptr %alloca_0
+  store i32 %load_55, ptr %alloca_54
+  %alloca_57 = alloca i64, align 8
+  store i64 0, ptr %alloca_57
+  %alloca_59 = alloca i64, align 8
+  %load_60 = load i64, ptr %alloca_57
+  store i64 %load_60, ptr %alloca_59
+  %alloca_62 = alloca i64, align 8
+  store i64 1024, ptr %alloca_62
+  %alloca_64 = alloca i64, align 8
+  %load_65 = load i64, ptr %alloca_4
+  %load_66 = load i64, ptr %alloca_62
+  %div_67 = udiv i64 %load_65, %load_66
+  store i64 %div_67, ptr %alloca_64
+  %load_69 = load i64, ptr %alloca_64
+  %load_70 = load i32, ptr %alloca_9
+  %load_71 = load i64, ptr %alloca_14
+  %load_72 = load i32, ptr %alloca_54
+  call i32 (ptr, ...) @printf(ptr @.str.0, i64 %load_69, i32 %load_70, i64 %load_71, i32 %load_72)
   br label %bb4
 bb4:
-  %load_75 = load i64, ptr %alloca_19
-  %load_76 = load i1, ptr %alloca_41
-  call i32 (ptr, ...) @printf(ptr @.str.1, i64 %load_75, i1 %load_76)
+  %load_74 = load i64, ptr %alloca_19
+  %load_75 = load i1, ptr %alloca_41
+  call i32 (ptr, ...) @printf(ptr @.str.1, i64 %load_74, i1 %load_75)
   br label %bb5
 bb5:
-  store i32 0, ptr %alloca_0
+  store i32 0, ptr %alloca_1
   ret i32 0
 }
 

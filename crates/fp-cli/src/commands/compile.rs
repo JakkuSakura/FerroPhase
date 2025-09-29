@@ -31,6 +31,8 @@ pub struct CompileArgs {
     pub save_intermediates: bool,
     /// Override source language detection
     pub source_language: Option<String>,
+    /// Treat build as release (disable debug assertions)
+    pub release: bool,
 }
 
 /// Execute the compile command
@@ -124,6 +126,7 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     max_errors: args.max_errors,
                     save_intermediates: args.save_intermediates,
                     source_language: args.source_language.clone(),
+                    release: args.release,
                 },
                 config,
             )
@@ -180,6 +183,7 @@ async fn compile_file(
             show_all_errors: true,
             continue_on_error: true,
         },
+        release: args.release,
     };
 
     // Execute pipeline with new options
