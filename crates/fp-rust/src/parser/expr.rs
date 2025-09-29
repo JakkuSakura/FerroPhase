@@ -29,6 +29,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Tuple(t) if t.elems.is_empty() => Expr::unit(),
         syn::Expr::Tuple(t) => Expr::Tuple(parse_expr_tuple(t)?),
         syn::Expr::Struct(s) => Expr::Struct(parse_expr_struct(s)?.into()),
+        syn::Expr::Const(c) => parse_expr_const(c)?,
         syn::Expr::Paren(p) => Expr::Paren(parse_expr_paren(p)?),
         syn::Expr::Range(r) => Expr::Range(parse_expr_range(r)?),
         syn::Expr::Field(f) => Expr::Select(parse_expr_field(f)?.into()),
@@ -366,6 +367,16 @@ pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<Expr> {
         return parse_println_macro_to_function_call(&m.mac);
     }
 
+    if is_cfg_macro(&m.mac) {
+        if let Some(expr) = parse_cfg_macro(&m.mac)? {
+            return Ok(expr);
+        }
+    }
+
+    if is_input_macro(&m.mac) {
+        return parse_input_macro(&m.mac);
+    }
+
     // Check if this is an fp! macro
     if is_fp_macro(&m.mac) {
         return parse_fp_macro(&m.mac);
@@ -380,6 +391,21 @@ pub fn parse_stmt_macro(raw: syn::StmtMacro) -> Result<BlockStmt> {
     if is_println_macro(&raw.mac) {
         let call_expr = parse_println_macro_to_function_call(&raw.mac)?;
         tracing::debug!("parsed println! macro to function call");
+        return Ok(BlockStmt::Expr(
+            BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
+        ));
+    }
+
+    if is_cfg_macro(&raw.mac) {
+        if let Some(expr) = parse_cfg_macro(&raw.mac)? {
+            return Ok(BlockStmt::Expr(
+                BlockStmtExpr::new(expr).with_semicolon(raw.semi_token.is_some()),
+            ));
+        }
+    }
+
+    if is_input_macro(&raw.mac) {
+        let call_expr = parse_input_macro(&raw.mac)?;
         return Ok(BlockStmt::Expr(
             BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
         ));
@@ -402,8 +428,76 @@ fn is_println_macro(mac: &syn::Macro) -> bool {
     mac.path.segments.len() == 1 && mac.path.segments[0].ident == "println"
 }
 
+fn is_cfg_macro(mac: &syn::Macro) -> bool {
+    mac.path.segments.len() == 1 && mac.path.segments[0].ident == "cfg"
+}
+
 fn is_fp_macro(mac: &syn::Macro) -> bool {
     mac.path.segments.len() == 1 && mac.path.segments[0].ident == "fp"
+}
+
+fn is_input_macro(mac: &syn::Macro) -> bool {
+    mac.path.segments.len() == 1 && mac.path.segments[0].ident == "input"
+}
+
+fn parse_cfg_macro(mac: &syn::Macro) -> Result<Option<Expr>> {
+    let tokens = mac
+        .tokens
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+
+    if tokens == "debug_assertions" {
+        return Ok(Some(debug_assertions_intrinsic()));
+    }
+
+    if tokens == "not(debug_assertions)" {
+        let expr = debug_assertions_intrinsic();
+        return Ok(Some(Expr::UnOp(ExprUnOp {
+            op: UnOpKind::Not,
+            val: Box::new(expr),
+        })));
+    }
+
+    Ok(None)
+}
+
+fn debug_assertions_intrinsic() -> Expr {
+    Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::DebugAssertions,
+        IntrinsicCallPayload::Args { args: Vec::new() },
+    ))
+}
+
+fn parse_input_macro(mac: &syn::Macro) -> Result<Expr> {
+    let tokens_str = mac.tokens.to_string();
+    let args = if tokens_str.trim().is_empty() {
+        Vec::new()
+    } else {
+        let wrapped = format!("dummy({})", tokens_str);
+        let call: syn::ExprCall = syn::parse_str(&wrapped)
+            .map_err(|err| ::eyre::eyre!("Failed to parse input! arguments: {}", err))?;
+        call.args
+            .into_iter()
+            .map(parse_expr)
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::Input,
+        IntrinsicCallPayload::Args { args },
+    )))
+}
+
+fn parse_expr_const(expr: syn::ExprConst) -> Result<Expr> {
+    let block = parse_block(expr.block)?;
+    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::ConstBlock,
+        IntrinsicCallPayload::Args {
+            args: vec![Expr::block(block)],
+        },
+    )))
 }
 
 fn parse_fp_macro(mac: &syn::Macro) -> Result<Expr> {

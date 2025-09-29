@@ -423,6 +423,31 @@ impl<'a> TypeInferencer<'a> {
                         self.bind(int, TypeTerm::Uint(Some(hir_types::UintTy::Usize)))?;
                         int
                     }
+                    IntrinsicCallKind::ConstBlock => {
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            if let Some(body) = args.first() {
+                                return self.infer_expr(body);
+                            }
+                        }
+                        let unit = self.fresh_type_var();
+                        self.bind(unit, TypeTerm::Unit)?;
+                        unit
+                    }
+                    IntrinsicCallKind::DebugAssertions => {
+                        let bool_ty = self.fresh_type_var();
+                        self.bind(bool_ty, TypeTerm::Bool)?;
+                        bool_ty
+                    }
+                    IntrinsicCallKind::Input => {
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        let string_ty = self.fresh_type_var();
+                        self.bind(string_ty, TypeTerm::String)?;
+                        string_ty
+                    }
                 }
             }
             ExprKind::If(cond, then_expr, else_expr) => {

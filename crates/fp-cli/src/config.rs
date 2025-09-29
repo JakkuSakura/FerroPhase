@@ -20,6 +20,8 @@ pub struct PipelineOptions {
     pub debug: DebugOptions,
     /// Error tolerance options
     pub error_tolerance: ErrorToleranceOptions,
+    /// Whether the current build is in release mode
+    pub release: bool,
 }
 
 /// Compilation targets
@@ -99,6 +101,7 @@ impl Default for PipelineOptions {
                 verbose: false,
             },
             error_tolerance: ErrorToleranceOptions::default(),
+            release: false,
         }
     }
 }
@@ -139,6 +142,7 @@ impl From<&PipelineConfig> for PipelineOptions {
                 verbose: false,
             },
             error_tolerance: ErrorToleranceOptions::default(),
+            release: false,
         }
     }
 }

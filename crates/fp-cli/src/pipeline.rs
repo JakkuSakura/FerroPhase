@@ -455,6 +455,7 @@ impl Pipeline {
 
         let shared_context = SharedScopedContext::new();
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
+        const_evaluator.set_debug_assertions(!options.release);
 
         let outcome = match const_evaluator.evaluate(&thir_program, &shared_context) {
             Ok(outcome) => outcome,
@@ -962,6 +963,7 @@ impl Pipeline {
         register_threadlocal_serializer(serializer.clone());
 
         let mut interpreter = InterpretationOrchestrator::new(mode);
+        interpreter.set_debug_assertions(!options.release);
         let interpreter_diagnostics = Arc::new(DiagnosticManager::new());
         interpreter.set_diagnostics(Some(interpreter_diagnostics.clone()));
 

@@ -425,6 +425,17 @@ impl ThirGenerator {
                         self.create_unit_type()
                     }
                     IntrinsicCallKind::Len => self.create_usize_type(),
+                    IntrinsicCallKind::ConstBlock => {
+                        if let IntrinsicCallPayload::Args { args } = &payload {
+                            args.first()
+                                .map(|expr| expr.ty.clone())
+                                .unwrap_or_else(|| self.create_unit_type())
+                        } else {
+                            self.create_unit_type()
+                        }
+                    }
+                    IntrinsicCallKind::DebugAssertions => self.create_bool_type(),
+                    IntrinsicCallKind::Input => self.create_string_type(),
                 };
 
                 (
@@ -1178,6 +1189,10 @@ impl ThirGenerator {
 
     pub(super) fn create_usize_type(&self) -> hir_types::Ty {
         hir_types::Ty::uint(hir_types::UintTy::Usize)
+    }
+
+    pub(super) fn create_bool_type(&self) -> hir_types::Ty {
+        hir_types::Ty::bool()
     }
 
     pub(super) fn create_string_type(&self) -> hir_types::Ty {

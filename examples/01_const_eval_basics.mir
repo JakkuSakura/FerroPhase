@@ -51,7 +51,6 @@ mir::Program {
                     s11: _15 = const Constant { span: Span { file: 958031099278485038, lo: 33, hi: 34 }, user_ty: None, literal: Int(0) }
                     s12: _16 = Eq(move _14, move _15)
                     s13: _5 = move _16
-                    s14: _17 = const Constant { span: Span { file: 958031099278485038, lo: 36, hi: 37 }, user_ty: None, literal: Bool(false) }
                     terminator: switch move _17 [1 -> bb1] otherwise -> bb2
                 bb1:
                     s0: _19 = const Constant { span: Span { file: 958031099278485038, lo: 37, hi: 38 }, user_ty: None, literal: Int(2) }

@@ -9,6 +9,12 @@ pub enum IntrinsicCallKind {
     Print,
     /// Length query for collections/strings.
     Len,
+    /// Compile-time const block expression.
+    ConstBlock,
+    /// Debug assertions state (mapped from build profile).
+    DebugAssertions,
+    /// Input prompt/read intrinsic.
+    Input,
 }
 
 /// Wrapper that carries the intrinsic kind plus stage-specific payload.
