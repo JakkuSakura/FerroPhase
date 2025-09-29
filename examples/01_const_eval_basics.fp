@@ -4,6 +4,7 @@
 fn main() {
     // Basic compile-time computation
     const BUFFER_SIZE: usize = 1024 * 4;
+    println!("Buffer size: {} Bytes", BUFFER_SIZE);
     const MAX_CONNECTIONS: i32 = 100 + 50;
     const TIMEOUT_MS: u64 = 30 * 1000;
 

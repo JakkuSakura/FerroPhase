@@ -11,6 +11,6 @@ thir::Program {
                 _4: bool
                 _5: i32
                 _6: <??>
-            value: block(10 stmts) : ()
+            value: block(11 stmts) : ()
         }
 }
