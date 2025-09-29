@@ -113,13 +113,13 @@ lir::Program {
                 i71: %r71 = load %r9 align 4 : i32
                 i72: %r72 = load %r14 align 8 : i64
                 i73: %r73 = load %r55 align 4 : i32
-                i74: %r74 = call c undef void(c"Config: buffer=%lluKB, connections=%d, timeout=%llums, debug=%d
+                i74: %r74 = call c @printf(c"Config: buffer=%lluKB, connections=%d, timeout=%llums, debug=%d
 ", %r70, %r71, %r72, %r73)
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
                 i75: %r75 = load %r19 align 8 : i64
                 i76: %r76 = load %r41 align 1 : i1
-                i77: %r77 = call c undef void(c"Computed: factorial=%lld, is_pow2=%d
+                i77: %r77 = call c @printf(c"Computed: factorial=%lld, is_pow2=%d
 ", %r75, %r76)
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4]:

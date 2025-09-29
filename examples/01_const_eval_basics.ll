@@ -2,7 +2,7 @@
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-macosx15.0.0"
 
-@.str.0 = constant [64 x i8] [i8 67, i8 111, i8 110, i8 102, i8 105, i8 103, i8 58, i8 32, i8 98, i8 117, i8 102, i8 102, i8 101, i8 114, i8 61, i8 37, i8 108, i8 117, i8 75, i8 66, i8 44, i8 32, i8 99, i8 111, i8 110, i8 110, i8 101, i8 99, i8 116, i8 105, i8 111, i8 110, i8 115, i8 61, i8 37, i8 100, i8 44, i8 32, i8 116, i8 105, i8 109, i8 101, i8 111, i8 117, i8 116, i8 61, i8 37, i8 108, i8 108, i8 117, i8 109, i8 115, i8 44, i8 32, i8 100, i8 101, i8 98, i8 117, i8 103, i8 61, i8 37, i8 100, i8 10, i8 0], align 1
+@.str.0 = constant [65 x i8] [i8 67, i8 111, i8 110, i8 102, i8 105, i8 103, i8 58, i8 32, i8 98, i8 117, i8 102, i8 102, i8 101, i8 114, i8 61, i8 37, i8 108, i8 108, i8 117, i8 75, i8 66, i8 44, i8 32, i8 99, i8 111, i8 110, i8 110, i8 101, i8 99, i8 116, i8 105, i8 111, i8 110, i8 115, i8 61, i8 37, i8 100, i8 44, i8 32, i8 116, i8 105, i8 109, i8 101, i8 111, i8 117, i8 116, i8 61, i8 37, i8 108, i8 108, i8 117, i8 109, i8 115, i8 44, i8 32, i8 100, i8 101, i8 98, i8 117, i8 103, i8 61, i8 37, i8 100, i8 10, i8 0], align 1
 @.str.1 = constant [38 x i8] [i8 67, i8 111, i8 109, i8 112, i8 117, i8 116, i8 101, i8 100, i8 58, i8 32, i8 102, i8 97, i8 99, i8 116, i8 111, i8 114, i8 105, i8 97, i8 108, i8 61, i8 37, i8 108, i8 108, i8 100, i8 44, i8 32, i8 105, i8 115, i8 95, i8 112, i8 111, i8 119, i8 50, i8 61, i8 37, i8 100, i8 10, i8 0], align 1
 declare i32 @printf(ptr, ...)
 define i32 @main() {
@@ -76,25 +76,23 @@ bb3:
   %alloca_60 = alloca i64, align 8
   %load_61 = load i64, ptr %alloca_58
   store i64 %load_61, ptr %alloca_60
-  %alloca_63 = alloca i32, align 4
-  %alloca_64 = alloca i64, align 8
-  store i64 1024, ptr %alloca_64
-  %alloca_66 = alloca i64, align 8
-  %load_67 = load i64, ptr %alloca_4
-  %load_68 = load i64, ptr %alloca_64
-  %div_69 = udiv i64 %load_67, %load_68
-  store i64 %div_69, ptr %alloca_66
-  %load_71 = load i64, ptr %alloca_66
-  %load_72 = load i32, ptr %alloca_9
-  %load_73 = load i64, ptr %alloca_14
-  %load_74 = load i32, ptr %alloca_55
-  call i32 (ptr, ...) @printf(ptr @.str.0, i64 %load_71, i32 %load_72, i64 %load_73, i32 %load_74)
+  %alloca_63 = alloca i64, align 8
+  store i64 1024, ptr %alloca_63
+  %alloca_65 = alloca i64, align 8
+  %load_66 = load i64, ptr %alloca_4
+  %load_67 = load i64, ptr %alloca_63
+  %div_68 = udiv i64 %load_66, %load_67
+  store i64 %div_68, ptr %alloca_65
+  %load_70 = load i64, ptr %alloca_65
+  %load_71 = load i32, ptr %alloca_9
+  %load_72 = load i64, ptr %alloca_14
+  %load_73 = load i32, ptr %alloca_55
+  call i32 (ptr, ...) @printf(ptr @.str.0, i64 %load_70, i32 %load_71, i64 %load_72, i32 %load_73)
   br label %bb4
 bb4:
-  %alloca_76 = alloca i32, align 4
-  %load_77 = load i64, ptr %alloca_19
-  %load_78 = load i1, ptr %alloca_41
-  call i32 (ptr, ...) @printf(ptr @.str.1, i64 %load_77, i1 %load_78)
+  %load_75 = load i64, ptr %alloca_19
+  %load_76 = load i1, ptr %alloca_41
+  call i32 (ptr, ...) @printf(ptr @.str.1, i64 %load_75, i1 %load_76)
   br label %bb5
 bb5:
   store i32 0, ptr %alloca_0

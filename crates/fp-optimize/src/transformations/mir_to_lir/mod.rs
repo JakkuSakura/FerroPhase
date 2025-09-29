@@ -549,7 +549,7 @@ impl LirGenerator {
             }
 
             if should_update_register_map {
-                if target_is_zst {
+                if target_is_zst && !matches!(value, lir::LirValue::Function(_)) {
                     value = lir::LirValue::Constant(lir::LirConstant::Undef(target_lir_ty));
                 }
                 self.register_map.insert(place.local, value);
