@@ -5,7 +5,7 @@ work captured in `specs/003-compile/tasks.md` (T027).
 
 ## Goals
 
-- Provide operators and developers with visibility into each pipeline stage (parse → const eval → HIR → THIR → MIR → LIR → backend).
+- Provide operators and developers with visibility into each pipeline stage (parse → type inference → const eval → HIRᵗ → MIR → LIR → backend).
 - Maintain deterministic logs across modes to preserve cross-stage guarantees (`docs/Design.md:158`).
 - Ensure tracing output is opt-in and environment-configurable.
 
@@ -22,16 +22,16 @@ work captured in `specs/003-compile/tasks.md` (T027).
 | Stage            | Location                                           | Notes                                     |
 |------------------|----------------------------------------------------|-------------------------------------------|
 | Parsing          | `fp-cli/src/pipeline.rs:parse_source`              | Emits source path and module count        |
+| Type Inference   | `fp-cli/src/pipeline.rs:run_type_inference`        | Logs constraint solving time, result size |
 | Const Evaluation | `fp-cli/src/pipeline.rs:run_const_eval`            | Logs dependency graph and evaluation time |
-| HIR Lowering     | `fp-optimize/src/transformations/ast_to_hir.rs`    | Span-preserving logs, TODO for modules    |
-| THIR Projection  | `fp-optimize/src/transformations/hir_to_thir.rs`   | Placeholder instrumentation, to be expanded|
-| MIR/LIR          | `fp-optimize/src/transformations/{thir_to_mir,mir_to_lir}` | MIR builds the Rust-style SSA graph; logging yet minimal |
+| HIR Projection   | `fp-optimize/src/transformations/ast_to_hir.rs`    | Span-preserving logs, TODO for modules    |
+| MIR/LIR          | `fp-optimize/src/transformations/{hir_to_mir,mir_to_lir}` | MIR builds the Rust-style SSA graph; logging yet minimal |
 | Backends         | `fp-llvm/src/codegen.rs`                           | Emits target triple, optimisation level   |
 
 ## Tracing Roadmap (T027)
 
 1. **Structured Spans** – Introduce span guards for each pipeline step so nested operations (e.g., module lowering) are visible.
-2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with TAST/THIR outputs.
+2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with typed AST/HIR outputs.
 3. **Error Correlation** – Ensure errors recorded through `tracing::error!` map back to TAST spans, matching the cross-stage guarantees.
 4. **CLI Flags** – Add `--log {level}` and `--log-format {pretty,json}` flags with sensible defaults.
 5. **Test Hooks** – Provide utilities in `fp-optimize/tests` to assert log spans when running pipeline tests.
