@@ -1,25 +1,18 @@
 hir::Program {
     pub fn main() -> _ {
         {
-            let APP_LENGTH: i64 = 10;
-            let VERSION_LENGTH: i64 = 5;
-            let BANNER_EXTRA: i64 = 3;
-            let BANNER_LENGTH: i64 = ((APP_LENGTH + VERSION_LENGTH) + BANNER_EXTRA);
-            let VERSION_HAS_SEPARATOR: bool = true;
-            let RELEASE_CHANNEL_IS_BETA: bool = false;
-            let METADATA_VALID: bool = (BANNER_LENGTH >= 15);
-            let BUFFER_SIZE: i64 = <control-flow>;
-            let HASH_BASE: i64 = 31;
-            let SIMPLE_HASH: i64 = ((APP_LENGTH * HASH_BASE) + VERSION_LENGTH);
-            let SUMMARY_SCORE: i64 = ((APP_LENGTH + VERSION_LENGTH) + BANNER_LENGTH);
+            let NAME: &_ = "FerroPhase";
+            let VERSION: &_ = "0.1.0";
+            let NAME_LEN: u64 = 10;
+            let VERSION_LEN: u64 = 5;
+            std::Println(2 args)
+            std::Println(2 args)
+            let IS_EMPTY: bool = (NAME_LEN == 0);
+            let IS_LONG: bool = (NAME_LEN > 5);
+            std::Println(2 args)
+            let BANNER: &_ = "FerroPhase v0.1.0";
             std::Println(1 args)
-            std::Println(1 args)
-            std::Println(1 args)
-            std::Println(1 args)
-            std::Println(1 args)
-            std::Println(1 args)
-            std::Println(1 args)
-            std::Println(1 args)
+            let BUFFER_SIZE: u64 = <control-flow>;
             std::Println(1 args)
         }
     }

@@ -1,0 +1,19 @@
+hir::Program {
+    pub fn main() -> _ {
+        {
+            let TEMP: i64 = 25;
+            let WEATHER: &_ = <control-flow>;
+            std::Println(2 args)
+            let IS_SUNNY: bool = true;
+            let IS_WARM: bool = (TEMP > 20);
+            let ACTIVITY: &_ = <control-flow>;
+            std::Println(1 args)
+            let SCORE: i64 = 85;
+            let GRADE: &_ = <control-flow>;
+            std::Println(2 args)
+            let value: i64 = 42;
+            let category: *i8 = <control-flow>;
+            std::Println(2 args)
+        }
+    }
+}

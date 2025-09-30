@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -456,7 +456,6 @@ impl ThirGenerator {
                 )
             }
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
-                // Convert method call to function call for simplicity
                 let receiver_thir = self.transform_expr(*receiver)?;
                 let args_thir: Vec<_> = args
                     .into_iter()
@@ -465,28 +464,44 @@ impl ThirGenerator {
                 let return_ty =
                     self.infer_method_call_return_type(&receiver_thir, &method_name, &args_thir)?;
 
-                // Create a function call with method name
-                let func_expr = thir::Expr {
-                    thir_id: self.next_id(),
-                    kind: thir::ExprKind::Path(thir::ItemRef {
-                        name: method_name.clone(),
-                        def_id: self.type_context.lookup_value_def_id(&method_name),
-                    }),
-                    ty: self.create_unit_type(), // Simplified
-                    span: Span::new(0, 0, 0),
-                };
+                // Check if this is an intrinsic method call
+                if self.is_intrinsic_method(&receiver_thir.ty, &method_name) {
+                    // Generate intrinsic call
+                    let intrinsic_kind = self.get_intrinsic_kind(&method_name);
+                    let mut all_args = vec![receiver_thir];
+                    all_args.extend(args_thir);
 
-                let mut all_args = vec![receiver_thir];
-                all_args.extend(args_thir);
+                    (
+                        thir::ExprKind::IntrinsicCall(IntrinsicCall::new(
+                            intrinsic_kind,
+                            IntrinsicCallPayload::Args { args: all_args },
+                        )),
+                        return_ty,
+                    )
+                } else {
+                    // Regular method call - convert to function call
+                    let func_expr = thir::Expr {
+                        thir_id: self.next_id(),
+                        kind: thir::ExprKind::Path(thir::ItemRef {
+                            name: method_name.clone(),
+                            def_id: self.type_context.lookup_value_def_id(&method_name),
+                        }),
+                        ty: self.create_unit_type(),
+                        span: Span::new(0, 0, 0),
+                    };
 
-                (
-                    thir::ExprKind::Call {
-                        fun: Box::new(func_expr),
-                        args: all_args,
-                        from_hir_call: true,
-                    },
-                    return_ty,
-                )
+                    let mut all_args = vec![receiver_thir];
+                    all_args.extend(args_thir);
+
+                    (
+                        thir::ExprKind::Call {
+                            fun: Box::new(func_expr),
+                            args: all_args,
+                            from_hir_call: true,
+                        },
+                        return_ty,
+                    )
+                }
             }
             hir::ExprKind::FieldAccess(expr, field_name) => {
                 // If base is a const struct, inline the specific field initializer
@@ -923,6 +938,8 @@ impl ThirGenerator {
             hir::BinOp::Mul => thir::BinOp::Mul,
             hir::BinOp::Div => thir::BinOp::Div,
             hir::BinOp::Rem => thir::BinOp::Rem,
+            hir::BinOp::And => thir::BinOp::And,
+            hir::BinOp::Or => thir::BinOp::Or,
             hir::BinOp::BitXor => thir::BinOp::BitXor,
             hir::BinOp::BitAnd => thir::BinOp::BitAnd,
             hir::BinOp::BitOr => thir::BinOp::BitOr,
@@ -934,7 +951,6 @@ impl ThirGenerator {
             hir::BinOp::Le => thir::BinOp::Le,
             hir::BinOp::Gt => thir::BinOp::Gt,
             hir::BinOp::Ge => thir::BinOp::Ge,
-            _ => thir::BinOp::Add, // Fallback
         }
     }
 
@@ -1306,6 +1322,23 @@ impl ThirGenerator {
             "Method '{}' not found for receiver type {:?}",
             method_name, receiver.ty
         )))
+    }
+
+    /// Check if a method is an intrinsic
+    fn is_intrinsic_method(&self, receiver_ty: &hir_types::Ty, method_name: &str) -> bool {
+        match &receiver_ty.kind {
+            hir_types::TyKind::Slice(_) if method_name == "len" => true,
+            hir_types::TyKind::Ref(_, inner, _) => self.is_intrinsic_method(inner, method_name),
+            _ => false,
+        }
+    }
+
+    /// Get the intrinsic kind for a method name
+    fn get_intrinsic_kind(&self, method_name: &str) -> IntrinsicCallKind {
+        match method_name {
+            "len" => IntrinsicCallKind::Len,
+            _ => panic!("Unknown intrinsic method: {}", method_name),
+        }
     }
 
     /// Unify two types

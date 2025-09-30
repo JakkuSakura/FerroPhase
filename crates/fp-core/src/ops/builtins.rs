@@ -248,6 +248,38 @@ pub fn builtin_ne() -> BuiltinFn {
     binary_comparison_on_literals(BinOpKind::Ne, |x, y| x != y, |x, y| x != y)
 }
 
+pub fn builtin_and() -> BuiltinFn {
+    BuiltinFn::new(BinOpKind::And, move |args, _ctx| {
+        if args.len() != 2 {
+            bail!("And expects 2 arguments, got: {:?}", args)
+        }
+        match (&args[0], &args[1]) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value && b.value)),
+            _ => bail!(
+                "And operation requires boolean operands, got: {:?} && {:?}",
+                args[0],
+                args[1]
+            ),
+        }
+    })
+}
+
+pub fn builtin_or() -> BuiltinFn {
+    BuiltinFn::new(BinOpKind::Or, move |args, _ctx| {
+        if args.len() != 2 {
+            bail!("Or expects 2 arguments, got: {:?}", args)
+        }
+        match (&args[0], &args[1]) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value || b.value)),
+            _ => bail!(
+                "Or operation requires boolean operands, got: {:?} || {:?}",
+                args[0],
+                args[1]
+            ),
+        }
+    })
+}
+
 pub fn builtin_print(_se: Arc<dyn AstSerializer>) -> BuiltinFn {
     BuiltinFn::new_with_ident("print".into(), move |args, ctx| {
         use crate::context::ExecutionMode;

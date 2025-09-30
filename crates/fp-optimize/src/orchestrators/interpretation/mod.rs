@@ -1149,6 +1149,14 @@ impl InterpretationOrchestrator {
             BinOp::Sub => self.binary_int_op(left, right, |a, b| a - b),
             BinOp::Mul => self.binary_int_op(left, right, |a, b| a * b),
             BinOp::Div => self.binary_int_op(left, right, |a, b| if b == 0 { a } else { a / b }),
+            BinOp::And => match (&left, &right) {
+                (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value && b.value)),
+                _ => Err(optimization_error(format!("And operation requires boolean operands, got: {:?} && {:?}", left, right))),
+            },
+            BinOp::Or => match (&left, &right) {
+                (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value || b.value)),
+                _ => Err(optimization_error(format!("Or operation requires boolean operands, got: {:?} || {:?}", left, right))),
+            },
             BinOp::Rem => self.binary_int_op(left, right, |a, b| a % b),
             BinOp::BitAnd => self.binary_int_op(left, right, |a, b| a & b),
             BinOp::BitOr => self.binary_int_op(left, right, |a, b| a | b),

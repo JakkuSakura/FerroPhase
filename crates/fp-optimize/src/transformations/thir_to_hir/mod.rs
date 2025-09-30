@@ -628,6 +628,8 @@ impl ThirDetyper {
             thir::BinOp::Mul => hir::BinOp::Mul,
             thir::BinOp::Div => hir::BinOp::Div,
             thir::BinOp::Rem => hir::BinOp::Rem,
+            thir::BinOp::And => hir::BinOp::And,
+            thir::BinOp::Or => hir::BinOp::Or,
             thir::BinOp::BitXor => hir::BinOp::BitXor,
             thir::BinOp::BitAnd => hir::BinOp::BitAnd,
             thir::BinOp::BitOr => hir::BinOp::BitOr,

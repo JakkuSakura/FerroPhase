@@ -1,0 +1,31 @@
+mir::Program {
+    items:
+        fn main::main() -> i32 [body: body0]
+    bodies:
+        body0 { arg_count: 0, locals: 10 }
+            return_local: _0
+            locals:
+                _0: i32
+                _1: bool
+                _2: bool
+                _3: bool
+                _4: bool
+                _5: bool
+                _6: bool
+                _7: ()
+                _8: ()
+                _9: ()
+            blocks:
+                bb0:
+                    s0: _4 = const Constant { span: Span { file: 10746427014118528112, lo: 3, hi: 4 }, user_ty: None, literal: Bool(true) }
+                    s1: _1 = move _4
+                    s2: _5 = const Constant { span: Span { file: 10746427014118528112, lo: 5, hi: 6 }, user_ty: None, literal: Bool(false) }
+                    s3: _2 = move _5
+                    s4: _6 = And(move _1, move _2)
+                    s5: _3 = move _6
+                    s6: _7 = const Constant { span: Span { file: 10746427014118528112, lo: 10, hi: 11 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _7(const Constant { span: Span { file: 10746427014118528112, lo: 10, hi: 11 }, user_ty: None, literal: Str("A=%d, B=%d, A && B=%d\n") }, move _1, move _2, move _3) -> _8 then bb1
+                bb1:
+                    s0: _0 = move _9
+                    terminator: return
+}
