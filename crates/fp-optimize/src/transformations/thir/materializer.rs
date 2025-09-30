@@ -267,6 +267,26 @@ impl BackendThirMaterializer {
                     kind
                 );
             }
+            // Metaprogramming intrinsics - keep as intrinsic calls (handled by interpreter)
+            _ => {
+                // For all other intrinsics (including metaprogramming), keep them as intrinsic calls
+                // They will be handled during const evaluation or interpretation
+                let mut materialized_payload = payload.clone();
+                if let IntrinsicCallPayload::Args { args } = &mut materialized_payload {
+                    for arg in args.iter_mut() {
+                        self.materialize_expr(arg);
+                    }
+                }
+                thir::Expr {
+                    thir_id,
+                    kind: ExprKind::IntrinsicCall(thir::ThirIntrinsicCall {
+                        kind,
+                        payload: materialized_payload,
+                    }),
+                    ty: self.create_unit_type(),
+                    span,
+                }
+            }
         }
     }
 

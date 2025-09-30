@@ -464,6 +464,80 @@ impl<'a> TypeInferencer<'a> {
                             call.kind
                         )));
                     }
+                    // Metaprogramming intrinsics - infer types
+                    IntrinsicCallKind::SizeOf
+                    | IntrinsicCallKind::FieldCount
+                    | IntrinsicCallKind::MethodCount
+                    | IntrinsicCallKind::StructSize => {
+                        // Infer argument types
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        let usize_ty = self.fresh_type_var();
+                        self.bind(usize_ty, TypeTerm::Uint(Some(hir_types::UintTy::Usize)))?;
+                        usize_ty
+                    }
+                    IntrinsicCallKind::HasField | IntrinsicCallKind::HasMethod => {
+                        // Infer argument types
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        let bool_ty = self.fresh_type_var();
+                        self.bind(bool_ty, TypeTerm::Bool)?;
+                        bool_ty
+                    }
+                    IntrinsicCallKind::TypeName => {
+                        // Infer argument types
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        let string_ty = self.fresh_type_var();
+                        self.bind(string_ty, TypeTerm::String)?;
+                        string_ty
+                    }
+                    IntrinsicCallKind::ReflectFields
+                    | IntrinsicCallKind::CreateStruct
+                    | IntrinsicCallKind::CloneStruct
+                    | IntrinsicCallKind::AddField
+                    | IntrinsicCallKind::FieldType => {
+                        // Infer argument types
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        // Return unknown type
+                        self.fresh_type_var()
+                    }
+                    IntrinsicCallKind::GenerateMethod | IntrinsicCallKind::CompileWarning => {
+                        // Infer argument types
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        let unit = self.fresh_type_var();
+                        self.bind(unit, TypeTerm::Unit)?;
+                        unit
+                    }
+                    IntrinsicCallKind::CompileError => {
+                        // Infer argument types
+                        if let IntrinsicCallPayload::Args { args } = &call.payload {
+                            for arg in args {
+                                let _ = self.infer_expr(arg)?;
+                            }
+                        }
+                        // Never returns - but for typing purposes, use never type
+                        let never = self.fresh_type_var();
+                        self.bind(never, TypeTerm::Never)?;
+                        never
+                    }
                 }
             }
             ExprKind::If(cond, then_expr, else_expr) => {
