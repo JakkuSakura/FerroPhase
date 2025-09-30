@@ -1,0 +1,26 @@
+hir::Program {
+    pub fn main() -> _ {
+        {
+            let APP_LENGTH: i64 = 10;
+            let VERSION_LENGTH: i64 = 5;
+            let BANNER_EXTRA: i64 = 3;
+            let BANNER_LENGTH: i64 = ((APP_LENGTH + VERSION_LENGTH) + BANNER_EXTRA);
+            let VERSION_HAS_SEPARATOR: bool = true;
+            let RELEASE_CHANNEL_IS_BETA: bool = false;
+            let METADATA_VALID: bool = (BANNER_LENGTH >= 15);
+            let BUFFER_SIZE: i64 = <control-flow>;
+            let HASH_BASE: i64 = 31;
+            let SIMPLE_HASH: i64 = ((APP_LENGTH * HASH_BASE) + VERSION_LENGTH);
+            let SUMMARY_SCORE: i64 = ((APP_LENGTH + VERSION_LENGTH) + BANNER_LENGTH);
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+        }
+    }
+}
