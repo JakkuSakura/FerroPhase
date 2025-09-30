@@ -3,208 +3,141 @@ lir::Program {
         fn main() -> i32 [cc: c, linkage: internal] {
             locals:
                 %0: i32
-                %1: i64
-                %2: i64
+                %1: ptr i32
+                %2: ptr i32
                 %3: i64
                 %4: i64
                 %5: i1
                 %6: i1
-                %7: i1
+                %7: ptr i32
                 %8: i64
-                %9: i64
-                %10: i64
+                %9: ptr i32
+                %10: ptr i32
                 %11: i64
                 %12: i64
-                %13: i64
-                %14: i64
-                %15: i64
-                %16: i64
-                %17: i1
+                %13: void
+                %14: void
+                %15: void
+                %16: void
+                %17: i64
                 %18: i1
                 %19: i64
                 %20: i1
-                %21: i64
-                %22: i1
-                %23: i64
-                %24: i64
-                %25: i64
+                %21: void
+                %22: void
+                %23: ptr i32
+                %24: void
+                %25: void
                 %26: i64
-                %27: i64
+                %27: i1
                 %28: i64
                 %29: i64
                 %30: i64
                 %31: void
                 %32: void
                 %33: void
-                %34: void
-                %35: void
-                %36: void
-                %37: void
-                %38: void
-                %39: void
-                %40: void
-                %41: void
-                %42: void
-                %43: void
-                %44: void
-                %45: void
-                %46: void
-                %47: void
-                %48: void
-                %49: void
-            bb0 // label: bb0 // succs: [bb1, bb2]:
+            bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = alloca i32 1 align 4 : ptr i32
                 i1: %r1 = alloca i32 1 align 8 : ptr i64
-                i2: %r2 = alloca i32 1 align 8 : ptr i64
-                i3: store i64 10, %r2 align 8
-                i4: %r4 = alloca i32 1 align 8 : ptr i64
-                i5: %r5 = load %r2 align 8 : i64
+                i2: %r2 = alloca i32 1 align 8 : ptr ptr i32
+                i3: store c"FerroPhase", %r2 align 8
+                i4: %r4 = alloca i32 1 align 8 : ptr ptr i32
+                i5: %r5 = load %r2 align 8 : ptr i32
                 i6: store %r5, %r4 align 8
-                i7: %r7 = alloca i32 1 align 8 : ptr i64
-                i8: store i64 5, %r7 align 8
-                i9: %r9 = alloca i32 1 align 8 : ptr i64
-                i10: %r10 = load %r7 align 8 : i64
+                i7: %r7 = alloca i32 1 align 8 : ptr ptr i32
+                i8: store c"0.1.0", %r7 align 8
+                i9: %r9 = alloca i32 1 align 8 : ptr ptr i32
+                i10: %r10 = load %r7 align 8 : ptr i32
                 i11: store %r10, %r9 align 8
                 i12: %r12 = alloca i32 1 align 8 : ptr i64
-                i13: store i64 3, %r12 align 8
+                i13: store i64 10, %r12 align 8
                 i14: %r14 = alloca i32 1 align 8 : ptr i64
                 i15: %r15 = load %r12 align 8 : i64
                 i16: store %r15, %r14 align 8
                 i17: %r17 = alloca i32 1 align 8 : ptr i64
-                i18: %r18 = load %r4 align 8 : i64
-                i19: %r19 = load %r9 align 8 : i64
-                i20: %r20 = add %r18, %r19 : i64
-                i21: store %r20, %r17 align 8
-                i22: %r22 = alloca i32 1 align 8 : ptr i64
-                i23: %r23 = load %r17 align 8 : i64
-                i24: %r24 = load %r14 align 8 : i64
-                i25: %r25 = add %r23, %r24 : i64
-                i26: store %r25, %r22 align 8
-                i27: %r27 = alloca i32 1 align 8 : ptr i64
-                i28: %r28 = load %r22 align 8 : i64
-                i29: store %r28, %r27 align 8
+                i18: store i64 5, %r17 align 8
+                i19: %r19 = alloca i32 1 align 8 : ptr i64
+                i20: %r20 = load %r17 align 8 : i64
+                i21: store %r20, %r19 align 8
+                i22: %r22 = load %r4 align 8 : ptr i32
+                i23: %r23 = load %r14 align 8 : i64
+                i24: %r24 = call c @printf(c"name='%p' len=%llu
+", %r22, %r23)
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i25: %r25 = load %r9 align 8 : ptr i32
+                i26: %r26 = load %r19 align 8 : i64
+                i27: %r27 = call c @printf(c"version='%p' len=%llu
+", %r25, %r26)
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i28: %r28 = alloca i32 1 align 8 : ptr i64
+                i29: store i64 0, %r28 align 8
                 i30: %r30 = alloca i32 1 align 1 : ptr i1
-                i31: store bool true, %r30 align 1
-                i32: %r32 = alloca i32 1 align 1 : ptr i1
-                i33: %r33 = load %r30 align 1 : i1
-                i34: store %r33, %r32 align 1
+                i31: %r31 = load %r14 align 8 : i64
+                i32: %r32 = load %r28 align 8 : i64
+                i33: %r33 = eq %r31, %r32 : i1
+                i34: store %r33, %r30 align 1
                 i35: %r35 = alloca i32 1 align 1 : ptr i1
-                i36: store bool false, %r35 align 1
-                i37: %r37 = alloca i32 1 align 1 : ptr i1
-                i38: %r38 = load %r35 align 1 : i1
-                i39: store %r38, %r37 align 1
-                i40: %r40 = alloca i32 1 align 8 : ptr i64
-                i41: store i64 15, %r40 align 8
-                i42: %r42 = alloca i32 1 align 1 : ptr i1
-                i43: %r43 = load %r27 align 8 : i64
-                i44: %r44 = load %r40 align 8 : i64
-                i45: %r45 = ge %r43, %r44 : i1
-                i46: store %r45, %r42 align 1
-                i47: %r47 = alloca i32 1 align 1 : ptr i1
-                i48: %r48 = load %r42 align 1 : i1
-                i49: store %r48, %r47 align 1
-                i50: %r50 = alloca i32 1 align 8 : ptr i64
-                i51: store i64 20, %r50 align 8
-                i52: %r52 = alloca i32 1 align 1 : ptr i1
-                i53: %r53 = load %r27 align 8 : i64
-                i54: %r54 = load %r50 align 8 : i64
-                i55: %r55 = gt %r53, %r54 : i1
-                i56: store %r55, %r52 align 1
-                i57: %r57 = load %r52 align 1 : i1
-                terminator: cond_br %r57, bb1, bb2
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb3]:
-                i58: %r58 = alloca i32 1 align 8 : ptr i64
-                i59: store i64 1024, %r58 align 8
-                i60: %r60 = load %r58 align 8 : i64
-                i61: store %r60, %r1 align 8
+                i36: %r36 = load %r30 align 1 : i1
+                i37: store %r36, %r35 align 1
+                i38: %r38 = alloca i32 1 align 8 : ptr i64
+                i39: store i64 5, %r38 align 8
+                i40: %r40 = alloca i32 1 align 1 : ptr i1
+                i41: %r41 = load %r14 align 8 : i64
+                i42: %r42 = load %r38 align 8 : i64
+                i43: %r43 = gt %r41, %r42 : i1
+                i44: store %r43, %r40 align 1
+                i45: %r45 = alloca i32 1 align 1 : ptr i1
+                i46: %r46 = load %r40 align 1 : i1
+                i47: store %r46, %r45 align 1
+                i48: %r48 = load %r35 align 1 : i1
+                i49: %r49 = load %r45 align 1 : i1
+                i50: %r50 = call c @printf(c"empty=%d, long=%d
+", %r48, %r49)
                 terminator: br bb3
-            bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i62: %r62 = alloca i32 1 align 8 : ptr i64
-                i63: store i64 512, %r62 align 8
-                i64: %r64 = load %r62 align 8 : i64
-                i65: store %r64, %r1 align 8
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb1, bb2] // succs: [bb4]:
-                i66: %r66 = alloca i32 1 align 8 : ptr i64
-                i67: %r67 = load %r1 align 8 : i64
-                i68: store %r67, %r66 align 8
-                i69: %r69 = alloca i32 1 align 8 : ptr i64
-                i70: store i64 31, %r69 align 8
-                i71: %r71 = alloca i32 1 align 8 : ptr i64
-                i72: %r72 = load %r69 align 8 : i64
-                i73: store %r72, %r71 align 8
-                i74: %r74 = alloca i32 1 align 8 : ptr i64
-                i75: %r75 = load %r4 align 8 : i64
-                i76: %r76 = load %r71 align 8 : i64
-                i77: %r77 = mul %r75, %r76 : i64
-                i78: store %r77, %r74 align 8
-                i79: %r79 = alloca i32 1 align 8 : ptr i64
-                i80: %r80 = load %r74 align 8 : i64
-                i81: %r81 = load %r9 align 8 : i64
-                i82: %r82 = add %r80, %r81 : i64
-                i83: store %r82, %r79 align 8
-                i84: %r84 = alloca i32 1 align 8 : ptr i64
-                i85: %r85 = load %r79 align 8 : i64
-                i86: store %r85, %r84 align 8
-                i87: %r87 = alloca i32 1 align 8 : ptr i64
-                i88: %r88 = load %r4 align 8 : i64
-                i89: %r89 = load %r9 align 8 : i64
-                i90: %r90 = add %r88, %r89 : i64
-                i91: store %r90, %r87 align 8
-                i92: %r92 = alloca i32 1 align 8 : ptr i64
-                i93: %r93 = load %r87 align 8 : i64
-                i94: %r94 = load %r27 align 8 : i64
-                i95: %r95 = add %r93, %r94 : i64
-                i96: store %r95, %r92 align 8
-                i97: %r97 = alloca i32 1 align 8 : ptr i64
-                i98: %r98 = load %r92 align 8 : i64
-                i99: store %r98, %r97 align 8
-                i100: %r100 = load %r4 align 8 : i64
-                i101: %r101 = call c @printf(c"App length %lld
-", %r100)
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i51: %r51 = alloca i32 1 align 8 : ptr ptr i32
+                i52: store c"FerroPhase v0.1.0", %r51 align 8
+                i53: %r53 = alloca i32 1 align 8 : ptr ptr i32
+                i54: %r54 = load %r51 align 8 : ptr i32
+                i55: store %r54, %r53 align 8
+                i56: %r56 = load %r53 align 8 : ptr i32
+                i57: %r57 = call c @printf(c"banner='%p'
+", %r56)
                 terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i102: %r102 = load %r9 align 8 : i64
-                i103: %r103 = call c @printf(c"Version length %lld
-", %r102)
-                terminator: br bb5
-            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i104: %r104 = load %r27 align 8 : i64
-                i105: %r105 = call c @printf(c"Banner length %lld
-", %r104)
-                terminator: br bb6
-            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i106: %r106 = load %r32 align 1 : i1
-                i107: %r107 = call c @printf(c"Separator flag %d
-", %r106)
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5, bb6]:
+                i58: %r58 = alloca i32 1 align 8 : ptr i64
+                i59: store i64 8, %r58 align 8
+                i60: %r60 = alloca i32 1 align 1 : ptr i1
+                i61: %r61 = load %r14 align 8 : i64
+                i62: %r62 = load %r58 align 8 : i64
+                i63: %r63 = gt %r61, %r62 : i1
+                i64: store %r63, %r60 align 1
+                i65: %r65 = load %r60 align 1 : i1
+                terminator: cond_br %r65, bb5, bb6
+            bb5 // label: bb5 // preds: [bb4] // succs: [bb7]:
+                i66: %r66 = alloca i32 1 align 8 : ptr i64
+                i67: store i64 256, %r66 align 8
+                i68: %r68 = load %r66 align 8 : i64
+                i69: store %r68, %r1 align 8
                 terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i108: %r108 = load %r37 align 1 : i1
-                i109: %r109 = call c @printf(c"Beta channel %d
-", %r108)
+            bb6 // label: bb6 // preds: [bb4] // succs: [bb7]:
+                i70: %r70 = alloca i32 1 align 8 : ptr i64
+                i71: store i64 128, %r70 align 8
+                i72: %r72 = load %r70 align 8 : i64
+                i73: store %r72, %r1 align 8
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb5, bb6] // succs: [bb8]:
+                i74: %r74 = alloca i32 1 align 8 : ptr i64
+                i75: %r75 = load %r1 align 8 : i64
+                i76: store %r75, %r74 align 8
+                i77: %r77 = load %r74 align 8 : i64
+                i78: %r78 = call c @printf(c"buffer_size=%llu
+", %r77)
                 terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i110: %r110 = load %r47 align 1 : i1
-                i111: %r111 = call c @printf(c"Metadata valid %d
-", %r110)
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i112: %r112 = load %r66 align 8 : i64
-                i113: %r113 = call c @printf(c"Buffer size %lld
-", %r112)
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i114: %r114 = load %r84 align 8 : i64
-                i115: %r115 = call c @printf(c"Hash marker %lld
-", %r114)
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i116: %r116 = load %r97 align 8 : i64
-                i117: %r117 = call c @printf(c"Summary score %lld
-", %r116)
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11]:
-                i118: store i32 0, %r0 align 4
+            bb8 // label: bb8 // preds: [bb7]:
+                i79: store i32 0, %r0 align 4
                 terminator: ret i32 0
         }
 }

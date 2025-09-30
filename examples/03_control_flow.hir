@@ -1,0 +1,26 @@
+hir::Program {
+    fn main() -> () {
+        {
+            const TEMP: i64 =
+                25;
+            const WEATHER: &str =
+                <control-flow>;
+            std::Println(2 args);
+            const IS_SUNNY: bool =
+                true;
+            const IS_WARM: bool =
+                (TEMP > 20);
+            const ACTIVITY: &str =
+                <control-flow>;
+            std::Println(1 args);
+            const SCORE: i64 =
+                85;
+            const GRADE: &str =
+                <control-flow>;
+            std::Println(2 args);
+            let value = 42;
+            let category = <control-flow>;
+            std::Println(2 args);
+        }
+    }
+}

@@ -54,6 +54,8 @@ impl InterpretationOrchestrator {
             "==" if resolve => Ok(Value::any(builtin_eq())),
             "<=" if resolve => Ok(Value::any(builtin_le())),
             "<" if resolve => Ok(Value::any(builtin_lt())),
+            "&&" if resolve => Ok(Value::any(builtin_and())),
+            "||" if resolve => Ok(Value::any(builtin_or())),
             "print" if resolve => Ok(Value::any(builtin_print(self.serializer.clone()))),
             "println!" if resolve => Ok(Value::any(builtin_println(self.serializer.clone()))),
             "println" if resolve => Ok(Value::any(builtin_println(self.serializer.clone()))),
@@ -489,6 +491,30 @@ impl InterpretationOrchestrator {
             }
             _ => Ok(val.clone()),
         }
+    }
+
+    pub fn lookup_bin_op_kind(&self, op: BinOpKind) -> Result<BuiltinFn> {
+        use BinOpKind::*;
+        let builtin = match op {
+            Add | AddTrait => builtin_add(),
+            Sub => builtin_sub(),
+            Mul => builtin_mul(),
+            Gt => builtin_gt(),
+            Ge => builtin_ge(),
+            Lt => builtin_lt(),
+            Le => builtin_le(),
+            Eq => builtin_eq(),
+            Ne => builtin_ne(),
+            And => builtin_and(),
+            Or => builtin_or(),
+            _ => {
+                return Err(optimization_error(format!(
+                    "Binary operator {:?} not supported in const evaluation",
+                    op
+                )))
+            }
+        };
+        Ok(builtin)
     }
 
     pub fn interpret_binop(&self, binop: &ExprBinOp, ctx: &SharedScopedContext) -> Result<Value> {

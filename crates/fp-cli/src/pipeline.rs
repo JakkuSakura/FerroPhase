@@ -12,7 +12,7 @@ use fp_core::ast::typed as tast;
 use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
-    Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport, DiagnosticTemplate,
+    Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
 };
 use fp_core::hir::typed as thir;
 use fp_core::intrinsics::BackendFlavor;
@@ -92,7 +92,6 @@ struct ConstEvalArtifacts {
 pub struct Pipeline {
     frontends: Arc<FrontendRegistry>,
     default_runtime: String,
-    diagnostic_template: DiagnosticTemplate,
     serializer: Option<Arc<dyn AstSerializer>>,
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
@@ -107,7 +106,6 @@ impl Pipeline {
         Self {
             frontends: Arc::new(registry),
             default_runtime: "literal".to_string(),
-            diagnostic_template: DiagnosticTemplate::Pretty,
             serializer: None,
             source_language: None,
             frontend_snapshot: None,
@@ -124,7 +122,6 @@ impl Pipeline {
         Self {
             frontends: registry,
             default_runtime: "literal".to_string(),
-            diagnostic_template: DiagnosticTemplate::Pretty,
             serializer: None,
             source_language: None,
             frontend_snapshot: None,
@@ -135,14 +132,6 @@ impl Pipeline {
         self.default_runtime = runtime_name.to_string();
     }
 
-    pub fn with_diagnostic_template(mut self, template: DiagnosticTemplate) -> Self {
-        self.diagnostic_template = template;
-        self
-    }
-
-    pub fn set_diagnostic_template(&mut self, template: DiagnosticTemplate) {
-        self.diagnostic_template = template;
-    }
 
     pub async fn execute_with_options(
         &mut self,
@@ -1018,10 +1007,7 @@ impl Pipeline {
     }
 
     fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
-        DiagnosticDisplayOptions::with_template(
-            self.diagnostic_template.clone(),
-            options.debug.verbose,
-        )
+        DiagnosticDisplayOptions::new(options.debug.verbose)
     }
 
     fn evaluate_program_entry(

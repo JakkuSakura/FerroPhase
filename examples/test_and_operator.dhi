@@ -1,0 +1,10 @@
+hir::Program {
+    pub fn main() -> _ {
+        {
+            let A: bool = true;
+            let B: bool = false;
+            let C: bool = (A && B);
+            std::Println(3 args)
+        }
+    }
+}

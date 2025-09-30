@@ -14,20 +14,50 @@ pub(super) struct TypeContext {
     struct_names: HashMap<String, hir_types::DefId>,
     value_names: HashMap<String, hir_types::DefId>,
     const_types: HashMap<hir_types::DefId, hir_types::Ty>,
+    intrinsic_method_signatures: HashMap<String, hir_types::FnSig>,
     next_def_id: hir_types::DefId,
 }
 
 impl TypeContext {
     pub(super) fn new() -> Self {
-        Self {
+        let mut ctx = Self {
             function_signatures: HashMap::new(),
             method_signatures: HashMap::new(),
             structs: HashMap::new(),
             struct_names: HashMap::new(),
             value_names: HashMap::new(),
             const_types: HashMap::new(),
+            intrinsic_method_signatures: HashMap::new(),
             next_def_id: 1,
-        }
+        };
+        ctx.init_intrinsic_methods();
+        ctx
+    }
+
+    fn init_intrinsic_methods(&mut self) {
+        // Register .len() for slices/str: fn(&self) -> usize
+        let len_sig = hir_types::FnSig {
+            inputs: vec![
+                Box::new(hir_types::Ty {
+                    kind: hir_types::TyKind::Ref(
+                        hir_types::Region::ReStatic,
+                        Box::new(hir_types::Ty {
+                            kind: hir_types::TyKind::Slice(Box::new(hir_types::Ty {
+                                kind: hir_types::TyKind::Char,
+                            })),
+                        }),
+                        hir_types::Mutability::Not,
+                    ),
+                })
+            ],
+            output: Box::new(hir_types::Ty {
+                kind: hir_types::TyKind::Uint(hir_types::UintTy::Usize),
+            }),
+            c_variadic: false,
+            unsafety: hir_types::Unsafety::Normal,
+            abi: hir_types::Abi::Rust,
+        };
+        self.intrinsic_method_signatures.insert("slice::len".to_string(), len_sig);
     }
 
     pub(super) fn register_function(
@@ -187,6 +217,24 @@ impl TypeContext {
                 .get(&adt_def.did)
                 .and_then(|methods| methods.get(method_name)),
             hir_types::TyKind::Ref(_, inner, _) => self.lookup_method_signature(inner, method_name),
+            hir_types::TyKind::Slice(_) => {
+                // Intrinsic methods for slices (including &str)
+                self.get_intrinsic_method_signature(owner_ty, method_name)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get intrinsic method signatures for built-in types
+    fn get_intrinsic_method_signature(
+        &self,
+        owner_ty: &hir_types::Ty,
+        method_name: &str,
+    ) -> Option<&hir_types::FnSig> {
+        match &owner_ty.kind {
+            hir_types::TyKind::Slice(_) if method_name == "len" => {
+                self.intrinsic_method_signatures.get("slice::len")
+            }
             _ => None,
         }
     }
