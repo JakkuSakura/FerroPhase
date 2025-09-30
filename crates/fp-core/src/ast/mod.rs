@@ -13,13 +13,15 @@ mod expr;
 mod item;
 mod pretty;
 mod serialize;
-pub mod typed;
 mod value;
 
 pub use attr::*;
 pub use expr::*;
 pub use item::*;
 pub use value::*;
+
+/// Shared slot for storing optional type annotations on AST nodes.
+pub type TySlot = Option<Ty>;
 
 /// Placeholder alias so LAST callers can begin depending on a dedicated type.
 /// The alias intentionally points at the canonical AST until the lowered
@@ -43,10 +45,72 @@ impl std::fmt::Display for File {
 }
 common_enum! {
     /// Tree is any syntax tree element
-    pub enum Node {
+    pub enum NodeKind {
         Item(Item),
         Expr(Expr),
         File(File),
+    }
+}
+
+common_struct! {
+    pub struct Node {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub ty: TySlot,
+        #[serde(flatten)]
+        pub kind: NodeKind,
+    }
+}
+
+impl Node {
+    pub fn new(kind: NodeKind) -> Self {
+        Self { ty: None, kind }
+    }
+
+    pub fn with_ty(kind: NodeKind, ty: TySlot) -> Self {
+        Self { ty, kind }
+    }
+
+    pub fn ty(&self) -> Option<&Ty> {
+        self.ty.as_ref()
+    }
+
+    pub fn ty_mut(&mut self) -> &mut TySlot {
+        &mut self.ty
+    }
+
+    pub fn set_ty(&mut self, ty: Ty) {
+        self.ty = Some(ty);
+    }
+
+    pub fn kind(&self) -> &NodeKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut NodeKind {
+        &mut self.kind
+    }
+
+    pub fn with_ty_slot(mut self, ty: TySlot) -> Self {
+        self.ty = ty;
+        self
+    }
+
+    pub fn file(file: File) -> Self {
+        Node::from(NodeKind::File(file))
+    }
+
+    pub fn item(item: Item) -> Self {
+        Node::from(NodeKind::Item(item))
+    }
+
+    pub fn expr(expr: Expr) -> Self {
+        Node::from(NodeKind::Expr(expr))
+    }
+}
+
+impl From<NodeKind> for Node {
+    fn from(kind: NodeKind) -> Self {
+        Node::new(kind)
     }
 }
 
@@ -59,6 +123,6 @@ impl<D: AstDeserializer> AstProvider for D {
         Ok(self.deserialize_node(cst)?)
     }
     fn get_ast_from_file_path(&self, path: &Path) -> Result<Node> {
-        Ok(self.deserialize_file_load(path).map(Node::File)?)
+        Ok(self.deserialize_file_load(path).map(Node::file)?)
     }
 }

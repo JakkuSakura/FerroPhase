@@ -86,21 +86,51 @@ impl IntrinsicRegistry {
         registry.register_concat("concat!");
 
         // Register metaprogramming intrinsics
-        registry.entries.insert("sizeof!".into(), IntrinsicKind::SizeOf);
-        registry.entries.insert("reflect_fields!".into(), IntrinsicKind::ReflectFields);
-        registry.entries.insert("hasmethod!".into(), IntrinsicKind::HasMethod);
-        registry.entries.insert("type_name!".into(), IntrinsicKind::TypeName);
-        registry.entries.insert("create_struct!".into(), IntrinsicKind::CreateStruct);
-        registry.entries.insert("clone_struct!".into(), IntrinsicKind::CloneStruct);
-        registry.entries.insert("addfield!".into(), IntrinsicKind::AddField);
-        registry.entries.insert("hasfield!".into(), IntrinsicKind::HasField);
-        registry.entries.insert("field_count!".into(), IntrinsicKind::FieldCount);
-        registry.entries.insert("method_count!".into(), IntrinsicKind::MethodCount);
-        registry.entries.insert("field_type!".into(), IntrinsicKind::FieldType);
-        registry.entries.insert("struct_size!".into(), IntrinsicKind::StructSize);
-        registry.entries.insert("generate_method!".into(), IntrinsicKind::GenerateMethod);
-        registry.entries.insert("compile_error!".into(), IntrinsicKind::CompileError);
-        registry.entries.insert("compile_warning!".into(), IntrinsicKind::CompileWarning);
+        registry
+            .entries
+            .insert("sizeof!".into(), IntrinsicKind::SizeOf);
+        registry
+            .entries
+            .insert("reflect_fields!".into(), IntrinsicKind::ReflectFields);
+        registry
+            .entries
+            .insert("hasmethod!".into(), IntrinsicKind::HasMethod);
+        registry
+            .entries
+            .insert("type_name!".into(), IntrinsicKind::TypeName);
+        registry
+            .entries
+            .insert("create_struct!".into(), IntrinsicKind::CreateStruct);
+        registry
+            .entries
+            .insert("clone_struct!".into(), IntrinsicKind::CloneStruct);
+        registry
+            .entries
+            .insert("addfield!".into(), IntrinsicKind::AddField);
+        registry
+            .entries
+            .insert("hasfield!".into(), IntrinsicKind::HasField);
+        registry
+            .entries
+            .insert("field_count!".into(), IntrinsicKind::FieldCount);
+        registry
+            .entries
+            .insert("method_count!".into(), IntrinsicKind::MethodCount);
+        registry
+            .entries
+            .insert("field_type!".into(), IntrinsicKind::FieldType);
+        registry
+            .entries
+            .insert("struct_size!".into(), IntrinsicKind::StructSize);
+        registry
+            .entries
+            .insert("generate_method!".into(), IntrinsicKind::GenerateMethod);
+        registry
+            .entries
+            .insert("compile_error!".into(), IntrinsicKind::CompileError);
+        registry
+            .entries
+            .insert("compile_warning!".into(), IntrinsicKind::CompileWarning);
 
         registry
     }
@@ -142,48 +172,48 @@ impl IntrinsicRegistry {
             Some(IntrinsicKind::SizeOf) => {
                 Ok(Some(crate::intrinsics::intrinsic_sizeof().call(args, ctx)?))
             }
-            Some(IntrinsicKind::ReflectFields) => {
-                Ok(Some(crate::intrinsics::intrinsic_reflect_fields().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::HasMethod) => {
-                Ok(Some(crate::intrinsics::intrinsic_hasmethod().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::TypeName) => {
-                Ok(Some(crate::intrinsics::intrinsic_type_name().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::CreateStruct) => {
-                Ok(Some(crate::intrinsics::intrinsic_create_struct().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::CloneStruct) => {
-                Ok(Some(crate::intrinsics::intrinsic_clone_struct().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::AddField) => {
-                Ok(Some(crate::intrinsics::intrinsic_addfield().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::HasField) => {
-                Ok(Some(crate::intrinsics::intrinsic_hasfield().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::FieldCount) => {
-                Ok(Some(crate::intrinsics::intrinsic_field_count().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::MethodCount) => {
-                Ok(Some(crate::intrinsics::intrinsic_method_count().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::FieldType) => {
-                Ok(Some(crate::intrinsics::intrinsic_field_type().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::StructSize) => {
-                Ok(Some(crate::intrinsics::intrinsic_struct_size().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::GenerateMethod) => {
-                Ok(Some(crate::intrinsics::intrinsic_generate_method().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::CompileError) => {
-                Ok(Some(crate::intrinsics::intrinsic_compile_error().call(args, ctx)?))
-            }
-            Some(IntrinsicKind::CompileWarning) => {
-                Ok(Some(crate::intrinsics::intrinsic_compile_warning().call(args, ctx)?))
-            }
+            Some(IntrinsicKind::ReflectFields) => Ok(Some(
+                crate::intrinsics::intrinsic_reflect_fields().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::HasMethod) => Ok(Some(
+                crate::intrinsics::intrinsic_hasmethod().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::TypeName) => Ok(Some(
+                crate::intrinsics::intrinsic_type_name().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::CreateStruct) => Ok(Some(
+                crate::intrinsics::intrinsic_create_struct().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::CloneStruct) => Ok(Some(
+                crate::intrinsics::intrinsic_clone_struct().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::AddField) => Ok(Some(
+                crate::intrinsics::intrinsic_addfield().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::HasField) => Ok(Some(
+                crate::intrinsics::intrinsic_hasfield().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::FieldCount) => Ok(Some(
+                crate::intrinsics::intrinsic_field_count().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::MethodCount) => Ok(Some(
+                crate::intrinsics::intrinsic_method_count().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::FieldType) => Ok(Some(
+                crate::intrinsics::intrinsic_field_type().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::StructSize) => Ok(Some(
+                crate::intrinsics::intrinsic_struct_size().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::GenerateMethod) => Ok(Some(
+                crate::intrinsics::intrinsic_generate_method().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::CompileError) => Ok(Some(
+                crate::intrinsics::intrinsic_compile_error().call(args, ctx)?,
+            )),
+            Some(IntrinsicKind::CompileWarning) => Ok(Some(
+                crate::intrinsics::intrinsic_compile_warning().call(args, ctx)?,
+            )),
             None => Ok(None),
         }
     }
@@ -362,7 +392,9 @@ impl InterpretationOrchestrator {
                 .get(local_id)
                 .cloned()
                 .map(EvalFlow::Value)
-                .ok_or_else(|| interpretation_error(format!("Missing local binding {:?}", local_id))),
+                .ok_or_else(|| {
+                    interpretation_error(format!("Missing local binding {:?}", local_id))
+                }),
             EK::Path(item_ref) => {
                 if let Some(def_id) = item_ref.def_id {
                     // First check if it's a const value
@@ -384,15 +416,25 @@ impl InterpretationOrchestrator {
                                         // Create a minimal AST struct representation
                                         // We'll use the item's thir_id as a simple name
                                         let type_struct = fp_core::ast::TypeStruct {
-                                            name: fp_core::id::Ident::new(format!("Struct_{:?}", def_id)),
-                                            fields: (0..field_count).map(|i| {
-                                                fp_core::ast::StructuralField {
-                                                    name: fp_core::id::Ident::new(format!("field_{}", i)),
-                                                    value: fp_core::ast::Ty::Expr(Box::new(fp_core::ast::Expr::unit())),
-                                                }
-                                            }).collect(),
+                                            name: fp_core::id::Ident::new(format!(
+                                                "Struct_{:?}",
+                                                def_id
+                                            )),
+                                            fields: (0..field_count)
+                                                .map(|i| fp_core::ast::StructuralField {
+                                                    name: fp_core::id::Ident::new(format!(
+                                                        "field_{}",
+                                                        i
+                                                    )),
+                                                    value: fp_core::ast::Ty::Expr(Box::new(
+                                                        fp_core::ast::Expr::unit(),
+                                                    )),
+                                                })
+                                                .collect(),
                                         };
-                                        return Ok(EvalFlow::Value(Value::Type(fp_core::ast::Ty::Struct(type_struct))));
+                                        return Ok(EvalFlow::Value(Value::Type(
+                                            fp_core::ast::Ty::Struct(type_struct),
+                                        )));
                                     }
                                 }
                             }
@@ -620,7 +662,9 @@ impl InterpretationOrchestrator {
                         let result = self.read_input(prompt)?;
                         Ok(EvalFlow::Value(result))
                     }
-                    IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
+                    IntrinsicCallKind::Break
+                    | IntrinsicCallKind::Continue
+                    | IntrinsicCallKind::Return => {
                         // These should never appear in intrinsic call expressions during interpretation
                         // They are converted to proper HIR control flow expressions in AST→HIR
                         return Err(interpretation_error(format!(
@@ -687,11 +731,14 @@ impl InterpretationOrchestrator {
                         };
 
                         // Invoke the intrinsic
-                        let result = self.invoke_intrinsic(intrinsic_name, &evaluated_args, ctx)?
-                            .ok_or_else(|| interpretation_error(format!(
-                                "intrinsic '{}' returned None",
-                                intrinsic_name
-                            )))?;
+                        let result = self
+                            .invoke_intrinsic(intrinsic_name, &evaluated_args, ctx)?
+                            .ok_or_else(|| {
+                                interpretation_error(format!(
+                                    "intrinsic '{}' returned None",
+                                    intrinsic_name
+                                ))
+                            })?;
                         Ok(EvalFlow::Value(result))
                     }
                 }
@@ -1048,9 +1095,9 @@ impl InterpretationOrchestrator {
     }
 
     fn perform_strlen(&self, args: &[Value]) -> Result<Value> {
-        let value = args
-            .first()
-            .ok_or_else(|| interpretation_error("strlen intrinsic expects at least one argument"))?;
+        let value = args.first().ok_or_else(|| {
+            interpretation_error("strlen intrinsic expects at least one argument")
+        })?;
         let length = match value {
             Value::String(s) => s.value.len() as i64,
             other => {
@@ -1335,11 +1382,17 @@ impl InterpretationOrchestrator {
             BinOp::Div => self.binary_int_op(left, right, |a, b| if b == 0 { a } else { a / b }),
             BinOp::And => match (&left, &right) {
                 (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value && b.value)),
-                _ => Err(interpretation_error(format!("And operation requires boolean operands, got: {:?} && {:?}", left, right))),
+                _ => Err(interpretation_error(format!(
+                    "And operation requires boolean operands, got: {:?} && {:?}",
+                    left, right
+                ))),
             },
             BinOp::Or => match (&left, &right) {
                 (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value || b.value)),
-                _ => Err(interpretation_error(format!("Or operation requires boolean operands, got: {:?} || {:?}", left, right))),
+                _ => Err(interpretation_error(format!(
+                    "Or operation requires boolean operands, got: {:?} || {:?}",
+                    left, right
+                ))),
             },
             BinOp::Rem => self.binary_int_op(left, right, |a, b| a % b),
             BinOp::BitAnd => self.binary_int_op(left, right, |a, b| a & b),

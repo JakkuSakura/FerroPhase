@@ -54,8 +54,8 @@ fn test_ast_expr_parsing() -> Result<()> {
 
     // Test that expressions parse into correct AST structures
     let expr = shll_parse_expr!(42);
-    match expr {
-        Expr::Value(val) => match val.as_ref() {
+    match expr.kind() {
+        ExprKind::Value(val) => match val.as_ref() {
             Value::Int(int_val) => assert_eq!(int_val.value, 42),
             _ => panic!("Expected integer value"),
         },
@@ -98,11 +98,11 @@ fn test_complex_ast_structures() -> Result<()> {
     let expr = shll_parse_expr!(5 + 3);
 
     // Verify the AST structure is correct
-    match expr {
-        Expr::BinOp(binop) => {
+    match expr.kind() {
+        ExprKind::BinOp(binop) => {
             // Has left and right operands
-            match (binop.lhs.as_ref(), binop.rhs.as_ref()) {
-                (Expr::Value(_), Expr::Value(_)) => {
+            match (binop.lhs.as_ref().kind(), binop.rhs.as_ref().kind()) {
+                (ExprKind::Value(_), ExprKind::Value(_)) => {
                     // Good - both sides are values
                 }
                 _ => panic!("Expected value operands"),
@@ -122,11 +122,11 @@ fn test_nested_ast_expressions() -> Result<()> {
     let expr = shll_parse_expr!(2 + 3 * 4);
 
     // Should parse as 2 + (3 * 4) due to precedence
-    match expr {
-        Expr::BinOp(add_op) => {
+    match expr.kind() {
+        ExprKind::BinOp(add_op) => {
             // Right side should be a multiplication
-            match add_op.rhs.as_ref() {
-                Expr::BinOp(_mul_op) => {
+            match add_op.rhs.as_ref().kind() {
+                ExprKind::BinOp(_mul_op) => {
                     // Good - nested structure preserved
                 }
                 _ => panic!("Expected nested binary operation"),

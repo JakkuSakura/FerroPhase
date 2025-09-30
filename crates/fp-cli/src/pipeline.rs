@@ -1,29 +1,21 @@
-use crate::CliError;
 use crate::codegen::CodeGenerator;
-use crate::compilation::BinaryCompiler;
 use crate::config::{PipelineOptions, PipelineTarget, RuntimeConfig};
 use crate::frontend::{
     FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend, RustFrontend,
 };
 use crate::languages;
 use crate::languages::detect_source_language;
+use crate::CliError;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::typed as tast;
 use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
 };
-use fp_core::hir::typed as thir;
-use fp_core::intrinsics::BackendFlavor;
-use fp_core::pretty::{PrettyOptions, pretty};
-use fp_core::{hir, lir, mir};
+use fp_core::pretty::{pretty, PrettyOptions};
+use fp_core::hir;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
-use fp_optimize::transformations::{
-    BackendThirMaterializer, HirGenerator, IrTransform, LirGenerator, MirGenerator,
-    SymbolicThirNormalizer, TastResugar, ThirDetyper, ThirGenerator,
-};
-use fp_interpret::thir::{InterpretationOrchestrator, InterpreterMode};
+use fp_optimize::transformations::HirGenerator;
 use fp_optimize::ConstEvaluationOrchestrator;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,31 +23,14 @@ use std::sync::Arc;
 use tracing::{debug, info_span, warn};
 
 const STAGE_CONST_EVAL: &str = "const-eval";
+const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
-const STAGE_HIR_TO_THIR: &str = "hir→thir";
-const STAGE_THIR_NORMALIZE: &str = "thir→thir(normalize)";
-const STAGE_THIR_TO_MIR: &str = "thir→mir";
-const STAGE_THIR_TO_TAST: &str = "thir→tast";
-const STAGE_MIR_TO_LIR: &str = "mir→lir";
-const STAGE_LIR_TO_LLVM: &str = "lir→llvm";
-const STAGE_BINARY: &str = "binary";
 const STAGE_INTERPRET: &str = "interpret";
-const STAGE_THIR_TO_HIR_DETYPE: &str = "thir→hir(detyped)";
-const STAGE_DETYPED_HIR_TO_THIR: &str = "detyped-hir→thir";
-const STAGE_THIR_MATERIALIZE_LLVM: &str = "thir→thir(materialize:llvm)";
-const STAGE_THIR_MATERIALIZE_INTERP: &str = "thir→thir(materialize:interp)";
-const STAGE_THIR_MATERIALIZE_RUST: &str = "thir→thir(materialize:rust)";
-const STAGE_THIR_MATERIALIZE_JS: &str = "thir→thir(materialize:javascript)";
 
+const EXT_AST: &str = "ast";
+const EXT_AST_TYPED: &str = "ast-typed";
+const EXT_AST_EVAL: &str = "ast-eval";
 const EXT_HIR: &str = "hir";
-const EXT_THIR: &str = "thi";
-const EXT_THIR_SYMBOLIC: &str = "tsym";
-const EXT_THIR_MATERIALIZED: &str = "tmat";
-const EXT_CONST_THIR: &str = "tce";
-const EXT_DETYPED_HIR: &str = "dhi";
-const EXT_MIR: &str = "mir";
-const EXT_LIR: &str = "lir";
-const EXT_TAST: &str = "tast";
 
 pub use crate::config::PipelineConfig;
 #[derive(Debug)]
@@ -71,13 +46,9 @@ pub enum PipelineOutput {
     Code(String),
 }
 
-fn materialize_stage_label(backend: BackendFlavor) -> &'static str {
-    match backend {
-        BackendFlavor::Llvm => STAGE_THIR_MATERIALIZE_LLVM,
-        BackendFlavor::Interpreter => STAGE_THIR_MATERIALIZE_INTERP,
-        BackendFlavor::TranspileRust => STAGE_THIR_MATERIALIZE_RUST,
-        BackendFlavor::TranspileJavascript => STAGE_THIR_MATERIALIZE_JS,
-    }
+struct TypeEnrichmentArtifacts {
+    typed_ast: Node,
+    hir_program: hir::Program,
 }
 
 struct CompilationArtifacts {
@@ -86,7 +57,7 @@ struct CompilationArtifacts {
 }
 
 struct ConstEvalArtifacts {
-    thir_program: thir::Program,
+    typed_ast: Node,
     outcome: ConstEvalOutcome,
 }
 
@@ -132,7 +103,6 @@ impl Pipeline {
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.default_runtime = runtime_name.to_string();
     }
-
 
     pub async fn execute_with_options(
         &mut self,
@@ -202,35 +172,25 @@ impl Pipeline {
 
                 let diagnostic_manager = DiagnosticManager::new();
 
-                let hir_report =
-                    self.run_hir_stage(&ast_node, &options, input_path.as_deref(), base_path)?;
-                let hir_program = self.collect_stage(
-                    STAGE_AST_TO_HIR,
-                    hir_report,
+                let type_report = self.run_type_enrichment_stage(
+                    &ast_node,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let TypeEnrichmentArtifacts {
+                    typed_ast,
+                    hir_program: _initial_hir,
+                } = self.collect_stage(
+                    STAGE_TYPE_ENRICH,
+                    type_report,
                     &diagnostic_manager,
                     &options,
                 )?;
 
-                let thir_report = self.run_thir_stage(hir_program, &options, base_path)?;
-                let thir_program = self.collect_stage(
-                    STAGE_HIR_TO_THIR,
-                    thir_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let thir_norm_report =
-                    self.run_thir_normalize_stage(thir_program, &options, base_path)?;
-                let thir_program = self.collect_stage(
-                    STAGE_THIR_NORMALIZE,
-                    thir_norm_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let const_report = self.run_const_eval_stage(thir_program, &options, base_path)?;
+                let const_report = self.run_const_eval_stage(typed_ast, options, base_path)?;
                 let ConstEvalArtifacts {
-                    thir_program: evaluated_thir,
+                    typed_ast: evaluated_typed_ast,
                     outcome: _,
                 } = self.collect_stage(
                     STAGE_CONST_EVAL,
@@ -239,18 +199,9 @@ impl Pipeline {
                     &options,
                 )?;
 
-                let tast_report =
-                    self.run_tast_stage(&ast_node, &evaluated_thir, &options, base_path)?;
-                let tast_program = self.collect_stage(
-                    STAGE_THIR_TO_TAST,
-                    tast_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
                 let rust_span = info_span!("pipeline.codegen", target = "rust");
                 let _enter_rust = rust_span.enter();
-                let rust_code = CodeGenerator::generate_rust_code(&tast_program)?;
+                let rust_code = CodeGenerator::generate_rust_code(&evaluated_typed_ast)?;
                 drop(_enter_rust);
 
                 let diagnostics = diagnostic_manager.get_diagnostics();
@@ -294,47 +245,12 @@ impl Pipeline {
                     }
                 }
             }
-            PipelineTarget::Llvm => {
-                let artifacts = self.compile(ast_node, &options, input_path.as_deref())?;
-                self.emit_diagnostics(&artifacts.diagnostics, None, &options);
-                let llvm_ir_content = fs::read_to_string(&artifacts.llvm_ir)
-                    .map_err(|e| CliError::Compilation(format!("Failed to read LLVM IR from {}: {}", artifacts.llvm_ir.display(), e)))?;
-                Ok(PipelineOutput::Code(llvm_ir_content))
-            }
-            PipelineTarget::Binary => {
-                let mut artifacts = self.compile(ast_node, &options, input_path.as_deref())?;
-                let base_path = options.base_path.as_ref().ok_or_else(|| {
-                    CliError::Compilation("Missing base path for binary output".to_string())
-                })?;
-
-                let obj_path = base_path.with_extension("o");
-                debug!(path = ?obj_path, "invoking llc");
-                let llc_result = BinaryCompiler::run_llc(&artifacts.llvm_ir, &obj_path, &options)?;
-
-                let binary_extension = if cfg!(windows) { "exe" } else { "out" };
-                let binary_path = base_path.with_extension(binary_extension);
-                debug!(path = ?binary_path, "linking final binary");
-                let link_result = BinaryCompiler::link_binary(&obj_path, &binary_path, &options)?;
-
-                artifacts.diagnostics.push(
-                    Diagnostic::info(format!("Linked binary to {}", binary_path.display()))
-                        .with_source_context(STAGE_BINARY),
-                );
-
-                self.emit_diagnostics(&artifacts.diagnostics, None, &options);
-                println!(
-                    "Binary compiled successfully:\n  LLVM IR: {}\n  Object: {}\n  Binary: {}\n  LLC: {}\n  Linker: {}",
-                    artifacts.llvm_ir.display(),
-                    obj_path.display(),
-                    binary_path.display(),
-                    llc_result,
-                    link_result
-                );
-
-                Ok(PipelineOutput::Value(Value::string(
-                    "Binary compilation completed".to_string(),
-                )))
-            }
+            PipelineTarget::Llvm => Err(CliError::Compilation(
+                "LLVM backend not yet ported to typed AST".to_string(),
+            )),
+            PipelineTarget::Binary => Err(CliError::Compilation(
+                "binary backend not yet ported to typed AST".to_string(),
+            )),
             PipelineTarget::Bytecode => {
                 let bytecode_span = info_span!("pipeline.bytecode");
                 let _enter_bytecode = bytecode_span.enter();
@@ -357,84 +273,29 @@ impl Pipeline {
 
         let diagnostic_manager = DiagnosticManager::new();
 
-        let hir_report = self.run_hir_stage(&ast, options, file_path, base_path)?;
-        let hir_program =
-            self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
+        let type_report = self.run_type_enrichment_stage(&ast, options, file_path, base_path)?;
+        let TypeEnrichmentArtifacts {
+            typed_ast,
+            hir_program: _initial_hir,
+        } = self.collect_stage(STAGE_TYPE_ENRICH, type_report, &diagnostic_manager, options)?;
 
-        let thir_report = self.run_thir_stage(hir_program, options, base_path)?;
-        let thir_program =
-            self.collect_stage(STAGE_HIR_TO_THIR, thir_report, &diagnostic_manager, options)?;
-
-        let thir_norm_report = self.run_thir_normalize_stage(thir_program, options, base_path)?;
-        let thir_program = self.collect_stage(
-            STAGE_THIR_NORMALIZE,
-            thir_norm_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
+        let const_report =
+            self.run_const_eval_stage(typed_ast, options, base_path)?;
         let ConstEvalArtifacts {
-            thir_program: evaluated_thir,
-            outcome: _const_outcome,
+            typed_ast: _evaluated_typed,
+            outcome: _,
         } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
-
-        let detype_report = self.run_detype_stage(evaluated_thir, options, base_path)?;
-        let detyped_hir = self.collect_stage(
-            STAGE_THIR_TO_HIR_DETYPE,
-            detype_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let thir_from_detyped = self.run_thir_stage(detyped_hir, options, base_path)?;
-        let thir_program = self.collect_stage(
-            STAGE_DETYPED_HIR_TO_THIR,
-            thir_from_detyped,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let thir_norm_report = self.run_thir_normalize_stage(thir_program, options, base_path)?;
-        let thir_program = self.collect_stage(
-            STAGE_THIR_NORMALIZE,
-            thir_norm_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let thir_materialized_report =
-            self.run_thir_materialize_stage(thir_program, BackendFlavor::Llvm, options, base_path)?;
-        let thir_program = self.collect_stage(
-            materialize_stage_label(BackendFlavor::Llvm),
-            thir_materialized_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let mir_report = self.run_mir_stage(thir_program, options, base_path)?;
-        let mir_program =
-            self.collect_stage(STAGE_THIR_TO_MIR, mir_report, &diagnostic_manager, options)?;
-
-        let lir_report = self.run_lir_stage(mir_program, options, base_path)?;
-        let lir_program =
-            self.collect_stage(STAGE_MIR_TO_LIR, lir_report, &diagnostic_manager, options)?;
-
-        let llvm_report = self.run_llvm_stage(lir_program, base_path)?;
-        let llvm_ir =
-            self.collect_stage(STAGE_LIR_TO_LLVM, llvm_report, &diagnostic_manager, options)?;
 
         let diagnostics = diagnostic_manager.get_diagnostics();
 
-        Ok(CompilationArtifacts {
-            llvm_ir,
-            diagnostics,
-        })
+        Err(CliError::Compilation(
+            "typed backend pipeline not yet implemented".to_string(),
+        ))
     }
 
     fn run_const_eval_stage(
         &self,
-        thir_program: thir::Program,
+        typed_ast: Node,
         options: &PipelineOptions,
         base_path: &Path,
     ) -> Result<DiagnosticReport<ConstEvalArtifacts>, CliError> {
@@ -447,7 +308,7 @@ impl Pipeline {
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
         const_evaluator.set_debug_assertions(!options.release);
 
-        let outcome = match const_evaluator.evaluate(&thir_program, &shared_context) {
+        let outcome = match const_evaluator.evaluate(&typed_ast, &shared_context) {
             Ok(outcome) => outcome,
             Err(e) => {
                 let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
@@ -457,52 +318,72 @@ impl Pipeline {
         };
 
         if options.save_intermediates {
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-            let rendered = format!("{}", pretty(&thir_program, pretty_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_CONST_THIR), rendered) {
+            let mut ast_opts = PrettyOptions::default();
+            ast_opts.show_spans = options.debug.verbose;
+            let rendered_ast = format!("{}", pretty(&typed_ast, ast_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_AST_EVAL), rendered_ast) {
                 debug!(
                     error = %err,
-                    "failed to persist evaluated THIR (tce) intermediate after const eval"
+                    "failed to persist evaluated AST (ast-eval) intermediate after const eval"
                 );
             }
         }
 
         Ok(DiagnosticReport::success(ConstEvalArtifacts {
-            thir_program,
+            typed_ast,
             outcome,
         }))
     }
 
-    fn run_detype_stage(
+    fn run_type_enrichment_stage(
         &self,
-        thir_program: thir::Program,
+        ast: &Node,
         options: &PipelineOptions,
+        file_path: Option<&Path>,
         base_path: &Path,
-    ) -> Result<DiagnosticReport<hir::Program>, CliError> {
-        let mut detyper = ThirDetyper::new();
-        match detyper.transform(thir_program) {
-            Ok(hir_program) => {
-                if options.save_intermediates {
-                    let mut pretty_opts = PrettyOptions::default();
-                    pretty_opts.show_spans = options.debug.verbose;
-                    let rendered = format!("{}", pretty(&hir_program, pretty_opts));
-                    if let Err(err) = fs::write(base_path.with_extension(EXT_DETYPED_HIR), rendered)
-                    {
-                        debug!(
-                            error = %err,
-                            "failed to persist detyped HIR intermediate"
-                        );
-                    }
-                }
-                Ok(DiagnosticReport::success(hir_program))
+    ) -> Result<DiagnosticReport<TypeEnrichmentArtifacts>, CliError> {
+        let DiagnosticReport {
+            value: hir_value,
+            mut diagnostics,
+        } = self.run_hir_stage(ast, options, file_path, base_path)?;
+
+        let hir_program = match hir_value {
+            Some(program) => program,
+            None => {
+                return Ok(DiagnosticReport::failure(diagnostics));
             }
-            Err(err) => {
-                let diagnostic = Diagnostic::error(format!("THIR→HIR detyping failed: {}", err))
-                    .with_source_context(STAGE_THIR_TO_HIR_DETYPE);
-                Ok(DiagnosticReport::failure(vec![diagnostic]))
+        };
+
+        let typed_ast = ast.clone();
+
+        if options.save_intermediates {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+
+            let rendered_ast = format!("{}", pretty(ast, pretty_opts.clone()));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_AST), rendered_ast) {
+                debug!(
+                    error = %err,
+                    "failed to persist AST intermediate"
+                );
+            }
+
+            let rendered_typed = format!("{}", pretty(&typed_ast, pretty_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_AST_TYPED), rendered_typed) {
+                debug!(
+                    error = %err,
+                    "failed to persist typed AST intermediate"
+                );
             }
         }
+
+        Ok(DiagnosticReport::success_with_diagnostics(
+            TypeEnrichmentArtifacts {
+                typed_ast,
+                hir_program,
+            },
+            diagnostics,
+        ))
     }
 
     fn run_hir_stage(
@@ -521,7 +402,7 @@ impl Pipeline {
             generator.enable_error_tolerance(options.error_tolerance.max_errors);
         }
 
-        if matches!(ast, Node::Item(_)) {
+        if matches!(ast.kind(), NodeKind::Item(_)) {
             let diag = Diagnostic::error(
                 "Top-level items are not supported; provide a file or expression".to_string(),
             )
@@ -529,10 +410,10 @@ impl Pipeline {
             return Ok(DiagnosticReport::failure(vec![diag]));
         }
 
-        let result = match ast {
-            Node::Expr(expr) => generator.transform(expr),
-            Node::File(file) => generator.transform(file),
-            Node::Item(_) => unreachable!(),
+        let result = match ast.kind() {
+            NodeKind::Expr(expr) => generator.transform(expr),
+            NodeKind::File(file) => generator.transform(file),
+            NodeKind::Item(_) => unreachable!(),
         };
 
         let (errors, warnings) = generator.take_diagnostics();
@@ -575,415 +456,27 @@ impl Pipeline {
         }
     }
 
-    fn run_thir_stage(
-        &self,
-        hir_program: hir::Program,
-        options: &PipelineOptions,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<thir::Program>, CliError> {
-        let mut generator = ThirGenerator::new();
-        let result = generator.transform(hir_program);
-        let diagnostic_manager = DiagnosticManager::new();
-
-        if let Err(e) = &result {
-            diagnostic_manager.add_diagnostic(
-                Diagnostic::error(format!("HIR→THIR transformation failed: {}", e))
-                    .with_source_context(STAGE_HIR_TO_THIR),
-            );
-        }
-
-        match result {
-            Ok(program) => {
-                if options.save_intermediates {
-                    let mut pretty_opts = PrettyOptions::default();
-                    pretty_opts.show_spans = options.debug.verbose;
-                    let rendered = format!("{}", pretty(&program, pretty_opts));
-                    if let Err(err) = fs::write(base_path.with_extension(EXT_THIR), rendered) {
-                        warn!(error = %err, "failed to persist THIR intermediate");
-                    }
-                }
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(DiagnosticReport::success_with_diagnostics(
-                    program,
-                    diagnostics,
-                ))
-            }
-            Err(e) => {
-                // Ensure the error is captured in diagnostics if it wasn't already
-                let mut diagnostics = diagnostic_manager.get_diagnostics();
-                if diagnostics.is_empty() {
-                    diagnostics.push(
-                        Diagnostic::error(format!("HIR→THIR transformation failed: {}", e))
-                            .with_source_context(STAGE_HIR_TO_THIR),
-                    );
-                }
-                Ok(DiagnosticReport::failure(diagnostics))
-            }
-        }
-    }
-
-    fn run_thir_normalize_stage(
-        &self,
-        thir_program: thir::Program,
-        options: &PipelineOptions,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<thir::Program>, CliError> {
-        let mut normalizer = SymbolicThirNormalizer::new();
-        let program = normalizer.normalize(thir_program);
-
-        if options.save_intermediates {
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-            let rendered = format!("{}", pretty(&program, pretty_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_THIR_SYMBOLIC), rendered) {
-                debug!(
-                    error = %err,
-                    "failed to persist symbolic THIR intermediate"
-                );
-            }
-        }
-
-        Ok(DiagnosticReport::success(program))
-    }
-
-    fn run_thir_materialize_stage(
-        &self,
-        thir_program: thir::Program,
-        backend: BackendFlavor,
-        options: &PipelineOptions,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<thir::Program>, CliError> {
-        use fp_optimize::transformations::thir::backends;
-
-        // Get the backend-specific intrinsic materializer
-        let materializer: &'static dyn fp_core::intrinsics::IntrinsicMaterializer = match backend {
-            BackendFlavor::Llvm => backends::llvm::get_materializer(),
-            _ => {
-                // For other backends, we'd have separate materializers
-                // For now, use a no-op materializer that keeps intrinsics as-is
-                todo!("Implement materializers for non-LLVM backends")
-            }
-        };
-
-        let mut thir_materializer = BackendThirMaterializer::new(materializer);
-        let program = thir_materializer.materialize(thir_program);
-
-        if options.save_intermediates {
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-            let rendered = format!("{}", pretty(&program, pretty_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_THIR_MATERIALIZED), rendered) {
-                debug!(
-                    error = %err,
-                    "failed to persist materialised THIR intermediate"
-                );
-            }
-        }
-
-        Ok(DiagnosticReport::success(program))
-    }
-
-    fn run_tast_stage(
-        &self,
-        original_ast: &Node,
-        thir_program: &thir::Program,
-        options: &PipelineOptions,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<tast::Program>, CliError> {
-        let mut resugar = TastResugar::new();
-        let program = resugar.resugar(original_ast, thir_program);
-
-        if options.save_intermediates {
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-            let rendered = format!("{}", pretty(&program, pretty_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_TAST), rendered) {
-                warn!(error = %err, "failed to persist TAST intermediate");
-            }
-        }
-
-        Ok(DiagnosticReport::success(program))
-    }
-
-    fn run_mir_stage(
-        &self,
-        thir_program: thir::Program,
-        options: &PipelineOptions,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<mir::Program>, CliError> {
-        let mut generator = MirGenerator::new();
-        generator.set_debug_assertions(!options.release);
-        let result = generator.transform(thir_program);
-        let diagnostic_manager = DiagnosticManager::new();
-
-        if let Err(e) = &result {
-            diagnostic_manager.add_diagnostic(
-                Diagnostic::error(format!("THIR→MIR transformation failed: {}", e))
-                    .with_source_context(STAGE_THIR_TO_MIR),
-            );
-        }
-
-        match result {
-            Ok(program) => {
-                if options.save_intermediates {
-                    let mut pretty_opts = PrettyOptions::default();
-                    pretty_opts.show_spans = options.debug.verbose;
-                    let rendered = format!("{}", pretty(&program, pretty_opts));
-                    if let Err(err) = fs::write(base_path.with_extension(EXT_MIR), rendered) {
-                        warn!(error = %err, "failed to persist MIR intermediate");
-                    }
-                }
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(DiagnosticReport::success_with_diagnostics(
-                    program,
-                    diagnostics,
-                ))
-            }
-            Err(e) => {
-                // Ensure the error is captured in diagnostics if it wasn't already
-                let mut diagnostics = diagnostic_manager.get_diagnostics();
-                if diagnostics.is_empty() {
-                    diagnostics.push(
-                        Diagnostic::error(format!("THIR→MIR transformation failed: {}", e))
-                            .with_source_context(STAGE_THIR_TO_MIR),
-                    );
-                }
-                Ok(DiagnosticReport::failure(diagnostics))
-            }
-        }
-    }
-
-    fn run_lir_stage(
-        &self,
-        mir_program: mir::Program,
-        options: &PipelineOptions,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<lir::LirProgram>, CliError> {
-        let mut generator = LirGenerator::new();
-        let result = generator.transform(mir_program);
-        let diagnostic_manager = DiagnosticManager::new();
-
-        if let Err(e) = &result {
-            diagnostic_manager.add_diagnostic(
-                Diagnostic::error(format!("MIR→LIR transformation failed: {}", e))
-                    .with_source_context(STAGE_MIR_TO_LIR),
-            );
-        }
-
-        match result {
-            Ok(program) => {
-                if options.save_intermediates {
-                    let mut pretty_opts = PrettyOptions::default();
-                    pretty_opts.show_spans = options.debug.verbose;
-                    let rendered = format!("{}", pretty(&program, pretty_opts));
-                    if let Err(err) = fs::write(base_path.with_extension(EXT_LIR), rendered) {
-                        warn!(error = %err, "failed to persist LIR intermediate");
-                    }
-                }
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(DiagnosticReport::success_with_diagnostics(
-                    program,
-                    diagnostics,
-                ))
-            }
-            Err(e) => {
-                // Ensure the error is captured in diagnostics if it wasn't already
-                let mut diagnostics = diagnostic_manager.get_diagnostics();
-                if diagnostics.is_empty() {
-                    diagnostics.push(
-                        Diagnostic::error(format!("MIR→LIR transformation failed: {}", e))
-                            .with_source_context(STAGE_MIR_TO_LIR),
-                    );
-                }
-                Ok(DiagnosticReport::failure(diagnostics))
-            }
-        }
-    }
-
-    fn run_llvm_stage(
-        &self,
-        lir_program: lir::LirProgram,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<PathBuf>, CliError> {
-        let llvm_output = base_path.with_extension("ll");
-        let llvm_config = fp_llvm::LlvmConfig::executable(&llvm_output);
-        let llvm_compiler = fp_llvm::LlvmCompiler::new(llvm_config);
-
-        let diagnostic_manager = DiagnosticManager::new();
-
-        let result = llvm_compiler.compile(lir_program, None);
-        if let Err(e) = &result {
-            diagnostic_manager.add_diagnostic(
-                Diagnostic::error(format!("LLVM IR generation failed: {}", e))
-                    .with_source_context(STAGE_LIR_TO_LLVM),
-            );
-        }
-
-        let llvm_ir = match result {
-            Ok(path) => path,
-            Err(_) => {
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                return Ok(DiagnosticReport::failure(diagnostics));
-            }
-        };
-
-        let diagnostics = diagnostic_manager.get_diagnostics();
-
-        Ok(DiagnosticReport::success_with_diagnostics(
-            llvm_ir,
-            diagnostics,
-        ))
-    }
-
-    pub async fn execute(
-        &mut self,
-        input: PipelineInput,
-        config: &PipelineConfig,
-    ) -> Result<PipelineOutput, CliError> {
-        let options = PipelineOptions::from(config);
-        self.execute_with_options(input, options).await
-    }
-
-    pub async fn execute_runtime(
-        &mut self,
-        input: PipelineInput,
-        runtime_name: &str,
-    ) -> Result<RuntimeValue, CliError> {
-        let options = PipelineOptions {
-            target: PipelineTarget::Interpret,
-            runtime: RuntimeConfig {
-                runtime_type: runtime_name.to_string(),
-                options: std::collections::HashMap::new(),
-            },
-            ..Default::default()
-        };
-
-        match self.execute_with_options(input, options).await? {
-            PipelineOutput::RuntimeValue(val) => Ok(val),
-            _ => Err(CliError::Compilation("Expected runtime value".to_string())),
-        }
-    }
-
-    pub fn parse_source_public(&self, source: &str) -> Result<fp_core::ast::BExpr, CliError> {
-        let frontend = self
-            .frontends
-            .get(languages::FERROPHASE)
-            .ok_or_else(|| CliError::Compilation("Rust frontend not registered".to_string()))?;
-        let FrontendResult {
-            ast, serializer, ..
-        } = frontend.parse(source, None)?;
-        register_threadlocal_serializer(serializer);
-
-        match ast {
-            Node::Expr(expr) => Ok(Box::new(expr)),
-            _ => Err(CliError::Compilation(
-                "Expected expression input when parsing source".to_string(),
-            )),
-        }
-    }
-
     async fn interpret_ast(
         &self,
-        ast: &Node,
-        options: &PipelineOptions,
-        file_path: Option<&Path>,
+        _ast: &Node,
+        _options: &PipelineOptions,
+        _file_path: Option<&Path>,
     ) -> Result<Value, CliError> {
-        let (value, _) = self
-            .interpret_ast_with_mode(ast, options, file_path, InterpreterMode::Const)
-            .await?;
-        Ok(value)
+        Err(CliError::Compilation(
+            "AST interpreter not yet ported".to_string(),
+        ))
     }
 
     async fn interpret_ast_runtime(
         &self,
-        ast: &Node,
+        _ast: &Node,
         _runtime_name: &str,
-        options: &PipelineOptions,
-        file_path: Option<&Path>,
+        _options: &PipelineOptions,
+        _file_path: Option<&Path>,
     ) -> Result<RuntimeValue, CliError> {
-        let (value, runtime_value) = self
-            .interpret_ast_with_mode(ast, options, file_path, InterpreterMode::Runtime)
-            .await?;
-        Ok(runtime_value.unwrap_or_else(|| value.to_runtime_owned()))
-    }
-
-    async fn interpret_ast_with_mode(
-        &self,
-        ast: &Node,
-        options: &PipelineOptions,
-        file_path: Option<&Path>,
-        mode: InterpreterMode,
-    ) -> Result<(Value, Option<RuntimeValue>), CliError> {
-        let base_path = options.base_path.as_ref().ok_or_else(|| {
-            CliError::Compilation("Missing base path for interpretation".to_string())
-        })?;
-
-        let diagnostic_manager = DiagnosticManager::new();
-
-        let hir_report = self.run_hir_stage(ast, options, file_path, base_path)?;
-        let hir_program =
-            self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
-
-        let thir_report = self.run_thir_stage(hir_program, options, base_path)?;
-        let thir_program =
-            self.collect_stage(STAGE_HIR_TO_THIR, thir_report, &diagnostic_manager, options)?;
-
-        let thir_norm_report = self.run_thir_normalize_stage(thir_program, options, base_path)?;
-        let thir_program = self.collect_stage(
-            STAGE_THIR_NORMALIZE,
-            thir_norm_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let const_report = self.run_const_eval_stage(thir_program, options, base_path)?;
-        let ConstEvalArtifacts {
-            thir_program,
-            outcome,
-        } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
-
-        let thir_materialized_report = self.run_thir_materialize_stage(
-            thir_program,
-            BackendFlavor::Interpreter,
-            options,
-            base_path,
-        )?;
-        let thir_program = self.collect_stage(
-            materialize_stage_label(BackendFlavor::Interpreter),
-            thir_materialized_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        let serializer = self.serializer.clone().ok_or_else(|| {
-            CliError::Compilation(
-                "Frontend did not register serializer for interpretation".to_string(),
-            )
-        })?;
-        register_threadlocal_serializer(serializer.clone());
-
-        let mut interpreter = InterpretationOrchestrator::new(mode);
-        interpreter.set_debug_assertions(!options.release);
-        let interpreter_diagnostics = Arc::new(DiagnosticManager::new());
-        interpreter.set_diagnostics(Some(interpreter_diagnostics.clone()));
-
-        let value =
-            self.evaluate_program_entry(&thir_program, &mut interpreter, &outcome.values)?;
-
-        let runtime_value = if matches!(mode, InterpreterMode::Runtime) {
-            Some(interpreter.finalize_runtime_value(value.clone()))
-        } else {
-            None
-        };
-
-        let interp_diags = interpreter_diagnostics.get_diagnostics();
-        self.emit_diagnostics(&interp_diags, Some(STAGE_INTERPRET), options);
-        diagnostic_manager.add_diagnostics(interp_diags);
-
-        Ok((value, runtime_value))
+        Err(CliError::Compilation(
+            "AST runtime interpreter not yet ported".to_string(),
+        ))
     }
 
     fn emit_diagnostics(
@@ -1023,46 +516,6 @@ impl Pipeline {
         DiagnosticDisplayOptions::new(options.debug.verbose)
     }
 
-    fn evaluate_program_entry(
-        &self,
-        program: &thir::Program,
-        interpreter: &mut InterpretationOrchestrator,
-        const_values: &std::collections::HashMap<thir::ty::DefId, Value>,
-    ) -> Result<Value, CliError> {
-        let (_body_id, body) = self.find_entry_body(program).ok_or_else(|| {
-            CliError::Compilation("No executable entry point found in THIR program".to_string())
-        })?;
-
-        let shared_context = SharedScopedContext::new();
-
-        interpreter
-            .evaluate_body(body, program, &shared_context, const_values)
-            .map_err(|e| CliError::Compilation(format!("Interpretation failed: {}", e)))
-    }
-
-    fn find_entry_body<'a>(
-        &self,
-        program: &'a thir::Program,
-    ) -> Option<(thir::BodyId, &'a thir::Body)> {
-        let mut fallback = None;
-
-        for item in &program.items {
-            if let thir::ItemKind::Function(function) = &item.kind {
-                if let Some(body_id) = function.body_id {
-                    if let Some(body) = program.bodies.get(&body_id) {
-                        if !function.is_const {
-                            return Some((body_id, body));
-                        }
-                        if fallback.is_none() {
-                            fallback = Some((body_id, body));
-                        }
-                    }
-                }
-            }
-        }
-
-        fallback
-    }
 }
 
 #[cfg(test)]

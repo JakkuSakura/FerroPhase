@@ -44,10 +44,10 @@ lowerings consume the already-typed structures.
      this step focuses on structural desugaring and borrow checking hooks while
      preserving the attached type metadata.
 
-6. **Backend Lowering (Compile / Optimisation Modes)**
-   - Native and optimised targets lower `HIRᵗ` to `MIR → LIR → LLVM IR`.
-   - MIR/LIR benefit from prior evaluation (folded consts, generated structs)
-     and the types recorded on HIR nodes; no THIR snapshot is produced.
+6. **Backend Lowering (planned)**
+   - Native and optimised targets will eventually lower `HIRᵗ` through MIR/LIR
+     into backend-specific IR. This portion of the pipeline is currently
+     disabled while the typed AST/HIR rewrite lands.
 
 Each step returns a `DiagnosticReport<T>` containing the produced artefact (or a
 placeholder in tolerant mode) and the collected `Diagnostic` entries. The
@@ -55,10 +55,9 @@ pipeline updates its cached serializer/language metadata in place, and
 diagnostics are printed stage-by-stage while also bubbling up for aggregate
 reporting.
 
-7. **Binary Emission (optional)**
-   - If the target is `Binary`, the LLVM artefact is passed to `llc` and the
-     configured linker via `BinaryCompiler` with diagnostics folded into the
-     final report.
+7. **Binary Emission (planned)**
+   - Once backend lowering returns, binary emission will invoke the LLVM tool
+     chain (`llc`, system linker) using the evaluated, typed inputs.
 
 ## Pipeline State
 
@@ -106,10 +105,10 @@ flags for informational entries but always surfaces warnings and errors.
 
 ## Intermediates & Persistence
 
-When `save_intermediates` is enabled, each stage writes its artefact into the
-`base_path` with a conventional extension (`.ast`, `.ast-typed`, `.ast-eval`,
-`.hir`, `.mir`, `.lir`, `.ll`). The driver handles the IO so the stage helpers
-remain pure.
+When `save_intermediates` is enabled, each completed stage writes its artefact
+into the `base_path` with a conventional extension (`.ast`, `.ast-typed`,
+`.ast-eval`, `.hir`). Backends will add their own intermediates once they are
+re-enabled.
 
 ## Error Tolerance
 
@@ -119,14 +118,9 @@ stage can produce a placeholder artefact, it returns it while emitting
 
 ## Runtime & Interpretation
 
-Interpretation (interactive `run`/`eval`) now flows through the same
-`AST → ASTᵗ → ASTᵗ′` pipeline used for compilation. The interpreter reuses the
-frontend serializer, executes typed AST bodies in either const or runtime mode,
-and produces owned runtime values via shared evaluation machinery.
-
-The runtime path still needs richer semantics (ownership-aware operations,
-language intrinsics), but it no longer depends on THIR materialisation or the
-deprecated `RuntimePass` abstraction.
+Interpretation (interactive `run`/`eval`) will share the same
+`AST → ASTᵗ → ASTᵗ′` pipeline once the new evaluator lands. For now the
+interpreter entrypoints are placeholders while the AST interpreter is rebuilt.
 
 ## Extending the Pipeline
 

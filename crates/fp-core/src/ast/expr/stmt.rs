@@ -1,10 +1,10 @@
 use std::hash::Hash;
 
-use crate::ast::{BExpr, BItem, Expr, Item, Ty};
+use crate::ast::{BExpr, BItem, Expr, ExprKind, Item, Ty};
 use crate::common_enum;
 use crate::common_struct;
 use crate::id::Ident;
-use crate::pat::{Pattern, PatternIdent, PatternType};
+use crate::pat::{Pattern, PatternIdent, PatternKind, PatternType};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 
 common_enum! {
@@ -75,17 +75,17 @@ impl StmtLet {
     }
     pub fn new_typed(name: Ident, ty: Ty, value: Expr) -> Self {
         Self {
-            pat: Pattern::Type(PatternType::new(
-                Pattern::Ident(PatternIdent::new(name)),
+            pat: Pattern::from(PatternKind::Type(PatternType::new(
+                Pattern::from(PatternKind::Ident(PatternIdent::new(name))),
                 ty,
-            )),
+            ))),
             init: Some(value),
             diverge: None,
         }
     }
     pub fn new_simple(name: Ident, value: Expr) -> Self {
         Self {
-            pat: Pattern::Ident(PatternIdent::new(name)),
+            pat: Pattern::from(PatternKind::Ident(PatternIdent::new(name))),
             init: Some(value),
             diverge: None,
         }
@@ -173,7 +173,7 @@ impl ExprBlock {
             }
         }
 
-        Expr::Block(self)
+        ExprKind::Block(self).into()
     }
     /// returns the first few stmts, leaving behind the last expr
     pub fn first_stmts(&self) -> &[BlockStmt] {

@@ -5,9 +5,9 @@ use quote::{format_ident, quote};
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField, ExprIf,
-    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprLet, ExprLoop, ExprMatch, ExprParen, ExprRange,
-    ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple, ExprUnOp,
-    ExprWhile, StmtLet,
+    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMatch, ExprParen,
+    ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple,
+    ExprUnOp, ExprWhile, StmtLet,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 
@@ -15,9 +15,9 @@ use crate::printer::RustPrinter;
 
 impl RustPrinter {
     pub fn print_expr_no_braces(&self, node: &Expr) -> Result<TokenStream> {
-        match node {
-            Expr::Block(n) => self.print_block_no_braces(&n),
-            Expr::Value(v) if v.is_unit() => Ok(quote!()),
+        match node.kind() {
+            ExprKind::Block(n) => self.print_block_no_braces(&n),
+            ExprKind::Value(v) if v.is_unit() => Ok(quote!()),
             _ => self.print_expr(node),
         }
     }
@@ -26,32 +26,32 @@ impl RustPrinter {
         Ok(quote!(#ident))
     }
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
-        match node {
-            Expr::Id(id) => self.print_expr_id(*id),
-            Expr::Locator(loc) => self.print_locator(loc),
-            Expr::Value(n) => self.print_value(n),
-            Expr::Invoke(n) => self.print_invoke_expr(n),
-            Expr::UnOp(op) => self.print_un_op(op),
-            Expr::BinOp(op) => self.print_bin_op(op),
-            Expr::Any(n) => self.print_any(n),
-            Expr::Match(n) => self.print_match(n),
-            Expr::If(n) => self.print_if(n),
-            Expr::Block(n) => self.print_block(n),
-            Expr::Struct(n) => self.print_struct_expr(n),
-            Expr::Select(n) => self.print_select(n),
-            Expr::Reference(n) => self.print_ref(n),
-            Expr::Assign(n) => self.print_assign(n),
-            Expr::Index(n) => self.print_index(n),
-            Expr::Closured(n) => self.print_expr(&n.expr),
-            Expr::Paren(n) => self.print_paren(n),
-            Expr::Loop(n) => self.print_loop(n),
-            Expr::Range(n) => self.print_range(n),
-            Expr::Tuple(n) => self.print_expr_tuple(n),
-            Expr::Try(n) => self.print_expr_try(&n.expr),
-            Expr::While(n) => self.print_while(n),
-            Expr::Let(n) => self.print_expr_let(n),
-            Expr::Closure(n) => self.print_expr_closure(n),
-            Expr::Array(n) => self.print_expr_array(n),
+        match node.kind() {
+            ExprKind::Id(id) => self.print_expr_id(*id),
+            ExprKind::Locator(loc) => self.print_locator(loc),
+            ExprKind::Value(n) => self.print_value(n),
+            ExprKind::Invoke(n) => self.print_invoke_expr(n),
+            ExprKind::UnOp(op) => self.print_un_op(op),
+            ExprKind::BinOp(op) => self.print_bin_op(op),
+            ExprKind::Any(n) => self.print_any(n),
+            ExprKind::Match(n) => self.print_match(n),
+            ExprKind::If(n) => self.print_if(n),
+            ExprKind::Block(n) => self.print_block(n),
+            ExprKind::Struct(n) => self.print_struct_expr(n),
+            ExprKind::Select(n) => self.print_select(n),
+            ExprKind::Reference(n) => self.print_ref(n),
+            ExprKind::Assign(n) => self.print_assign(n),
+            ExprKind::Index(n) => self.print_index(n),
+            ExprKind::Closured(n) => self.print_expr(&n.expr),
+            ExprKind::Paren(n) => self.print_paren(n),
+            ExprKind::Loop(n) => self.print_loop(n),
+            ExprKind::Range(n) => self.print_range(n),
+            ExprKind::Tuple(n) => self.print_expr_tuple(n),
+            ExprKind::Try(n) => self.print_expr_try(&n.expr),
+            ExprKind::While(n) => self.print_while(n),
+            ExprKind::Let(n) => self.print_expr_let(n),
+            ExprKind::Closure(n) => self.print_expr_closure(n),
+            ExprKind::Array(n) => self.print_expr_array(n),
 
             _ => bail!("Unable to serialize {:?}", node),
         }
@@ -162,8 +162,8 @@ impl RustPrinter {
                 } else if expr0.semicolon == Some(false) {
                     with_semicolon = false;
                 } else {
-                    match &*expr0.expr {
-                        Expr::Block(_) | Expr::If(_) => with_semicolon = false,
+                    match expr0.expr.kind() {
+                        ExprKind::Block(_) | ExprKind::If(_) => with_semicolon = false,
                         _ => with_semicolon = true,
                     }
                 }

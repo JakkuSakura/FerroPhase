@@ -1,7 +1,9 @@
 use std::fmt::{self, Formatter};
 use std::result::Result;
 
-use crate::ast::{try_get_threadlocal_serializer, AstSerializer, Expr, File, Item, Node};
+use crate::ast::{
+    try_get_threadlocal_serializer, AstSerializer, Expr, File, Item, Node, NodeKind,
+};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 fn render_with_serializer<T>(
@@ -58,10 +60,10 @@ impl PrettyPrintable for File {
 
 impl PrettyPrintable for Node {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        match self {
-            Node::Item(item) => item.fmt_pretty(f, ctx),
-            Node::Expr(expr) => expr.fmt_pretty(f, ctx),
-            Node::File(file) => file.fmt_pretty(f, ctx),
+        match self.kind() {
+            NodeKind::Item(item) => item.fmt_pretty(f, ctx),
+            NodeKind::Expr(expr) => expr.fmt_pretty(f, ctx),
+            NodeKind::File(file) => file.fmt_pretty(f, ctx),
         }
     }
 }

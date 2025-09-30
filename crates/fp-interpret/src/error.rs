@@ -8,7 +8,10 @@ pub fn interpretation_error(message: impl Into<String>) -> Error {
 }
 
 /// Create an interpretation error with a specific error code
-pub fn interpretation_error_with_code(message: impl Into<String>, code: impl Into<String>) -> Error {
+pub fn interpretation_error_with_code(
+    message: impl Into<String>,
+    code: impl Into<String>,
+) -> Error {
     let message = format!("{} ({})", message.into(), code.into());
     report_error(message)
 }
@@ -33,10 +36,14 @@ macro_rules! interp_bail {
         return Err($crate::error::interpretation_error($message))
     };
     ($message:expr, $code:expr) => {
-        return Err($crate::error::interpretation_error_with_code($message, $code))
+        return Err($crate::error::interpretation_error_with_code(
+            $message, $code,
+        ))
     };
     ($message:expr, $span:expr) => {
-        return Err($crate::error::interpretation_error_with_span($message, $span))
+        return Err($crate::error::interpretation_error_with_span(
+            $message, $span,
+        ))
     };
 }
 

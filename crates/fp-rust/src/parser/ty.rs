@@ -7,8 +7,8 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, FieldsNamed, Token};
 
 use fp_core::ast::{
-    DecimalType, Expr, ExprBinOp, StructuralField, Ty, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
+    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeBounds, TypeFunction,
+    TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
 };
 use fp_core::id::{Ident, Path};
 use fp_core::ops::BinOpKind;
@@ -214,22 +214,21 @@ impl syn::parse::Parse for TypeExprParser {
         Ok(lhs)
     }
 }
-impl Into<Expr> for TypeExprParser {
-    fn into(self) -> Expr {
-        match self {
-            TypeExprParser::Add { left, right } => Expr::BinOp(ExprBinOp {
+impl From<TypeExprParser> for Expr {
+    fn from(parser: TypeExprParser) -> Self {
+        match parser {
+            TypeExprParser::Add { left, right } => ExprKind::BinOp(ExprBinOp {
                 lhs: left.into(),
                 rhs: right.into(),
                 kind: BinOpKind::Add,
-            }),
-            // TypeExprParser::Sub { .. } => {
-            //     unreachable!()
-            // }
+            })
+            .into(),
+            // TypeExprParser::Sub { .. } => unreachable!(),
             TypeExprParser::Value(v) => Expr::value(v.into()),
         }
     }
 }
 fn parse_custom_type_expr(m: syn::TypeMacro) -> Result<Expr> {
     let t: TypeExprParser = m.mac.parse_body().with_context(|| format!("{:?}", m))?;
-    Ok(t.into())
+    Ok(Expr::from(t))
 }
