@@ -1,19 +1,31 @@
 #!/usr/bin/env fp run
-//! Basic specialization example showing function composition and inlining.
-//! Demonstrates how functions can be specialized and evaluated at compile time.
+//! Function specialization and inlining
 
-fn inc(i: i64) -> i64 {
-    i + 1 + 2 + 3
+fn add(a: i64, b: i64) -> i64 {
+    a + b
 }
 
-fn double(i: i64) -> i64 {
-    i * 2
+fn double(x: i64) -> i64 {
+    x * 2
 }
 
-fn print(i: i64) {
-    println!("{}", i)
+fn compose(x: i64) -> i64 {
+    double(add(x, 1))
 }
 
 fn main() {
-    print(inc(1));
+    // Simple calls (should inline)
+    println!("{}", add(2, 3));
+    println!("{}", double(5));
+
+    // Composition (should inline entire chain)
+    println!("{}", compose(10)); // (10 + 1) * 2 = 22
+
+    // Const evaluation (compile-time)
+    const RESULT: i64 = {
+        let x = 5;
+        let y = x + 10; // add inlined
+        y * 2           // double inlined
+    };
+    println!("const: {}", RESULT);
 }

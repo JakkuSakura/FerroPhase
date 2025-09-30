@@ -1,100 +1,40 @@
 #!/usr/bin/env fp run
-//! Metaprogramming patterns built on FerroPhase macros
+//! Metaprogramming: using const metadata to drive code generation
 
 fn main() {
-    println!("=== Metaprogramming Patterns ===");
+    // Const metadata
+    const FIELD_COUNT: usize = 3;
+    const TYPE_NAME: &str = "Point3D";
 
-    //------------------------------------------------------------------
-    // Pattern 1: Schema-driven ORM scaffolding
-    //------------------------------------------------------------------
-    struct TableField {
-        name: &'static str,
-        ty: &'static str,
-        constraints: &'static str,
+    struct Point3D {
+        x: i64,
+        y: i64,
+        z: i64,
     }
 
-    struct TableSchema {
-        table: &'static str,
-        fields: &'static [TableField],
-    }
-
-    const USER_SCHEMA: TableSchema = TableSchema {
-        table: "users",
-        fields: &[
-            TableField { name: "id", ty: "u64", constraints: "PRIMARY KEY" },
-            TableField { name: "name", ty: "String", constraints: "NOT NULL" },
-            TableField { name: "email", ty: "String", constraints: "UNIQUE" },
-            TableField { name: "created_at", ty: "u64", constraints: "DEFAULT NOW()" },
-        ],
-    };
-
-    t! {
-        struct User {
-            id: u64,
-            name: String,
-            email: String,
-            created_at: u64,
-
-            fn insert(&self) {
-                println!("INSERT INTO {} (name, email) VALUES ('{}', '{}')",
-                    USER_SCHEMA.table, self.name, self.email);
-            }
-
-            fn find(id: u64) -> Option<User> {
-                println!("SELECT * FROM {} WHERE id = {}", USER_SCHEMA.table, id);
-                None
-            }
+    impl Point3D {
+        fn type_name() -> &'static str {
+            TYPE_NAME
         }
-    };
 
-    let alice = User {
-        id: 1,
-        name: "Alice".to_string(),
-        email: "alice@example.com".to_string(),
-        created_at: 0,
-    };
-    alice.insert();
-    User::find(1);
-
-    //------------------------------------------------------------------
-    // Pattern 2: Domain-specific protocol messages
-    //------------------------------------------------------------------
-    struct MessageMetadata {
-        code: u16,
-        name: &'static str,
-    }
-
-    const MESSAGES: [MessageMetadata; 3] = [
-        MessageMetadata { code: 0x01, name: "Ping" },
-        MessageMetadata { code: 0x02, name: "Pong" },
-        MessageMetadata { code: 0x10, name: "Data" },
-    ];
-
-    t! {
-        enum ProtocolMessage {
-            Ping,
-            Pong,
-            Data { payload_len: usize },
-
-            fn opcode(&self) -> u16 {
-                match self {
-                    ProtocolMessage::Ping => 0x01,
-                    ProtocolMessage::Pong => 0x02,
-                    ProtocolMessage::Data { .. } => 0x10,
-                }
-            }
+        fn field_count() -> usize {
+            FIELD_COUNT
         }
-    };
-
-    const MESSAGE_VARIANTS: usize = MESSAGES.len();
-    println!("Defined {} protocol metadata entries", MESSAGE_VARIANTS);
-
-    for meta in &MESSAGES {
-        println!("Message {:02X} => {}", meta.code, meta.name);
     }
 
-    let payload = ProtocolMessage::Data { payload_len: 512 };
-    println!("Payload opcode {:02X}", payload.opcode());
+    println!("{} has {} fields",
+             Point3D::type_name(),
+             Point3D::field_count());
 
-    println!("\n✓ Metaprogramming templates ready");
+    // Enum discriminants with const
+    const VARIANT_A: u8 = 1;
+    const VARIANT_B: u8 = 2;
+
+    enum Tag {
+        A = VARIANT_A as isize,
+        B = VARIANT_B as isize,
+    }
+
+    let tag = Tag::A;
+    println!("tag discriminant: {}", tag as u8);
 }
