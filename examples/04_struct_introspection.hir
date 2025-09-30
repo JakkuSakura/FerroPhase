@@ -11,21 +11,21 @@ hir::Program {
                 pub b: u8,
             }
             const POINT_SIZE: usize =
-                false;
+                std::SizeOf(1 args);
             const COLOR_SIZE: usize =
-                false;
+                std::SizeOf(1 args);
             const POINT_FIELDS: usize =
-                false;
+                std::FieldCount(1 args);
             const COLOR_FIELDS: usize =
-                false;
+                std::FieldCount(1 args);
             const POINT_HAS_X: bool =
-                false;
+                std::HasField(2 args);
             const POINT_HAS_Z: bool =
-                false;
+                std::HasField(2 args);
             const POINT_METHODS: usize =
-                false;
+                std::MethodCount(1 args);
             const COLOR_METHODS: usize =
-                false;
+                std::MethodCount(1 args);
             std::Println(0 args);
             std::Println(1 args);
             std::Println(1 args);
@@ -38,9 +38,9 @@ hir::Program {
             std::Println(0 args);
             std::Println(0 args);
             const POINT_SIZE_CONST: usize =
-                false;
+                std::SizeOf(1 args);
             const COLOR_SIZE_CONST: usize =
-                false;
+                std::SizeOf(1 args);
             const TOTAL_SIZE: usize =
                 (POINT_SIZE_CONST + COLOR_SIZE_CONST);
             let origin = Point { x: 0, y: 0 };
