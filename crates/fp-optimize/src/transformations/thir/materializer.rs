@@ -149,10 +149,12 @@ impl BackendThirMaterializer {
                 if let Some(materialized) = self.materializer.prepare_print(kind, &template) {
                     // Backend provides printf-style transformation
                     let mut call_args = Vec::with_capacity(template.args.len() + 1);
-                    call_args.push(self.make_string_literal_expr(span, materialized.format_literal));
+                    call_args
+                        .push(self.make_string_literal_expr(span, materialized.format_literal));
                     call_args.extend(template.args.into_iter());
 
-                    let fun = Box::new(self.make_path_expr(span, &materialized.printf_function_name));
+                    let fun =
+                        Box::new(self.make_path_expr(span, &materialized.printf_function_name));
 
                     thir::Expr {
                         thir_id,
@@ -256,6 +258,14 @@ impl BackendThirMaterializer {
                     ty: self.create_string_type(),
                     span,
                 }
+            }
+            IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
+                // These should never appear as intrinsic calls in THIR
+                // They are converted to proper ExprKind variants in AST→HIR
+                unreachable!(
+                    "unexpected control flow intrinsic {:?} in THIR materializer",
+                    kind
+                );
             }
         }
     }

@@ -21,6 +21,66 @@ hir::Program {
             let value = 42;
             let category = <control-flow>;
             std::Println(2 args);
+            let mut count = 0;
+            loop
+                {
+                    count = (count + 1);
+                    if ((count >= 5))
+                        {
+                            false;
+                        }
+                    if ((count >= 5))
+                        {
+                            false;
+                        }
+                }
+            std::Println(1 args);
+            let mut i = 0;
+            while ((i < 3))
+                {
+                    std::Println(1 args);
+                    i = (i + 1);
+                }
+            let mut j = 0;
+            loop
+                {
+                    j = (j + 1);
+                    if ((j < 3))
+                        {
+                            false;
+                        }
+                    std::Println(1 args);
+                    if ((j >= 3))
+                        {
+                            false;
+                        }
+                    if ((j >= 3))
+                        {
+                            false;
+                        }
+                }
+            let result = check_value(15);
+            std::Println(1 args);
+        }
+    }
+
+    fn check_value(x: i64) -> &str {
+        // params: [x: i64]
+        {
+            if ((x < 0))
+                {
+                    false;
+                }
+            if ((x < 10))
+                {
+                    false;
+                }
+            if ((x < 100))
+                {
+                    false;
+                }
+            "large"
+            "large"
         }
     }
 }

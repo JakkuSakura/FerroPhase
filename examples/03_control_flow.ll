@@ -48,7 +48,7 @@ bb1:
   %alloca_22 = alloca ptr, align 8
   store ptr @.str.0, ptr %alloca_22
   %load_24 = load ptr, ptr %alloca_22
-  store ptr %load_24, ptr %alloca_6
+  store ptr %load_24, ptr %alloca_7
   br label %bb3
 bb2:
   %alloca_26 = alloca i64, align 8
@@ -62,7 +62,7 @@ bb2:
   br i1 %load_33, label %bb4, label %bb5
 bb3:
   %alloca_34 = alloca ptr, align 8
-  %load_35 = load ptr, ptr %alloca_6
+  %load_35 = load ptr, ptr %alloca_7
   store ptr %load_35, ptr %alloca_34
   %alloca_37 = alloca ptr, align 8
   %load_38 = load i64, ptr %alloca_11
@@ -73,13 +73,13 @@ bb4:
   %alloca_41 = alloca ptr, align 8
   store ptr @.str.2, ptr %alloca_41
   %load_43 = load ptr, ptr %alloca_41
-  store ptr %load_43, ptr %alloca_0
+  store ptr %load_43, ptr %alloca_4
   br label %bb6
 bb5:
   %alloca_45 = alloca ptr, align 8
   store ptr @.str.3, ptr %alloca_45
   %load_47 = load ptr, ptr %alloca_45
-  store ptr %load_47, ptr %alloca_0
+  store ptr %load_47, ptr %alloca_4
   br label %bb6
 bb7:
   %alloca_49 = alloca i1, align 1
@@ -105,24 +105,24 @@ bb7:
   %load_69 = load i1, ptr %alloca_64
   br i1 %load_69, label %bb8, label %bb9
 bb6:
-  %load_70 = load ptr, ptr %alloca_0
-  store ptr %load_70, ptr %alloca_6
+  %load_70 = load ptr, ptr %alloca_4
+  store ptr %load_70, ptr %alloca_7
   br label %bb3
 bb8:
   %alloca_72 = alloca ptr, align 8
   store ptr @.str.4, ptr %alloca_72
   %load_74 = load ptr, ptr %alloca_72
-  store ptr %load_74, ptr %alloca_7
+  store ptr %load_74, ptr %alloca_6
   br label %bb10
 bb9:
   %alloca_76 = alloca ptr, align 8
   store ptr @.str.5, ptr %alloca_76
   %load_78 = load ptr, ptr %alloca_76
-  store ptr %load_78, ptr %alloca_7
+  store ptr %load_78, ptr %alloca_6
   br label %bb10
 bb10:
   %alloca_80 = alloca ptr, align 8
-  %load_81 = load ptr, ptr %alloca_7
+  %load_81 = load ptr, ptr %alloca_6
   store ptr %load_81, ptr %alloca_80
   %alloca_83 = alloca ptr, align 8
   %load_84 = load ptr, ptr %alloca_80
@@ -172,7 +172,7 @@ bb15:
   %alloca_118 = alloca ptr, align 8
   store ptr @.str.9, ptr %alloca_118
   %load_120 = load ptr, ptr %alloca_118
-  store ptr %load_120, ptr %alloca_1
+  store ptr %load_120, ptr %alloca_0
   br label %bb17
 bb16:
   %alloca_122 = alloca i64, align 8
@@ -200,26 +200,26 @@ bb21:
   %load_142 = load i1, ptr %alloca_137
   br i1 %load_142, label %bb22, label %bb23
 bb17:
-  %load_143 = load ptr, ptr %alloca_1
+  %load_143 = load ptr, ptr %alloca_0
   store ptr %load_143, ptr %alloca_3
   br label %bb14
 bb18:
   %alloca_145 = alloca ptr, align 8
   store ptr @.str.10, ptr %alloca_145
   %load_147 = load ptr, ptr %alloca_145
-  store ptr %load_147, ptr %alloca_8
+  store ptr %load_147, ptr %alloca_5
   br label %bb20
 bb19:
   %alloca_149 = alloca ptr, align 8
   store ptr @.str.11, ptr %alloca_149
   %load_151 = load ptr, ptr %alloca_149
-  store ptr %load_151, ptr %alloca_8
+  store ptr %load_151, ptr %alloca_5
   br label %bb20
 bb22:
   %alloca_153 = alloca ptr, align 8
   store ptr @.str.12, ptr %alloca_153
   %load_155 = load ptr, ptr %alloca_153
-  store ptr %load_155, ptr %alloca_5
+  store ptr %load_155, ptr %alloca_8
   br label %bb24
 bb23:
   %alloca_157 = alloca i64, align 8
@@ -232,12 +232,12 @@ bb23:
   %load_164 = load i1, ptr %alloca_159
   br i1 %load_164, label %bb25, label %bb26
 bb20:
-  %load_165 = load ptr, ptr %alloca_8
-  store ptr %load_165, ptr %alloca_1
+  %load_165 = load ptr, ptr %alloca_5
+  store ptr %load_165, ptr %alloca_0
   br label %bb17
 bb24:
   %alloca_167 = alloca ptr, align 8
-  %load_168 = load ptr, ptr %alloca_5
+  %load_168 = load ptr, ptr %alloca_8
   store ptr %load_168, ptr %alloca_167
   %alloca_170 = alloca ptr, align 8
   %load_171 = load i64, ptr %alloca_132
@@ -248,20 +248,20 @@ bb25:
   %alloca_174 = alloca ptr, align 8
   store ptr @.str.14, ptr %alloca_174
   %load_176 = load ptr, ptr %alloca_174
-  store ptr %load_176, ptr %alloca_4
+  store ptr %load_176, ptr %alloca_1
   br label %bb27
 bb26:
   %alloca_178 = alloca ptr, align 8
   store ptr @.str.15, ptr %alloca_178
   %load_180 = load ptr, ptr %alloca_178
-  store ptr %load_180, ptr %alloca_4
+  store ptr %load_180, ptr %alloca_1
   br label %bb27
 bb28:
   store i32 0, ptr %alloca_2
   ret i32 0
 bb27:
-  %load_183 = load ptr, ptr %alloca_4
-  store ptr %load_183, ptr %alloca_5
+  %load_183 = load ptr, ptr %alloca_1
+  store ptr %load_183, ptr %alloca_8
   br label %bb24
 }
 

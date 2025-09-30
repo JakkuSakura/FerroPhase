@@ -39,6 +39,9 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Closure(c) => Expr::Closure(parse_expr_closure(c)?),
         syn::Expr::Array(a) => Expr::Array(parse_expr_array(a)?),
         syn::Expr::Assign(a) => Expr::Assign(parse_expr_assign(a)?.into()),
+        syn::Expr::Break(b) => parse_expr_break(b)?,
+        syn::Expr::Continue(_) => parse_expr_continue()?,
+        syn::Expr::Return(r) => parse_expr_return(r)?,
         raw => {
             tracing::debug!("RawExpr {:?}", raw);
             Expr::Any(AnyBox::new(RawExpr { raw }))
@@ -740,4 +743,37 @@ fn parse_expr_assign(a: syn::ExprAssign) -> Result<ExprAssign> {
         target: parse_expr(*a.left)?.into(),
         value: parse_expr(*a.right)?.into(),
     })
+}
+
+fn parse_expr_break(b: syn::ExprBreak) -> Result<Expr> {
+    let value = b.expr.map(|e| parse_expr(*e)).transpose()?;
+    let args = if let Some(val) = value {
+        vec![val]
+    } else {
+        Vec::new()
+    };
+    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::Break,
+        IntrinsicCallPayload::Args { args },
+    )))
+}
+
+fn parse_expr_continue() -> Result<Expr> {
+    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::Continue,
+        IntrinsicCallPayload::Args { args: Vec::new() },
+    )))
+}
+
+fn parse_expr_return(r: syn::ExprReturn) -> Result<Expr> {
+    let value = r.expr.map(|e| parse_expr(*e)).transpose()?;
+    let args = if let Some(val) = value {
+        vec![val]
+    } else {
+        Vec::new()
+    };
+    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::Return,
+        IntrinsicCallPayload::Args { args },
+    )))
 }

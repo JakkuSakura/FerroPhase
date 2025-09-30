@@ -456,6 +456,14 @@ impl<'a> TypeInferencer<'a> {
                         self.bind(string_ty, TypeTerm::String)?;
                         string_ty
                     }
+                    IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
+                        // These should never appear as intrinsic calls in HIR
+                        // They are converted to proper ExprKind variants in AST→HIR
+                        return Err(crate::error::optimization_error(format!(
+                            "unexpected control flow intrinsic {:?} in type inference",
+                            call.kind
+                        )));
+                    }
                 }
             }
             ExprKind::If(cond, then_expr, else_expr) => {

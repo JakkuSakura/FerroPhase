@@ -436,6 +436,14 @@ impl ThirGenerator {
                     }
                     IntrinsicCallKind::DebugAssertions => self.create_bool_type(),
                     IntrinsicCallKind::Input => self.create_string_type(),
+                    IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
+                        // These should never appear as intrinsic calls in HIR
+                        // They are converted to proper ExprKind variants in AST→HIR
+                        return Err(crate::error::optimization_error(format!(
+                            "unexpected control flow intrinsic {:?} in HIR",
+                            call.kind
+                        )));
+                    }
                 };
 
                 (
