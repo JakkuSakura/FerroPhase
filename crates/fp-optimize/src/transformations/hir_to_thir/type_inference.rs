@@ -86,9 +86,11 @@ impl<'a> TypeInferencer<'a> {
             let annotated = self.generator.hir_ty_to_ty(&param.ty)?;
             let annotated_var = self.type_from_hir_ty(&annotated)?;
             self.unify(pattern_ty, annotated_var)?;
+            // Introduce bindings for their side effects on the type environment
             let _ = self.introduce_pattern_bindings(&param.pat)?;
         }
 
+        // Infer body expression type for side effects on the type environment
         let _ = self.infer_expr(&body.value)?;
 
         self.generalize_record_results()?;
@@ -149,9 +151,11 @@ impl<'a> TypeInferencer<'a> {
                     }
                 }
 
+                // Introduce bindings for their side effects on the type environment
                 let _ = self.introduce_pattern_bindings(&local.pat)?;
             }
             hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                // Infer expression type for side effects on the type environment
                 let _ = self.infer_expr(expr)?;
             }
             hir::StmtKind::Item(_) => {}
@@ -403,9 +407,11 @@ impl<'a> TypeInferencer<'a> {
                     IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                         if let IntrinsicCallPayload::Format { template } = &call.payload {
                             for arg in &template.args {
+                                // Infer arg types for side effects on the type environment
                                 let _ = self.infer_expr(arg)?;
                             }
                             for kw in &template.kwargs {
+                                // Infer kwarg types for side effects on the type environment
                                 let _ = self.infer_expr(&kw.value)?;
                             }
                         }
@@ -416,6 +422,7 @@ impl<'a> TypeInferencer<'a> {
                     IntrinsicCallKind::Len => {
                         if let IntrinsicCallPayload::Args { args } = &call.payload {
                             if let Some(arg) = args.first() {
+                                // Infer arg type for side effects on the type environment
                                 let _ = self.infer_expr(arg)?;
                             }
                         }
@@ -441,6 +448,7 @@ impl<'a> TypeInferencer<'a> {
                     IntrinsicCallKind::Input => {
                         if let IntrinsicCallPayload::Args { args } = &call.payload {
                             for arg in args {
+                                // Infer arg types for side effects on the type environment
                                 let _ = self.infer_expr(arg)?;
                             }
                         }
@@ -466,6 +474,7 @@ impl<'a> TypeInferencer<'a> {
             }
             ExprKind::Return(value) => {
                 if let Some(expr) = value {
+                    // Infer return value type for side effects on the type environment
                     let _ = self.infer_expr(expr)?;
                 }
                 let never = self.fresh_type_var();
@@ -474,6 +483,7 @@ impl<'a> TypeInferencer<'a> {
             }
             ExprKind::Break(value) => {
                 if let Some(expr) = value {
+                    // Infer break value type for side effects on the type environment
                     let _ = self.infer_expr(expr)?;
                 }
                 let never = self.fresh_type_var();
@@ -576,6 +586,7 @@ impl<'a> TypeInferencer<'a> {
 
     fn infer_call_args(&mut self, args: &[hir::Expr]) -> Result<TypeVarId> {
         for arg in args {
+            // Infer arg types for side effects on the type environment
             let _ = self.infer_expr(arg)?;
         }
         let unit = self.fresh_type_var();
