@@ -2,12 +2,12 @@
 
 FerroPhase's pipeline is organised as a share-nothing driver that threads
 diagnostics between functional stages while the `Pipeline` struct caches the
-frontend serializer, detected language, and snapshot metadata. The
-frontend now produces a language-specific AST (LAST) snapshot alongside the
-canonical AST, ensuring multi-language inputs flow through the same
-lowerings. The updated flow centres typed interpretation on THIR before
-resugaring to TAST and, for compilation backends, re-projecting into the
-optimisation IR stack.
+frontend serializer, detected language, and snapshot metadata. The frontend
+produces a language-specific AST (LAST) snapshot alongside the canonical AST so
+multi-language inputs flow through the same normalisation passes. The new
+design removes THIR entirely: type inference now annotates the canonical AST in
+place, the interpreter operates directly on that typed AST, and the remaining
+lowerings consume the already-typed structures.
 
 ## Stage Overview
 
@@ -24,26 +24,30 @@ optimisation IR stack.
      stage while spans are preserved.
    - The output is the normalised AST that every downstream mode consumes.
 
-3. **Desugaring & Typing (AST → HIR → THIR)**
-   - `HirGenerator` removes surface sugar and resolves bindings.
-   - `ThirGenerator` runs Algorithm W style inference to produce a typed HIR
-     (THIR). Types are attached to every expression and pattern.
+3. **Type Enrichment (AST → ASTᵗ)**
+   - An Algorithm W style inferencer walks the normalised AST, resolving names
+     and constraints while writing inferred types back onto AST nodes
+     (`ast::Expr.ty`, `ast::Pattern.ty`, …).
+   - The output is the same structural AST enriched with optional type slots
+     (`ASTᵗ`). No HIR/THIR projection occurs during typing.
 
-4. **Typed Interpretation (THIR → THIR′)**
-   - Compile-time and runtime interpretation operate directly on THIR.
-   - The resulting THIR′ snapshot captures any compile-time structural edits and becomes the authoritative typed program after evaluation.
+4. **Typed Interpretation (ASTᵗ → ASTᵗ′)**
+   - Compile-time and runtime interpretation operate on the typed AST. Both
+     modes share the same evaluator with different configuration flags.
+   - Const evaluation may mutate the AST in place (folding expressions,
+     synthesising declarations, materialising intrinsic calls). The resulting
+     `ASTᵗ′` snapshot becomes the source of truth for subsequent stages.
 
-5. **Resugaring (THIR′ → TAST → LAST′)**
-   - A lifting phase rebuilds a typed AST (TAST) that mirrors surface syntax
-     while preserving the THIR types and spans.
-   - Language-specific generators can rehydrate a LAST′ view for transpilers or
-     tooling that prefers front-end formats.
+5. **Typed Projection (ASTᵗ′ → HIRᵗ)**
+   - `HirGenerator` consumes the evaluated typed AST and produces a
+     type-aware HIR (`HIRᵗ`). Because the AST already carries principal types,
+     this step focuses on structural desugaring and borrow checking hooks while
+     preserving the attached type metadata.
 
 6. **Backend Lowering (Compile / Optimisation Modes)**
-   - For native/optimised targets, the driver re-projects the evaluated program:
-     `TAST → HIR → THIR → MIR → LIR → LLVM IR`.
-   - MIR/LIR benefit from evaluation results (folded consts, generated structs)
-     while preserving deterministic spans from the original source.
+   - Native and optimised targets lower `HIRᵗ` to `MIR → LIR → LLVM IR`.
+   - MIR/LIR benefit from prior evaluation (folded consts, generated structs)
+     and the types recorded on HIR nodes; no THIR snapshot is produced.
 
 Each step returns a `DiagnosticReport<T>` containing the produced artefact (or a
 placeholder in tolerant mode) and the collected `Diagnostic` entries. The
@@ -61,8 +65,8 @@ reporting.
 `Pipeline` now owns the lightweight metadata that previously lived inside a
 `CompilationContext`:
 
-- `serializer: Option<Arc<dyn AstSerializer>>` – reused by const-eval and
-  interpretation to serialise THIR/values.
+- `serializer: Option<Arc<dyn AstSerializer>>` – reused by type inference and
+  interpretation to serialise typed AST fragments/values.
 - `source_language: Option<String>` – records the detected or user-specified
   language for diagnostics and downstream tooling.
 - `frontend_snapshot: Option<FrontendSnapshot>` – keeps LAST provenance handy
@@ -103,9 +107,9 @@ flags for informational entries but always surfaces warnings and errors.
 ## Intermediates & Persistence
 
 When `save_intermediates` is enabled, each stage writes its artefact into the
-`base_path` with a conventional extension (`.ast`, `.hir`, `.thi`, `.tce`, `.dhi`,
-`.tast`, `.mir`, `.lir`, `.ll`). The driver handles the IO so the stage helpers remain
-pure.
+`base_path` with a conventional extension (`.ast`, `.ast-typed`, `.ast-eval`,
+`.hir`, `.mir`, `.lir`, `.ll`). The driver handles the IO so the stage helpers
+remain pure.
 
 ## Error Tolerance
 
@@ -115,14 +119,14 @@ stage can produce a placeholder artefact, it returns it while emitting
 
 ## Runtime & Interpretation
 
-Interpretation (interactive `run`/`eval`) now flows through the same AST → HIR
-→ THIR → const-eval pipeline used for compilation. The typed interpreter reuses
-the frontend serializer, executes THIR bodies in either const or runtime mode,
-and currently produces owned runtime values via the same evaluation machinery.
+Interpretation (interactive `run`/`eval`) now flows through the same
+`AST → ASTᵗ → ASTᵗ′` pipeline used for compilation. The interpreter reuses the
+frontend serializer, executes typed AST bodies in either const or runtime mode,
+and produces owned runtime values via shared evaluation machinery.
 
 The runtime path still needs richer semantics (ownership-aware operations,
-language intrinsics), but the driver no longer depends on the removed
-`RuntimePass` abstraction.
+language intrinsics), but it no longer depends on THIR materialisation or the
+deprecated `RuntimePass` abstraction.
 
 ## Extending the Pipeline
 

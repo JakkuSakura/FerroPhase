@@ -65,16 +65,17 @@ Highlights:
 
 ## Running Const Evaluation
 
-To inspect const-eval output and verify TAST contents, run:
+To inspect const-eval output and verify the typed AST, run:
 
 ```bash
 $ fp compile src/main.fp --emit ast --emit east
 ```
 
 Artifacts (paths depend on your configuration):
-- `target/tast/src_main.tast` – Evaluated typed AST snapshot (TAST)
-- `target/hir/src_main.hir` – HIR after lowering
-- `target/tce/src_main.tce` – Evaluated THIR snapshot after const evaluation
+- `target/ast/src_main.ast` – Normalised AST snapshot
+- `target/ast/src_main.ast-typed` – Typed AST (`ASTᵗ`)
+- `target/ast/src_main.ast-eval` – Post-const-eval AST (`ASTᵗ′`)
+- `target/hir/src_main.hir` – Typed HIR after projection
 
 ## Building to Native (LLVM target)
 
@@ -87,19 +88,19 @@ $ fp compile src/main.fp --target native --out target/bin/main
 Common flags:
 - `--opt {0|1|2|3}` – Optimisation level (default: 2)
 - `--debug` – Include debug info
-- `--emit {ast,east,hir,thir,mir,lir,llvm}` – Persist intermediates for inspection
+- `--emit {ast,ast-typed,ast-eval,hir,mir,lir,llvm}` – Persist intermediates for inspection
 - `--save-intermediates` – Shortcut to emit all intermediates
 
 ## Inspecting Intermediates
 
 ```bash
-$ fp compile src/main.fp --emit thir --emit tast --emit mir
-$ cat target/tce/src_main.tce
-$ cat target/tast/src_main.tast
+$ fp compile src/main.fp --emit ast-typed --emit ast-eval --emit mir
+$ cat target/ast/src_main.ast-typed
+$ cat target/ast/src_main.ast-eval
 ```
 
-- THIR shows ConcreteType embeddings.
-- TAST re-sugars the program with explicit type annotations (static transpile path).
+- The typed AST shows principal types inferred for each expression.
+- The evaluated AST includes const-folded expressions and generated items.
 
 ## Running the Binary
 
@@ -113,8 +114,8 @@ Hello from quote/splice!
 
 - **Missing LLVM tools**: `fp compile` reports if `llc`/`clang` are unavailable. Install via your package manager or set
   `FP_LLVM_PATH`.
-- **Const eval errors**: Review TAST artefacts. Diagnostics map back to original spans.
-- **Transpile mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—TAST must match quoted/spliced code.
+- **Const eval errors**: Review the `ast-eval` artefact. Diagnostics map back to original spans.
+- **Transpile mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—the evaluated AST should match quoted/spliced code.
 
 ## Next Steps
 
