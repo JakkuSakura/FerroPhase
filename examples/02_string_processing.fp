@@ -1,27 +1,34 @@
 #!/usr/bin/env fp run
-//! Placeholder string metrics until string intrinsics are available.
+//! Compile-time string operations and intrinsics (future feature showcase)
 
 fn main() {
-    const APP_LENGTH: i64 = 10;
-    const VERSION_LENGTH: i64 = 5;
-    const BANNER_EXTRA: i64 = 3;
-    const BANNER_LENGTH: i64 = APP_LENGTH + VERSION_LENGTH + BANNER_EXTRA;
-    const VERSION_HAS_SEPARATOR: bool = true;
-    const RELEASE_CHANNEL_IS_BETA: bool = false;
-    const METADATA_VALID: bool = BANNER_LENGTH >= 15;
+    // Const strings
+    const NAME: &str = "FerroPhase";
+    const VERSION: &str = "0.1.0";
 
-    const BUFFER_SIZE: i64 = if BANNER_LENGTH > 20 { 1024 } else { 512 };
-    const HASH_BASE: i64 = 31;
-    const SIMPLE_HASH: i64 = APP_LENGTH * HASH_BASE + VERSION_LENGTH;
-    const SUMMARY_SCORE: i64 = APP_LENGTH + VERSION_LENGTH + BANNER_LENGTH;
+    // String .len() intrinsic at compile time (TODO: implement in codegen)
+    // const NAME_LEN: usize = NAME.len();
+    // const VERSION_LEN: usize = VERSION.len();
+    const NAME_LEN: usize = 10;  // Placeholder until .len() codegen is implemented
+    const VERSION_LEN: usize = 5; // Placeholder until .len() codegen is implemented
 
-    println!("App length {}", APP_LENGTH);
-    println!("Version length {}", VERSION_LENGTH);
-    println!("Banner length {}", BANNER_LENGTH);
-    println!("Separator flag {}", VERSION_HAS_SEPARATOR);
-    println!("Beta channel {}", RELEASE_CHANNEL_IS_BETA);
-    println!("Metadata valid {}", METADATA_VALID);
-    println!("Buffer size {}", BUFFER_SIZE);
-    println!("Hash marker {}", SIMPLE_HASH);
-    println!("Summary score {}", SUMMARY_SCORE);
+    println!("name='{}' len={}", NAME, NAME_LEN);
+    println!("version='{}' len={}", VERSION, VERSION_LEN);
+
+    // String-based comparisons at compile time
+    const IS_EMPTY: bool = NAME_LEN == 0;
+    const IS_LONG: bool = NAME_LEN > 5;
+
+    println!("empty={}, long={}", IS_EMPTY, IS_LONG);
+
+    // Const string concatenation (future)
+    // const BANNER: &str = NAME + " v" + VERSION;
+    const BANNER: &str = "FerroPhase v0.1.0";
+    println!("banner='{}'", BANNER);
+
+    // Buffer sizing based on string length
+    const BUFFER_SIZE: usize = if NAME_LEN > 8 { 256 } else { 128 };
+    println!("buffer_size={}", BUFFER_SIZE);
+
+    // Future intrinsics: .starts_with(), .ends_with(), .contains(), slicing
 }

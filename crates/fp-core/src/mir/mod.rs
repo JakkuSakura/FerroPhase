@@ -308,6 +308,8 @@ pub enum BinOp {
     Mul,
     Div,
     Rem,
+    And,
+    Or,
     BitXor,
     BitAnd,
     BitOr,

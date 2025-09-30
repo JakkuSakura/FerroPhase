@@ -1,0 +1,12 @@
+thir::Program {
+    items:
+        fn main::main() -> <??> [body: body0] : <??>
+    bodies:
+        body0 (params: 0, locals: 3) {
+            locals:
+                _0: bool
+                _1: bool
+                _2: bool
+            value: block(4 stmts) : ()
+        }
+}

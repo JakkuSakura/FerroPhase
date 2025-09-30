@@ -1787,6 +1787,8 @@ impl LirGenerator {
             mir::BinOp::Mul => lir::LirInstructionKind::Mul(lhs, rhs),
             mir::BinOp::Div => lir::LirInstructionKind::Div(lhs, rhs),
             mir::BinOp::Rem => lir::LirInstructionKind::Rem(lhs, rhs),
+            mir::BinOp::And => lir::LirInstructionKind::And(lhs, rhs),
+            mir::BinOp::Or => lir::LirInstructionKind::Or(lhs, rhs),
             mir::BinOp::BitAnd => lir::LirInstructionKind::And(lhs, rhs),
             mir::BinOp::BitOr => lir::LirInstructionKind::Or(lhs, rhs),
             mir::BinOp::BitXor => lir::LirInstructionKind::Xor(lhs, rhs),
