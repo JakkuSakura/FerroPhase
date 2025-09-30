@@ -91,18 +91,18 @@ impl RustPrinter {
         ))
     }
     pub fn print_item(&self, item: &Item) -> Result<TokenStream> {
-        match item {
-            Item::DefFunction(n) => self.print_def_function(n),
-            Item::DefType(n) => self.print_def_type(n),
-            Item::DefStruct(n) => self.print_def_struct(n),
-            Item::DefTrait(n) => self.print_def_trait(n),
-            Item::DefConst(n) => self.print_def_const(n),
-            Item::DefStatic(n) => self.print_def_static(n),
-            // Item::DefEnum(n) => self.print_def_enum(n),
-            Item::Impl(n) => self.print_impl(n),
-            Item::Module(n) => self.print_module(n),
-            Item::Import(n) => self.print_import(n),
-            Item::Expr(n) => self.print_expr(n),
+        match item.kind() {
+            ItemKind::DefFunction(n) => self.print_def_function(n),
+            ItemKind::DefType(n) => self.print_def_type(n),
+            ItemKind::DefStruct(n) => self.print_def_struct(n),
+            ItemKind::DefTrait(n) => self.print_def_trait(n),
+            ItemKind::DefConst(n) => self.print_def_const(n),
+            ItemKind::DefStatic(n) => self.print_def_static(n),
+            // ItemKind::DefEnum(n) => self.print_def_enum(n),
+            ItemKind::Impl(n) => self.print_impl(n),
+            ItemKind::Module(n) => self.print_module(n),
+            ItemKind::Import(n) => self.print_import(n),
+            ItemKind::Expr(n) => self.print_expr(n),
             _ => bail!("Unable to serialize {:?}", item),
         }
     }

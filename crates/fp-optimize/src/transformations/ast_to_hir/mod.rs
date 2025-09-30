@@ -3,7 +3,7 @@ use fp_core::id::Locator;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
 use fp_core::span::{FileId, Span};
-use fp_core::{ast, hir};
+use fp_core::{ast, ast::ItemKind, hir};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -506,26 +506,26 @@ impl HirGenerator {
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
         for item in items {
-            match item {
-                ast::Item::Module(module) => {
+            match item.kind() {
+                ItemKind::Module(module) => {
                     self.allocate_def_id_for_item(item);
                     self.push_module_scope(&module.name.name, &module.visibility);
                     self.predeclare_items(&module.items)?;
                     self.pop_module_scope();
                 }
-                ast::Item::DefConst(def_const) => {
+                ItemKind::DefConst(def_const) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&def_const.name.name, def_id, &def_const.visibility);
                 }
-                ast::Item::DefStruct(def_struct) => {
+                ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
                 }
-                ast::Item::DefFunction(def_fn) => {
+                ItemKind::DefFunction(def_fn) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
                 }
-                ast::Item::Impl(_) => {
+                ItemKind::Impl(_) => {
                     self.allocate_def_id_for_item(item);
                 }
                 _ => {}
@@ -680,15 +680,15 @@ impl HirGenerator {
     }
 
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {
-        match item {
-            ast::Item::Module(module) => {
+        match item.kind() {
+            ItemKind::Module(module) => {
                 self.push_module_scope(&module.name.name, &module.visibility);
                 for child in &module.items {
                     self.append_item(program, child)?;
                 }
                 self.pop_module_scope();
             }
-            ast::Item::Import(import) => {
+            ItemKind::Import(import) => {
                 self.handle_import(import)?;
             }
             _ => {
@@ -713,8 +713,8 @@ impl HirGenerator {
         let def_id = self.def_id_for_item(item);
         let span = self.create_span(1);
 
-        let (kind, visibility) = match item {
-            ast::Item::DefConst(const_def) => {
+        let (kind, visibility) = match item.kind() {
+            ItemKind::DefConst(const_def) => {
                 self.register_value_def(&const_def.name.name, def_id, &const_def.visibility);
                 let hir_const = self.transform_const_def(const_def)?;
                 (
@@ -722,7 +722,7 @@ impl HirGenerator {
                     self.map_visibility(&const_def.visibility),
                 )
             }
-            ast::Item::DefStruct(struct_def) => {
+            ItemKind::DefStruct(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
                 let name = self.qualify_name(&struct_def.name.name);
                 let fields = struct_def
@@ -753,7 +753,7 @@ impl HirGenerator {
                     self.map_visibility(&struct_def.visibility),
                 )
             }
-            ast::Item::DefFunction(func_def) => {
+            ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
                 let function = self.transform_function(func_def, None)?;
                 (
@@ -761,7 +761,7 @@ impl HirGenerator {
                     self.map_visibility(&func_def.visibility),
                 )
             }
-            ast::Item::Impl(impl_block) => {
+            ItemKind::Impl(impl_block) => {
                 let hir_impl = self.transform_impl(impl_block)?;
                 (hir::ItemKind::Impl(hir_impl), hir::Visibility::Private)
             }

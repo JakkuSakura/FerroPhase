@@ -6,7 +6,7 @@ pub use runtime::*;
 pub use ty::*;
 pub use value::*;
 
-use crate::ast::{get_threadlocal_serializer, BExpr, Expr};
+use crate::ast::{get_threadlocal_serializer, BExpr, Expr, ExprKind};
 use crate::bail;
 use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
@@ -77,9 +77,11 @@ impl Value {
     pub const NULL: Value = Value::Null(ValueNull);
 
     pub fn expr(e: impl Into<Expr>) -> Self {
-        match e.into() {
-            Expr::Value(v) => *v,
-            e => Value::Expr(e.into()),
+        let expr: Expr = e.into();
+        let (ty, kind) = expr.into_parts();
+        match kind {
+            ExprKind::Value(v) => *v,
+            other => Value::Expr(Expr::from_parts(ty, other).into()),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {

@@ -16,9 +16,13 @@ impl InlinePass {
     }
 
     pub fn inline_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
-        match expr {
-            Expr::Value(value) => self.inline_value(value.into(), ctx).map(Expr::value),
-            _ => Ok(expr),
+        let (ty, kind) = expr.into_parts();
+        match kind {
+            ExprKind::Value(value) => {
+                let inlined = self.inline_value((*value), ctx)?;
+                Ok(Expr::value(inlined).with_ty_slot(ty))
+            }
+            other => Ok(Expr::from_parts(ty, other)),
         }
     }
     pub fn inline_invoke(
@@ -33,7 +37,7 @@ impl InlinePass {
                     match name.as_str() {
                         "print" => {
                             invoke.target = Locator::ident(name.clone()).into();
-                            return Ok(Expr::Invoke(invoke.into()));
+                            return Ok(ExprKind::Invoke(invoke).into());
                         }
                         _ if invoke.args.is_empty() => return Ok(func.body.get()),
                         _ => {}
@@ -46,19 +50,20 @@ impl InlinePass {
             _ => {}
         }
 
-        Ok(Expr::Invoke(invoke.into()))
+        Ok(ExprKind::Invoke(invoke).into())
     }
     pub fn try_get_pat(&self, ident: Locator, ctx: &SharedScopedContext) -> Result<Expr> {
         match ctx.get_expr(ident.to_path()) {
             Some(expr) => Ok(expr),
-            None => Ok(Expr::Locator(ident)),
+            None => Ok(Expr::locator(ident)),
         }
     }
 
     pub fn try_get_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
-        match expr {
-            Expr::Locator(ident) => self.try_get_pat(ident, ctx),
-            _ => Ok(expr),
+        let (ty, kind) = expr.into_parts();
+        match kind {
+            ExprKind::Locator(ident) => self.try_get_pat(ident, ctx).map(|expr| expr.with_ty_slot(ty)),
+            other => Ok(Expr::from_parts(ty, other)),
         }
     }
     pub fn inline_value(&self, value: Value, ctx: &SharedScopedContext) -> Result<Value> {

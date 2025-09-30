@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprInvokeTarget, ExprMatchCase, FormatKwArg,
-    Item, Node, Ty, Value, ValueFunction,
+    self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprInvokeTarget, ExprKind, ExprMatchCase,
+    FormatKwArg, Item, ItemKind, Node, NodeKind, Ty, Value, ValueFunction,
 };
 use fp_core::id::{Ident, Locator, Path};
 
@@ -10,10 +10,10 @@ const CANONICAL_STD_REWRITES: &[(&str, &[&str])] = &[
 ];
 
 pub fn normalize_last_to_ast(node: &mut Node) {
-    match node {
-        Node::Expr(expr) => normalize_expr(expr),
-        Node::Item(item) => normalize_item(item),
-        Node::File(file) => {
+    match node.kind_mut() {
+        NodeKind::Expr(expr) => normalize_expr(expr),
+        NodeKind::Item(item) => normalize_item(item),
+        NodeKind::File(file) => {
             for item in &mut file.items {
                 normalize_item(item);
             }
@@ -22,16 +22,16 @@ pub fn normalize_last_to_ast(node: &mut Node) {
 }
 
 fn normalize_item(item: &mut Item) {
-    match item {
-        Item::Module(module) => {
+    match item.kind_mut() {
+        ItemKind::Module(module) => {
             for item in &mut module.items {
                 normalize_item(item);
             }
         }
-        Item::DefFunction(function) => normalize_bexpr(&mut function.body),
-        Item::DefConst(const_item) => normalize_bexpr(&mut const_item.value),
-        Item::DefStatic(static_item) => normalize_bexpr(&mut static_item.value),
-        Item::Impl(impl_item) => {
+        ItemKind::DefFunction(function) => normalize_bexpr(&mut function.body),
+        ItemKind::DefConst(const_item) => normalize_bexpr(&mut const_item.value),
+        ItemKind::DefStatic(static_item) => normalize_bexpr(&mut static_item.value),
+        ItemKind::Impl(impl_item) => {
             if let Some(locator) = &mut impl_item.trait_ty {
                 normalize_locator(locator);
             }
@@ -40,7 +40,7 @@ fn normalize_item(item: &mut Item) {
                 normalize_item(item);
             }
         }
-        Item::Expr(expr) => normalize_expr(expr),
+        ItemKind::Expr(expr) => normalize_expr(expr),
         _ => {}
     }
 }
@@ -50,53 +50,53 @@ fn normalize_bexpr(expr: &mut ast::BExpr) {
 }
 
 fn normalize_expr(expr: &mut Expr) {
-    match expr {
-        Expr::Locator(locator) => normalize_locator(locator),
-        Expr::Value(value) => normalize_value(value.as_mut()),
-        Expr::Block(block) => normalize_block(block),
-        Expr::Invoke(invoke) => {
+    match expr.kind_mut() {
+        ExprKind::Locator(locator) => normalize_locator(locator),
+        ExprKind::Value(value) => normalize_value(value.as_mut()),
+        ExprKind::Block(block) => normalize_block(block),
+        ExprKind::Invoke(invoke) => {
             normalize_invoke_target(&mut invoke.target);
             for arg in &mut invoke.args {
                 normalize_expr(arg);
             }
         }
-        Expr::Match(expr_match) => {
+        ExprKind::Match(expr_match) => {
             for ExprMatchCase { cond, body } in &mut expr_match.cases {
                 normalize_bexpr(cond);
                 normalize_bexpr(body);
             }
         }
-        Expr::If(expr_if) => {
+        ExprKind::If(expr_if) => {
             normalize_bexpr(&mut expr_if.cond);
             normalize_bexpr(&mut expr_if.then);
             if let Some(elze) = &mut expr_if.elze {
                 normalize_bexpr(elze);
             }
         }
-        Expr::Loop(expr_loop) => normalize_bexpr(&mut expr_loop.body),
-        Expr::While(expr_while) => {
+        ExprKind::Loop(expr_loop) => normalize_bexpr(&mut expr_loop.body),
+        ExprKind::While(expr_while) => {
             normalize_bexpr(&mut expr_while.cond);
             normalize_bexpr(&mut expr_while.body);
         }
-        Expr::BinOp(bin_op) => {
+        ExprKind::BinOp(bin_op) => {
             normalize_bexpr(&mut bin_op.lhs);
             normalize_bexpr(&mut bin_op.rhs);
         }
-        Expr::UnOp(un_op) => normalize_bexpr(&mut un_op.val),
-        Expr::Assign(assign) => {
+        ExprKind::UnOp(un_op) => normalize_bexpr(&mut un_op.val),
+        ExprKind::Assign(assign) => {
             normalize_bexpr(&mut assign.target);
             normalize_bexpr(&mut assign.value);
         }
-        Expr::Select(select) => {
+        ExprKind::Select(select) => {
             normalize_bexpr(&mut select.obj);
         }
-        Expr::Index(index) => {
+        ExprKind::Index(index) => {
             normalize_bexpr(&mut index.obj);
             normalize_bexpr(&mut index.index);
         }
-        Expr::Reference(reference) => normalize_bexpr(&mut reference.referee),
-        Expr::Dereference(deref) => normalize_bexpr(&mut deref.referee),
-        Expr::Struct(struct_expr) => {
+        ExprKind::Reference(reference) => normalize_bexpr(&mut reference.referee),
+        ExprKind::Dereference(deref) => normalize_bexpr(&mut deref.referee),
+        ExprKind::Struct(struct_expr) => {
             normalize_bexpr(&mut struct_expr.name);
             for ExprField { value, .. } in &mut struct_expr.fields {
                 if let Some(expr) = value {
@@ -104,28 +104,28 @@ fn normalize_expr(expr: &mut Expr) {
                 }
             }
         }
-        Expr::Structural(structural) => {
+        ExprKind::Structural(structural) => {
             for ExprField { value, .. } in &mut structural.fields {
                 if let Some(expr) = value {
                     normalize_expr(expr);
                 }
             }
         }
-        Expr::Tuple(tuple) => {
+        ExprKind::Tuple(tuple) => {
             for value in &mut tuple.values {
                 normalize_expr(value);
             }
         }
-        Expr::Try(expr_try) => normalize_bexpr(&mut expr_try.expr),
-        Expr::Let(expr_let) => normalize_bexpr(&mut expr_let.expr),
-        Expr::Closure(closure) => normalize_bexpr(&mut closure.body),
-        Expr::Array(array) => {
+        ExprKind::Try(expr_try) => normalize_bexpr(&mut expr_try.expr),
+        ExprKind::Let(expr_let) => normalize_bexpr(&mut expr_let.expr),
+        ExprKind::Closure(closure) => normalize_bexpr(&mut closure.body),
+        ExprKind::Array(array) => {
             for value in &mut array.values {
                 normalize_expr(value);
             }
         }
-        Expr::Paren(paren) => normalize_bexpr(&mut paren.expr),
-        Expr::Range(range) => {
+        ExprKind::Paren(paren) => normalize_bexpr(&mut paren.expr),
+        ExprKind::Range(range) => {
             if let Some(start) = &mut range.start {
                 normalize_bexpr(start);
             }
@@ -136,7 +136,7 @@ fn normalize_expr(expr: &mut Expr) {
                 normalize_bexpr(step);
             }
         }
-        Expr::FormatString(format) => {
+        ExprKind::FormatString(format) => {
             for arg in &mut format.args {
                 normalize_expr(arg);
             }
@@ -144,11 +144,11 @@ fn normalize_expr(expr: &mut Expr) {
                 normalize_expr(value);
             }
         }
-        Expr::Splat(splat) => normalize_expr(splat.iter.as_mut()),
-        Expr::SplatDict(dict) => normalize_expr(dict.dict.as_mut()),
-        Expr::Closured(closured) => normalize_bexpr(&mut closured.expr),
-        Expr::Item(item) => normalize_item(item.as_mut()),
-        Expr::IntrinsicCall(_) | Expr::Id(_) | Expr::Any(_) => {}
+        ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut()),
+        ExprKind::SplatDict(dict) => normalize_expr(dict.dict.as_mut()),
+        ExprKind::Closured(closured) => normalize_bexpr(&mut closured.expr),
+        ExprKind::Item(item) => normalize_item(item.as_mut()),
+        ExprKind::IntrinsicCall(_) | ExprKind::Id(_) | ExprKind::Any(_) => {}
     }
 }
 

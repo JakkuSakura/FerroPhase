@@ -18,8 +18,8 @@ fn test_integer_literal_parsing() -> Result<()> {
 
     // Test parsing of integer literals
     let expr = shll_parse_expr!(42);
-    match expr {
-        Expr::Value(val) => match val.as_ref() {
+    match expr.kind() {
+        ExprKind::Value(val) => match val.as_ref() {
             Value::Int(int_val) => assert_eq!(int_val.value, 42),
             _ => panic!("Expected integer value"),
         },
@@ -27,8 +27,8 @@ fn test_integer_literal_parsing() -> Result<()> {
     }
 
     let expr = shll_parse_expr!(0);
-    match expr {
-        Expr::Value(val) => match val.as_ref() {
+    match expr.kind() {
+        ExprKind::Value(val) => match val.as_ref() {
             Value::Int(int_val) => assert_eq!(int_val.value, 0),
             _ => panic!("Expected integer value"),
         },
@@ -43,8 +43,8 @@ fn test_boolean_literal_parsing() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let expr = shll_parse_expr!(true);
-    match expr {
-        Expr::Value(val) => match val.as_ref() {
+    match expr.kind() {
+        ExprKind::Value(val) => match val.as_ref() {
             Value::Bool(bool_val) => assert_eq!(bool_val.value, true),
             _ => panic!("Expected boolean value"),
         },
@@ -52,8 +52,8 @@ fn test_boolean_literal_parsing() -> Result<()> {
     }
 
     let expr = shll_parse_expr!(false);
-    match expr {
-        Expr::Value(val) => match val.as_ref() {
+    match expr.kind() {
+        ExprKind::Value(val) => match val.as_ref() {
             Value::Bool(bool_val) => assert_eq!(bool_val.value, false),
             _ => panic!("Expected boolean value"),
         },
@@ -68,8 +68,8 @@ fn test_string_literal_parsing() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
     let expr = shll_parse_expr!("hello");
-    match expr {
-        Expr::Value(val) => match val.as_ref() {
+    match expr.kind() {
+        ExprKind::Value(val) => match val.as_ref() {
             Value::String(str_val) => assert_eq!(str_val.value, "hello"),
             _ => panic!("Expected string value"),
         },
@@ -87,20 +87,20 @@ fn test_binary_operation_parsing() -> Result<()> {
 
     // Test addition parsing
     let expr = shll_parse_expr!(5 + 3);
-    match expr {
-        Expr::BinOp(binop) => {
+    match expr.kind() {
+        ExprKind::BinOp(binop) => {
             assert!(matches!(binop.kind, BinOpKind::Add));
             // Check left operand
-            match binop.lhs.as_ref() {
-                Expr::Value(val) => match val.as_ref() {
+            match binop.lhs.as_ref().kind() {
+                ExprKind::Value(val) => match val.as_ref() {
                     Value::Int(int_val) => assert_eq!(int_val.value, 5),
                     _ => panic!("Expected integer in left operand"),
                 },
                 _ => panic!("Expected value in left operand"),
             }
             // Check right operand
-            match binop.rhs.as_ref() {
-                Expr::Value(val) => match val.as_ref() {
+            match binop.rhs.as_ref().kind() {
+                ExprKind::Value(val) => match val.as_ref() {
                     Value::Int(int_val) => assert_eq!(int_val.value, 3),
                     _ => panic!("Expected integer in right operand"),
                 },
@@ -119,13 +119,13 @@ fn test_operator_precedence_parsing() -> Result<()> {
 
     // Test that 2 + 3 * 4 parses as 2 + (3 * 4)
     let expr = shll_parse_expr!(2 + 3 * 4);
-    match expr {
-        Expr::BinOp(add_op) => {
+    match expr.kind() {
+        ExprKind::BinOp(add_op) => {
             assert!(matches!(add_op.kind, BinOpKind::Add));
 
             // Left side should be 2
-            match add_op.lhs.as_ref() {
-                Expr::Value(val) => match val.as_ref() {
+            match add_op.lhs.as_ref().kind() {
+                ExprKind::Value(val) => match val.as_ref() {
                     Value::Int(int_val) => assert_eq!(int_val.value, 2),
                     _ => panic!("Expected integer 2"),
                 },
@@ -133,8 +133,8 @@ fn test_operator_precedence_parsing() -> Result<()> {
             }
 
             // Right side should be 3 * 4
-            match add_op.rhs.as_ref() {
-                Expr::BinOp(mul_op) => {
+            match add_op.rhs.as_ref().kind() {
+                ExprKind::BinOp(mul_op) => {
                     assert!(matches!(mul_op.kind, BinOpKind::Mul));
                     // Should have 3 and 4 as operands
                 }
@@ -153,8 +153,8 @@ fn test_comparison_parsing() -> Result<()> {
 
     // Test equality parsing
     let expr = shll_parse_expr!(5 == 5);
-    match expr {
-        Expr::BinOp(binop) => {
+    match expr.kind() {
+        ExprKind::BinOp(binop) => {
             assert!(matches!(binop.kind, BinOpKind::Eq));
         }
         _ => panic!("Expected equality comparison"),
@@ -162,8 +162,8 @@ fn test_comparison_parsing() -> Result<()> {
 
     // Test inequality parsing
     let expr = shll_parse_expr!(5 != 3);
-    match expr {
-        Expr::BinOp(binop) => {
+    match expr.kind() {
+        ExprKind::BinOp(binop) => {
             assert!(matches!(binop.kind, BinOpKind::Ne));
         }
         _ => panic!("Expected inequality comparison"),
@@ -171,8 +171,8 @@ fn test_comparison_parsing() -> Result<()> {
 
     // Test greater than parsing
     let expr = shll_parse_expr!(10 > 5);
-    match expr {
-        Expr::BinOp(binop) => {
+    match expr.kind() {
+        ExprKind::BinOp(binop) => {
             assert!(matches!(binop.kind, BinOpKind::Gt));
         }
         _ => panic!("Expected greater than comparison"),
@@ -191,21 +191,21 @@ fn test_complex_expression_parsing() -> Result<()> {
     let expr = shll_parse_expr!(2 + 3 * 4 - 5);
 
     // Should parse as ((2 + (3 * 4)) - 5)
-    match expr {
-        Expr::BinOp(sub_op) => {
+    match expr.kind() {
+        ExprKind::BinOp(sub_op) => {
             assert!(matches!(sub_op.kind, BinOpKind::Sub));
 
             // Left side should be 2 + 3 * 4
-            match sub_op.lhs.as_ref() {
-                Expr::BinOp(add_op) => {
+            match sub_op.lhs.as_ref().kind() {
+                ExprKind::BinOp(add_op) => {
                     assert!(matches!(add_op.kind, BinOpKind::Add));
                 }
                 _ => panic!("Expected addition on left side"),
             }
 
             // Right side should be 5
-            match sub_op.rhs.as_ref() {
-                Expr::Value(val) => match val.as_ref() {
+            match sub_op.rhs.as_ref().kind() {
+                ExprKind::Value(val) => match val.as_ref() {
                     Value::Int(int_val) => assert_eq!(int_val.value, 5),
                     _ => panic!("Expected integer 5"),
                 },

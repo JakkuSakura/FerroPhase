@@ -75,40 +75,30 @@ Artifacts (paths depend on your configuration):
 - `target/ast/src_main.ast` – Normalised AST snapshot
 - `target/ast/src_main.ast-typed` – Typed AST (`ASTᵗ`)
 - `target/ast/src_main.ast-eval` – Post-const-eval AST (`ASTᵗ′`)
-- `target/hir/src_main.hir` – Typed HIR after projection
+- `target/hir/src_main.hir` – HIR emitted from the current type-enrichment stage
 
 ## Building to Native (LLVM target)
 
-Compile the project:
+> ⚠️ The native backend is temporarily unavailable while the typed AST/HIR
+> refactor lands. The CLI currently stops after producing the typed AST and
+> HIR snapshots.
 
-```bash
-$ fp compile src/main.fp --target native --out target/bin/main
-```
-
-Common flags:
+Common flags (still accepted for future use):
 - `--opt {0|1|2|3}` – Optimisation level (default: 2)
 - `--debug` – Include debug info
-- `--emit {ast,ast-typed,ast-eval,hir,mir,lir,llvm}` – Persist intermediates for inspection
+- `--emit {ast,ast-typed,ast-eval,hir}` – Persist intermediates for inspection
 - `--save-intermediates` – Shortcut to emit all intermediates
 
 ## Inspecting Intermediates
 
 ```bash
-$ fp compile src/main.fp --emit ast-typed --emit ast-eval --emit mir
+$ fp compile src/main.fp --emit ast-typed --emit ast-eval --emit hir
 $ cat target/ast/src_main.ast-typed
 $ cat target/ast/src_main.ast-eval
 ```
 
-- The typed AST shows principal types inferred for each expression.
+- The typed AST shows the solver’s view before evaluation.
 - The evaluated AST includes const-folded expressions and generated items.
-
-## Running the Binary
-
-```bash
-$ ./target/bin/main
-Welcome to FerroPhase
-Hello from quote/splice!
-```
 
 ## Troubleshooting
 
@@ -120,5 +110,5 @@ Hello from quote/splice!
 ## Next Steps
 
 - Explore bytecode mode: `fp bytecode src/main.fp --emit bytecode`
-- Generate Rust output: `fp transpile src/main.fp --target rust --emit tast`
+- Generate Rust output (currently disabled while the new pipeline lands)
 - Extend the project with modules and custom targets; update `FerroPhase.toml` accordingly.

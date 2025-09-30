@@ -1,5 +1,5 @@
-use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ty, Value, ValueUnit};
-use crate::common_enum;
+use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ty, TySlot, Value, ValueUnit};
+use crate::{common_enum, common_struct};
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use std::fmt::{Debug, Display, Formatter};
@@ -17,7 +17,7 @@ pub type BExpr = Box<Expr>;
 
 common_enum! {
     /// Expr is an expression that returns a value, note that a Type is also a Value
-    pub enum Expr {
+    pub enum ExprKind {
         /// An id for the expression node
         Id(ExprId),
         Locator(Locator),
@@ -59,50 +59,118 @@ common_enum! {
 
 }
 
+common_struct! {
+    pub struct Expr {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub ty: TySlot,
+        #[serde(flatten)]
+        pub kind: ExprKind,
+    }
+}
+
 impl Expr {
+    pub fn new(kind: ExprKind) -> Self {
+        Self { ty: None, kind }
+    }
+
+    pub fn with_ty(kind: ExprKind, ty: TySlot) -> Self {
+        Self { ty, kind }
+    }
+
+    pub fn ty(&self) -> Option<&Ty> {
+        self.ty.as_ref()
+    }
+
+    pub fn ty_mut(&mut self) -> &mut TySlot {
+        &mut self.ty
+    }
+
+    pub fn set_ty(&mut self, ty: Ty) {
+        self.ty = Some(ty);
+    }
+
+    pub fn kind(&self) -> &ExprKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut ExprKind {
+        &mut self.kind
+    }
+
+    pub fn into_parts(self) -> (TySlot, ExprKind) {
+        (self.ty, self.kind)
+    }
+
+    pub fn from_parts(ty: TySlot, kind: ExprKind) -> Self {
+        Self { ty, kind }
+    }
+
+    pub fn with_ty_slot(mut self, ty: TySlot) -> Self {
+        self.ty = ty;
+        self
+    }
+
     pub fn get(&self) -> Self {
         self.clone()
     }
     pub fn unit() -> Expr {
-        Expr::Value(Value::Unit(ValueUnit).into())
+        ExprKind::Value(Value::Unit(ValueUnit).into()).into()
     }
     pub fn is_unit(&self) -> bool {
-        match self {
-            Expr::Value(value) => value.is_unit(),
+        match &self.kind {
+            ExprKind::Value(value) => value.is_unit(),
             _ => false,
         }
     }
     pub fn value(v: Value) -> Expr {
         match v {
             Value::Expr(expr) => *expr,
-            Value::Any(any) => Expr::Any(any),
+            Value::Any(any) => ExprKind::Any(any).into(),
             Value::Type(Ty::Expr(expr)) => *expr,
-            _ => Expr::Value(v.into()),
+            _ => ExprKind::Value(v.into()).into(),
         }
     }
     pub fn ident(name: Ident) -> Expr {
-        Expr::Locator(Locator::ident(name))
+        ExprKind::Locator(Locator::ident(name)).into()
     }
     pub fn path(path: Path) -> Expr {
-        Expr::Locator(Locator::path(path))
+        ExprKind::Locator(Locator::path(path)).into()
+    }
+    pub fn locator(locator: Locator) -> Expr {
+        ExprKind::Locator(locator).into()
     }
     pub fn block(block: ExprBlock) -> Expr {
         block.into_expr()
     }
     pub fn into_block(self) -> ExprBlock {
-        match self {
-            Expr::Block(block) => block,
-            _ => ExprBlock::new_expr(self),
+        let (ty, kind) = self.into_parts();
+        match kind {
+            ExprKind::Block(block) => block,
+            other => ExprBlock::new_expr(Expr::from_parts(ty, other)),
         }
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
-        Self::Any(AnyBox::new(any))
+        ExprKind::Any(AnyBox::new(any)).into()
     }
 }
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_expr(self).unwrap();
         f.write_str(&s)
+    }
+}
+impl From<ExprKind> for Expr {
+    fn from(kind: ExprKind) -> Self {
+        Expr::new(kind)
+    }
+}
+
+impl<T> From<T> for Expr
+where
+    ExprKind: From<T>,
+{
+    fn from(value: T) -> Self {
+        Expr::from(ExprKind::from(value))
     }
 }
 impl From<BExpr> for Expr {

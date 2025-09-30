@@ -188,12 +188,16 @@ impl ConstEvalTracker {
             if method_exists(impl_block, method_name) {
                 return Ok(());
             }
-            impl_block.items.push(Item::DefFunction(function));
+            impl_block
+                .items
+                .push(ItemKind::DefFunction(function).into());
             Ok(())
         } else {
-            let impl_item =
-                ItemImpl::new_ident(Ident::new(target_type), vec![Item::DefFunction(function)]);
-            push_item(ast, Item::Impl(impl_item))
+            let impl_item = ItemImpl::new_ident(
+                Ident::new(target_type),
+                vec![ItemKind::DefFunction(function).into()],
+            );
+            push_item(ast, ItemKind::Impl(impl_item).into())
         }
     }
 
@@ -218,7 +222,7 @@ impl ConstEvalTracker {
                 value: struct_ty_clone,
             };
 
-            push_item(ast, Item::DefStruct(struct_item))?;
+            push_item(ast, ItemKind::DefStruct(struct_item).into())?;
         }
 
         Ok(())
@@ -284,14 +288,14 @@ impl ConstEval {
 }
 
 fn find_struct_mut<'a>(node: &'a mut Node, target: &str) -> Option<&'a mut ItemDefStruct> {
-    match node {
-        Node::File(file) => find_struct_in_items_mut(&mut file.items, target),
-        Node::Item(item) => match item {
-            Item::DefStruct(def) if def.name.as_str() == target => Some(def),
-            Item::Module(module) => find_struct_in_items_mut(&mut module.items, target),
+    match node.kind_mut() {
+        NodeKind::File(file) => find_struct_in_items_mut(&mut file.items, target),
+        NodeKind::Item(item) => match item.kind_mut() {
+            ItemKind::DefStruct(def) if def.name.as_str() == target => Some(def),
+            ItemKind::Module(module) => find_struct_in_items_mut(&mut module.items, target),
             _ => None,
         },
-        Node::Expr(_) => None,
+        NodeKind::Expr(_) => None,
     }
 }
 
@@ -300,9 +304,9 @@ fn find_struct_in_items_mut<'a>(
     target: &str,
 ) -> Option<&'a mut ItemDefStruct> {
     for item in items.iter_mut() {
-        match item {
-            Item::DefStruct(def) if def.name.as_str() == target => return Some(def),
-            Item::Module(module) => {
+        match item.kind_mut() {
+            ItemKind::DefStruct(def) if def.name.as_str() == target => return Some(def),
+            ItemKind::Module(module) => {
                 if let Some(found) = find_struct_in_items_mut(&mut module.items, target) {
                     return Some(found);
                 }
@@ -318,20 +322,20 @@ fn find_impl_mut<'a>(
     target: &str,
     trait_name: Option<&str>,
 ) -> Option<&'a mut ItemImpl> {
-    match node {
-        Node::File(file) => find_impl_in_items_mut(&mut file.items, target, trait_name),
-        Node::Item(item) => match item {
-            Item::Impl(item_impl) => {
+    match node.kind_mut() {
+        NodeKind::File(file) => find_impl_in_items_mut(&mut file.items, target, trait_name),
+        NodeKind::Item(item) => match item.kind_mut() {
+            ItemKind::Impl(item_impl) => {
                 if impl_matches(item_impl, target, trait_name) {
                     Some(item_impl)
                 } else {
                     None
                 }
             }
-            Item::Module(module) => find_impl_in_items_mut(&mut module.items, target, trait_name),
+            ItemKind::Module(module) => find_impl_in_items_mut(&mut module.items, target, trait_name),
             _ => None,
         },
-        Node::Expr(_) => None,
+        NodeKind::Expr(_) => None,
     }
 }
 
@@ -341,13 +345,13 @@ fn find_impl_in_items_mut<'a>(
     trait_name: Option<&str>,
 ) -> Option<&'a mut ItemImpl> {
     for item in items.iter_mut() {
-        match item {
-            Item::Impl(item_impl) => {
+        match item.kind_mut() {
+            ItemKind::Impl(item_impl) => {
                 if impl_matches(item_impl, target, trait_name) {
                     return Some(item_impl);
                 }
             }
-            Item::Module(module) => {
+            ItemKind::Module(module) => {
                 if let Some(found) = find_impl_in_items_mut(&mut module.items, target, trait_name) {
                     return Some(found);
                 }
@@ -360,8 +364,8 @@ fn find_impl_in_items_mut<'a>(
 
 fn impl_matches(impl_block: &ItemImpl, target: &str, trait_name: Option<&str>) -> bool {
     let self_matches = matches!(
-        &impl_block.self_ty,
-        Expr::Locator(Locator::Ident(ident)) if ident.as_str() == target
+        impl_block.self_ty.kind(),
+        ExprKind::Locator(Locator::Ident(ident)) if ident.as_str() == target
     );
 
     if !self_matches {
@@ -379,8 +383,8 @@ fn impl_matches(impl_block: &ItemImpl, target: &str, trait_name: Option<&str>) -
 }
 
 fn method_exists(impl_block: &ItemImpl, method_name: &str) -> bool {
-    impl_block.items.iter().any(|item| match item {
-        Item::DefFunction(func) => func.name.as_str() == method_name,
+    impl_block.items.iter().any(|item| match item.kind() {
+        ItemKind::DefFunction(func) => func.name.as_str() == method_name,
         _ => false,
     })
 }
@@ -391,15 +395,20 @@ fn create_method_function(method_name: &str, method_body: &Expr) -> ItemDefFunct
 }
 
 fn push_item(ast: &mut Node, item: Item) -> Result<()> {
-    match ast {
-        Node::File(file) => {
+    match ast.kind_mut() {
+        NodeKind::File(file) => {
             file.items.push(item);
             Ok(())
         }
-        Node::Item(Item::Module(module)) => {
-            module.items.push(item);
-            Ok(())
-        }
+        NodeKind::Item(inner) => match inner.kind_mut() {
+            ItemKind::Module(module) => {
+                module.items.push(item);
+                Ok(())
+            }
+            _ => Err(report_error(
+                "Const-eval cannot insert generated item into this AST location",
+            )),
+        },
         _ => Err(report_error(
             "Const-eval cannot insert generated item into this AST location",
         )),
