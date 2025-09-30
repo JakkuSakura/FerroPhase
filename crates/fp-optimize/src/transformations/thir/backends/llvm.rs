@@ -1,9 +1,7 @@
 /// LLVM backend-specific THIR materialization
-
 use super::super::format::build_printf_format;
-use fp_core::hir::typed::{self as thir, ExprKind, ItemRef};
+use fp_core::hir::typed as thir;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicMaterializer, MaterializedPrint};
-use fp_core::span::Span;
 
 /// LLVM backend's intrinsic materializer
 pub struct LlvmIntrinsicMaterializer;
