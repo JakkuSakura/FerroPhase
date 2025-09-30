@@ -226,7 +226,9 @@ impl TypeQueries {
                     if idx > 0 {
                         name.push_str(", ");
                     }
+                    // Write to name buffer; write! can't fail on String
                     let _ = write!(&mut name, "{}", type_display(ty));
+                    // Resolve types for their side effects on the type registry
                     let _ = self.resolve_or_register_type(ty)?;
                 }
                 name.push(')');

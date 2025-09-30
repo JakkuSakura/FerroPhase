@@ -359,7 +359,7 @@ impl LirGenerator {
                                 matches!(destination_lir_ty, Some(lir::LirType::Ptr(_)));
                             if !expects_pointer && matches!(lir_ty, lir::LirType::Ptr(_)) {
                                 let load_ty =
-                                    destination_lir_ty.clone().unwrap_or(lir::LirType::I64);
+                                    destination_lir_ty.clone().expect("destination LIR type must be known for load operation");
                                 let load_id = self.next_id();
                                 instructions.push(lir::LirInstruction {
                                     id: load_id,
@@ -411,7 +411,7 @@ impl LirGenerator {
                 let operand_value = self.transform_operand(operand)?;
                 instructions.extend(self.take_queued_instructions());
 
-                let result_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I64);
+                let result_ty = destination_lir_ty.clone().expect("destination LIR type must be known for unary operation");
 
                 let instr_id = self.next_id();
                 let lir_kind =
@@ -459,7 +459,7 @@ impl LirGenerator {
                 let operand_value = self.transform_operand(operand)?;
                 instructions.extend(self.take_queued_instructions());
                 let source_ty = self.type_of_operand(operand);
-                let target_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I64);
+                let target_ty = destination_lir_ty.clone().expect("destination LIR type must be known for cast operation");
 
                 let instr_id = self.next_id();
                 let instr_kind = self.lower_cast(
@@ -509,7 +509,7 @@ impl LirGenerator {
                 if value_is_zst_constant {
                     value = self
                         .zero_value_for_lir_type(&target_lir_ty)
-                        .unwrap_or_else(|| lir::LirValue::Undef(target_lir_ty.clone()));
+                        .expect("zero value must be available for ZST constant");
                 }
             }
 
@@ -651,7 +651,8 @@ impl LirGenerator {
                         return Ok(lir::LirValue::Function(mapped_name));
                     }
                     let runtime_target = self.map_std_function_to_runtime(&mapped_name);
-                    if runtime_target != mapped_name {
+                    // Check if it's a known runtime function (either mapped or direct)
+                    if self.is_known_runtime_function(&runtime_target) {
                         return Ok(lir::LirValue::Function(runtime_target));
                     }
                     Ok(lir::LirValue::Global(
@@ -985,7 +986,7 @@ impl LirGenerator {
                 .get(idx)
                 .and_then(|entry| entry.as_ref())
                 .cloned()
-                .unwrap_or_else(|| field_lir_ty.clone());
+                .expect("struct field type must be known");
             offset = offset.saturating_add(Self::size_of_lir_type(&ty));
         }
 
@@ -1128,7 +1129,7 @@ impl LirGenerator {
                 .iter()
                 .map(Self::alignment_for_lir_type)
                 .max()
-                .unwrap_or(1),
+                .expect("struct must have at least one field to compute alignment"),
             _ => 8,
         }
     }
@@ -1503,9 +1504,35 @@ impl LirGenerator {
         }
     }
 
+    fn is_known_runtime_function(&self, fn_name: &str) -> bool {
+        matches!(
+            fn_name,
+            "printf"
+                | "fprintf"
+                | "malloc"
+                | "free"
+                | "realloc"
+                | "sin"
+                | "sinf"
+                | "cos"
+                | "cosf"
+                | "tan"
+                | "tanf"
+                | "sqrt"
+                | "sqrtf"
+                | "pow"
+                | "powf"
+                | "strlen"
+                | "strcmp"
+                | "exit"
+                | "abort"
+        )
+    }
+
     fn map_std_function_to_runtime(&self, fn_name: &str) -> String {
         match fn_name {
             // I/O helpers map to C stdio calls
+            "printf" => "printf".to_string(), // Direct C runtime function
             "println" | "println!" | "std::io::println" => "printf".to_string(),
             "print" | "print!" | "std::io::print" => "printf".to_string(),
             "eprint" | "eprint!" | "std::io::eprint" => "fprintf".to_string(),

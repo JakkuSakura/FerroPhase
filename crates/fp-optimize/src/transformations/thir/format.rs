@@ -74,7 +74,34 @@ fn infer_printf_spec(ty: &Ty) -> String {
             FloatTy::F32 => "%f".to_string(),
             FloatTy::F64 => "%f".to_string(),
         },
-        TyKind::RawPtr(_) | TyKind::Ref(..) => "%p".to_string(),
+        TyKind::Ref(_, inner_ty, _) => {
+            // Check if this is a string reference (&str) - represented as *const i8
+            if let TyKind::RawPtr(ptr_ty) = &inner_ty.kind {
+                if let TyKind::Int(IntTy::I8) = ptr_ty.ty.kind {
+                    return "%s".to_string();
+                }
+            }
+            // Check if inner is a slice of i8/u8 (another string representation)
+            if let TyKind::Slice(slice_ty) = &inner_ty.kind {
+                if matches!(slice_ty.kind, TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8)) {
+                    return "%s".to_string();
+                }
+            }
+            // Check if inner type is inferred - assume it's a string in printf context
+            if matches!(inner_ty.kind, TyKind::Infer(_)) {
+                return "%s".to_string();
+            }
+            "%p".to_string()
+        }
+        TyKind::RawPtr(ptr_ty) => {
+            // Check if this is a string type (*const i8)
+            if let TyKind::Int(IntTy::I8) = ptr_ty.ty.kind {
+                if ptr_ty.mutbl == fp_core::hir::typed::ty::Mutability::Not {
+                    return "%s".to_string();
+                }
+            }
+            "%p".to_string()
+        }
         other => panic!("Cannot infer printf spec for type {:?}", other),
     }
 }

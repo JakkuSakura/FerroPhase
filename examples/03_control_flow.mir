@@ -25,7 +25,7 @@ mir::Program {
                 _17: <??>
                 _18: <??>
                 _19: <??>
-                _20: ()
+                _20: <??>
                 _21: ()
                 _22: bool
                 _23: i64
@@ -34,7 +34,7 @@ mir::Program {
                 _26: <??>
                 _27: <??>
                 _28: <??>
-                _29: ()
+                _29: <??>
                 _30: ()
                 _31: i64
                 _32: i64
@@ -50,7 +50,7 @@ mir::Program {
                 _42: <??>
                 _43: <??>
                 _44: <??>
-                _45: ()
+                _45: <??>
                 _46: ()
                 _47: i64
                 _48: i64
@@ -62,7 +62,7 @@ mir::Program {
                 _54: <??>
                 _55: <??>
                 _56: <??>
-                _57: ()
+                _57: <??>
                 _58: ()
                 _59: ()
             blocks:
@@ -82,8 +82,8 @@ mir::Program {
                     terminator: switch move _16 [1 -> bb4] otherwise -> bb5
                 bb3:
                     s0: _2 = move _13
-                    s1: _20 = const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    terminator: call move _20(const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Str("%lld°C is %p\n") }, move _1, move _2) -> _21 then bb7
+                    s1: _20 = const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
+                    terminator: call move _20(const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Str("%lld°C is %s\n") }, move _1, move _2) -> _21 then bb7
                 bb4:
                     s0: _18 = const Constant { span: Span { file: 18067511962513181491, lo: 14, hi: 15 }, user_ty: None, literal: Str("warm") }
                     s1: _17 = move _18
@@ -113,8 +113,8 @@ mir::Program {
                     terminator: goto -> bb10
                 bb10:
                     s0: _5 = move _26
-                    s1: _29 = const Constant { span: Span { file: 18067511962513181491, lo: 32, hi: 33 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    terminator: call move _29(const Constant { span: Span { file: 18067511962513181491, lo: 32, hi: 33 }, user_ty: None, literal: Str("Suggested: %p\n") }, move _5) -> _30 then bb11
+                    s1: _29 = const Constant { span: Span { file: 18067511962513181491, lo: 32, hi: 33 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
+                    terminator: call move _29(const Constant { span: Span { file: 18067511962513181491, lo: 32, hi: 33 }, user_ty: None, literal: Str("Suggested: %s\n") }, move _5) -> _30 then bb11
                 bb11:
                     s0: _31 = const Constant { span: Span { file: 18067511962513181491, lo: 35, hi: 36 }, user_ty: None, literal: Int(85) }
                     s1: _6 = move _31
@@ -131,8 +131,8 @@ mir::Program {
                     terminator: switch move _37 [1 -> bb15] otherwise -> bb16
                 bb14:
                     s0: _7 = move _34
-                    s1: _45 = const Constant { span: Span { file: 18067511962513181491, lo: 53, hi: 54 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    terminator: call move _45(const Constant { span: Span { file: 18067511962513181491, lo: 53, hi: 54 }, user_ty: None, literal: Str("Score %lld = grade %p\n") }, move _6, move _7) -> _46 then bb21
+                    s1: _45 = const Constant { span: Span { file: 18067511962513181491, lo: 53, hi: 54 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
+                    terminator: call move _45(const Constant { span: Span { file: 18067511962513181491, lo: 53, hi: 54 }, user_ty: None, literal: Str("Score %lld = grade %s\n") }, move _6, move _7) -> _46 then bb21
                 bb15:
                     s0: _39 = const Constant { span: Span { file: 18067511962513181491, lo: 46, hi: 47 }, user_ty: None, literal: Str("B") }
                     s1: _38 = move _39
@@ -171,8 +171,8 @@ mir::Program {
                     terminator: switch move _53 [1 -> bb25] otherwise -> bb26
                 bb24:
                     s0: _9 = move _50
-                    s1: _57 = const Constant { span: Span { file: 18067511962513181491, lo: 68, hi: 69 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    terminator: call move _57(const Constant { span: Span { file: 18067511962513181491, lo: 68, hi: 69 }, user_ty: None, literal: Str("Value %lld is %p\n") }, move _8, move _9) -> _58 then bb28
+                    s1: _57 = const Constant { span: Span { file: 18067511962513181491, lo: 68, hi: 69 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
+                    terminator: call move _57(const Constant { span: Span { file: 18067511962513181491, lo: 68, hi: 69 }, user_ty: None, literal: Str("Value %lld is %s\n") }, move _8, move _9) -> _58 then bb28
                 bb25:
                     s0: _55 = const Constant { span: Span { file: 18067511962513181491, lo: 66, hi: 67 }, user_ty: None, literal: Str("medium") }
                     s1: _54 = move _55

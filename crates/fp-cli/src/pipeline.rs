@@ -27,7 +27,7 @@ use fp_optimize::{ConstEvaluationOrchestrator, InterpretationOrchestrator, Inter
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, info_span};
+use tracing::{debug, info_span, warn};
 
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
@@ -296,9 +296,9 @@ impl Pipeline {
             PipelineTarget::Llvm => {
                 let artifacts = self.compile(ast_node, &options, input_path.as_deref())?;
                 self.emit_diagnostics(&artifacts.diagnostics, None, &options);
-                Ok(PipelineOutput::Code(
-                    artifacts.llvm_ir.to_str().unwrap_or_default().to_string(),
-                ))
+                let llvm_ir_content = fs::read_to_string(&artifacts.llvm_ir)
+                    .map_err(|e| CliError::Compilation(format!("Failed to read LLVM IR from {}: {}", artifacts.llvm_ir.display(), e)))?;
+                Ok(PipelineOutput::Code(llvm_ir_content))
             }
             PipelineTarget::Binary => {
                 let mut artifacts = self.compile(ast_node, &options, input_path.as_deref())?;
@@ -557,7 +557,7 @@ impl Pipeline {
                     pretty_opts.show_spans = options.debug.verbose;
                     let rendered = format!("{}", pretty(&program, pretty_opts));
                     if let Err(err) = fs::write(base_path.with_extension(EXT_HIR), rendered) {
-                        debug!(error = %err, "failed to persist HIR intermediate");
+                        warn!(error = %err, "failed to persist HIR intermediate");
                     }
                 }
 
@@ -598,7 +598,7 @@ impl Pipeline {
                     pretty_opts.show_spans = options.debug.verbose;
                     let rendered = format!("{}", pretty(&program, pretty_opts));
                     if let Err(err) = fs::write(base_path.with_extension(EXT_THIR), rendered) {
-                        debug!(error = %err, "failed to persist THIR intermediate");
+                        warn!(error = %err, "failed to persist THIR intermediate");
                     }
                 }
 
@@ -653,8 +653,20 @@ impl Pipeline {
         options: &PipelineOptions,
         base_path: &Path,
     ) -> Result<DiagnosticReport<thir::Program>, CliError> {
-        let mut materializer = BackendThirMaterializer::new(backend);
-        let program = materializer.materialize(thir_program);
+        use fp_optimize::transformations::thir::backends;
+
+        // Get the backend-specific intrinsic materializer
+        let materializer: &'static dyn fp_core::intrinsics::IntrinsicMaterializer = match backend {
+            BackendFlavor::Llvm => backends::llvm::get_materializer(),
+            _ => {
+                // For other backends, we'd have separate materializers
+                // For now, use a no-op materializer that keeps intrinsics as-is
+                todo!("Implement materializers for non-LLVM backends")
+            }
+        };
+
+        let mut thir_materializer = BackendThirMaterializer::new(materializer);
+        let program = thir_materializer.materialize(thir_program);
 
         if options.save_intermediates {
             let mut pretty_opts = PrettyOptions::default();
@@ -686,7 +698,7 @@ impl Pipeline {
             pretty_opts.show_spans = options.debug.verbose;
             let rendered = format!("{}", pretty(&program, pretty_opts));
             if let Err(err) = fs::write(base_path.with_extension(EXT_TAST), rendered) {
-                debug!(error = %err, "failed to persist TAST intermediate");
+                warn!(error = %err, "failed to persist TAST intermediate");
             }
         }
 
@@ -718,7 +730,7 @@ impl Pipeline {
                     pretty_opts.show_spans = options.debug.verbose;
                     let rendered = format!("{}", pretty(&program, pretty_opts));
                     if let Err(err) = fs::write(base_path.with_extension(EXT_MIR), rendered) {
-                        debug!(error = %err, "failed to persist MIR intermediate");
+                        warn!(error = %err, "failed to persist MIR intermediate");
                     }
                 }
 
@@ -766,7 +778,7 @@ impl Pipeline {
                     pretty_opts.show_spans = options.debug.verbose;
                     let rendered = format!("{}", pretty(&program, pretty_opts));
                     if let Err(err) = fs::write(base_path.with_extension(EXT_LIR), rendered) {
-                        debug!(error = %err, "failed to persist LIR intermediate");
+                        warn!(error = %err, "failed to persist LIR intermediate");
                     }
                 }
 

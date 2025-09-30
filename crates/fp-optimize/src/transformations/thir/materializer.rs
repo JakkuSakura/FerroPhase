@@ -1,18 +1,18 @@
-use super::format::build_printf_format;
+use super::backends;
 use fp_core::hir::typed::ty::{IntTy, Mutability, Ty, TyKind, TypeAndMut, UintTy};
 use fp_core::hir::typed::{self as thir, Block, ExprKind, Stmt, StmtKind};
-use fp_core::intrinsics::{BackendFlavor, IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload, IntrinsicMaterializer};
 use fp_core::span::Span;
 
 pub struct BackendThirMaterializer {
-    backend: BackendFlavor,
+    materializer: &'static dyn IntrinsicMaterializer,
     next_thir_id: thir::ThirId,
 }
 
 impl BackendThirMaterializer {
-    pub fn new(backend: BackendFlavor) -> Self {
+    pub fn new(materializer: &'static dyn IntrinsicMaterializer) -> Self {
         Self {
-            backend,
+            materializer,
             next_thir_id: 0,
         }
     }
@@ -134,7 +134,6 @@ impl BackendThirMaterializer {
 
         match kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                let newline = matches!(kind, IntrinsicCallKind::Println);
                 let mut template = match payload {
                     IntrinsicCallPayload::Format { template } => template,
                     IntrinsicCallPayload::Args { .. } => {
@@ -142,35 +141,33 @@ impl BackendThirMaterializer {
                     }
                 };
 
+                // Materialize all arguments in the template
                 for arg in &mut template.args {
                     self.materialize_expr(arg);
                 }
 
-                match self.backend {
-                    BackendFlavor::Llvm => {
-                        let args_clone = template.args.clone();
-                        let format_literal = build_printf_format(&template, &args_clone, newline);
+                // Delegate to backend-specific materializer
+                if let Some(materialized) = self.materializer.prepare_print(kind, &template) {
+                    // Backend provides printf-style transformation
+                    let mut call_args = Vec::with_capacity(template.args.len() + 1);
+                    call_args.push(self.make_string_literal_expr(span, materialized.format_literal));
+                    call_args.extend(template.args.into_iter());
 
-                        let mut call_args = Vec::with_capacity(args_clone.len() + 1);
-                        call_args.push(self.make_string_literal_expr(span, format_literal));
-                        call_args.extend(args_clone.into_iter());
+                    let fun = Box::new(self.make_path_expr(span, &materialized.printf_function_name));
 
-                        let fun = Box::new(self.make_std_io_println_path_expr(span, newline));
-
-                        thir::Expr {
-                            thir_id,
-                            kind: ExprKind::Call {
-                                fun,
-                                args: call_args,
-                                from_hir_call: true,
-                            },
-                            ty: self.create_unit_type(),
-                            span,
-                        }
+                    thir::Expr {
+                        thir_id,
+                        kind: ExprKind::Call {
+                            fun,
+                            args: call_args,
+                            from_hir_call: true,
+                        },
+                        ty: self.create_unit_type(),
+                        span,
                     }
-                    BackendFlavor::Interpreter
-                    | BackendFlavor::TranspileRust
-                    | BackendFlavor::TranspileJavascript => thir::Expr {
+                } else {
+                    // Backend doesn't handle this at THIR level, keep as intrinsic call
+                    thir::Expr {
                         thir_id,
                         kind: ExprKind::IntrinsicCall(thir::ThirIntrinsicCall {
                             kind,
@@ -178,7 +175,7 @@ impl BackendThirMaterializer {
                         }),
                         ty: self.create_unit_type(),
                         span,
-                    },
+                    }
                 }
             }
             IntrinsicCallKind::Len => {
@@ -264,17 +261,21 @@ impl BackendThirMaterializer {
         }
     }
 
-    fn make_std_io_println_path_expr(&mut self, span: Span, newline: bool) -> thir::Expr {
-        let name = if newline {
-            "std::io::println"
+    fn make_path_expr(&mut self, span: Span, name: &str) -> thir::Expr {
+        // Determine the type based on the function name
+        let ty = if name == "printf" {
+            self.create_printf_function_type()
         } else {
-            "std::io::print"
-        }
-        .to_string();
+            self.create_unit_type()
+        };
+
         thir::Expr {
             thir_id: self.next_id(),
-            kind: ExprKind::Path(thir::ItemRef { name, def_id: None }),
-            ty: self.create_unit_type(),
+            kind: ExprKind::Path(thir::ItemRef {
+                name: name.to_string(),
+                def_id: None,
+            }),
+            ty,
             span,
         }
     }
@@ -324,6 +325,33 @@ impl BackendThirMaterializer {
     fn create_usize_type(&self) -> Ty {
         Ty {
             kind: TyKind::Uint(UintTy::Usize),
+        }
+    }
+
+    fn create_printf_function_type(&self) -> Ty {
+        use fp_core::hir::ty::{Abi, Binder, FnSig, PolyFnSig, Unsafety};
+
+        // printf signature: fn(format: *const i8, ...) -> i32
+        // inputs: [*const i8] (first parameter, rest are variadic)
+        // output: i32
+        // c_variadic: true
+        let fn_sig = FnSig {
+            inputs: vec![Box::new(self.create_string_type())],
+            output: Box::new(Ty {
+                kind: TyKind::Int(IntTy::I32),
+            }),
+            c_variadic: true,
+            unsafety: Unsafety::Normal,
+            abi: Abi::C { unwind: false },
+        };
+
+        Ty {
+            kind: TyKind::FnPtr(PolyFnSig {
+                binder: Binder {
+                    value: fn_sig,
+                    bound_vars: Vec::new(),
+                },
+            }),
         }
     }
 }
