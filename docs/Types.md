@@ -1,83 +1,91 @@
-# FerroPhase Type System Overview
+# FerroPhase Type System Overview (AST-Centric)
 
-This document explains how FerroPhase manages types across the compilation pipeline, summarising the data structures,
-query mechanisms, and interactions between modes.
+The FerroPhase type system now revolves around the canonical AST. Algorithm W
+inference annotates the AST in place, and every stage—const evaluation, runtime
+interpretation, HIR projection, MIR/LIR lowering—reads the same typed
+structures. This document summarises the representations, flows, and guarantees
+in the new architecture.
 
 ## Type Representations
 
-FerroPhase uses a tiered collection of type representations. Stable type tokens allow information to flow between stages
-without duplication:
-
-- **Ty** – Flexible, syntax-oriented types used in LAST and the canonical AST prior to typing. Supports unknowns, generics, `mut type`
-  declarations, and comptime queries.
-- **ConcreteType** – Fully resolved, layout-aware types embedded in THIR, MIR, LIR, and static transpile outputs.
-- **IntermediateType** (optional) – Bridges ConcreteType into backend-specific forms (e.g., bytecode abstractions) when
-  needed.
+- **`Ty`** – Syntax-oriented type declarations attached to AST nodes before
+  inference. Supports unknowns, generics, and provisional `mut type` tokens.
+- **`TypedAst` annotations** – Optional `ty: Option<Ty>` fields on expressions,
+  patterns, and declarations populated by the inferencer. These hold principal
+  types after substitutions are applied.
+- **`ConcreteType`** – Fully resolved, layout-aware types consumed by
+  optimisation backends (HIRᵗ, MIR, LIR) and persisted for tooling.
+- **`IntermediateType` (optional)** – Backend adapters derived from
+  `ConcreteType` when a target needs additional metadata (bytecode VMs, FFI
+  descriptors, etc.).
 
 ### Structural vs Dynamic Dictionaries
 
-- **Structural dictionaries**: Represented by `Ty::Structural` (and the field-carried `TypeStructural` node) and share storage with `TypeStruct`. When const-eval or other compile-time transforms synthesise one of these shapes the TypeQueryEngine records a full field list, and, once the effect log commits, the promotion step serialises the same layout into a `ConcreteType`. From that point the dictionary behaves exactly like any other frozen record type throughout THIR, MIR, LIR, and emission.
-- **Dynamic dictionaries**: Runtime values emitted as `Value::Structural` (or the structural payload of `Value::Struct`) remain outside the type tables. Until the program or const-eval proves a stable shape they continue to flow through interpretation as `Ty::Any`/`Ty::Unknown` placeholders. Only when a dynamic dictionary is promoted through a `TypeValue` expression or a comptime structural edit does it cross the boundary into the structural track above.
+- **Structural dictionaries**: Produced when const evaluation or intrinsic
+  builders synthesise record shapes. Once promoted they live in the shared type
+  tables as `ConcreteType` entries and reuse the same tokens for all downstream
+  stages.
+- **Dynamic dictionaries**: Runtime-only values represented by
+  `Value::Structural`. They remain untyped (`Ty::Any`/`Ty::Unknown`) until a
+  promotion step proves a stable shape. Evaluation treats them as opaque maps.
 
-### `mut type` Tokens at Comptime
+### `mut type` Tokens
 
-During const evaluation, transformations can introduce new types using the language construct `let mut T = struct {...}`.
-The TypeQueryEngine records these as provisional tokens that carry:
+Const evaluation can create provisional types via `let mut T = struct { … }`. The
+inferencer records these tokens with:
 
-- `Ty` description of the syntactic shape (populated from inline `struct` declarations or builder intrinsics)
-- Metadata sufficient to emit a corresponding `ConcreteType` (field order, trait impls, provenance)
-- A monotonically increasing `mut_revision` so memoised queries remain valid
+- The syntactic `Ty` form (fields, generics, trait impl hints).
+- Enough metadata to emit a `ConcreteType` when promoted.
+- A monotonic revision counter so cached queries remain valid.
 
-Once a const block succeeds, all of its `mut type` tokens are atomically promoted to ConcreteType definitions that share
-the same tokens used later in the pipeline. Failures drop the tokens entirely.
+Tokens promote atomically when the owning const block succeeds. Failed blocks
+discard the provisional entries.
 
-## TypeQueryEngine
+## Query Infrastructure
 
-The TypeQueryEngine is the const-eval facing façade over the shared type tables.
+The `TypeQueryEngine` exposes memoised queries over the shared type tables:
 
-- **Inputs**: Read-only `TypeSnapshot` produced after Phase 1 type checking.
-- **Queries**: Intrinsics like `@sizeof`, `@hasfield`, `@trait_impl` route through memoised helpers keyed by
-  `(query, type_id, mut_revision)`.
-- **Safety**: Queries never observe partially applied transformations; commits happen only after a const block completes.
-- **Diagnostics**: Errors during querying (e.g., missing field) produce structured diagnostics reused by later phases.
+- Inputs: the typed AST plus the current `ConcreteType` registry.
+- Queries: `sizeof`, `hasfield`, trait resolution, layout calculators.
+- Safety: queries observe only committed promotions; const blocks stage their
+  effects until they complete.
+- Diagnostics: failures produce structured messages reused across evaluation and
+  lowering.
 
 ## Flow Through the Pipeline
 
 ```
-CST → LAST → Annotated AST → HIR → THIR → Typed Interpretation → TAST → {re-project HIR → THIR → MIR | surface LAST′} → LIR → Backends
+SOURCE → LAST → AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → backend
 ```
 
-- **HIR** operates primarily on Ty but references the shared tables for resolved tokens.
-- **THIR** embeds ConcreteType directly and serves as the input to typed interpretation.
-- **TAST** (Typed AST) is the evaluated, resugared tree shared by all modes and carries ConcreteType metadata for emitters like C.
-- **Re-projected HIR/THIR** reuse the evaluated program for optimisation stages (compile, bytecode).
-- **MIR/LIR** continue with ConcreteType (or optional IntermediateType); MIR forms an SSA Mid-level Intermediate
-  Representation before LIR handles low-level layout and backend codegen.
+- **ASTᵗ** carries principal types in place.
+- **ASTᵗ′** is the evaluated AST (const-folded, intrinsic rewrites applied).
+- **HIRᵗ** preserves type metadata while desugaring structures for optimisation.
+- **MIR/LIR** operate on `ConcreteType` (and optional `IntermediateType`) for
+  code generation.
 
-## Cross-Stage Guarantees
+## Guarantees
 
-- **Canonical TAST**: All downstream stages consume the TAST snapshot emitted after typed interpretation.
-- **Semantic Preservation**: Lowering (TAST→HIR→THIR→MIR/LIR) cannot alter observable behaviour relative to the evaluated TAST.
-- **Deterministic Promotions**: `mut type` tokens promote in a deterministic order so repeated builds are stable.
-- **Shared Diagnostics**: Spans from the initial AST are threaded through THIR and TAST, providing consistent user feedback.
+- **Single source of truth**: All stages read the typed AST produced by the
+  inferencer.
+- **Deterministic promotions**: `mut type` tokens promote in a stable order.
+- **Span fidelity**: Type annotations and diagnostics reuse original AST spans.
+- **Backend isolation**: Consumers never access raw type tokens; they receive
+  shaped representations (`ConcreteType`, typed annotations) via stable APIs.
 
-## Shared Infrastructure
+## Shared Solver
 
-- **Constraint Solver**: The Hindley–Milner (Algorithm W) solver is implemented once and exposed to both the TypeQueryEngine and
-  THIR builder.
-- **Query Helpers**: Field lookups, trait resolution, and layout calculators live in `type_queries::*`, reused across
-  phases.
+The Hindley–Milner solver lives in a dedicated crate and offers:
 
-## Opaque Type Tokens
-
-Type tokens are intentionally opaque outside const evaluation and lowering. Downstream stages consume structured
-representations—`ConcreteType`, TAST annotations, MIR layouts—without peeking at the raw token values. When exposing
-APIs to backends or user tooling, forward the shaped type data instead of the token itself. This boundary prevents
-backend authors from depending on compiler-internal identifiers and mirrors Scala's `opaque type` distinction between
-implementation details and surface types.
+- In-place annotation of AST nodes.
+- Query APIs (`expr_ty`, `pattern_ty`) for tooling.
+- Hooks for const evaluation to request generalisations or specialisations when
+  intrinsics introduce new constraints.
 
 ## Future Work
 
-- Define backend-specific IntermediateType variants for LLVM and bytecode.
-- Expand the TypeQueryEngine with bulk query APIs (e.g., batch `hasfield`) for performance.
-- Formalise the re-sugaring metadata contract so TAST lift covers more syntactic forms.
+- Define concrete encodings for persisting typed AST snapshots (`.ast-typed`).
+- Extend `TypeQueryEngine` with batch operations for performance-sensitive
+  intrinsics.
+- Formalise how promotions surface in tooling (e.g., language server protocol
+  responses) using the same typed AST annotations.

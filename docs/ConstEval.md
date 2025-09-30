@@ -1,26 +1,20 @@
-# FerroPhase Const Evaluation
+# FerroPhase Const Evaluation (AST)
 
-## Overview
-
-Const evaluation in FerroPhase now operates on the typed intermediate representation (THIR). Frontends produce annotated
-ASTs, desugar to HIR, and run Algorithm W inference to build THIR before any compile-time execution takes place. Typed
-interpretation evaluates const blocks and produces an updated THIR′ snapshot.
-
-Const evaluation itself stops at THIR′. Resugaring or re-projection for particular backends happens in later pipeline phases.
+Const evaluation now operates directly on the typed AST. The interpreter runs in
+const mode over the same structures used by runtime execution and backend
+lowerings.
 
 ```
-Source → LAST → Annotated AST → HIR → THIR → Typed Interpretation (ConstEval) → THIR′
+Source → LAST → AST → ASTᵗ → (Const Evaluation) → ASTᵗ′
 ```
 
-**Benefits**
-
-- Typed evaluation: const/runtime interpretation sees principal types for every expression.
-- Unified interpreter: const and runtime execution share the same traversal engine (configuration still in progress).
+- `ASTᵗ` is the canonical AST annotated with types by the Algorithm W inferencer.
+- Const evaluation mutates the AST when necessary (constant folding, generated
+  declarations, intrinsic rewrites) and returns `ASTᵗ′`.
+- `ASTᵗ′` is the authoritative programme for all downstream stages (HIRᵗ, MIR,
+  LIR, transpilers).
 
 ## Const Block Semantics
-
-Const blocks remain declarative compile-time expressions. Evaluation happens in a typed environment, so values, type
-queries, and structural edits all observe the THIR schema the rest of the pipeline uses.
 
 ```rust
 const RESULT: i32 = {
@@ -30,16 +24,14 @@ const RESULT: i32 = {
 };
 ```
 
-**Properties**
+- Blocks execute during compilation using the AST interpreter in const mode.
+- Evaluation observes principal types (`expr.ty`) inferred earlier.
+- Intrinsics route through the shared registry and can query the
+  `TypeQueryEngine` without rebuilding THIR.
+- Structural edits (new structs, impls, generated functions) update the AST and
+  promote any provisional `mut type` tokens to concrete entries.
 
-- Executed at compile time using the typed interpreter.
-- Pure evaluation: no runtime side effects; structural edits are visible in the resulting THIR′ snapshot.
-- Access to type intrinsics (`sizeof!`, `field_count!`, `hasfield!`, etc.).
-- Local scope confined to the block; the final expression yields the const value.
-
-### Advanced Usage
-
-**Conditional configuration**
+### Advanced Patterns
 
 ```rust
 const DEBUG_CONFIG: Config = {
@@ -54,22 +46,18 @@ const DEBUG_CONFIG: Config = {
 };
 ```
 
-**Typed introspection**
-
 ```rust
 const STRUCT_INFO: StructInfo = {
     StructInfo {
         size: sizeof!(Point),
         field_count: field_count!(Point),
-        has_z_coordinate: hasfield!(Point, "z"),
+        has_z: hasfield!(Point, "z"),
     }
 };
 ```
 
-**Metaprogramming**
-
 ```rust
-const GENERATED_STRUCT: Type = {
+const GENERATED: Type = {
     struct GeneratedPoint { x: f64, y: f64 }
 
     if ENABLE_3D {
@@ -86,69 +74,44 @@ const GENERATED_STRUCT: Type = {
 };
 ```
 
-## Evaluation Rules
+## Evaluation Pipeline
 
-1. Const blocks execute in dependency order determined from THIR.
-2. Circular dependencies are detected and diagnosed before evaluation starts.
-3. Only pure functions participate; effectful calls must be encapsulated in runtime hooks.
-4. Intrinsics query the shared type tables captured during HIR→THIR inference.
-5. Structural edits (`struct`/`impl` declarations, builder intrinsics) are reflected directly in the resulting THIR′ snapshot.
-   directly.
+1. **Type foundation**
+   - Parse, normalise, and run Algorithm W inference to annotate the AST.
+   - Capture a `TypeSnapshot` for queries (`sizeof`, `hasfield`, etc.).
 
-## Const Blocks vs Regular Code
+2. **Const execution**
+   - Build dependency order from the typed AST (const items, const blocks,
+     generated symbols).
+   - Execute blocks using the AST interpreter in const mode.
+   - Promote `mut type` tokens and persist structural edits.
 
-| Aspect             | Const Block (typed)              | Regular Code                  |
+3. **Commit**
+   - Merge evaluated values back into the AST.
+   - Emit diagnostics using the shared `DiagnosticManager`.
+   - Persist `.ast-eval` artefacts when `--save-intermediates` is enabled.
+
+## Comparison
+
+| Aspect             | Const Block (ASTᵗ)               | Regular Code                  |
 |--------------------|----------------------------------|-------------------------------|
 | Execution time     | Compile time                     | Runtime                       |
 | Allowed functions  | Pure / const-compatible          | All                           |
-| Structural edits   | Reflected in THIR′ snapshot     | N/A                           |
+| Structural edits   | Written into ASTᵗ′               | N/A                           |
 | Scope              | Block-local                      | Module/function               |
-| Type information   | Resolved THIR types              | Runtime reflection (if any)   |
+| Type information   | Inferred AST annotations          | Runtime reflection (if any)   |
 | Failure handling   | Compile-time diagnostics         | Runtime errors/exceptions     |
 
-## Typed Effects
+## Artefacts
 
-The log replays during subsequent pipeline phases so every downstream stage observes the same evaluated programme.
-
-## Three-Phase Typed Workflow
-
-The historical three-phase structure still applies, now expressed in typed terms:
-
-1. **Phase 1 – Typed foundation**
-   - Parse and annotate AST.
-   - Lower to HIR and run Algorithm W inference to build THIR.
-   - Provide a `TypeSnapshot` for queries.
-
-2. **Phase 2 – Typed interpretation**
-   - Analyse const-block dependencies on THIR.
-   - Interpret blocks and capture evaluated values.
-   - Commit `mut type` tokens by promoting them to `ConcreteType` entries.
-
-3. **Phase 3 – Downstream validation**
-   - Outside the const-eval step, later passes replay typed effects, re-run checks, and prepare the program for specific backends or transpilers.
-
-## Example Walkthrough
-
-```
-Phase 1: build THIR, resolve Point, Config, etc.
-Phase 2: evaluate const blocks, compute sizeof!(Point), append GeneratedPoint fields, emit diagnostics if needed.
-Phase 3: downstream passes verify generated definitions and prepare outputs for compilation or transpilation (outside the const-eval step).
-```
-
-The updated THIR′ snapshot is persisted when `--save-intermediates` is enabled (e.g., `target/tce/...`). Later phases may emit additional artefacts (`.tast`, `.hir`, `.thi`, `.dhi`, etc.) depending on the selected mode.
+With `--save-intermediates`, const evaluation writes the post-eval snapshot as
+`*.ast-eval`. Downstream stages (HIRᵗ, MIR, transpilers) consume this snapshot
+without rebuilding THIR.
 
 ## Summary
 
-- Const evaluation operates on THIR with full type information produced by the HIR → THIR Algorithm W inference stage.
-
-```
-Phase 1: build THIR, resolve Point, Config, etc.
-Phase 2: evaluate const blocks, compute sizeof!(Point), append GeneratedPoint fields, emit diagnostics if needed.
-Phase 3: downstream passes verify generated definitions and prepare outputs for compilation or transpilation (outside the const-eval step).
-```
-
-When `--save-intermediates` is enabled, const evaluation persists the updated THIR snapshot as `.tce`. Later phases may produce additional artefacts as needed.
-
-## Summary
-
-- Const evaluation operates on THIR with full type information.
+- Const evaluation and runtime interpretation share the same AST interpreter with
+  different configuration flags.
+- The typed AST is the single source of truth; THIR is no longer produced.
+- Intrinsic handling and type queries operate through shared resolver/query
+  infrastructure.

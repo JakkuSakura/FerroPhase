@@ -66,8 +66,10 @@ All transformations remain deterministic: repeated quoting/splicing with identic
 
 - **Surface transpile**: treats spliced code like any other AST. Generated files include the re-sugared version of the
   injected code.
-- **Static transpile**: the TAST lift recognises quoted fragments and re-sugars them based on the stored provenance.
-- **Bytecode/compile**: HIR/THIR lowering consumes spliced fragments after TAST consolidation; no special casing required.
+- **Static transpile**: the typed AST lift recognises quoted fragments and re-sugars them based on the stored
+  provenance.
+- **Bytecode/compile**: typed HIR lowering consumes spliced fragments after const evaluation; no special casing
+  required.
 
 ## Future Work
 

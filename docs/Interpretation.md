@@ -1,62 +1,90 @@
-# Interpretation and Const Evaluation Review
+# Interpretation and Const Evaluation Roadmap
 
-## Current State Snapshot
+The interpreter is moving away from the THIR-centric design and now operates
+directly on the typed AST produced by the front-end. This document captures the
+new architecture and the work required to finish the migration.
 
-### ConstEvaluationOrchestrator (`crates/fp-optimize/src/orchestrators/const_evaluation.rs`)
-- Embeds multiple responsibilities: type registration (`TypeQueries`), dependency analysis, intrinsic bookkeeping, AST rewriting, and evaluation dispatch.
-- Relies on `InterpretationOrchestrator` for actual expression execution, yet the `evaluate_const_expression` hook ignores the supplied intrinsic context and simply calls `interpret_expr_no_resolve`.
-- Maintains bespoke registries (`EvaluationContext`, `ConstEvalTracker`, `IntrinsicEvaluationContext`) per run; there is no shared cache or reuse across compilation units.
-- Error handling routes through generic `optimization_error` calls, so diagnostics emitted during const evaluation cannot distinguish between recoverable intrinsic failures and structural bugs.
-- Inline-constant pass duplicates traversal logic already present in the interpreter and reruns interpretation per expression; this is costly and complicates mutation ordering.
+## Target Architecture
 
-### InterpretationOrchestrator (`crates/fp-optimize/src/orchestrators/interpretation/mod.rs`)
-- The THIR-based interpreter now drives both const and (basic) runtime modes through a shared configuration object (`InterpreterConfig`). Runtime mode records local bindings inside a `RuntimeEnvironment`, exposes them via `runtime_bindings()`, and returns owned `RuntimeValue`s; richer semantics (true borrow tracking, side-effect shims, foreign calls) remain TODO.
-- Intrinsics are routed through a small registry (print/println/strlen/concat today); expand this to cover the rest of the standard library and language-specific hooks.
-- THIR evaluation now covers loops, `break`/`continue`, local assignment, list/string indexing, and struct field access; continue expanding coverage to additional expression forms (tuple patterns, upvar refs, etc.).
-- Error propagation still relies on `optimization_error`; richer diagnostics should flow through `DiagnosticManager`.
+1. **Typed AST as the authoritative IR**
+   - Algorithm W inference runs directly on the canonical AST and writes the
+     resolved type into the optional `ty` slots on expressions, patterns, and
+     declarations.
+   - No THIR snapshot is produced. Downstream passes (interpreter, HIR
+     projection, backends) consume the same typed AST instance.
 
-### Type Inference
-- `TypeQueries` is limited to structural reflection backed by `TypeRegistry`; it does not perform inference itself.
-- There *is* a unification-based engine in `crates/fp-optimize/src/transformations/hir_to_thir/type_inference.rs` (the HIR→THIR lowering). It implements an Algorithm W–style solver to infer expression and pattern types before producing typed HIR (THIR).
-- That solver currently runs only during the HIR→THIR transformation. The interpreter and const evaluation orchestrator do not consult its output, so they still rely on registry stubs populated from surface syntax.
-- Because the solver’s results are written into `ThirGenerator::inferred_*` maps, we could expose those results to evaluation passes, but no such plumbing exists yet.
+2. **AST Interpreter**
+   - A single evaluator handles both const evaluation and runtime execution.
+   - Evaluation works against typed AST nodes; intrinsic dispatch receives the
+     enriched type information without consulting secondary maps.
+   - The evaluator mutates the AST when operating in const mode (folding
+     expressions, synthesising declarations, rewriting intrinsic calls) and
+     leaves it untouched in runtime mode.
 
-## Design Gaps and Risks
+3. **Type-Aware HIR**
+   - After evaluation, the typed AST is projected into a type-aware HIR for
+     optimisation backends. Because types already live on the AST, the
+     projection is responsible only for desugaring and ownership bookkeeping.
 
-1. **Runtime Execution Gap**: Only const evaluation runs today; runtime execution still needs to be built on the THIR interpreter.
-2. **Intrinsic Handling**: The intrinsic context collects `ConstEval` operations, but the interpreter invokes intrinsics via ad-hoc builtins that directly mutate shared state. This needs to be ported to THIR-aware intrinsics.
-3. **Configuration Surface**: There is no single struct representing "an evaluator" parameterized by mode. Instead, `ConstEvaluationOrchestrator` owns a dedicated `InterpretationOrchestrator`, meaning runtime interpretation cannot reuse the same instance with alternate policies.
-4. **Diagnostics**: Evaluation errors bubble up as generic optimization failures. With the new diagnostic manager infrastructure, evaluation should log structured diagnostics (node span, intrinsic name, etc.) and allow const evaluation to recover when possible.
-5. **Type Information**: The Algorithm W–style solver that runs during HIR→THIR is not surfaced to const/runtime evaluation, so those paths still operate without principal types. Until its results are exposed through a reusable interface, evaluators are forced to rely on ad-hoc registries.
+4. **Unified Diagnostics and Context**
+   - Evaluation feeds a `DiagnosticManager` so every failure surfaces rich
+     context (node span, intrinsic symbol, evaluation mode) and can recover when
+     permitted by the tolerance settings.
+   - Both const and runtime calls share an `InterpreterContext` that provides
+     access to intrinsic registries, environment bindings, and cached values.
 
-## Recommended Direction
+## Key Components
 
-### Unify the Evaluator
-- Extract a core THIR evaluator configuration (mode, diagnostics, intrinsic handlers) so const and runtime interpretation share infrastructure.
-- Ensure intrinsic evaluation always goes through a unified pathway so compile-time operations and runtime calls share the same dispatch code.
+### AST Type Inference (`Algorithm W`)
+- The existing solver from `hir_to_thir::type_inference` is being ported to work
+  directly on the AST. It walks the tree once, applies substitutions in place,
+  and annotates each node's `ty` slot.
+- The solver exposes a public API so tooling can query inferred types without
+  re-running inference.
 
-### Intrinsic and Builtin Registry
-- Replace the hard-coded `match` ladder in `interpret_ident` with a registry keyed by symbol + mode. This allows language frontends (Rust, LAST, etc.) to register their own intrinsics without editing the interpreter.
-- Encode each intrinsic as a struct implementing a `Builtin` trait (`fn invoke(&self, mode, evaluator, args)`). Const evaluation can attach metadata (e.g., produces `ConstEval::GenerateField`).
+### Interpreter Core
+- Lives under `crates/fp-interpret/src/ast`. It accepts a typed AST plus an
+  `InterpreterConfig` describing mode (const or runtime), intrinsic providers,
+  and feature flags.
+- Both modes return `InterpreterOutcome`, capturing produced values, emitted
+  diagnostics, and any AST mutations that callers may want to serialise.
 
-### Diagnostics and Recovery
-- Thread a `DiagnosticManager` through evaluation calls so every failure captures context (`span`, `intrinsic`, `const block id`).
-- Augment `EvaluationContext` with per-block diagnostics; allow const evaluation to continue past non-fatal intrinsic failures while reporting actionable messages.
+### Intrinsic Registry
+- Intrinsics are registered against canonical `std` symbols with metadata that
+  marks whether they are const-legal, runtime-only, or both.
+- Implementations receive fully-typed arguments and can return structured
+  results (`ConstValue`, `RuntimeValue`, or AST rewrites) without performing
+  ad-hoc type checks.
 
-### Revisit Const Evaluation Workflow
-- After unifying evaluation, reduce the orchestrator to sequencing phases: dependency ordering, evaluating blocks, and inlining constant expressions using the typed interpreter.
-- Consider batching const block results: once a block evaluates, inject its value into the shared context and the evaluator cache so subsequent lookups avoid re-interpretation.
+### Const Evaluation Orchestrator
+- Computes dependency order, runs the AST interpreter in const mode, and writes
+  results back into the AST.
+- Shares caches with runtime execution so blocks evaluated at compile time are
+  available when the program runs.
 
-### Type Inference Path
-- The existing HIR→THIR solver already performs Algorithm W–style inference; the next step is to surface its results outside that transform.
-- Extract a query interface (`TypeInferenceResults`) exposing `expr_ty(hir::HirId)` and `pat_ty(hir::HirId)` so other passes can consume principal types without rerunning inference.
-- Feed those inferred types into `EvaluationContext` to validate const block results or to specialize intrinsic calls.
-- Longer term, consider lifting the solver into a dedicated crate so both compile-time and runtime evaluators can share a single source of truth when future frontends (e.g., LAST) participate.
+## Immediate Work Items
 
-## Short-Term Actions
-1. Introduce an evaluation configuration object and retrofit `ConstEvaluationOrchestrator`/`InterpretationOrchestrator` to consume it, eliminating duplicated traversal functions.
-2. Replace direct `optimization_error` returns inside interpretation with diagnostic emissions + structured error types to aid recovery.
-3. Document how the existing HIR→THIR inference can be queried (or make it queryable) in `docs/Types.md` so downstream tooling understands the available hooks.
-4. Start carving out the builtin registry abstraction so new language frontends can plug in without touching the core interpreter.
+1. Port Algorithm W to the AST (in-place annotation, public query interface).
+2. Replace the THIR interpreter with the new AST evaluator and wire it into both
+   const and runtime paths.
+3. Migrate intrinsic implementations to the new registry and ensure they honour
+   the typed AST contracts.
+4. Update HIR projection to consume the typed AST output from interpretation.
+5. Update CLI commands and orchestrators to drop THIR-specific terminology and
+   storage (`.thi`, `.tce`, … files).
+6. Expand the diagnostic surface so evaluation failures report rich context and
+   can be downgraded when tolerance policies allow.
 
-With these steps, const and runtime evaluation can genuinely share a single engine configured per use case, and the existing Hindley–Milner–style solver can feed both paths without duplicating constraint logic.
+## Open Questions
+
+- How should we persist typed AST snapshots for tooling? Options include a
+  lightweight binary encoding or reusing the serializer with the type metadata
+  embedded.
+- What subset of runtime features must ship with the first iteration (I/O,
+  filesystem access, FFI hooks)? These determine which intrinsics need to be
+  ported immediately.
+- Do we surface a stable API for third-party tooling to run the interpreter, or
+  is it internal only for the initial release?
+
+The work tracked here is a prerequisite for the larger AST-centric refactor and
+should be completed before backends are updated to rely on the typed AST.
