@@ -1,10 +1,9 @@
-use crate::ast::Expr;
-use crate::ast::Ty;
+use crate::ast::{Expr, Ty, TySlot};
 use crate::id::{Ident, Locator};
 use crate::{common_enum, common_struct};
 pub type BPattern = Box<Pattern>;
 common_enum! {
-    pub enum Pattern {
+    pub enum PatternKind {
         Ident(PatternIdent),
         Tuple(PatternTuple),
         TupleStruct(PatternTupleStruct),
@@ -16,20 +15,66 @@ common_enum! {
         Wildcard(PatternWildcard),
     }
 }
+
+common_struct! {
+    pub struct Pattern {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub ty: TySlot,
+        #[serde(flatten)]
+        pub kind: PatternKind,
+    }
+}
+
 impl Pattern {
+    pub fn new(kind: PatternKind) -> Self {
+        Self { ty: None, kind }
+    }
+
+    pub fn with_ty(kind: PatternKind, ty: TySlot) -> Self {
+        Self { ty, kind }
+    }
+
+    pub fn ty(&self) -> Option<&Ty> {
+        self.ty.as_ref()
+    }
+
+    pub fn ty_mut(&mut self) -> &mut TySlot {
+        &mut self.ty
+    }
+
+    pub fn set_ty(&mut self, ty: Ty) {
+        self.ty = Some(ty);
+    }
+
+    pub fn kind(&self) -> &PatternKind {
+        &self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut PatternKind {
+        &mut self.kind
+    }
+
+    pub fn into_parts(self) -> (TySlot, PatternKind) {
+        (self.ty, self.kind)
+    }
+
+    pub fn from_parts(ty: TySlot, kind: PatternKind) -> Self {
+        Self { ty, kind }
+    }
+
     pub fn as_ident(&self) -> Option<&Ident> {
-        match self {
-            Pattern::Ident(ident) => Some(&ident.ident),
-            Pattern::Type(pattern_type) => pattern_type.pat.as_ident(),
+        match &self.kind {
+            PatternKind::Ident(ident) => Some(&ident.ident),
+            PatternKind::Type(pattern_type) => pattern_type.pat.as_ident(),
             _ => None,
         }
     }
     pub fn make_mut(&mut self) {
-        match self {
-            Pattern::Ident(ident) => {
+        match &mut self.kind {
+            PatternKind::Ident(ident) => {
                 ident.mutability = Some(true);
             }
-            Pattern::Type(PatternType { pat, .. }) => {
+            PatternKind::Type(PatternType { pat, .. }) => {
                 pat.make_mut();
             }
             _ => {}
@@ -91,6 +136,12 @@ impl PatternType {
             pat: pat.into(),
             ty,
         }
+    }
+}
+
+impl From<PatternKind> for Pattern {
+    fn from(kind: PatternKind) -> Self {
+        Pattern::new(kind)
     }
 }
 

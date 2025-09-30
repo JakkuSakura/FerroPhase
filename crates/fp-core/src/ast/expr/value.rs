@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
-use crate::ast::{get_threadlocal_serializer, BExpr, Expr, Ty, Value};
+use crate::ast::{get_threadlocal_serializer, BExpr, Expr, ExprKind, Ty, Value};
 use crate::ast::{BType, ValueFunction};
 use crate::id::{Ident, Locator};
 use crate::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -21,11 +21,12 @@ common_enum! {
 }
 impl ExprInvokeTarget {
     pub fn expr(expr: Expr) -> Self {
-        match expr {
-            Expr::Locator(locator) => Self::Function(locator.clone()),
-            Expr::Select(select) => Self::Method(select.clone()),
-            Expr::Value(value) => Self::value(*value),
-            _ => Self::Expr(expr.into()),
+        let (ty, kind) = expr.into_parts();
+        match kind {
+            ExprKind::Locator(locator) => Self::Function(locator),
+            ExprKind::Select(select) => Self::Method(select),
+            ExprKind::Value(value) => Self::value(*value),
+            other => Self::Expr(Expr::from_parts(ty, other).into()),
         }
     }
     pub fn value(value: Value) -> Self {
@@ -240,15 +241,15 @@ fn build_format_string_from_args(args: &[Expr], _newline: bool) -> Option<ExprFo
         });
     }
 
-    match &args[0] {
-        Expr::FormatString(fmt) => {
+    match args[0].kind() {
+        ExprKind::FormatString(fmt) => {
             let mut format = fmt.clone();
             if args.len() > 1 {
                 format.args.extend(args[1..].iter().cloned());
             }
             Some(format)
         }
-        Expr::Value(value) => {
+        ExprKind::Value(value) => {
             if let Value::String(str_val) = &**value {
                 let mut format = ExprFormatString {
                     parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],

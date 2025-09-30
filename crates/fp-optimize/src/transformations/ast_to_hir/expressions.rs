@@ -1,38 +1,39 @@
 use super::*;
+use ast::ItemKind;
 
 impl HirGenerator {
     /// Transform an AST expression to HIR expression
     pub(super) fn transform_expr_to_hir(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
-        use ast::Expr;
+        use ast::ExprKind;
 
         let span = self.create_span(1); // Create a span for this expression
         let hir_id = self.next_id();
 
-        let kind = match ast_expr {
-            Expr::Value(value) => self.transform_value_to_hir(value)?,
-            Expr::Locator(locator) => hir::ExprKind::Path(
+        let kind = match ast_expr.kind() {
+            ExprKind::Value(value) => self.transform_value_to_hir(value)?,
+            ExprKind::Locator(locator) => hir::ExprKind::Path(
                 self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?,
             ),
-            Expr::BinOp(binop) => self.transform_binop_to_hir(binop)?,
-            Expr::UnOp(unop) => self.transform_unop_to_hir(unop)?,
-            Expr::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
-            Expr::Select(select) => self.transform_select_to_hir(select)?,
-            Expr::Struct(struct_expr) => self.transform_struct_to_hir(struct_expr)?,
-            Expr::Block(block) => self.transform_block_to_hir(block)?,
-            Expr::If(if_expr) => self.transform_if_to_hir(if_expr)?,
-            Expr::Loop(loop_expr) => self.transform_loop_to_hir(loop_expr)?,
-            Expr::While(while_expr) => self.transform_while_to_hir(while_expr)?,
-            Expr::Assign(assign) => self.transform_assign_to_hir(assign)?,
-            Expr::Paren(paren) => self.transform_paren_to_hir(paren)?,
-            Expr::Let(let_expr) => self.transform_let_to_hir(let_expr)?,
-            Expr::Any(_) => {
+            ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
+            ExprKind::UnOp(unop) => self.transform_unop_to_hir(unop)?,
+            ExprKind::Invoke(invoke) => self.transform_invoke_to_hir(invoke)?,
+            ExprKind::Select(select) => self.transform_select_to_hir(select)?,
+            ExprKind::Struct(struct_expr) => self.transform_struct_to_hir(struct_expr)?,
+            ExprKind::Block(block) => self.transform_block_to_hir(block)?,
+            ExprKind::If(if_expr) => self.transform_if_to_hir(if_expr)?,
+            ExprKind::Loop(loop_expr) => self.transform_loop_to_hir(loop_expr)?,
+            ExprKind::While(while_expr) => self.transform_while_to_hir(while_expr)?,
+            ExprKind::Assign(assign) => self.transform_assign_to_hir(assign)?,
+            ExprKind::Paren(paren) => self.transform_paren_to_hir(paren)?,
+            ExprKind::Let(let_expr) => self.transform_let_to_hir(let_expr)?,
+            ExprKind::Any(_) => {
                 // Handle macro expressions and other "any" expressions
                 // For now, return a placeholder boolean literal
                 hir::ExprKind::Literal(hir::Lit::Bool(false))
             }
-            Expr::FormatString(format_str) => self.transform_format_string_to_hir(format_str)?,
-            Expr::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
-            Expr::Reference(reference) => {
+            ExprKind::FormatString(format_str) => self.transform_format_string_to_hir(format_str)?,
+            ExprKind::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
+            ExprKind::Reference(reference) => {
                 return self.transform_expr_to_hir(reference.referee.as_ref());
             }
             _ => {
@@ -232,8 +233,8 @@ impl HirGenerator {
 
             let mut items = Vec::new();
             for item in &impl_block.items {
-                match item {
-                    ast::Item::DefFunction(func) => {
+                match item.kind() {
+                    ItemKind::DefFunction(func) => {
                         let method = self.transform_function(func, Some(self_ty.clone()))?;
                         items.push(hir::ImplItem {
                             hir_id: self.next_id(),
@@ -241,7 +242,7 @@ impl HirGenerator {
                             kind: hir::ImplItemKind::Method(method),
                         });
                     }
-                    ast::Item::DefConst(const_item) => {
+                    ItemKind::DefConst(const_item) => {
                         let assoc_const = self.transform_const_def(const_item)?;
                         items.push(hir::ImplItem {
                             hir_id: self.next_id(),
@@ -767,8 +768,10 @@ impl HirGenerator {
         expr: &ast::Expr,
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
-        match expr {
-            ast::Expr::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
+        match expr.kind() {
+            ast::ExprKind::Locator(locator) => {
+                self.locator_to_hir_path_with_scope(locator, scope)
+            }
             _ => Err(crate::error::optimization_error(format!(
                 "Unsupported path expression: {:?}",
                 expr

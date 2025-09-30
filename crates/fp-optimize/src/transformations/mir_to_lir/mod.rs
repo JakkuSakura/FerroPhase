@@ -358,8 +358,9 @@ impl LirGenerator {
                             let expects_pointer =
                                 matches!(destination_lir_ty, Some(lir::LirType::Ptr(_)));
                             if !expects_pointer && matches!(lir_ty, lir::LirType::Ptr(_)) {
-                                let load_ty =
-                                    destination_lir_ty.clone().expect("destination LIR type must be known for load operation");
+                                let load_ty = destination_lir_ty.clone().expect(
+                                    "destination LIR type must be known for load operation",
+                                );
                                 let load_id = self.next_id();
                                 instructions.push(lir::LirInstruction {
                                     id: load_id,
@@ -411,7 +412,9 @@ impl LirGenerator {
                 let operand_value = self.transform_operand(operand)?;
                 instructions.extend(self.take_queued_instructions());
 
-                let result_ty = destination_lir_ty.clone().expect("destination LIR type must be known for unary operation");
+                let result_ty = destination_lir_ty
+                    .clone()
+                    .expect("destination LIR type must be known for unary operation");
 
                 let instr_id = self.next_id();
                 let lir_kind =
@@ -459,7 +462,9 @@ impl LirGenerator {
                 let operand_value = self.transform_operand(operand)?;
                 instructions.extend(self.take_queued_instructions());
                 let source_ty = self.type_of_operand(operand);
-                let target_ty = destination_lir_ty.clone().expect("destination LIR type must be known for cast operation");
+                let target_ty = destination_lir_ty
+                    .clone()
+                    .expect("destination LIR type must be known for cast operation");
 
                 let instr_id = self.next_id();
                 let instr_kind = self.lower_cast(

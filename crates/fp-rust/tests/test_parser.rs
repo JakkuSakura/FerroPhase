@@ -26,7 +26,8 @@ fn test_parse_fn() -> Result<()> {
     };
     assert_eq!(
         code,
-        Item::DefFunction(ItemDefFunction {
+        ItemKind::DefFunction(ItemDefFunction {
+            ty_annotation: None,
             attrs: vec![],
             name: "foo".into(),
             ty: None,
@@ -43,6 +44,7 @@ fn test_parse_fn() -> Result<()> {
             body: block.into(),
             visibility: Visibility::Private,
         })
+        .into()
     );
     Ok(())
 }
@@ -58,7 +60,7 @@ fn test_parse_block_noop() -> Result<()> {
     // println!("{:?} => {}", code, code);
     assert_eq!(
         code,
-        Expr::Block(ExprBlock {
+        Expr::block(ExprBlock {
             stmts: vec![BlockStmt::Noop, BlockStmt::Noop, BlockStmt::Noop],
         })
     );
@@ -74,9 +76,9 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        Expr::If(ExprIf {
+        Expr::from(ExprIf {
             cond: Expr::value(Value::bool(true)).into(),
-            then: Expr::Block(ExprBlock::new()).into(),
+            then: Expr::block(ExprBlock::new()).into(),
             elze: None,
         })
     );
@@ -89,10 +91,10 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        Expr::If(ExprIf {
+        Expr::from(ExprIf {
             cond: Expr::value(Value::bool(true)).into(),
-            then: Expr::Block(ExprBlock::new()).into(),
-            elze: Some(Expr::Block(ExprBlock::new()).into()),
+            then: Expr::block(ExprBlock::new()).into(),
+            elze: Some(Expr::block(ExprBlock::new()).into()),
         }),
     );
     let code = shll_parse_expr! {
@@ -104,13 +106,13 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        Expr::If(ExprIf {
+        Expr::from(ExprIf {
             cond: Expr::value(Value::bool(true)).into(),
-            then: Expr::Block(ExprBlock::new()).into(),
+            then: Expr::block(ExprBlock::new()).into(),
             elze: Some(
-                Expr::If(ExprIf {
+                Expr::from(ExprIf {
                     cond: Expr::value(Value::bool(false)).into(),
-                    then: Expr::Block(ExprBlock::new()).into(),
+                    then: Expr::block(ExprBlock::new()).into(),
                     elze: None,
                 })
                 .into()
@@ -126,15 +128,15 @@ fn test_parse_if() -> Result<()> {
     };
     assert_eq!(
         code,
-        Expr::If(ExprIf {
+        Expr::from(ExprIf {
             cond: Expr::value(Value::bool(true)).into(),
             then: Expr::unit().into(),
             elze: Some(
-                Expr::If(ExprIf {
+                Expr::from(ExprIf {
                     cond: Expr::value(Value::bool(false)).into(),
-                    then: Expr::Block(ExprBlock::new_stmts_expr(
+                    then: Expr::block(ExprBlock::new_stmts_expr(
                         vec![BlockStmt::Noop,],
-                        Expr::Block(ExprBlock::new())
+                        Expr::block(ExprBlock::new())
                     ))
                     .into(),
                     elze: None,
@@ -162,19 +164,19 @@ fn test_parse_block_if() -> Result<()> {
     // println!("{:?} => {}", code, code);
     assert_eq!(
         code,
-        Expr::Block(ExprBlock::new_stmts(vec![
+        Expr::block(ExprBlock::new_stmts(vec![
             BlockStmt::Expr(
-                BlockStmtExpr::new(Expr::If(ExprIf {
+                BlockStmtExpr::new(Expr::from(ExprIf {
                     cond: Expr::value(Value::bool(true)).into(),
-                    then: Expr::Block(ExprBlock::new()).into(),
+                    then: Expr::block(ExprBlock::new()).into(),
                     elze: None,
                 }))
                 .with_semicolon(false)
             ),
             BlockStmt::Expr(
-                BlockStmtExpr::new(Expr::If(ExprIf {
+                BlockStmtExpr::new(Expr::from(ExprIf {
                     cond: Expr::value(Value::bool(true)).into(),
-                    then: Expr::Block(ExprBlock::new()).into(),
+                    then: Expr::block(ExprBlock::new()).into(),
                     elze: None,
                 }))
                 .with_semicolon(true)
@@ -196,7 +198,7 @@ fn test_parse_impl_for() -> Result<()> {
     };
     assert_eq!(
         code,
-        Item::Impl(ItemImpl {
+        ItemKind::Impl(ItemImpl {
             trait_ty: Some(Locator::Ident("Foo".into())),
             self_ty: Expr::ident("Bar".into()),
             items: vec![shll_parse_item! {
@@ -205,6 +207,7 @@ fn test_parse_impl_for() -> Result<()> {
                 }
             }],
         })
+        .into()
     );
     Ok(())
 }
@@ -217,12 +220,14 @@ fn test_parse_static() -> Result<()> {
     };
     assert_eq!(
         code,
-        Item::DefStatic(ItemDefStatic {
+        ItemKind::DefStatic(ItemDefStatic {
+            ty_annotation: None,
             name: "FOO".into(),
             ty: Ty::Primitive(TypePrimitive::i64()),
             value: Expr::value(Value::int(1)).into(),
             visibility: Visibility::Private,
         })
+        .into()
     );
     println!("{}", code);
     Ok(())
@@ -236,7 +241,8 @@ fn test_parse_fn_self() -> Result<()> {
 
     assert_eq!(
         code,
-        Item::DefFunction(ItemDefFunction {
+        ItemKind::DefFunction(ItemDefFunction {
+            ty_annotation: None,
             attrs: vec![],
             name: "foo".into(),
             ty: None,
@@ -247,9 +253,10 @@ fn test_parse_fn_self() -> Result<()> {
                 generics_params: vec![],
                 ret_ty: None
             },
-            body: Expr::Block(ExprBlock::new()).into(),
+            body: Expr::block(ExprBlock::new()).into(),
             visibility: Visibility::Private,
         })
+        .into()
     );
     let code = shll_parse_item! {
         fn foo(&'static self) {}
@@ -257,7 +264,8 @@ fn test_parse_fn_self() -> Result<()> {
 
     assert_eq!(
         code,
-        Item::DefFunction(ItemDefFunction {
+        ItemKind::DefFunction(ItemDefFunction {
+            ty_annotation: None,
             attrs: vec![],
             name: "foo".into(),
             ty: None,
@@ -268,9 +276,10 @@ fn test_parse_fn_self() -> Result<()> {
                 generics_params: vec![],
                 ret_ty: None
             },
-            body: Expr::Block(ExprBlock::new()).into(),
+            body: Expr::block(ExprBlock::new()).into(),
             visibility: Visibility::Private,
         })
+        .into()
     );
     Ok(())
 }

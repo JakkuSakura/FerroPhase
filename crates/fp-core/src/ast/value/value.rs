@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ast::{get_threadlocal_serializer, BExpr};
-use crate::ast::{Ty, TypeBounds, TypeStruct, Value};
+use crate::ast::{Ty, TySlot, TypeBounds, TypeStruct, Value};
 use crate::id::Ident;
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
@@ -530,6 +530,8 @@ common_enum! {
 
 common_struct! {
     pub struct FunctionParam {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub ty_annotation: TySlot,
         pub name: Ident,
         pub ty: Ty,
         pub default: Option<Value>,
@@ -546,6 +548,7 @@ common_struct! {
 impl FunctionParam {
     pub fn new(name: Ident, ty: Ty) -> Self {
         Self {
+            ty_annotation: None,
             name,
             ty,
             default: None,
@@ -554,6 +557,18 @@ impl FunctionParam {
             positional_only: false,
             keyword_only: false,
         }
+    }
+
+    pub fn ty_annotation(&self) -> Option<&Ty> {
+        self.ty_annotation.as_ref()
+    }
+
+    pub fn ty_annotation_mut(&mut self) -> &mut TySlot {
+        &mut self.ty_annotation
+    }
+
+    pub fn set_ty_annotation(&mut self, ty: Ty) {
+        self.ty_annotation = Some(ty);
     }
 }
 

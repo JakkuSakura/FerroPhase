@@ -112,7 +112,7 @@ impl TypeRegistry {
             // Calculate size based on type
             match &type_info.ast_type {
                 Ty::Expr(expr) => {
-                    if let crate::ast::Expr::Locator(locator) = expr.as_ref() {
+                    if let crate::ast::ExprKind::Locator(locator) = expr.as_ref().kind() {
                         if let Some(ident) = locator.as_ident() {
                             let sizes = self.primitive_sizes.read().unwrap();
                             return sizes.get(&ident.name).copied().ok_or_else(|| {

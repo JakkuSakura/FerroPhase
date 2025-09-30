@@ -33,12 +33,13 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
 
 #[test]
 fn propagates_unimplemented_expression_error() {
-    use fp_core::ast::{Expr, ExprTry};
+    use fp_core::ast::{Expr, ExprKind, ExprTry};
 
     let mut generator = HirGenerator::new();
-    let unsupported = Expr::Try(ExprTry {
+    let unsupported = ExprKind::Try(ExprTry {
         expr: Box::new(Expr::unit()),
-    });
+    })
+    .into();
     let result = generator.transform(&unsupported);
     assert!(result.is_err());
 }
