@@ -224,15 +224,15 @@ impl RustParser {
                         semicolon: None,
                     }));
 
-                    Ok(Box::new(Expr::Block(ExprBlock { stmts: const_items })))
+                    Ok(Box::new(Expr::block(ExprBlock { stmts: const_items })))
                 } else {
                     // No main function, create a minimal structure for transpilation
                     if const_items.is_empty() {
                         // Create an empty block for transpilation purposes
-                        Ok(Box::new(Expr::Block(ExprBlock { stmts: vec![] })))
+                        Ok(Box::new(Expr::block(ExprBlock { stmts: vec![] })))
                     } else {
                         // Just use all parsed items
-                        Ok(Box::new(Expr::Block(ExprBlock { stmts: const_items })))
+                        Ok(Box::new(Expr::block(ExprBlock { stmts: const_items })))
                     }
                 }
             }
@@ -290,7 +290,7 @@ impl RustParser {
             }
         }
 
-        Ok(Box::new(Expr::Block(ExprBlock {
+        Ok(Box::new(Expr::block(ExprBlock {
             stmts: parsed_items,
         })))
     }
@@ -315,7 +315,7 @@ impl RustParser {
                             .map(|item| BlockStmt::Item(Box::new(item)))
                             .collect();
 
-                        return Ok(Expr::Block(ExprBlock { stmts }));
+                        return Ok(Expr::block(ExprBlock { stmts }));
                     }
                 }
             }
@@ -325,7 +325,7 @@ impl RustParser {
 
                 match syn::parse_str::<syn::Expr>(&wrapped_content) {
                     Ok(syn::Expr::Block(block_expr)) => {
-                        return crate::parser::expr::parse_block(block_expr.block).map(Expr::Block);
+                        return crate::parser::expr::parse_block(block_expr.block).map(Expr::block);
                     }
                     Ok(other) => {
                         return self.parse_expr(other);
@@ -352,7 +352,7 @@ impl AstDeserializer for RustParser {
     fn deserialize_node(&self, code: &str) -> fp_core::error::Result<Node> {
         let code: syn::File = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         let path = PathBuf::from("__file__");
-        Ok(self.parse_file_content(path, code).map(Node::File)?)
+        Ok(self.parse_file_content(path, code).map(Node::file)?)
     }
 
     fn deserialize_expr(&self, code: &str) -> fp_core::error::Result<Expr> {

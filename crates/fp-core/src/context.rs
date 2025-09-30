@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprClosured, Visibility};
+use crate::ast::{Expr, ExprKind, ExprClosured, Visibility};
 use crate::ast::{RuntimeValue, Ty, Value, ValueFunction};
 use crate::id::{Ident, Path};
 use dashmap::DashMap;
@@ -339,9 +339,9 @@ impl SharedScopedContext {
     // TODO: integrate it to optimizers
     pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
         // info!("try_get_value_from_expr {}", expr);
-        let ret = match expr {
-            Expr::Locator(ident) => self.get_value(ident.to_path()),
-            Expr::Value(value) => Some(value.get()),
+        let ret = match expr.kind() {
+            ExprKind::Locator(ident) => self.get_value(ident.to_path()),
+            ExprKind::Value(value) => Some(value.get()),
             _ => None,
         };
         debug!(
@@ -356,9 +356,9 @@ impl SharedScopedContext {
         debug!("get_value_recursive {}", key);
         let expr = self.get_expr(&key)?;
         debug!("get_value_recursive {} => {:?}", key, expr);
-        match expr {
-            Expr::Locator(ident) => self.get_value_recursive(ident.to_path()),
-            _ => Some(Value::expr(expr)),
+        match expr.kind() {
+            ExprKind::Locator(ident) => self.get_value_recursive(ident.to_path()),
+            _ => Some(Value::expr(expr.clone())),
         }
     }
     pub fn get_parent(&self) -> Option<Self> {

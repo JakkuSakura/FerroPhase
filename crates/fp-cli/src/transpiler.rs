@@ -37,8 +37,8 @@ impl Transpiler {
 
     fn visit_ast(&self, ast: &BExpr, context: &mut TranspileContext) {
         // Single AST visitor instead of separate extract_types_from_ast functions
-        match ast.as_ref() {
-            fp_core::ast::Expr::Block(block) => {
+        match ast.as_ref().kind() {
+            fp_core::ast::ExprKind::Block(block) => {
                 for stmt in &block.stmts {
                     self.visit_stmt(stmt, context);
                 }

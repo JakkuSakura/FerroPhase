@@ -264,8 +264,8 @@ impl TypeQueries {
                     Ok(type_id)
                 }
             }
-            Ty::Expr(expr) => match expr.as_ref() {
-                Expr::Locator(locator) => {
+            Ty::Expr(expr) => match expr.as_ref().kind() {
+                ExprKind::Locator(locator) => {
                     if let Some(ident) = locator.as_ident() {
                         Ok(self.ensure_named_type(ident.as_str(), Ty::ident(ident.clone())))
                     } else {
@@ -311,8 +311,8 @@ impl TypeQueries {
 
     fn type_exists(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::Expr(expr) => match expr.as_ref() {
-                Expr::Locator(locator) => locator
+            Ty::Expr(expr) => match expr.as_ref().kind() {
+                ExprKind::Locator(locator) => locator
                     .as_ident()
                     .and_then(|ident| self.type_registry.get_type_by_name(ident.as_str()))
                     .is_some(),
@@ -335,9 +335,9 @@ fn collect_type_items(ast: &Node) -> (Vec<ItemDefStruct>, Vec<ItemDefType>) {
     let mut structs = Vec::new();
     let mut aliases = Vec::new();
 
-    walk_items(ast, &mut |item| match item {
-        Item::DefStruct(def) => structs.push(def.clone()),
-        Item::DefType(def) => aliases.push(def.clone()),
+    walk_items(ast, &mut |item| match item.kind() {
+        ItemKind::DefStruct(def) => structs.push(def.clone()),
+        ItemKind::DefType(def) => aliases.push(def.clone()),
         _ => {}
     });
 
@@ -348,10 +348,10 @@ fn walk_items<F>(node: &Node, f: &mut F)
 where
     F: FnMut(&Item),
 {
-    match node {
-        Node::Item(item) => walk_item(item, f),
-        Node::Expr(expr) => walk_expr(expr, f),
-        Node::File(file) => {
+    match node.kind() {
+        NodeKind::Item(item) => walk_item(item, f),
+        NodeKind::Expr(expr) => walk_expr(expr, f),
+        NodeKind::File(file) => {
             for item in &file.items {
                 walk_item(item, f);
             }
@@ -363,8 +363,8 @@ fn walk_expr<F>(expr: &Expr, f: &mut F)
 where
     F: FnMut(&Item),
 {
-    match expr {
-        Expr::Block(block) => {
+    match expr.kind() {
+        ExprKind::Block(block) => {
             for stmt in &block.stmts {
                 match stmt {
                     BlockStmt::Item(item) => walk_item(item.as_ref(), f),
@@ -381,14 +381,14 @@ where
                 }
             }
         }
-        Expr::If(if_expr) => {
+        ExprKind::If(if_expr) => {
             walk_expr(&if_expr.cond, f);
             walk_expr(&if_expr.then, f);
             if let Some(elze) = if_expr.elze.as_ref() {
                 walk_expr(elze, f);
             }
         }
-        Expr::Invoke(invoke) => {
+        ExprKind::Invoke(invoke) => {
             for arg in &invoke.args {
                 walk_expr(arg, f);
             }
@@ -396,21 +396,21 @@ where
                 walk_expr(inner.as_ref(), f);
             }
         }
-        Expr::Let(let_expr) => {
+        ExprKind::Let(let_expr) => {
             walk_expr(let_expr.expr.as_ref(), f);
         }
-        Expr::Assign(assign) => {
+        ExprKind::Assign(assign) => {
             walk_expr(assign.target.as_ref(), f);
             walk_expr(assign.value.as_ref(), f);
         }
-        Expr::Struct(struct_expr) => {
+        ExprKind::Struct(struct_expr) => {
             for field in &struct_expr.fields {
                 if let Some(value) = field.value.as_ref() {
                     walk_expr(value, f);
                 }
             }
         }
-        Expr::Item(item) => walk_item(item, f),
+        ExprKind::Item(item) => walk_item(item, f),
         _ => {}
     }
 }
@@ -420,18 +420,18 @@ where
     F: FnMut(&Item),
 {
     f(item);
-    match item {
-        Item::Module(module) => {
+    match item.kind() {
+        ItemKind::Module(module) => {
             for child in &module.items {
                 walk_item(child, f);
             }
         }
-        Item::Impl(item_impl) => {
+        ItemKind::Impl(item_impl) => {
             for child in &item_impl.items {
                 walk_item(child, f);
             }
         }
-        Item::Expr(expr) => walk_expr(expr, f),
+        ItemKind::Expr(expr) => walk_expr(expr, f),
         _ => {}
     }
 }

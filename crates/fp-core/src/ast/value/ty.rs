@@ -51,10 +51,11 @@ impl Ty {
     pub fn bool() -> Ty {
         Ty::Primitive(TypePrimitive::Bool)
     }
-    pub fn expr(e: Expr) -> Self {
-        match e {
-            Expr::Value(ty) => Self::value(ty),
-            _ => Ty::Expr(Box::new(e)),
+    pub fn expr(expr: Expr) -> Self {
+        let (ty, kind) = expr.into_parts();
+        match kind {
+            ExprKind::Value(value) => Self::value(*value),
+            other => Ty::Expr(Box::new(Expr::from_parts(ty, other))),
         }
     }
     pub fn value(v: impl Into<Value>) -> Self {
@@ -91,7 +92,7 @@ impl Ty {
         })
     }
     pub fn locator(locator: crate::id::Locator) -> Self {
-        Self::expr(Expr::Locator(locator))
+        Self::expr(Expr::locator(locator))
     }
     pub fn type_bound(expr: Expr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))

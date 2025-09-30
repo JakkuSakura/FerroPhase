@@ -105,8 +105,8 @@ const GENERATED: Type = {
 ## Artefacts
 
 With `--save-intermediates`, const evaluation writes the post-eval snapshot as
-`*.ast-eval`. Downstream stages (HIRᵗ, MIR, transpilers) consume this snapshot
-without rebuilding THIR.
+`*.ast-eval`. Downstream tooling will consume this snapshot directly once the
+new typed HIR/MIR pipeline is reinstated.
 
 ## Summary
 

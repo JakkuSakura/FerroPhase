@@ -1,5 +1,6 @@
 use crate::ast::{
     BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, File, Item, ItemDefFunction, Module, Node,
+    NodeKind,
 };
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::bail;
@@ -9,10 +10,10 @@ use std::sync::Arc;
 #[allow(unused_variables)]
 pub trait AstSerializer: Send + Sync {
     fn serialize_node(&self, node: &Node) -> Result<String, crate::Error> {
-        match node {
-            Node::Item(item) => self.serialize_item(item),
-            Node::Expr(expr) => self.serialize_expr(expr),
-            Node::File(file) => self.serialize_file(file),
+        match node.kind() {
+            NodeKind::Item(item) => self.serialize_item(item),
+            NodeKind::Expr(expr) => self.serialize_expr(expr),
+            NodeKind::File(file) => self.serialize_file(file),
         }
     }
     fn serialize_expr(&self, node: &Expr) -> Result<String, crate::Error> {

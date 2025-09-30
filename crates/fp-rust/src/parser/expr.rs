@@ -17,28 +17,28 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Binary(b) => parse_expr_binary(b)?,
         syn::Expr::Unary(u) => parse_unary(u)?.into(),
         syn::Expr::Block(b) if b.label.is_none() => Expr::block(parse_block(b.block)?),
-        syn::Expr::Call(c) => Expr::Invoke(parse_expr_call(c)?.into()),
-        syn::Expr::If(i) => Expr::If(parse_expr_if(i)?),
-        syn::Expr::Loop(l) => Expr::Loop(parse_expr_loop(l)?),
+        syn::Expr::Call(c) => parse_expr_call(c)?.into(),
+        syn::Expr::If(i) => parse_expr_if(i)?.into(),
+        syn::Expr::Loop(l) => parse_expr_loop(l)?.into(),
         syn::Expr::Lit(l) => Expr::value(parse_literal(l.lit)?),
         syn::Expr::Macro(m) => parse_expr_macro(m)?,
-        syn::Expr::MethodCall(c) => Expr::Invoke(parse_expr_method_call(c)?.into()),
-        syn::Expr::Index(i) => Expr::Index(parse_expr_index(i)?),
+        syn::Expr::MethodCall(c) => parse_expr_method_call(c)?.into(),
+        syn::Expr::Index(i) => parse_expr_index(i)?.into(),
         syn::Expr::Path(p) => Expr::path(parser::parse_path(p.path)?),
-        syn::Expr::Reference(r) => Expr::Reference(parse_expr_reference(r)?.into()),
+        syn::Expr::Reference(r) => parse_expr_reference(r)?.into(),
         syn::Expr::Tuple(t) if t.elems.is_empty() => Expr::unit(),
-        syn::Expr::Tuple(t) => Expr::Tuple(parse_expr_tuple(t)?),
-        syn::Expr::Struct(s) => Expr::Struct(parse_expr_struct(s)?.into()),
+        syn::Expr::Tuple(t) => parse_expr_tuple(t)?.into(),
+        syn::Expr::Struct(s) => parse_expr_struct(s)?.into(),
         syn::Expr::Const(c) => parse_expr_const(c)?,
-        syn::Expr::Paren(p) => Expr::Paren(parse_expr_paren(p)?),
-        syn::Expr::Range(r) => Expr::Range(parse_expr_range(r)?),
-        syn::Expr::Field(f) => Expr::Select(parse_expr_field(f)?.into()),
-        syn::Expr::Try(t) => Expr::Try(parse_expr_try(t)?),
-        syn::Expr::While(w) => Expr::While(parse_expr_while(w)?),
-        syn::Expr::Let(l) => Expr::Let(parse_expr_let(l)?),
-        syn::Expr::Closure(c) => Expr::Closure(parse_expr_closure(c)?),
-        syn::Expr::Array(a) => Expr::Array(parse_expr_array(a)?),
-        syn::Expr::Assign(a) => Expr::Assign(parse_expr_assign(a)?.into()),
+        syn::Expr::Paren(p) => parse_expr_paren(p)?.into(),
+        syn::Expr::Range(r) => parse_expr_range(r)?.into(),
+        syn::Expr::Field(f) => parse_expr_field(f)?.into(),
+        syn::Expr::Try(t) => parse_expr_try(t)?.into(),
+        syn::Expr::While(w) => parse_expr_while(w)?.into(),
+        syn::Expr::Let(l) => parse_expr_let(l)?.into(),
+        syn::Expr::Closure(c) => parse_expr_closure(c)?.into(),
+        syn::Expr::Array(a) => parse_expr_array(a)?.into(),
+        syn::Expr::Assign(a) => parse_expr_assign(a)?.into(),
         syn::Expr::Break(b) => parse_expr_break(b)?,
         syn::Expr::Continue(_) => parse_expr_continue()?,
         syn::Expr::Return(r) => parse_expr_return(r)?,
@@ -78,7 +78,7 @@ fn parse_expr_let(l: syn::ExprLet) -> Result<ExprLet> {
 fn parse_expr_while(w: syn::ExprWhile) -> Result<ExprWhile> {
     Ok(ExprWhile {
         cond: parse_expr(*w.cond)?.into(),
-        body: Expr::Block(parse_block(w.body)?).into(),
+        body: Expr::block(parse_block(w.body)?).into(),
     })
 }
 fn parse_expr_try(t: syn::ExprTry) -> Result<ExprTry> {
@@ -244,50 +244,50 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::AddAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: Expr::BinOp(ExprBinOp {
+                value: ExprBinOp {
                     kind: BinOpKind::Add,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                })
+                }
                 .into(),
             };
-            return Ok(Expr::Assign(assign.into()));
+            return Ok(assign.into());
         }
         syn::BinOp::SubAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: Expr::BinOp(ExprBinOp {
+                value: ExprBinOp {
                     kind: BinOpKind::Sub,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                })
+                }
                 .into(),
             };
-            return Ok(Expr::Assign(assign.into()));
+            return Ok(assign.into());
         }
         syn::BinOp::MulAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: Expr::BinOp(ExprBinOp {
+                value: ExprBinOp {
                     kind: BinOpKind::Mul,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                })
+                }
                 .into(),
             };
-            return Ok(Expr::Assign(assign.into()));
+            return Ok(assign.into());
         }
         syn::BinOp::DivAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: Expr::BinOp(ExprBinOp {
+                value: ExprBinOp {
                     kind: BinOpKind::Div,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                })
+                }
                 .into(),
             };
-            return Ok(Expr::Assign(assign.into()));
+            return Ok(assign.into());
         }
         syn::BinOp::Add(_) => (BinOpKind::Add, true),
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
@@ -462,20 +462,22 @@ fn parse_cfg_macro(mac: &syn::Macro) -> Result<Option<Expr>> {
 
     if tokens == "not(debug_assertions)" {
         let expr = debug_assertions_intrinsic();
-        return Ok(Some(Expr::UnOp(ExprUnOp {
+        return Ok(Some(ExprUnOp {
             op: UnOpKind::Not,
             val: Box::new(expr),
-        })));
+        }
+        .into()));
     }
 
     Ok(None)
 }
 
 fn debug_assertions_intrinsic() -> Expr {
-    Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    ExprIntrinsicCall::new(
         IntrinsicCallKind::DebugAssertions,
         IntrinsicCallPayload::Args { args: Vec::new() },
-    ))
+    )
+    .into()
 }
 
 fn parse_input_macro(mac: &syn::Macro) -> Result<Expr> {
@@ -492,20 +494,22 @@ fn parse_input_macro(mac: &syn::Macro) -> Result<Expr> {
             .collect::<Result<Vec<_>>>()?
     };
 
-    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    Ok(ExprIntrinsicCall::new(
         IntrinsicCallKind::Input,
         IntrinsicCallPayload::Args { args },
-    )))
+    )
+    .into())
 }
 
 fn parse_expr_const(expr: syn::ExprConst) -> Result<Expr> {
     let block = parse_block(expr.block)?;
-    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    Ok(ExprIntrinsicCall::new(
         IntrinsicCallKind::ConstBlock,
         IntrinsicCallPayload::Args {
             args: vec![Expr::block(block)],
         },
-    )))
+    )
+    .into())
 }
 
 fn parse_fp_macro(mac: &syn::Macro) -> Result<Expr> {
@@ -529,7 +533,7 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
 
     // Handle empty println!()
     if tokens_str.trim().is_empty() {
-        let println_expr = Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        let println_expr = ExprIntrinsicCall::new(
             IntrinsicCallKind::Println,
             IntrinsicCallPayload::Format {
                 template: ExprFormatString {
@@ -538,7 +542,8 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
                     kwargs: Vec::new(),
                 },
             },
-        ));
+        )
+        .into();
         return Ok(println_expr);
     }
 
@@ -555,7 +560,7 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
 
             // Check if the first argument is a string literal (format string)
             if !args.is_empty() {
-                if let Expr::Value(value) = &args[0] {
+                if let ExprKind::Value(value) = args[0].kind() {
                     if let Value::String(format_str) = &**value {
                         // Parse format string into template parts
                         let format_args = args[1..].to_vec();
@@ -566,21 +571,23 @@ fn parse_println_macro_to_function_call(mac: &syn::Macro) -> Result<Expr> {
                             kwargs: Vec::new(), // No named args for now
                         };
 
-                        return Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+                        return Ok(ExprIntrinsicCall::new(
                             IntrinsicCallKind::Println,
                             IntrinsicCallPayload::Format { template: format },
-                        )));
+                        )
+                        .into());
                     }
                 }
             }
 
             // Fallback to regular function call
-            Ok(Expr::Invoke(ExprInvoke {
+            Ok(ExprInvoke {
                 target: ExprInvokeTarget::expr(Expr::path(fp_core::id::Path::from(Ident::new(
                     "println",
                 )))),
                 args,
-            }))
+            }
+            .into())
         }
         Err(e) => {
             // Don't silently fallback - report the parsing error
@@ -757,17 +764,19 @@ fn parse_expr_break(b: syn::ExprBreak) -> Result<Expr> {
     } else {
         Vec::new()
     };
-    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    Ok(ExprIntrinsicCall::new(
         IntrinsicCallKind::Break,
         IntrinsicCallPayload::Args { args },
-    )))
+    )
+    .into())
 }
 
 fn parse_expr_continue() -> Result<Expr> {
-    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    Ok(ExprIntrinsicCall::new(
         IntrinsicCallKind::Continue,
         IntrinsicCallPayload::Args { args: Vec::new() },
-    )))
+    )
+    .into())
 }
 
 fn parse_expr_return(r: syn::ExprReturn) -> Result<Expr> {
@@ -777,10 +786,11 @@ fn parse_expr_return(r: syn::ExprReturn) -> Result<Expr> {
     } else {
         Vec::new()
     };
-    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    Ok(ExprIntrinsicCall::new(
         IntrinsicCallKind::Return,
         IntrinsicCallPayload::Args { args },
-    )))
+    )
+    .into())
 }
 
 /// Get metaprogramming intrinsic kind from macro name
@@ -810,10 +820,7 @@ fn get_metaprogramming_intrinsic(mac: &syn::Macro) -> Option<IntrinsicCallKind> 
 }
 
 /// Parse metaprogramming intrinsic macro
-fn parse_metaprogramming_intrinsic(
-    mac: &syn::Macro,
-    kind: IntrinsicCallKind,
-) -> Result<Expr> {
+fn parse_metaprogramming_intrinsic(mac: &syn::Macro, kind: IntrinsicCallKind) -> Result<Expr> {
     let tokens_str = mac.tokens.to_string();
 
     // Parse arguments
@@ -821,16 +828,21 @@ fn parse_metaprogramming_intrinsic(
         Vec::new()
     } else {
         let wrapped = format!("dummy({})", tokens_str);
-        let call: syn::ExprCall = syn::parse_str(&wrapped)
-            .map_err(|e| fp_core::diagnostics::report_error(format!("Failed to parse intrinsic arguments: {}", e)))?;
+        let call: syn::ExprCall = syn::parse_str(&wrapped).map_err(|e| {
+            fp_core::diagnostics::report_error(format!(
+                "Failed to parse intrinsic arguments: {}",
+                e
+            ))
+        })?;
         call.args
             .into_iter()
             .map(parse_expr)
             .collect::<Result<Vec<_>>>()?
     };
 
-    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+    Ok(ExprIntrinsicCall::new(
         kind,
         IntrinsicCallPayload::Args { args },
-    )))
+    )
+    .into())
 }

@@ -19,14 +19,13 @@ work captured in `specs/003-compile/tasks.md` (T027).
 
 ### Key Instrumentation Points
 
-| Stage            | Location                                           | Notes                                     |
-|------------------|----------------------------------------------------|-------------------------------------------|
-| Parsing          | `fp-cli/src/pipeline.rs:parse_source`              | Emits source path and module count        |
-| Type Inference   | `fp-cli/src/pipeline.rs:run_type_inference`        | Logs constraint solving time, result size |
-| Const Evaluation | `fp-cli/src/pipeline.rs:run_const_eval`            | Logs dependency graph and evaluation time |
-| HIR Projection   | `fp-optimize/src/transformations/ast_to_hir.rs`    | Span-preserving logs, TODO for modules    |
-| MIR/LIR          | `fp-optimize/src/transformations/{hir_to_mir,mir_to_lir}` | MIR builds the Rust-style SSA graph; logging yet minimal |
-| Backends         | `fp-llvm/src/codegen.rs`                           | Emits target triple, optimisation level   |
+| Stage            | Location                                             | Notes                                     |
+|------------------|------------------------------------------------------|-------------------------------------------|
+| Parsing          | `fp-cli/src/pipeline.rs:parse_source`                | Emits source path and module count        |
+| Type Enrichment  | `fp-cli/src/pipeline.rs:run_type_enrichment_stage`   | Logs typed AST cloning and HIR output     |
+| Const Evaluation | `fp-cli/src/pipeline.rs:run_const_eval_stage`        | Logs stubbed const-eval (AST focus)       |
+| HIR Emission     | `fp-optimize/src/transformations/ast_to_hir.rs`      | Span-preserving logs, TODO for modules    |
+| Future Backends  | _pending rewrite_                                    | MIR/LIR/LLVM hooks will return once ready |
 
 ## Tracing Roadmap (T027)
 

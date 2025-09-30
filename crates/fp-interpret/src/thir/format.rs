@@ -83,7 +83,10 @@ fn infer_printf_spec(ty: &Ty) -> String {
             }
             // Check if inner is a slice of i8/u8 (another string representation)
             if let TyKind::Slice(slice_ty) = &inner_ty.kind {
-                if matches!(slice_ty.kind, TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8)) {
+                if matches!(
+                    slice_ty.kind,
+                    TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8)
+                ) {
                     return "%s".to_string();
                 }
             }

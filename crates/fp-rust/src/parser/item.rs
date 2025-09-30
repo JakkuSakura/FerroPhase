@@ -144,20 +144,24 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
                 sig: m.sig,
                 block: Box::new(m.block),
             })?;
-            Ok(Item::DefFunction(ItemDefFunction {
+            Ok(ItemKind::DefFunction(ItemDefFunction {
+                ty_annotation: None,
                 attrs,
                 name: func.name.clone().unwrap(),
                 ty: None,
                 sig: func.sig,
                 body: func.body,
                 visibility: parse_vis(m.vis),
-            }))
+            })
+            .into())
         }
-        syn::ImplItem::Type(t) => Ok(Item::DefType(ItemDefType {
+        syn::ImplItem::Type(t) => Ok(ItemKind::DefType(ItemDefType {
             name: parse_ident(t.ident),
             value: parse_type(t.ty)?,
             visibility: parse_vis(t.vis),
-        })),
+            ty_annotation: None,
+        })
+        .into()),
         _ => bail!("Does not support impl item {:?}", item),
     }
 }
@@ -166,6 +170,7 @@ fn parse_item_static(s: syn::ItemStatic) -> Result<ItemDefStatic> {
     let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?.into();
     Ok(ItemDefStatic {
+        ty_annotation: None,
         name: parse_ident(s.ident),
         ty,
         value,
@@ -177,6 +182,7 @@ fn parse_item_const(s: syn::ItemConst) -> Result<ItemDefConst> {
     let ty = parse_type(*s.ty)?;
     let value = parse_expr(*s.expr)?.into();
     Ok(ItemDefConst {
+        ty_annotation: None,
         name: parse_ident(s.ident),
         ty: ty.into(),
         value,
@@ -228,6 +234,7 @@ fn parse_item_fn(f: syn::ItemFn) -> Result<ItemDefFunction> {
     let attrs = parse_attrs(f.attrs.clone())?;
     let f = parse_value_fn(f)?;
     let d = ItemDefFunction {
+        ty_annotation: None,
         attrs,
         name: f.name.clone().unwrap(),
         ty: None,
@@ -241,45 +248,47 @@ pub fn parse_item(item: syn::Item) -> Result<Item> {
     let item = match item {
         syn::Item::Fn(f0) => {
             let f = parse_item_fn(f0)?;
-            Item::DefFunction(f)
+            ItemKind::DefFunction(f).into()
         }
-        syn::Item::Impl(im) => Item::Impl(parse_item_impl(im)?),
-        syn::Item::Use(u) => Item::Import(parse_use(u)?),
+        syn::Item::Impl(im) => ItemKind::Impl(parse_item_impl(im)?).into(),
+        syn::Item::Use(u) => ItemKind::Import(parse_use(u)?).into(),
         syn::Item::Macro(m) => Item::any(RawItemMacro { raw: m }),
         syn::Item::Struct(s) => {
             let s = parse_type_struct(s)?;
-            Item::DefStruct(ItemDefStruct {
+            ItemKind::DefStruct(ItemDefStruct {
                 name: s.name.clone(),
                 value: s,
                 visibility: Visibility::Private,
             })
+            .into()
         }
         syn::Item::Enum(e) => {
             let e = parse_item_enum(e)?;
-            Item::DefEnum(e)
+            ItemKind::DefEnum(e).into()
         }
         syn::Item::Type(t) => {
             let visibility = parse_vis(t.vis.clone());
             let ty = parse_type(*t.ty)?;
-            Item::DefType(ItemDefType {
+            ItemKind::DefType(ItemDefType {
                 name: parse_ident(t.ident),
                 value: ty,
                 visibility,
             })
+            .into()
         }
-        syn::Item::Mod(m) => Item::Module(parser::parse_module(m)?),
+        syn::Item::Mod(m) => ItemKind::Module(parser::parse_module(m)?).into(),
         syn::Item::Trait(t) => {
             let trait_ = parse_item_trait(t)?;
-            Item::DefTrait(trait_)
+            ItemKind::DefTrait(trait_).into()
         }
 
         syn::Item::Const(s) => {
             let s = parse_item_const(s)?;
-            Item::DefConst(s)
+            ItemKind::DefConst(s).into()
         }
         syn::Item::Static(s) => {
             let s = parse_item_static(s)?;
-            Item::DefStatic(s)
+            ItemKind::DefStatic(s).into()
         }
         _ => bail!("Does not support item yet: {:?}", item),
     };
@@ -296,6 +305,7 @@ pub fn parse_trait_item(f: syn::TraitItem) -> Result<Item> {
         syn::TraitItem::Fn(f) => {
             let name = parse_ident(f.sig.ident.clone());
             Ok(ItemDeclFunction {
+                ty_annotation: None,
                 name,
                 sig: parse_fn_sig(f.sig)?,
             }
@@ -304,12 +314,22 @@ pub fn parse_trait_item(f: syn::TraitItem) -> Result<Item> {
         syn::TraitItem::Type(t) => {
             let name = parse_ident(t.ident);
             let bounds = parse_type_param_bounds(t.bounds.into_iter().collect())?;
-            Ok(ItemDeclType { name, bounds }.into())
+            Ok(ItemDeclType {
+                ty_annotation: None,
+                name,
+                bounds,
+            }
+            .into())
         }
         syn::TraitItem::Const(c) => {
             let name = parse_ident(c.ident);
             let ty = parse_type(c.ty)?;
-            Ok(ItemDeclConst { name, ty }.into())
+            Ok(ItemDeclConst {
+                ty_annotation: None,
+                name,
+                ty,
+            }
+            .into())
         }
         _ => bail!("Does not support trait item {:?}", f),
     }

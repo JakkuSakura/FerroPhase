@@ -362,10 +362,10 @@ impl RustPrinter {
         Ok(quote!(#items))
     }
     pub fn print_node(&self, node: &Node) -> fp_core::Result<TokenStream> {
-        match node {
-            Node::Item(n) => self.print_item(n),
-            Node::Expr(n) => self.print_expr(n),
-            Node::File(n) => self.print_file(n),
+        match node.kind() {
+            NodeKind::Item(n) => self.print_item(n),
+            NodeKind::Expr(n) => self.print_expr(n),
+            NodeKind::File(n) => self.print_file(n),
         }
     }
 }
