@@ -1,0 +1,58 @@
+hir::Program {
+    fn main() -> () {
+        {
+            struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+            struct Color {
+                pub r: u8,
+                pub g: u8,
+                pub b: u8,
+            }
+            const POINT_SIZE: usize =
+                false;
+            const COLOR_SIZE: usize =
+                false;
+            const POINT_FIELDS: usize =
+                false;
+            const COLOR_FIELDS: usize =
+                false;
+            const POINT_HAS_X: bool =
+                false;
+            const POINT_HAS_Z: bool =
+                false;
+            const POINT_METHODS: usize =
+                false;
+            const COLOR_METHODS: usize =
+                false;
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
+            std::Println(0 args);
+            const POINT_SIZE_CONST: usize =
+                false;
+            const COLOR_SIZE_CONST: usize =
+                false;
+            const TOTAL_SIZE: usize =
+                (POINT_SIZE_CONST + COLOR_SIZE_CONST);
+            let origin = Point { x: 0, y: 0 };
+            let red = Color { r: 255, g: 0, b: 0 };
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
+            std::Println(2 args);
+            std::Println(3 args);
+            std::Println(0 args);
+        }
+    }
+}

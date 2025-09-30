@@ -145,6 +145,7 @@ pub struct IntrinsicResolver {
 }
 
 pub mod calls;
+
 pub use calls::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 
 impl IntrinsicResolver {

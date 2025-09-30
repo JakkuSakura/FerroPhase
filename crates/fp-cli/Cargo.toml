@@ -10,6 +10,7 @@ path = "src/bin/fp.rs"
 [dependencies]
 # Core FerroPhase crates
 fp-core = { path = "../fp-core" }
+fp-interpret = { path = "../fp-interpret" }
 fp-optimize = { path = "../fp-optimize" }
 fp-rust = { path = "../fp-rust" }
 fp-javascript = { path = "../fp-javascript" }
