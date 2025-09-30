@@ -144,6 +144,9 @@ pub fn intrinsic_sizeof() -> IntrinsicFunction {
             )));
         }
 
+        // Debug: print what we received
+        eprintln!("[DEBUG sizeof!] Received argument: {:?}", &args[0]);
+
         match &args[0] {
             Value::Type(ast_type) => {
                 let size = match ast_type {

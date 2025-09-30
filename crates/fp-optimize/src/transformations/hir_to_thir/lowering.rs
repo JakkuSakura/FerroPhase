@@ -442,7 +442,35 @@ impl ThirGenerator {
                         return Err(crate::error::optimization_error(format!(
                             "unexpected control flow intrinsic {:?} in HIR",
                             call.kind
-                        )));
+                        )))
+                    }
+                    // Metaprogramming intrinsics - return appropriate types
+                    IntrinsicCallKind::SizeOf
+                    | IntrinsicCallKind::FieldCount
+                    | IntrinsicCallKind::MethodCount
+                    | IntrinsicCallKind::StructSize => self.create_usize_type(),
+                    IntrinsicCallKind::HasField
+                    | IntrinsicCallKind::HasMethod => self.create_bool_type(),
+                    IntrinsicCallKind::TypeName => self.create_string_type(),
+                    IntrinsicCallKind::ReflectFields => {
+                        // Returns a list of field descriptors
+                        self.create_unit_type()
+                    }
+                    IntrinsicCallKind::CreateStruct
+                    | IntrinsicCallKind::CloneStruct
+                    | IntrinsicCallKind::AddField
+                    | IntrinsicCallKind::FieldType => {
+                        // Returns a type
+                        self.create_unit_type()
+                    }
+                    IntrinsicCallKind::GenerateMethod => self.create_unit_type(),
+                    IntrinsicCallKind::CompileError => {
+                        // Never returns - but for typing purposes, use never
+                        self.create_never_type()
+                    }
+                    IntrinsicCallKind::CompileWarning => {
+                        // Returns unit after printing warning
+                        self.create_unit_type()
                     }
                 };
 
