@@ -1,8 +1,10 @@
 thir::Program {
     items:
-        fn main::main() -> <??> [body: body0] : <??>
+        fn main::main() -> () [body: body0] : <??>
+
+        fn check_value::check_value(arg0: i64) -> <??> [body: body1] : <??>
     bodies:
-        body0 (params: 0, locals: 9) {
+        body0 (params: 0, locals: 13) {
             locals:
                 _0: i64
                 _1: <??>
@@ -13,6 +15,17 @@ thir::Program {
                 _6: <??>
                 _7: i64
                 _8: <??>
-            value: block(13 stmts) : ()
+                _9: i64
+                _10: i64
+                _11: i64
+                _12: <??>
+            value: block(22 stmts) : ()
+        }
+        body1 (params: 1, locals: 1) {
+            params:
+                x: i64
+            locals:
+                _0: i64
+            value: block(4 stmts) : <??>
         }
 }

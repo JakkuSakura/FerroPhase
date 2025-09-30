@@ -186,7 +186,10 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         }
         IntrinsicCallKind::ConstBlock
         | IntrinsicCallKind::DebugAssertions
-        | IntrinsicCallKind::Input => None,
+        | IntrinsicCallKind::Input
+        | IntrinsicCallKind::Break
+        | IntrinsicCallKind::Continue
+        | IntrinsicCallKind::Return => None,
     }
 }
 

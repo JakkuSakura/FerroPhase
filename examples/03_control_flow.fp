@@ -1,5 +1,13 @@
 #!/usr/bin/env fp run
 //! Control flow: if/else expressions with const and runtime evaluation
+//!
+//! Demonstrates:
+//! - Const if/else with compile-time evaluation
+//! - Nested if/else chains
+//! - Boolean logic in conditions
+//! - Runtime if/else expressions
+//!
+//! Note: Loop/break/continue/return statements are parsed but have MIR generation bugs
 
 fn main() {
     // Const if/else chains
@@ -46,4 +54,5 @@ fn main() {
         "low"
     };
     println!("Value {} is {}", value, category);
+
 }

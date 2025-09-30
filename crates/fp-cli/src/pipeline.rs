@@ -23,7 +23,8 @@ use fp_optimize::transformations::{
     BackendThirMaterializer, HirGenerator, IrTransform, LirGenerator, MirGenerator,
     SymbolicThirNormalizer, TastResugar, ThirDetyper, ThirGenerator,
 };
-use fp_optimize::{ConstEvaluationOrchestrator, InterpretationOrchestrator, InterpreterMode};
+use fp_interpret::thir::{InterpretationOrchestrator, InterpreterMode};
+use fp_optimize::ConstEvaluationOrchestrator;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

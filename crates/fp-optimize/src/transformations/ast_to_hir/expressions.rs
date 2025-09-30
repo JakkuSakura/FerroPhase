@@ -611,7 +611,35 @@ impl HirGenerator {
         &mut self,
         call: &ast::ExprIntrinsicCall,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::IntrinsicCallPayload;
+        use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+
+        // Handle control flow intrinsics specially
+        match call.kind {
+            IntrinsicCallKind::Break => {
+                if let IntrinsicCallPayload::Args { args } = &call.payload {
+                    let value = if args.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(self.transform_expr_to_hir(&args[0])?))
+                    };
+                    return Ok(hir::ExprKind::Break(value));
+                }
+            }
+            IntrinsicCallKind::Continue => {
+                return Ok(hir::ExprKind::Continue);
+            }
+            IntrinsicCallKind::Return => {
+                if let IntrinsicCallPayload::Args { args } = &call.payload {
+                    let value = if args.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(self.transform_expr_to_hir(&args[0])?))
+                    };
+                    return Ok(hir::ExprKind::Return(value));
+                }
+            }
+            _ => {}
+        }
 
         let payload = match &call.payload {
             IntrinsicCallPayload::Format { template } => {
