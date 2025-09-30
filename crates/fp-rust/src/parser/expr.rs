@@ -385,6 +385,11 @@ pub fn parse_expr_macro(m: syn::ExprMacro) -> Result<Expr> {
         return parse_fp_macro(&m.mac);
     }
 
+    // Check if this is a metaprogramming intrinsic
+    if let Some(intrinsic_kind) = get_metaprogramming_intrinsic(&m.mac) {
+        return parse_metaprogramming_intrinsic(&m.mac, intrinsic_kind);
+    }
+
     // For other macros, preserve the original behavior
     Ok(Expr::any(RawExprMacro { raw: m }))
 }
@@ -774,6 +779,58 @@ fn parse_expr_return(r: syn::ExprReturn) -> Result<Expr> {
     };
     Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
         IntrinsicCallKind::Return,
+        IntrinsicCallPayload::Args { args },
+    )))
+}
+
+/// Get metaprogramming intrinsic kind from macro name
+fn get_metaprogramming_intrinsic(mac: &syn::Macro) -> Option<IntrinsicCallKind> {
+    if mac.path.segments.len() != 1 {
+        return None;
+    }
+    let name = mac.path.segments[0].ident.to_string();
+    match name.as_str() {
+        "sizeof" => Some(IntrinsicCallKind::SizeOf),
+        "reflect_fields" => Some(IntrinsicCallKind::ReflectFields),
+        "hasmethod" => Some(IntrinsicCallKind::HasMethod),
+        "type_name" => Some(IntrinsicCallKind::TypeName),
+        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
+        "clone_struct" => Some(IntrinsicCallKind::CloneStruct),
+        "addfield" => Some(IntrinsicCallKind::AddField),
+        "hasfield" => Some(IntrinsicCallKind::HasField),
+        "field_count" => Some(IntrinsicCallKind::FieldCount),
+        "method_count" => Some(IntrinsicCallKind::MethodCount),
+        "field_type" => Some(IntrinsicCallKind::FieldType),
+        "struct_size" => Some(IntrinsicCallKind::StructSize),
+        "generate_method" => Some(IntrinsicCallKind::GenerateMethod),
+        "compile_error" => Some(IntrinsicCallKind::CompileError),
+        "compile_warning" => Some(IntrinsicCallKind::CompileWarning),
+        _ => None,
+    }
+}
+
+/// Parse metaprogramming intrinsic macro
+fn parse_metaprogramming_intrinsic(
+    mac: &syn::Macro,
+    kind: IntrinsicCallKind,
+) -> Result<Expr> {
+    let tokens_str = mac.tokens.to_string();
+
+    // Parse arguments
+    let args = if tokens_str.trim().is_empty() {
+        Vec::new()
+    } else {
+        let wrapped = format!("dummy({})", tokens_str);
+        let call: syn::ExprCall = syn::parse_str(&wrapped)
+            .map_err(|e| fp_core::diagnostics::report_error(format!("Failed to parse intrinsic arguments: {}", e)))?;
+        call.args
+            .into_iter()
+            .map(parse_expr)
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    Ok(Expr::IntrinsicCall(ExprIntrinsicCall::new(
+        kind,
         IntrinsicCallPayload::Args { args },
     )))
 }

@@ -21,6 +21,38 @@ pub enum IntrinsicCallKind {
     Continue,
     /// Early return from function with optional value.
     Return,
+
+    // Metaprogramming intrinsics
+    /// `sizeof!` - get size of a type in bytes
+    SizeOf,
+    /// `reflect_fields!` - get field information of a struct
+    ReflectFields,
+    /// `hasmethod!` - check if a type has a specific method
+    HasMethod,
+    /// `type_name!` - get the name of a type as a string
+    TypeName,
+    /// `create_struct!` - create a new struct type dynamically
+    CreateStruct,
+    /// `clone_struct!` - clone an existing struct type
+    CloneStruct,
+    /// `addfield!` - add a field to a struct type
+    AddField,
+    /// `hasfield!` - check if a struct has a specific field
+    HasField,
+    /// `field_count!` - get the number of fields in a struct
+    FieldCount,
+    /// `method_count!` - get the number of methods in a struct
+    MethodCount,
+    /// `field_type!` - get the type of a specific field
+    FieldType,
+    /// `struct_size!` - get the size of a struct in bytes
+    StructSize,
+    /// `generate_method!` - generate a method for a type
+    GenerateMethod,
+    /// `compile_error!` - generate a compile-time error
+    CompileError,
+    /// `compile_warning!` - generate a compile-time warning
+    CompileWarning,
 }
 
 /// Wrapper that carries the intrinsic kind plus stage-specific payload.

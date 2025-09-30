@@ -189,7 +189,22 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::Input
         | IntrinsicCallKind::Break
         | IntrinsicCallKind::Continue
-        | IntrinsicCallKind::Return => None,
+        | IntrinsicCallKind::Return
+        | IntrinsicCallKind::SizeOf
+        | IntrinsicCallKind::ReflectFields
+        | IntrinsicCallKind::HasMethod
+        | IntrinsicCallKind::TypeName
+        | IntrinsicCallKind::CreateStruct
+        | IntrinsicCallKind::CloneStruct
+        | IntrinsicCallKind::AddField
+        | IntrinsicCallKind::HasField
+        | IntrinsicCallKind::FieldCount
+        | IntrinsicCallKind::MethodCount
+        | IntrinsicCallKind::FieldType
+        | IntrinsicCallKind::StructSize
+        | IntrinsicCallKind::GenerateMethod
+        | IntrinsicCallKind::CompileError
+        | IntrinsicCallKind::CompileWarning => None,
     }
 }
 

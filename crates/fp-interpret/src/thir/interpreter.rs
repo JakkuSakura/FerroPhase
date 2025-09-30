@@ -51,6 +51,22 @@ enum IntrinsicKind {
     Print { newline: bool },
     StrLen,
     Concat,
+    // Metaprogramming intrinsics
+    SizeOf,
+    ReflectFields,
+    HasMethod,
+    TypeName,
+    CreateStruct,
+    CloneStruct,
+    AddField,
+    HasField,
+    FieldCount,
+    MethodCount,
+    FieldType,
+    StructSize,
+    GenerateMethod,
+    CompileError,
+    CompileWarning,
 }
 
 impl IntrinsicRegistry {
@@ -68,6 +84,24 @@ impl IntrinsicRegistry {
         registry.register_strlen("strlen!");
         registry.register_concat("concat");
         registry.register_concat("concat!");
+
+        // Register metaprogramming intrinsics
+        registry.entries.insert("sizeof!".into(), IntrinsicKind::SizeOf);
+        registry.entries.insert("reflect_fields!".into(), IntrinsicKind::ReflectFields);
+        registry.entries.insert("hasmethod!".into(), IntrinsicKind::HasMethod);
+        registry.entries.insert("type_name!".into(), IntrinsicKind::TypeName);
+        registry.entries.insert("create_struct!".into(), IntrinsicKind::CreateStruct);
+        registry.entries.insert("clone_struct!".into(), IntrinsicKind::CloneStruct);
+        registry.entries.insert("addfield!".into(), IntrinsicKind::AddField);
+        registry.entries.insert("hasfield!".into(), IntrinsicKind::HasField);
+        registry.entries.insert("field_count!".into(), IntrinsicKind::FieldCount);
+        registry.entries.insert("method_count!".into(), IntrinsicKind::MethodCount);
+        registry.entries.insert("field_type!".into(), IntrinsicKind::FieldType);
+        registry.entries.insert("struct_size!".into(), IntrinsicKind::StructSize);
+        registry.entries.insert("generate_method!".into(), IntrinsicKind::GenerateMethod);
+        registry.entries.insert("compile_error!".into(), IntrinsicKind::CompileError);
+        registry.entries.insert("compile_warning!".into(), IntrinsicKind::CompileWarning);
+
         registry
     }
 
@@ -103,6 +137,52 @@ impl IntrinsicRegistry {
             Some(IntrinsicKind::Concat) => {
                 let value = interpreter.perform_concat(args)?;
                 Ok(Some(value))
+            }
+            // Metaprogramming intrinsics - delegate to functions from intrinsics module
+            Some(IntrinsicKind::SizeOf) => {
+                Ok(Some(crate::intrinsics::intrinsic_sizeof().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::ReflectFields) => {
+                Ok(Some(crate::intrinsics::intrinsic_reflect_fields().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::HasMethod) => {
+                Ok(Some(crate::intrinsics::intrinsic_hasmethod().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::TypeName) => {
+                Ok(Some(crate::intrinsics::intrinsic_type_name().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::CreateStruct) => {
+                Ok(Some(crate::intrinsics::intrinsic_create_struct().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::CloneStruct) => {
+                Ok(Some(crate::intrinsics::intrinsic_clone_struct().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::AddField) => {
+                Ok(Some(crate::intrinsics::intrinsic_addfield().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::HasField) => {
+                Ok(Some(crate::intrinsics::intrinsic_hasfield().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::FieldCount) => {
+                Ok(Some(crate::intrinsics::intrinsic_field_count().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::MethodCount) => {
+                Ok(Some(crate::intrinsics::intrinsic_method_count().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::FieldType) => {
+                Ok(Some(crate::intrinsics::intrinsic_field_type().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::StructSize) => {
+                Ok(Some(crate::intrinsics::intrinsic_struct_size().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::GenerateMethod) => {
+                Ok(Some(crate::intrinsics::intrinsic_generate_method().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::CompileError) => {
+                Ok(Some(crate::intrinsics::intrinsic_compile_error().call(args, ctx)?))
+            }
+            Some(IntrinsicKind::CompileWarning) => {
+                Ok(Some(crate::intrinsics::intrinsic_compile_warning().call(args, ctx)?))
             }
             None => Ok(None),
         }
@@ -285,16 +365,46 @@ impl InterpretationOrchestrator {
                 .ok_or_else(|| interpretation_error(format!("Missing local binding {:?}", local_id))),
             EK::Path(item_ref) => {
                 if let Some(def_id) = item_ref.def_id {
-                    const_values
-                        .get(&def_id)
-                        .cloned()
-                        .map(EvalFlow::Value)
-                        .ok_or_else(|| {
-                            interpretation_error(format!(
-                                "Const {:?} referenced before evaluation",
-                                item_ref.name
-                            ))
-                        })
+                    // First check if it's a const value
+                    if let Some(value) = const_values.get(&def_id).cloned() {
+                        return Ok(EvalFlow::Value(value));
+                    }
+
+                    // Check if it's a type definition (struct, enum, etc.)
+                    // For now, create a simple type representation with field count
+                    for item in &program.items {
+                        match &item.kind {
+                            thir::ItemKind::Struct(struct_item) => {
+                                // Check if this item's type matches our def_id
+                                if let fp_core::hir::ty::TyKind::Adt(adt_def, _) = &item.ty.kind {
+                                    if adt_def.did == def_id {
+                                        // Extract field information from THIR struct
+                                        let field_count = struct_item.fields.len();
+
+                                        // Create a minimal AST struct representation
+                                        // We'll use the item's thir_id as a simple name
+                                        let type_struct = fp_core::ast::TypeStruct {
+                                            name: fp_core::id::Ident::new(format!("Struct_{:?}", def_id)),
+                                            fields: (0..field_count).map(|i| {
+                                                fp_core::ast::StructuralField {
+                                                    name: fp_core::id::Ident::new(format!("field_{}", i)),
+                                                    value: fp_core::ast::Ty::Expr(Box::new(fp_core::ast::Expr::unit())),
+                                                }
+                                            }).collect(),
+                                        };
+                                        return Ok(EvalFlow::Value(Value::Type(fp_core::ast::Ty::Struct(type_struct))));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // If not found, it's an error
+                    Err(interpretation_error(format!(
+                        "Path {:?} with def_id {:?} not found in const values or type definitions",
+                        item_ref.name, def_id
+                    )))
                 } else {
                     Err(interpretation_error(format!(
                         "Unsupported path without def_id: {}",
@@ -517,6 +627,72 @@ impl InterpretationOrchestrator {
                             "unexpected control flow intrinsic {:?} during interpretation",
                             call.kind
                         )));
+                    }
+                    // Metaprogramming intrinsics - handled by const evaluation
+                    IntrinsicCallKind::SizeOf
+                    | IntrinsicCallKind::ReflectFields
+                    | IntrinsicCallKind::HasMethod
+                    | IntrinsicCallKind::TypeName
+                    | IntrinsicCallKind::CreateStruct
+                    | IntrinsicCallKind::CloneStruct
+                    | IntrinsicCallKind::AddField
+                    | IntrinsicCallKind::HasField
+                    | IntrinsicCallKind::FieldCount
+                    | IntrinsicCallKind::MethodCount
+                    | IntrinsicCallKind::FieldType
+                    | IntrinsicCallKind::StructSize
+                    | IntrinsicCallKind::GenerateMethod
+                    | IntrinsicCallKind::CompileError
+                    | IntrinsicCallKind::CompileWarning => {
+                        // Evaluate metaprogramming intrinsics
+                        let args = match &call.payload {
+                            IntrinsicCallPayload::Args { args } => args,
+                            _ => {
+                                return Err(interpretation_error(
+                                    "metaprogramming intrinsics require Args payload",
+                                ))
+                            }
+                        };
+
+                        let mut evaluated_args = Vec::with_capacity(args.len());
+                        for arg in args {
+                            let value = propagate_flow!(self.evaluate_expr(
+                                arg,
+                                program,
+                                ctx,
+                                locals,
+                                const_values,
+                            )?);
+                            evaluated_args.push(value);
+                        }
+
+                        // Get intrinsic name
+                        let intrinsic_name = match call.kind {
+                            IntrinsicCallKind::SizeOf => "sizeof!",
+                            IntrinsicCallKind::ReflectFields => "reflect_fields!",
+                            IntrinsicCallKind::HasMethod => "hasmethod!",
+                            IntrinsicCallKind::TypeName => "type_name!",
+                            IntrinsicCallKind::CreateStruct => "create_struct!",
+                            IntrinsicCallKind::CloneStruct => "clone_struct!",
+                            IntrinsicCallKind::AddField => "addfield!",
+                            IntrinsicCallKind::HasField => "hasfield!",
+                            IntrinsicCallKind::FieldCount => "field_count!",
+                            IntrinsicCallKind::MethodCount => "method_count!",
+                            IntrinsicCallKind::FieldType => "field_type!",
+                            IntrinsicCallKind::StructSize => "struct_size!",
+                            IntrinsicCallKind::GenerateMethod => "generate_method!",
+                            IntrinsicCallKind::CompileError => "compile_error!",
+                            IntrinsicCallKind::CompileWarning => "compile_warning!",
+                            _ => unreachable!(),
+                        };
+
+                        // Invoke the intrinsic
+                        let result = self.invoke_intrinsic(intrinsic_name, &evaluated_args, ctx)?
+                            .ok_or_else(|| interpretation_error(format!(
+                                "intrinsic '{}' returned None",
+                                intrinsic_name
+                            )))?;
+                        Ok(EvalFlow::Value(result))
                     }
                 }
             }
