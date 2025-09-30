@@ -30,7 +30,7 @@ done
 | Example | Focus | Demonstrates |
 |---------|-------|--------------|
 | `01_const_eval_basics.fp` | Const evaluation essentials | Arithmetic, branching, struct defaults |
-| `02_string_processing.fp` | Compile-time strings | Concatenation, search, formatting |
+| `02_string_processing.fp` | String metrics placeholder | Length math, separator flags |
 | `03_control_flow.fp` | Control-flow tour | Nested `if`, boolean logic, numeric guards |
 | `04_struct_introspection.fp` | Type analysis | `sizeof!`, `field_count!`, `hasfield!` |
 | `05_struct_generation.fp` | Config-driven structs | const toggles feeding generated defaults |
@@ -40,6 +40,10 @@ done
 | `09_metaprogramming_patterns.fp` | Code-generation patterns | Schema-driven structs, protocol enums |
 | `10_transpile_structs.fp` | Transpilation demo | Type reflection feeding external targets |
 | `11_print_showcase.fp` | Unified printing demo | Variadic `print`, namespace calls, runtime formatting |
+| `12_specialization_basics.fp` | Function specialization | Function composition, inlining, compile-time specialization |
+| `13_higher_order_placeholders.fp` | Higher-order functions | Generic operations, passing functions as arguments |
+| `14_const_branching.fp` | Constant branching | Compile-time evaluation with conditional branching |
+| `15_type_arithmetic.fp` | Type arithmetic | Struct composition using type-level + operator |
 
 The auxiliary files (`rust_structs.*`, `transpile_example.*`) are kept alongside the examples because they serve as transpilation targets for `10_transpile_structs.fp`.
 
