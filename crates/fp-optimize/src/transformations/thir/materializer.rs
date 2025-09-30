@@ -1,4 +1,3 @@
-use super::backends;
 use fp_core::hir::typed::ty::{IntTy, Mutability, Ty, TyKind, TypeAndMut, UintTy};
 use fp_core::hir::typed::{self as thir, Block, ExprKind, Stmt, StmtKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload, IntrinsicMaterializer};
