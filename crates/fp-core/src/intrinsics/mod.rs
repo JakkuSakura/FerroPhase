@@ -18,8 +18,42 @@ pub use catalog::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StdIntrinsic {
+    // I/O
     IoPrintln,
     IoPrint,
+    IoEprint,
+    IoEprintln,
+
+    // Memory allocation
+    AllocAlloc,
+    AllocDealloc,
+    AllocRealloc,
+
+    // Math - f64
+    F64Sin,
+    F64Cos,
+    F64Tan,
+    F64Sqrt,
+    F64Pow,
+    F64Log,
+    F64Exp,
+
+    // Math - f32
+    F32Sin,
+    F32Cos,
+    F32Tan,
+    F32Sqrt,
+    F32Pow,
+    F32Log,
+    F32Exp,
+
+    // String operations
+    StrLen,
+    StrCmp,
+
+    // Process control
+    ProcessExit,
+    ProcessAbort,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -161,4 +195,29 @@ pub fn default_resolver() -> &'static IntrinsicResolver {
 
 pub fn identify_symbol(symbol: &str) -> Option<IntrinsicKind> {
     catalog::lookup_spec(symbol).map(|spec| spec.kind)
+}
+
+/// Result of materializing a print intrinsic
+pub struct MaterializedPrint {
+    pub format_literal: String,
+    pub printf_function_name: String,
+}
+
+/// Trait for backend-specific THIR intrinsic materialization.
+///
+/// Each backend implements this trait to define how intrinsic calls are transformed
+/// at the THIR level into backend-specific representations.
+pub trait IntrinsicMaterializer: Send + Sync {
+    /// Prepare materialization data for a print/println intrinsic call.
+    ///
+    /// Returns `Some(data)` if this backend handles print/println at THIR level,
+    /// or `None` to keep the intrinsic call for later backend-specific handling.
+    fn prepare_print(
+        &self,
+        kind: calls::IntrinsicCallKind,
+        template: &crate::hir::typed::FormatString,
+    ) -> Option<MaterializedPrint>;
+
+    /// Check if this materializer handles the given intrinsic kind at THIR level.
+    fn can_materialize(&self, kind: calls::IntrinsicCallKind) -> bool;
 }
