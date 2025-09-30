@@ -1,8 +1,8 @@
 # FerroPhase Examples
 
-All example programs now live directly in this directory with sequential numeric prefixes. Each file carries a documentation header and a shebang so it can be run either directly or through the CLI.
+All example programs live in this directory with sequential numeric prefixes. Each file carries a documentation header and shebang so it can be run directly or through the CLI.
 
-## Running Samples
+## Running Examples
 
 ```bash
 # Make executable (one-time)
@@ -15,36 +15,41 @@ chmod +x examples/01_const_eval_basics.fp
 fp run examples/01_const_eval_basics.fp
 ```
 
-To iterate through the full catalog:
-
-```bash
-for example in examples/[0-9][0-9]_*.fp; do
-    echo "Running $example..."
-    "$example"
-    echo
-done
-```
-
 ## Catalog Overview
+
+### Core Language Features
 
 | Example | Focus | Demonstrates |
 |---------|-------|--------------|
-| `01_const_eval_basics.fp` | Const evaluation essentials | Arithmetic, branching, struct defaults |
-| `02_string_processing.fp` | String metrics placeholder | Length math, separator flags |
-| `03_control_flow.fp` | Control-flow tour | Nested `if`, boolean logic, numeric guards |
-| `04_struct_introspection.fp` | Type analysis | `sizeof!`, `field_count!`, `hasfield!` |
-| `05_struct_generation.fp` | Config-driven structs | const toggles feeding generated defaults |
-| `06_struct_methods.fp` | Struct behaviour | `impl` blocks, method receivers, runtime math |
-| `07_compile_time_validation.fp` | Static validation | Custom diagnostics, constraint checking |
-| `08_error_tolerance.fp` | Error aggregation | Multiple diagnostics without aborting evaluation |
-| `09_metaprogramming_patterns.fp` | Code-generation patterns | Schema-driven structs, protocol enums |
-| `10_transpile_structs.fp` | Transpilation demo | Type reflection feeding external targets |
-| `11_print_showcase.fp` | Unified printing demo | Variadic `print`, namespace calls, runtime formatting |
-| `12_specialization_basics.fp` | Function specialization | Function composition, inlining, compile-time specialization |
-| `13_higher_order_placeholders.fp` | Higher-order functions | Generic operations, passing functions as arguments |
-| `14_const_branching.fp` | Constant branching | Compile-time evaluation with conditional branching |
-| `15_type_arithmetic.fp` | Type arithmetic | Struct composition using type-level + operator |
+| `01_const_eval_basics.fp` | Const evaluation | Arithmetic, const blocks, struct defaults |
+| `02_string_processing.fp` | String processing (future) | Placeholder for string intrinsics |
+| `03_control_flow.fp` | Control flow | Nested if/else, boolean logic, guards |
+| `04_struct_introspection.fp` | Type introspection | `sizeof!`, `field_count!`, `hasfield!`, transpilation |
+| `05_struct_generation.fp` | Config-driven structs | Const toggles, conditional defaults |
+| `06_struct_methods.fp` | Struct methods | `impl` blocks, methods, field access |
 
-The auxiliary files (`rust_structs.*`, `transpile_example.*`) are kept alongside the examples because they serve as transpilation targets for `10_transpile_structs.fp`.
+### Advanced Features
+
+| Example | Focus | Demonstrates |
+|---------|-------|--------------|
+| `07_compile_time_validation.fp` | Static validation | Constraints, size checks, introspection |
+| `08_error_tolerance.fp` | Error handling | Multiple diagnostics without abort |
+| `09_metaprogramming_patterns.fp` | Code generation | Schema-driven structs, protocol enums |
+| `10_higher_order_functions.fp` | Higher-order functions | Function passing, generics, composition |
+| `11_print_showcase.fp` | Printing | Variadic `print`, formatting |
+| `12_specialization_basics.fp` | Function specialization | Inlining, optimization, monomorphization |
+
+### Type System
+
+| Example | Focus | Demonstrates |
+|---------|-------|--------------|
+| `13_pattern_matching.fp` | Pattern matching | `match`, guards, destructuring |
+| `14_loops.fp` | Loops | `while`, `for`, `loop`, break, continue |
+| `15_type_arithmetic.fp` | Type arithmetic (future) | Type-level operations, struct composition |
+| `16_enums.fp` | Enums | Unit, tuple, struct variants, discriminants |
+| `17_traits.fp` | Traits | Trait bounds, default methods, impl |
+| `18_generics.fp` | Generics | Type parameters, monomorphization |
+
+**Note:** Examples marked "(future)" are placeholders for upcoming features.
 
 See `docs/ConstEval.md` for background on the showcased features.

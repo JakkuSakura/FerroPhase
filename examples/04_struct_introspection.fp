@@ -37,4 +37,27 @@ fn main() {
     println!("Color methods: {}", method_count!(Color));
     
     println!("\n✓ Introspection completed!");
+
+    // Transpilation example - using introspection for code generation
+    println!("\n=== Transpilation Demo ===");
+
+    // Const evaluation for transpilation targets
+    const POINT_SIZE_CONST: usize = sizeof!(Point);
+    const COLOR_SIZE_CONST: usize = sizeof!(Color);
+    const TOTAL_SIZE: usize = POINT_SIZE_CONST + COLOR_SIZE_CONST;
+
+    // Runtime values that could be used for external code generation
+    let origin = Point { x: 0.0, y: 0.0 };
+    let red = Color { r: 255, g: 0, b: 0 };
+
+    println!("Transpilation target sizes:");
+    println!("  Point: {} bytes (const)", POINT_SIZE_CONST);
+    println!("  Color: {} bytes (const)", COLOR_SIZE_CONST);
+    println!("  Combined: {} bytes", TOTAL_SIZE);
+
+    println!("Runtime instances:");
+    println!("  Origin: ({}, {})", origin.x, origin.y);
+    println!("  Red: rgb({}, {}, {})", red.r, red.g, red.b);
+
+    println!("\n✓ Introspection enables external code generation!");
 }
