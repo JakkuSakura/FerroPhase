@@ -1,0 +1,42 @@
+hir::Program {
+    pub fn main() -> _ {
+        {
+            {
+            }
+            {
+            }
+            let POINT_SIZE: u64 = false;
+            let COLOR_SIZE: u64 = false;
+            let POINT_FIELDS: u64 = false;
+            let COLOR_FIELDS: u64 = false;
+            let POINT_HAS_X: bool = false;
+            let POINT_HAS_Z: bool = false;
+            let POINT_METHODS: u64 = false;
+            let COLOR_METHODS: u64 = false;
+            std::Println(0 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(0 args)
+            std::Println(0 args)
+            let POINT_SIZE_CONST: u64 = false;
+            let COLOR_SIZE_CONST: u64 = false;
+            let TOTAL_SIZE: u64 = (POINT_SIZE_CONST + COLOR_SIZE_CONST);
+            let origin: Point = 0;
+            let red: Color = 0;
+            std::Println(0 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(1 args)
+            std::Println(0 args)
+            std::Println(2 args)
+            std::Println(3 args)
+            std::Println(0 args)
+        }
+    }
+}

@@ -7,7 +7,6 @@ use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use fp_core::ast::*;
 use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use fp_core::ops::{BuiltinFn, BuiltinFnName};
 use fp_core::pat::{Pattern, PatternIdent};
 use fp_core::printer::AstSerializerConfig;
 use fp_core::utils::anybox::AnyBox;
@@ -301,13 +300,6 @@ impl RustPrinter {
         Ok(quote!(#name: #value))
     }
 
-    pub fn print_builtin_fn(&self, bt: &BuiltinFn) -> Result<TokenStream> {
-        match bt.name {
-            BuiltinFnName::BinOpKind(ref op) => Ok(self.print_bin_op_kind(op)),
-            BuiltinFnName::Name(ref name) => Ok(self.print_ident(name)),
-        }
-    }
-
     pub fn print_any(&self, n: &AnyBox) -> Result<TokenStream> {
         if let Some(n) = n.downcast_ref::<RawExprMacro>() {
             return Ok(n.raw.to_token_stream());
@@ -317,9 +309,6 @@ impl RustPrinter {
         }
         if let Some(n) = n.downcast_ref::<RawStmtMacro>() {
             return Ok(n.raw.to_token_stream());
-        }
-        if let Some(f) = n.downcast_ref::<BuiltinFn>() {
-            return self.print_builtin_fn(f);
         }
         bail!("Not supported {:?}", n)
     }

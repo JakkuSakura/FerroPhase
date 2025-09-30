@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
-use crate::orchestrators::interpretation::{InterpretationOrchestrator, InterpreterMode};
+use fp_interpret::thir::{InterpretationOrchestrator, InterpreterMode};
 use crate::queries::DependencyQueries;
 use crate::utils::evaluation_context::EvaluationContext;
 

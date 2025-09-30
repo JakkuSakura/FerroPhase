@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 
-use crate::error::optimization_error;
-use crate::transformations::thir::format::build_printf_format;
+use crate::error::interpretation_error;
+use crate::thir::format::build_printf_format;
 
 macro_rules! propagate_flow {
     ($value:expr) => {
@@ -282,7 +282,7 @@ impl InterpretationOrchestrator {
                 .get(local_id)
                 .cloned()
                 .map(EvalFlow::Value)
-                .ok_or_else(|| optimization_error(format!("Missing local binding {:?}", local_id))),
+                .ok_or_else(|| interpretation_error(format!("Missing local binding {:?}", local_id))),
             EK::Path(item_ref) => {
                 if let Some(def_id) = item_ref.def_id {
                     const_values
@@ -290,13 +290,13 @@ impl InterpretationOrchestrator {
                         .cloned()
                         .map(EvalFlow::Value)
                         .ok_or_else(|| {
-                            optimization_error(format!(
+                            interpretation_error(format!(
                                 "Const {:?} referenced before evaluation",
                                 item_ref.name
                             ))
                         })
                 } else {
-                    Err(optimization_error(format!(
+                    Err(interpretation_error(format!(
                         "Unsupported path without def_id: {}",
                         item_ref.name
                     )))
@@ -410,7 +410,7 @@ impl InterpretationOrchestrator {
                         let template = match &call.payload {
                             IntrinsicCallPayload::Format { template } => template,
                             IntrinsicCallPayload::Args { .. } => {
-                                return Err(optimization_error(
+                                return Err(interpretation_error(
                                     "print intrinsics require format payload",
                                 ))
                             }
@@ -448,11 +448,11 @@ impl InterpretationOrchestrator {
                         let arg_expr = match &call.payload {
                             IntrinsicCallPayload::Args { args } => {
                                 args.first().ok_or_else(|| {
-                                    optimization_error("len intrinsic expects one argument")
+                                    interpretation_error("len intrinsic expects one argument")
                                 })?
                             }
                             IntrinsicCallPayload::Format { .. } => {
-                                return Err(optimization_error(
+                                return Err(interpretation_error(
                                     "len intrinsic should not carry format payload",
                                 ))
                             }
@@ -473,11 +473,11 @@ impl InterpretationOrchestrator {
                         let arg_expr = match &call.payload {
                             IntrinsicCallPayload::Args { args } => {
                                 args.first().ok_or_else(|| {
-                                    optimization_error("const block intrinsic expects a body")
+                                    interpretation_error("const block intrinsic expects a body")
                                 })?
                             }
                             _ => {
-                                return Err(optimization_error(
+                                return Err(interpretation_error(
                                     "const block intrinsic must use args payload",
                                 ))
                             }
@@ -509,6 +509,14 @@ impl InterpretationOrchestrator {
 
                         let result = self.read_input(prompt)?;
                         Ok(EvalFlow::Value(result))
+                    }
+                    IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
+                        // These should never appear in intrinsic call expressions during interpretation
+                        // They are converted to proper HIR control flow expressions in AST→HIR
+                        return Err(interpretation_error(format!(
+                            "unexpected control flow intrinsic {:?} during interpretation",
+                            call.kind
+                        )));
                     }
                 }
             }
@@ -561,7 +569,7 @@ impl InterpretationOrchestrator {
                     return Ok(result);
                 }
 
-                Err(optimization_error(
+                Err(interpretation_error(
                     "No match arm matched during const evaluation",
                 ))
             }
@@ -581,7 +589,7 @@ impl InterpretationOrchestrator {
                         .get(*field_idx)
                         .map(|field| field.value.clone())
                         .ok_or_else(|| {
-                            optimization_error(format!(
+                            interpretation_error(format!(
                                 "Field index {} out of bounds for struct",
                                 field_idx
                             ))
@@ -591,13 +599,13 @@ impl InterpretationOrchestrator {
                         .get(*field_idx)
                         .map(|field| field.value.clone())
                         .ok_or_else(|| {
-                            optimization_error(format!(
+                            interpretation_error(format!(
                                 "Field index {} out of bounds for structural value",
                                 field_idx
                             ))
                         })?,
                     other => {
-                        return Err(optimization_error(format!(
+                        return Err(interpretation_error(format!(
                             "Field access is not supported for value {:?}",
                             other
                         )))
@@ -624,13 +632,13 @@ impl InterpretationOrchestrator {
 
                 let index = self.expect_int(index_value)?;
                 let index_usize = usize::try_from(index).map_err(|_| {
-                    optimization_error(format!("Index {} cannot be represented as usize", index))
+                    interpretation_error(format!("Index {} cannot be represented as usize", index))
                 })?;
 
                 let extracted = match base_value {
                     Value::List(list) => {
                         list.values.get(index_usize).cloned().ok_or_else(|| {
-                            optimization_error(format!(
+                            interpretation_error(format!(
                                 "Index {} is out of bounds for list of length {}",
                                 index_usize,
                                 list.values.len()
@@ -643,14 +651,14 @@ impl InterpretationOrchestrator {
                         .nth(index_usize)
                         .map(|ch| Value::from(ValueChar::new(ch)))
                         .ok_or_else(|| {
-                            optimization_error(format!(
+                            interpretation_error(format!(
                                 "Index {} is out of bounds for string of length {}",
                                 index_usize,
                                 string_value.value.chars().count()
                             ))
                         })?,
                     other => {
-                        return Err(optimization_error(format!(
+                        return Err(interpretation_error(format!(
                             "Indexing is not supported for value {:?}",
                             other
                         )))
@@ -710,7 +718,7 @@ impl InterpretationOrchestrator {
             EK::AssignOp { op, lhs, rhs } => {
                 let target = self.resolve_assignment_target(lhs)?;
                 let current = locals.get(&target).cloned().ok_or_else(|| {
-                    optimization_error(format!(
+                    interpretation_error(format!(
                         "Assignment target {:?} has no current value",
                         target
                     ))
@@ -723,7 +731,7 @@ impl InterpretationOrchestrator {
                 self.config.store_local(target, &cloned);
                 Ok(EvalFlow::Value(Value::unit()))
             }
-            EK::UpvarRef { .. } => Err(optimization_error(format!(
+            EK::UpvarRef { .. } => Err(interpretation_error(format!(
                 "Unsupported THIR expression in const evaluation: {:?}",
                 expr.kind
             ))),
@@ -783,13 +791,13 @@ impl InterpretationOrchestrator {
                 } else if let Some(def_id) = item_ref.def_id {
                     self.evaluate_function_call(def_id, evaluated_args, program, ctx, const_values)
                 } else {
-                    Err(optimization_error(format!(
+                    Err(interpretation_error(format!(
                         "Unsupported function call target '{}' in const evaluation",
                         name
                     )))
                 }
             }
-            other => Err(optimization_error(format!(
+            other => Err(interpretation_error(format!(
                 "Unsupported call target expression in const evaluation: {:?}",
                 other
             ))),
@@ -818,7 +826,7 @@ impl InterpretationOrchestrator {
             match first {
                 Value::String(s) => (s.value.clone(), rest),
                 other => {
-                    return Err(optimization_error(format!(
+                    return Err(interpretation_error(format!(
                         "println-style call expects leading string literal, got {:?}",
                         other
                     )))
@@ -845,13 +853,13 @@ impl InterpretationOrchestrator {
             print!("{}", prompt);
             io::stdout()
                 .flush()
-                .map_err(|err| optimization_error(err.to_string()))?;
+                .map_err(|err| interpretation_error(err.to_string()))?;
         }
 
         let mut buffer = String::new();
         io::stdin()
             .read_line(&mut buffer)
-            .map_err(|err| optimization_error(err.to_string()))?;
+            .map_err(|err| interpretation_error(err.to_string()))?;
 
         if buffer.ends_with('\n') {
             buffer.pop();
@@ -866,11 +874,11 @@ impl InterpretationOrchestrator {
     fn perform_strlen(&self, args: &[Value]) -> Result<Value> {
         let value = args
             .first()
-            .ok_or_else(|| optimization_error("strlen intrinsic expects at least one argument"))?;
+            .ok_or_else(|| interpretation_error("strlen intrinsic expects at least one argument"))?;
         let length = match value {
             Value::String(s) => s.value.len() as i64,
             other => {
-                return Err(optimization_error(format!(
+                return Err(interpretation_error(format!(
                     "strlen! expects a string argument, got {:?}",
                     other
                 )))
@@ -897,7 +905,7 @@ impl InterpretationOrchestrator {
             if args.is_empty() {
                 return Ok(String::new());
             }
-            return Err(optimization_error(
+            return Err(interpretation_error(
                 "printf-style call received arguments but no format string",
             ));
         }
@@ -932,19 +940,19 @@ impl InterpretationOrchestrator {
             }
 
             if !spec_consumed {
-                return Err(optimization_error(
+                return Err(interpretation_error(
                     "incomplete printf format specifier in const evaluation",
                 ));
             }
 
             let value = remaining.next().ok_or_else(|| {
-                optimization_error("missing argument for printf format specifier")
+                interpretation_error("missing argument for printf format specifier")
             })?;
             output.push_str(&Self::value_to_display_string(value));
         }
 
         if remaining.next().is_some() {
-            return Err(optimization_error(
+            return Err(interpretation_error(
                 "too many arguments supplied to printf-style call",
             ));
         }
@@ -994,28 +1002,28 @@ impl InterpretationOrchestrator {
         const_values: &HashMap<thir::ty::DefId, Value>,
     ) -> Result<Value> {
         let (function, body_id) = self.lookup_function(program, def_id).ok_or_else(|| {
-            optimization_error(format!(
+            interpretation_error(format!(
                 "Unable to resolve function with def_id {} in const evaluation",
                 def_id
             ))
         })?;
 
         if self.config.mode == InterpreterMode::Const && !function.is_const {
-            return Err(optimization_error(format!(
+            return Err(interpretation_error(format!(
                 "Function with def_id {} is not const and cannot be evaluated at compile time",
                 def_id
             )));
         }
 
         let body = program.bodies.get(&body_id).ok_or_else(|| {
-            optimization_error(format!(
+            interpretation_error(format!(
                 "Missing THIR body {:?} for function def_id {}",
                 body_id, def_id
             ))
         })?;
 
         if body.params.len() != args.len() {
-            return Err(optimization_error(format!(
+            return Err(interpretation_error(format!(
                 "Function def_id {} expects {} arguments but received {}",
                 def_id,
                 body.params.len(),
@@ -1038,7 +1046,7 @@ impl InterpretationOrchestrator {
         match &expr.kind {
             thir::ExprKind::VarRef { id } => Ok(*id),
             thir::ExprKind::Local(id) => Ok(*id),
-            other => Err(optimization_error(format!(
+            other => Err(interpretation_error(format!(
                 "Assignments to non-local targets are not supported: {:?}",
                 other
             ))),
@@ -1077,7 +1085,7 @@ impl InterpretationOrchestrator {
                 self.config.store_local(*var, &cloned);
                 Ok(())
             }
-            _ => Err(optimization_error(format!(
+            _ => Err(interpretation_error(format!(
                 "Unsupported pattern in const evaluation: {:?}",
                 pat.kind
             ))),
@@ -1096,7 +1104,7 @@ impl InterpretationOrchestrator {
                 self.bind_pattern(pat, value, locals)?;
                 Ok(true)
             }
-            _ => Err(optimization_error(format!(
+            _ => Err(interpretation_error(format!(
                 "Unsupported pattern in let-expression const evaluation: {:?}",
                 pat.kind
             ))),
@@ -1110,7 +1118,7 @@ impl InterpretationOrchestrator {
             L::Int(i, _) => Ok(Value::int(*i as i64)),
             L::Uint(u, _) => {
                 let value: i64 = (*u).try_into().map_err(|_| {
-                    optimization_error(format!("Unsigned literal too large: {}", u))
+                    interpretation_error(format!("Unsigned literal too large: {}", u))
                 })?;
                 Ok(Value::int(value))
             }
@@ -1120,7 +1128,7 @@ impl InterpretationOrchestrator {
             L::Byte(b) => Ok(Value::int(*b as i64)),
             L::ByteStr(bytes) => {
                 let string = String::from_utf8(bytes.clone())
-                    .map_err(|_| optimization_error("Byte string literal is not valid UTF-8"))?;
+                    .map_err(|_| interpretation_error("Byte string literal is not valid UTF-8"))?;
                 Ok(Value::string(string))
             }
         }
@@ -1136,7 +1144,7 @@ impl InterpretationOrchestrator {
                 } else if let Value::Decimal(d) = &value {
                     Ok(Value::decimal(-d.value))
                 } else {
-                    Err(optimization_error("Negation expects numeric value"))
+                    Err(interpretation_error("Negation expects numeric value"))
                 }
             }
         }
@@ -1151,11 +1159,11 @@ impl InterpretationOrchestrator {
             BinOp::Div => self.binary_int_op(left, right, |a, b| if b == 0 { a } else { a / b }),
             BinOp::And => match (&left, &right) {
                 (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value && b.value)),
-                _ => Err(optimization_error(format!("And operation requires boolean operands, got: {:?} && {:?}", left, right))),
+                _ => Err(interpretation_error(format!("And operation requires boolean operands, got: {:?} && {:?}", left, right))),
             },
             BinOp::Or => match (&left, &right) {
                 (Value::Bool(a), Value::Bool(b)) => Ok(Value::bool(a.value || b.value)),
-                _ => Err(optimization_error(format!("Or operation requires boolean operands, got: {:?} || {:?}", left, right))),
+                _ => Err(interpretation_error(format!("Or operation requires boolean operands, got: {:?} || {:?}", left, right))),
             },
             BinOp::Rem => self.binary_int_op(left, right, |a, b| a % b),
             BinOp::BitAnd => self.binary_int_op(left, right, |a, b| a & b),
@@ -1193,14 +1201,14 @@ impl InterpretationOrchestrator {
     fn expect_bool(&self, value: Value) -> Result<bool> {
         match value {
             Value::Bool(b) => Ok(b.value),
-            _ => Err(optimization_error("Expected boolean value")),
+            _ => Err(interpretation_error("Expected boolean value")),
         }
     }
 
     fn expect_int(&self, value: Value) -> Result<i64> {
         match value {
             Value::Int(i) => Ok(i.value),
-            _ => Err(optimization_error("Expected integer value")),
+            _ => Err(interpretation_error("Expected integer value")),
         }
     }
 }

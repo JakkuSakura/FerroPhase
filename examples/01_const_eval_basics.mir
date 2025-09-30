@@ -20,13 +20,13 @@ mir::Program {
                 _12: i64
                 _13: i64
                 _14: bool
-                _15: ()
+                _15: <??>
                 _16: i64
                 _17: i64
                 _18: ()
                 _19: ()
                 _20: i64
-                _21: ()
+                _21: <??>
                 _22: i64
                 _23: i64
                 _24: ()
@@ -40,7 +40,7 @@ mir::Program {
                 _32: <??>
                 _33: i64
                 _34: i64
-                _35: ()
+                _35: <??>
                 _36: ()
                 _37: ()
             blocks:
@@ -54,14 +54,14 @@ mir::Program {
                     s6: _13 = const Constant { span: Span { file: 958031099278485038, lo: 21, hi: 22 }, user_ty: None, literal: Int(2048) }
                     s7: _14 = Gt(move _1, move _13)
                     s8: _4 = move _14
-                    s9: _15 = const Constant { span: Span { file: 958031099278485038, lo: 22, hi: 23 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    s9: _15 = const Constant { span: Span { file: 958031099278485038, lo: 22, hi: 23 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
                     s10: _16 = const Constant { span: Span { file: 958031099278485038, lo: 25, hi: 26 }, user_ty: None, literal: Int(1024) }
                     s11: _17 = Div(move _1, move _16)
                     terminator: call move _15(const Constant { span: Span { file: 958031099278485038, lo: 22, hi: 23 }, user_ty: None, literal: Str("Buffer: %lldKB, factorial(5)=%lld, large=%d\n") }, move _17, move _3, move _4) -> _18 then bb1
                 bb1:
                     s0: _20 = const Constant { span: Span { file: 958031099278485038, lo: 30, hi: 31 }, user_ty: None, literal: Int(0) }
                     s1: _5 = move _20
-                    s2: _21 = const Constant { span: Span { file: 958031099278485038, lo: 33, hi: 34 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    s2: _21 = const Constant { span: Span { file: 958031099278485038, lo: 33, hi: 34 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
                     s3: _22 = const Constant { span: Span { file: 958031099278485038, lo: 37, hi: 38 }, user_ty: None, literal: Int(1024) }
                     s4: _23 = Div(move _1, move _22)
                     terminator: call move _21(const Constant { span: Span { file: 958031099278485038, lo: 33, hi: 34 }, user_ty: None, literal: Str("Config: %lldKB buffer, %lld connections\n") }, move _23, move _2) -> _24 then bb2
@@ -87,8 +87,8 @@ mir::Program {
                     s1: _33 = Mul(move _1, move _2)
                     s2: _34 = Mul(move _6, move _33)
                     s3: _9 = move _34
-                    s4: _35 = const Constant { span: Span { file: 958031099278485038, lo: 58, hi: 59 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
-                    terminator: call move _35(const Constant { span: Span { file: 958031099278485038, lo: 58, hi: 59 }, user_ty: None, literal: Str("Const blocks: size=%lld, strategy=%p, memory=%lld\n") }, move _7, move _8, move _9) -> _36 then bb6
+                    s4: _35 = const Constant { span: Span { file: 958031099278485038, lo: 58, hi: 59 }, user_ty: None, literal: Global("printf", Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) }) }
+                    terminator: call move _35(const Constant { span: Span { file: 958031099278485038, lo: 58, hi: 59 }, user_ty: None, literal: Str("Const blocks: size=%lld, strategy=%s, memory=%lld\n") }, move _7, move _8, move _9) -> _36 then bb6
                 bb6:
                     s0: _0 = move _37
                     terminator: return

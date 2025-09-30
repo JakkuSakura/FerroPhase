@@ -15,6 +15,12 @@ pub enum IntrinsicCallKind {
     DebugAssertions,
     /// Input prompt/read intrinsic.
     Input,
+    /// Break from loop with optional value.
+    Break,
+    /// Continue to next loop iteration.
+    Continue,
+    /// Early return from function with optional value.
+    Return,
 }
 
 /// Wrapper that carries the intrinsic kind plus stage-specific payload.

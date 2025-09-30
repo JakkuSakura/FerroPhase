@@ -808,6 +808,7 @@ dependencies = [
  "eyre",
  "fp-core",
  "fp-csharp",
+ "fp-interpret",
  "fp-javascript",
  "fp-llvm",
  "fp-optimize",
@@ -870,6 +871,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-interpret"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+ "itertools 0.12.1",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "fp-javascript"
 version = "0.1.0"
 dependencies = [
@@ -907,6 +921,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "fp-core",
+ "fp-interpret",
  "fp-rust",
  "itertools 0.12.1",
  "pretty_assertions",
