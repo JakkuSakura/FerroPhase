@@ -3,70 +3,21 @@ use once_cell::sync::Lazy;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, Mutex};
 
-/// Context provided to diagnostic template renderers while producing output lines.
-pub struct DiagnosticRenderContext<'a> {
-    pub context: &'a str,
-    pub verbose_info: bool,
-}
-
-/// Trait for converting a diagnostic into human-readable output according to a template.
-pub trait DiagnosticTemplateRenderer: Send + Sync {
-    fn render(
-        &self,
-        diagnostic: &Diagnostic,
-        ctx: &DiagnosticRenderContext<'_>,
-    ) -> Option<Vec<String>>;
-}
-
-/// Built-in templates supported by the diagnostic manager.
-#[derive(Clone)]
-pub enum DiagnosticTemplate {
-    Pretty,
-    Plain,
-    Custom(Arc<dyn DiagnosticTemplateRenderer>),
-}
-
-impl DiagnosticTemplate {
-    fn render(
-        &self,
-        diagnostic: &Diagnostic,
-        ctx: &DiagnosticRenderContext<'_>,
-    ) -> Option<Vec<String>> {
-        match self {
-            DiagnosticTemplate::Pretty => render_pretty(diagnostic, ctx),
-            DiagnosticTemplate::Plain => render_plain(diagnostic, ctx),
-            DiagnosticTemplate::Custom(renderer) => renderer.render(diagnostic, ctx),
-        }
-    }
-}
-
 /// Runtime configuration for emitting diagnostics.
 #[derive(Clone)]
 pub struct DiagnosticDisplayOptions {
-    pub template: DiagnosticTemplate,
     pub verbose_info: bool,
 }
 
 impl DiagnosticDisplayOptions {
-    pub fn with_template(template: DiagnosticTemplate, verbose_info: bool) -> Self {
-        Self {
-            template,
-            verbose_info,
-        }
-    }
-
-    pub fn pretty(verbose_info: bool) -> Self {
-        Self::with_template(DiagnosticTemplate::Pretty, verbose_info)
-    }
-
-    pub fn plain(verbose_info: bool) -> Self {
-        Self::with_template(DiagnosticTemplate::Plain, verbose_info)
+    pub fn new(verbose_info: bool) -> Self {
+        Self { verbose_info }
     }
 }
 
 impl Default for DiagnosticDisplayOptions {
     fn default() -> Self {
-        DiagnosticDisplayOptions::pretty(false)
+        DiagnosticDisplayOptions::new(false)
     }
 }
 
@@ -304,24 +255,27 @@ impl DiagnosticManager {
         }
 
         for diagnostic in diagnostics {
+            // Skip info diagnostics unless verbose mode is enabled
+            if matches!(diagnostic.level, DiagnosticLevel::Info) && !options.verbose_info {
+                continue;
+            }
+
             let context = diagnostic
                 .source_context
                 .as_deref()
-                .or(fallback_context)
-                .unwrap_or("pipeline");
+                .or(fallback_context);
 
-            let render_ctx = DiagnosticRenderContext {
-                context,
-                verbose_info: options.verbose_info,
+            let message = &diagnostic.message;
+
+            // Format message with suggestions if present
+            let full_message = if !diagnostic.suggestions.is_empty() {
+                let suggestions = diagnostic.suggestions.join("; ");
+                format!("{} (hint: {})", message, suggestions)
+            } else {
+                message.to_string()
             };
 
-            let printable = diagnostic.as_string_diagnostic();
-
-            if let Some(lines) = options.template.render(&printable, &render_ctx) {
-                for line in lines {
-                    eprintln!("{}", line);
-                }
-            }
+            emit_tracing(&diagnostic.level, context, &full_message);
         }
     }
 }
@@ -334,105 +288,82 @@ pub fn diagnostic_manager() -> Arc<DiagnosticManager> {
 }
 
 pub fn report_error(message: impl Into<String>) -> crate::error::Error {
-    report_error_impl(None, message.into())
+    report_diagnostic_impl(None, message.into(), DiagnosticLevel::Error)
 }
 
 pub fn report_error_with_context(
     context: impl Into<String>,
     message: impl Into<String>,
 ) -> crate::error::Error {
-    report_error_impl(Some(context.into()), message.into())
+    report_diagnostic_impl(Some(context.into()), message.into(), DiagnosticLevel::Error)
 }
 
-fn report_error_impl(context: Option<String>, message: String) -> crate::error::Error {
-    let mut diagnostic = Diagnostic::error(message.clone());
+pub fn report_warning(message: impl Into<String>) {
+    report_diagnostic_trace(None, message.into(), DiagnosticLevel::Warning);
+}
+
+pub fn report_warning_with_context(
+    context: impl Into<String>,
+    message: impl Into<String>,
+) {
+    report_diagnostic_trace(Some(context.into()), message.into(), DiagnosticLevel::Warning);
+}
+
+pub fn report_info(message: impl Into<String>) {
+    report_diagnostic_trace(None, message.into(), DiagnosticLevel::Info);
+}
+
+pub fn report_info_with_context(
+    context: impl Into<String>,
+    message: impl Into<String>,
+) {
+    report_diagnostic_trace(Some(context.into()), message.into(), DiagnosticLevel::Info);
+}
+
+fn report_diagnostic_impl(context: Option<String>, message: String, level: DiagnosticLevel) -> crate::error::Error {
+    let mut diagnostic = match level {
+        DiagnosticLevel::Error => Diagnostic::error(message.clone()),
+        DiagnosticLevel::Warning => Diagnostic::warning(message.clone()),
+        DiagnosticLevel::Info => Diagnostic::info(message.clone()),
+    };
+
     if let Some(ctx) = context.as_ref() {
         diagnostic = diagnostic.with_source_context(ctx.clone());
     }
 
-    match context.as_ref() {
-        Some(ctx) => println!("[diagnostic] [{}] {}", ctx, message),
-        None => println!("[diagnostic] {}", message),
-    }
+    emit_tracing(&level, context.as_deref(), &message);
 
     diagnostic_manager().error(diagnostic.clone());
     crate::error::Error::diagnostic(diagnostic)
 }
 
-fn render_pretty<M>(
-    diagnostic: &Diagnostic<M>,
-    ctx: &DiagnosticRenderContext<'_>,
-) -> Option<Vec<String>>
-where
-    M: Clone + Display,
-{
-    if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
-        return None;
-    }
-
-    let prefix = match diagnostic.level {
-        DiagnosticLevel::Error => "❌",
-        DiagnosticLevel::Warning => "⚠️ ",
-        DiagnosticLevel::Info => "ℹ️ ",
+fn report_diagnostic_trace(context: Option<String>, message: String, level: DiagnosticLevel) {
+    let mut diagnostic = match level {
+        DiagnosticLevel::Error => Diagnostic::error(message.clone()),
+        DiagnosticLevel::Warning => Diagnostic::warning(message.clone()),
+        DiagnosticLevel::Info => Diagnostic::info(message.clone()),
     };
 
-    let header = match diagnostic.code.as_ref() {
-        Some(code) => format!(
-            "{} [{}] {} ({})",
-            prefix, ctx.context, diagnostic.message, code
-        ),
-        None => format!("{} [{}] {}", prefix, ctx.context, diagnostic.message),
-    };
-
-    let mut lines = vec![header];
-
-    if let Some(span) = &diagnostic.span {
-        lines.push(format!("   at {}", span.to_string()));
+    if let Some(ctx) = context.as_ref() {
+        diagnostic = diagnostic.with_source_context(ctx.clone());
     }
 
-    for suggestion in &diagnostic.suggestions {
-        lines.push(format!("   💡 {}", suggestion));
-    }
-
-    Some(lines)
+    emit_tracing(&level, context.as_deref(), &message);
+    diagnostic_manager().add_diagnostic(diagnostic);
 }
 
-fn render_plain<M>(
-    diagnostic: &Diagnostic<M>,
-    ctx: &DiagnosticRenderContext<'_>,
-) -> Option<Vec<String>>
-where
-    M: Clone + Display,
-{
-    if matches!(diagnostic.level, DiagnosticLevel::Info) && !ctx.verbose_info {
-        return None;
-    }
-
-    let level = match diagnostic.level {
-        DiagnosticLevel::Error => "ERROR",
-        DiagnosticLevel::Warning => "WARNING",
-        DiagnosticLevel::Info => "INFO",
+fn emit_tracing(level: &DiagnosticLevel, context: Option<&str>, message: &str) {
+    let msg = if let Some(ctx) = context {
+        format!("[{}] {}", ctx, message)
+    } else {
+        message.to_string()
     };
 
-    let header = match diagnostic.code.as_ref() {
-        Some(code) => format!(
-            "[{}] {}: {} ({})",
-            ctx.context, level, diagnostic.message, code
-        ),
-        None => format!("[{}] {}: {}", ctx.context, level, diagnostic.message),
-    };
-
-    let mut lines = vec![header];
-
-    if let Some(span) = &diagnostic.span {
-        lines.push(format!("   at {}", span.to_string()));
+    match level {
+        DiagnosticLevel::Error => tracing::error!("{}", msg),
+        DiagnosticLevel::Warning => tracing::warn!("{}", msg),
+        DiagnosticLevel::Info => tracing::info!("{}", msg),
     }
-
-    for suggestion in &diagnostic.suggestions {
-        lines.push(format!("   suggestion: {}", suggestion));
-    }
-
-    Some(lines)
 }
 
 #[macro_export]

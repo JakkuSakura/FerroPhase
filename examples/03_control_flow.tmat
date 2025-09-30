@@ -2,16 +2,17 @@ thir::Program {
     items:
         fn main::main() -> <??> [body: body0] : <??>
     bodies:
-        body0 (params: 0, locals: 8) {
+        body0 (params: 0, locals: 9) {
             locals:
-                _0: <??>
+                _0: i64
                 _1: <??>
-                _2: u64
-                _3: u64
-                _4: bool
-                _5: bool
+                _2: bool
+                _3: bool
+                _4: <??>
+                _5: i64
                 _6: <??>
-                _7: u64
+                _7: i64
+                _8: <??>
             value: block(13 stmts) : ()
         }
 }

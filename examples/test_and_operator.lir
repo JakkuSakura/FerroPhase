@@ -1,0 +1,45 @@
+lir::Program {
+    functions:
+        fn main() -> i32 [cc: c, linkage: internal] {
+            locals:
+                %0: i32
+                %1: i1
+                %2: i1
+                %3: i1
+                %4: i1
+                %5: i1
+                %6: i1
+                %7: void
+                %8: void
+                %9: void
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = alloca i32 1 align 4 : ptr i32
+                i1: %r1 = alloca i32 1 align 1 : ptr i1
+                i2: store bool true, %r1 align 1
+                i3: %r3 = alloca i32 1 align 1 : ptr i1
+                i4: %r4 = load %r1 align 1 : i1
+                i5: store %r4, %r3 align 1
+                i6: %r6 = alloca i32 1 align 1 : ptr i1
+                i7: store bool false, %r6 align 1
+                i8: %r8 = alloca i32 1 align 1 : ptr i1
+                i9: %r9 = load %r6 align 1 : i1
+                i10: store %r9, %r8 align 1
+                i11: %r11 = alloca i32 1 align 1 : ptr i1
+                i12: %r12 = load %r3 align 1 : i1
+                i13: %r13 = load %r8 align 1 : i1
+                i14: unreachable : i1
+                i15: store %r14, %r11 align 1
+                i16: %r16 = alloca i32 1 align 1 : ptr i1
+                i17: %r17 = load %r11 align 1 : i1
+                i18: store %r17, %r16 align 1
+                i19: %r19 = load %r3 align 1 : i1
+                i20: %r20 = load %r8 align 1 : i1
+                i21: %r21 = load %r16 align 1 : i1
+                i22: %r22 = call c @printf(c"A=%d, B=%d, A && B=%d
+", %r19, %r20, %r21)
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                i23: store i32 0, %r0 align 4
+                terminator: ret i32 0
+        }
+}

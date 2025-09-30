@@ -1,0 +1,190 @@
+mir::Program {
+    items:
+        fn main::main() -> i32 [body: body0]
+    bodies:
+        body0 { arg_count: 0, locals: 60 }
+            return_local: _0
+            locals:
+                _0: i32
+                _1: i64
+                _2: <??>
+                _3: bool
+                _4: bool
+                _5: <??>
+                _6: i64
+                _7: <??>
+                _8: i64
+                _9: <??>
+                _10: i64
+                _11: i64
+                _12: bool
+                _13: <??>
+                _14: <??>
+                _15: i64
+                _16: bool
+                _17: <??>
+                _18: <??>
+                _19: <??>
+                _20: ()
+                _21: ()
+                _22: bool
+                _23: i64
+                _24: bool
+                _25: bool
+                _26: <??>
+                _27: <??>
+                _28: <??>
+                _29: ()
+                _30: ()
+                _31: i64
+                _32: i64
+                _33: bool
+                _34: <??>
+                _35: <??>
+                _36: i64
+                _37: bool
+                _38: <??>
+                _39: <??>
+                _40: i64
+                _41: bool
+                _42: <??>
+                _43: <??>
+                _44: <??>
+                _45: ()
+                _46: ()
+                _47: i64
+                _48: i64
+                _49: bool
+                _50: <??>
+                _51: <??>
+                _52: i64
+                _53: bool
+                _54: <??>
+                _55: <??>
+                _56: <??>
+                _57: ()
+                _58: ()
+                _59: ()
+            blocks:
+                bb0:
+                    s0: _10 = const Constant { span: Span { file: 18067511962513181491, lo: 3, hi: 4 }, user_ty: None, literal: Int(25) }
+                    s1: _1 = move _10
+                    s2: _11 = const Constant { span: Span { file: 18067511962513181491, lo: 8, hi: 9 }, user_ty: None, literal: Int(30) }
+                    s3: _12 = Gt(move _1, move _11)
+                    terminator: switch move _12 [1 -> bb1] otherwise -> bb2
+                bb1:
+                    s0: _14 = const Constant { span: Span { file: 18067511962513181491, lo: 9, hi: 10 }, user_ty: None, literal: Str("hot") }
+                    s1: _13 = move _14
+                    terminator: goto -> bb3
+                bb2:
+                    s0: _15 = const Constant { span: Span { file: 18067511962513181491, lo: 13, hi: 14 }, user_ty: None, literal: Int(20) }
+                    s1: _16 = Gt(move _1, move _15)
+                    terminator: switch move _16 [1 -> bb4] otherwise -> bb5
+                bb3:
+                    s0: _2 = move _13
+                    s1: _20 = const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _20(const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Str("%lld°C is %p\n") }, move _1, move _2) -> _21 then bb7
+                bb4:
+                    s0: _18 = const Constant { span: Span { file: 18067511962513181491, lo: 14, hi: 15 }, user_ty: None, literal: Str("warm") }
+                    s1: _17 = move _18
+                    terminator: goto -> bb6
+                bb5:
+                    s0: _19 = const Constant { span: Span { file: 18067511962513181491, lo: 15, hi: 16 }, user_ty: None, literal: Str("cold") }
+                    s1: _17 = move _19
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _13 = move _17
+                    terminator: goto -> bb3
+                bb7:
+                    s0: _22 = const Constant { span: Span { file: 18067511962513181491, lo: 20, hi: 21 }, user_ty: None, literal: Bool(true) }
+                    s1: _3 = move _22
+                    s2: _23 = const Constant { span: Span { file: 18067511962513181491, lo: 24, hi: 25 }, user_ty: None, literal: Int(20) }
+                    s3: _24 = Gt(move _1, move _23)
+                    s4: _4 = move _24
+                    s5: _25 = And(move _3, move _4)
+                    terminator: switch move _25 [1 -> bb8] otherwise -> bb9
+                bb8:
+                    s0: _27 = const Constant { span: Span { file: 18067511962513181491, lo: 30, hi: 31 }, user_ty: None, literal: Str("outdoor") }
+                    s1: _26 = move _27
+                    terminator: goto -> bb10
+                bb9:
+                    s0: _28 = const Constant { span: Span { file: 18067511962513181491, lo: 31, hi: 32 }, user_ty: None, literal: Str("indoor") }
+                    s1: _26 = move _28
+                    terminator: goto -> bb10
+                bb10:
+                    s0: _5 = move _26
+                    s1: _29 = const Constant { span: Span { file: 18067511962513181491, lo: 32, hi: 33 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _29(const Constant { span: Span { file: 18067511962513181491, lo: 32, hi: 33 }, user_ty: None, literal: Str("Suggested: %p\n") }, move _5) -> _30 then bb11
+                bb11:
+                    s0: _31 = const Constant { span: Span { file: 18067511962513181491, lo: 35, hi: 36 }, user_ty: None, literal: Int(85) }
+                    s1: _6 = move _31
+                    s2: _32 = const Constant { span: Span { file: 18067511962513181491, lo: 40, hi: 41 }, user_ty: None, literal: Int(90) }
+                    s3: _33 = Ge(move _6, move _32)
+                    terminator: switch move _33 [1 -> bb12] otherwise -> bb13
+                bb12:
+                    s0: _35 = const Constant { span: Span { file: 18067511962513181491, lo: 41, hi: 42 }, user_ty: None, literal: Str("A") }
+                    s1: _34 = move _35
+                    terminator: goto -> bb14
+                bb13:
+                    s0: _36 = const Constant { span: Span { file: 18067511962513181491, lo: 45, hi: 46 }, user_ty: None, literal: Int(80) }
+                    s1: _37 = Ge(move _6, move _36)
+                    terminator: switch move _37 [1 -> bb15] otherwise -> bb16
+                bb14:
+                    s0: _7 = move _34
+                    s1: _45 = const Constant { span: Span { file: 18067511962513181491, lo: 53, hi: 54 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _45(const Constant { span: Span { file: 18067511962513181491, lo: 53, hi: 54 }, user_ty: None, literal: Str("Score %lld = grade %p\n") }, move _6, move _7) -> _46 then bb21
+                bb15:
+                    s0: _39 = const Constant { span: Span { file: 18067511962513181491, lo: 46, hi: 47 }, user_ty: None, literal: Str("B") }
+                    s1: _38 = move _39
+                    terminator: goto -> bb17
+                bb16:
+                    s0: _40 = const Constant { span: Span { file: 18067511962513181491, lo: 50, hi: 51 }, user_ty: None, literal: Int(70) }
+                    s1: _41 = Ge(move _6, move _40)
+                    terminator: switch move _41 [1 -> bb18] otherwise -> bb19
+                bb17:
+                    s0: _34 = move _38
+                    terminator: goto -> bb14
+                bb18:
+                    s0: _43 = const Constant { span: Span { file: 18067511962513181491, lo: 51, hi: 52 }, user_ty: None, literal: Str("C") }
+                    s1: _42 = move _43
+                    terminator: goto -> bb20
+                bb19:
+                    s0: _44 = const Constant { span: Span { file: 18067511962513181491, lo: 52, hi: 53 }, user_ty: None, literal: Str("F") }
+                    s1: _42 = move _44
+                    terminator: goto -> bb20
+                bb20:
+                    s0: _38 = move _42
+                    terminator: goto -> bb17
+                bb21:
+                    s0: _47 = const Constant { span: Span { file: 18067511962513181491, lo: 56, hi: 57 }, user_ty: None, literal: Int(42) }
+                    s1: _8 = move _47
+                    s2: _48 = const Constant { span: Span { file: 18067511962513181491, lo: 60, hi: 61 }, user_ty: None, literal: Int(50) }
+                    s3: _49 = Gt(move _8, move _48)
+                    terminator: switch move _49 [1 -> bb22] otherwise -> bb23
+                bb22:
+                    s0: _51 = const Constant { span: Span { file: 18067511962513181491, lo: 61, hi: 62 }, user_ty: None, literal: Str("high") }
+                    s1: _50 = move _51
+                    terminator: goto -> bb24
+                bb23:
+                    s0: _52 = const Constant { span: Span { file: 18067511962513181491, lo: 65, hi: 66 }, user_ty: None, literal: Int(25) }
+                    s1: _53 = Gt(move _8, move _52)
+                    terminator: switch move _53 [1 -> bb25] otherwise -> bb26
+                bb24:
+                    s0: _9 = move _50
+                    s1: _57 = const Constant { span: Span { file: 18067511962513181491, lo: 68, hi: 69 }, user_ty: None, literal: Global("std::io::println", Ty { kind: Tuple([]) }) }
+                    terminator: call move _57(const Constant { span: Span { file: 18067511962513181491, lo: 68, hi: 69 }, user_ty: None, literal: Str("Value %lld is %p\n") }, move _8, move _9) -> _58 then bb28
+                bb25:
+                    s0: _55 = const Constant { span: Span { file: 18067511962513181491, lo: 66, hi: 67 }, user_ty: None, literal: Str("medium") }
+                    s1: _54 = move _55
+                    terminator: goto -> bb27
+                bb26:
+                    s0: _56 = const Constant { span: Span { file: 18067511962513181491, lo: 67, hi: 68 }, user_ty: None, literal: Str("low") }
+                    s1: _54 = move _56
+                    terminator: goto -> bb27
+                bb27:
+                    s0: _50 = move _54
+                    terminator: goto -> bb24
+                bb28:
+                    s0: _0 = move _59
+                    terminator: return
+}
