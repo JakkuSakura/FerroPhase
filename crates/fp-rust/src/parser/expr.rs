@@ -8,7 +8,6 @@ use fp_core::error::Result;
 use fp_core::id::Ident;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::utils::anybox::AnyBox;
 use itertools::Itertools;
 use quote::ToTokens;
 
@@ -44,7 +43,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Return(r) => parse_expr_return(r)?,
         raw => {
             tracing::debug!("RawExpr {:?}", raw);
-            Expr::Any(AnyBox::new(RawExpr { raw }))
+            Expr::any(RawExpr { raw })
         } // x => bail!("Expr not supported: {:?}", x),
     };
     Ok(expr)
@@ -244,11 +243,11 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::AddAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: ExprBinOp {
+                value: Expr::from(ExprKind::BinOp(ExprBinOp {
                     kind: BinOpKind::Add,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                }
+                }))
                 .into(),
             };
             return Ok(assign.into());
@@ -256,11 +255,11 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::SubAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: ExprBinOp {
+                value: Expr::from(ExprKind::BinOp(ExprBinOp {
                     kind: BinOpKind::Sub,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                }
+                }))
                 .into(),
             };
             return Ok(assign.into());
@@ -268,11 +267,11 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::MulAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: ExprBinOp {
+                value: Expr::from(ExprKind::BinOp(ExprBinOp {
                     kind: BinOpKind::Mul,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                }
+                }))
                 .into(),
             };
             return Ok(assign.into());
@@ -280,11 +279,11 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::DivAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
-                value: ExprBinOp {
+                value: Expr::from(ExprKind::BinOp(ExprBinOp {
                     kind: BinOpKind::Div,
                     lhs: lhs_expr.into(),
                     rhs: rhs_expr.into(),
-                }
+                }))
                 .into(),
             };
             return Ok(assign.into());
@@ -310,7 +309,7 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
     let lhs = lhs_expr.into();
     let rhs = rhs_expr.into();
 
-    Ok(ExprBinOp { kind, lhs, rhs }.into())
+    Ok(Expr::from(ExprKind::BinOp(ExprBinOp { kind, lhs, rhs })))
 }
 
 pub fn parse_expr_tuple(t: syn::ExprTuple) -> Result<ExprTuple> {
@@ -462,11 +461,13 @@ fn parse_cfg_macro(mac: &syn::Macro) -> Result<Option<Expr>> {
 
     if tokens == "not(debug_assertions)" {
         let expr = debug_assertions_intrinsic();
-        return Ok(Some(ExprUnOp {
-            op: UnOpKind::Not,
-            val: Box::new(expr),
-        }
-        .into()));
+        return Ok(Some(
+            ExprUnOp {
+                op: UnOpKind::Not,
+                val: Box::new(expr),
+            }
+            .into(),
+        ));
     }
 
     Ok(None)
@@ -840,9 +841,5 @@ fn parse_metaprogramming_intrinsic(mac: &syn::Macro, kind: IntrinsicCallKind) ->
             .collect::<Result<Vec<_>>>()?
     };
 
-    Ok(ExprIntrinsicCall::new(
-        kind,
-        IntrinsicCallPayload::Args { args },
-    )
-    .into())
+    Ok(ExprIntrinsicCall::new(kind, IntrinsicCallPayload::Args { args }).into())
 }

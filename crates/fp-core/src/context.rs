@@ -1,4 +1,4 @@
-use crate::ast::{Expr, ExprKind, ExprClosured, Visibility};
+use crate::ast::{Expr, ExprClosured, ExprKind, Visibility};
 use crate::ast::{RuntimeValue, Ty, Value, ValueFunction};
 use crate::id::{Ident, Path};
 use dashmap::DashMap;

@@ -1,7 +1,7 @@
 use crate::{
     Result,
     cli::CliConfig,
-    pipeline::{Pipeline, PipelineConfig, PipelineInput},
+    pipeline::{Pipeline, PipelineInput},
 };
 use fp_core::pretty::{PrettyOptions, pretty};
 use std::path::PathBuf;
@@ -30,15 +30,7 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
         }
     };
 
-    let pipeline = Pipeline::new();
-    let _config = PipelineConfig {
-        optimization_level: 0,
-        print_ast: false,
-        print_passes: false,
-        target: "rust".to_string(),
-        runtime: "literal".to_string(),
-    };
-
+    let mut pipeline = Pipeline::new();
     // Parse the input and get the AST
     let source = match &input {
         PipelineInput::Expression(expr) => expr.clone(),
@@ -56,7 +48,7 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
     pretty_opts.show_types = false;
     pretty_opts.show_spans = false;
 
-    println!("{}", pretty(ast.as_ref(), pretty_opts));
+    println!("{}", pretty(&ast, pretty_opts));
 
     Ok(())
 }

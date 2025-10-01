@@ -19,7 +19,7 @@ impl InlinePass {
         let (ty, kind) = expr.into_parts();
         match kind {
             ExprKind::Value(value) => {
-                let inlined = self.inline_value((*value), ctx)?;
+                let inlined = self.inline_value(*value, ctx)?;
                 Ok(Expr::value(inlined).with_ty_slot(ty))
             }
             other => Ok(Expr::from_parts(ty, other)),
@@ -62,7 +62,9 @@ impl InlinePass {
     pub fn try_get_expr(&self, expr: Expr, ctx: &SharedScopedContext) -> Result<Expr> {
         let (ty, kind) = expr.into_parts();
         match kind {
-            ExprKind::Locator(ident) => self.try_get_pat(ident, ctx).map(|expr| expr.with_ty_slot(ty)),
+            ExprKind::Locator(ident) => self
+                .try_get_pat(ident, ctx)
+                .map(|expr| expr.with_ty_slot(ty)),
             other => Ok(Expr::from_parts(ty, other)),
         }
     }

@@ -1,23 +1,23 @@
+use crate::CliError;
 use crate::codegen::CodeGenerator;
-use crate::config::{PipelineOptions, PipelineTarget, RuntimeConfig};
+use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::frontend::{
     FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend, RustFrontend,
 };
 use crate::languages;
 use crate::languages::detect_source_language;
-use crate::CliError;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstSerializer, Node, RuntimeValue, Value};
+use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
 };
-use fp_core::pretty::{pretty, PrettyOptions};
 use fp_core::hir;
-use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
-use fp_optimize::transformations::HirGenerator;
-use fp_optimize::typing::TypingDiagnosticLevel;
+use fp_core::pretty::{PrettyOptions, pretty};
 use fp_optimize::ConstEvaluationOrchestrator;
+use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
+use fp_optimize::transformations::{HirGenerator, IrTransform};
+use fp_optimize::typing::TypingDiagnosticLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +33,6 @@ const EXT_AST_TYPED: &str = "ast-typed";
 const EXT_AST_EVAL: &str = "ast-eval";
 const EXT_HIR: &str = "hir";
 
-pub use crate::config::PipelineConfig;
 #[derive(Debug)]
 pub enum PipelineInput {
     Expression(String),
@@ -49,7 +48,6 @@ pub enum PipelineOutput {
 
 struct TypeEnrichmentArtifacts {
     typed_ast: Node,
-    hir_program: hir::Program,
 }
 
 struct CompilationArtifacts {
@@ -59,6 +57,7 @@ struct CompilationArtifacts {
 
 struct ConstEvalArtifacts {
     typed_ast: Node,
+    hir_program: hir::Program,
     outcome: ConstEvalOutcome,
 }
 
@@ -103,6 +102,38 @@ impl Pipeline {
 
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.default_runtime = runtime_name.to_string();
+    }
+
+    pub async fn execute(
+        &mut self,
+        input: PipelineInput,
+        config: &PipelineConfig,
+    ) -> Result<PipelineOutput, CliError> {
+        let options: PipelineOptions = config.into();
+        self.execute_with_options(input, options).await
+    }
+
+    pub fn parse_source_public(&mut self, source: &str) -> Result<Node, CliError> {
+        let frontend = self
+            .frontends
+            .get(languages::FERROPHASE)
+            .ok_or_else(|| CliError::Compilation("Default frontend not registered".to_string()))?;
+
+        let FrontendResult {
+            ast,
+            serializer,
+            snapshot,
+            ..
+        } = frontend
+            .parse(source, None)
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+
+        register_threadlocal_serializer(serializer.clone());
+        self.serializer = Some(serializer.clone());
+        self.frontend_snapshot = snapshot;
+        self.source_language = Some(frontend.language().to_string());
+
+        Ok(ast)
     }
 
     pub async fn execute_with_options(
@@ -179,19 +210,22 @@ impl Pipeline {
                     input_path.as_deref(),
                     base_path,
                 )?;
-                let TypeEnrichmentArtifacts {
-                    typed_ast,
-                    hir_program: _initial_hir,
-                } = self.collect_stage(
+                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
                     STAGE_TYPE_ENRICH,
                     type_report,
                     &diagnostic_manager,
                     &options,
                 )?;
 
-                let const_report = self.run_const_eval_stage(typed_ast, options, base_path)?;
+                let const_report = self.run_const_eval_stage(
+                    typed_ast,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
                 let ConstEvalArtifacts {
                     typed_ast: evaluated_typed_ast,
+                    hir_program: _hir_program,
                     outcome: _,
                 } = self.collect_stage(
                     STAGE_CONST_EVAL,
@@ -275,19 +309,17 @@ impl Pipeline {
         let diagnostic_manager = DiagnosticManager::new();
 
         let type_report = self.run_type_enrichment_stage(&ast, options, file_path, base_path)?;
-        let TypeEnrichmentArtifacts {
-            typed_ast,
-            hir_program: _initial_hir,
-        } = self.collect_stage(STAGE_TYPE_ENRICH, type_report, &diagnostic_manager, options)?;
+        let TypeEnrichmentArtifacts { typed_ast } =
+            self.collect_stage(STAGE_TYPE_ENRICH, type_report, &diagnostic_manager, options)?;
 
-        let const_report =
-            self.run_const_eval_stage(typed_ast, options, base_path)?;
+        let const_report = self.run_const_eval_stage(typed_ast, options, file_path, base_path)?;
         let ConstEvalArtifacts {
             typed_ast: _evaluated_typed,
+            hir_program: _hir_program,
             outcome: _,
         } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
 
-        let diagnostics = diagnostic_manager.get_diagnostics();
+        let _diagnostics = diagnostic_manager.get_diagnostics();
 
         Err(CliError::Compilation(
             "typed backend pipeline not yet implemented".to_string(),
@@ -296,8 +328,9 @@ impl Pipeline {
 
     fn run_const_eval_stage(
         &self,
-        typed_ast: Node,
+        mut typed_ast: Node,
         options: &PipelineOptions,
+        file_path: Option<&Path>,
         base_path: &Path,
     ) -> Result<DiagnosticReport<ConstEvalArtifacts>, CliError> {
         let serializer = self.serializer.clone().ok_or_else(|| {
@@ -309,7 +342,9 @@ impl Pipeline {
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
         const_evaluator.set_debug_assertions(!options.release);
 
-        let outcome = match const_evaluator.evaluate(&typed_ast, &shared_context) {
+        let mut diagnostics = Vec::new();
+
+        let outcome = match const_evaluator.evaluate(&mut typed_ast, &shared_context) {
             Ok(outcome) => outcome,
             Err(e) => {
                 let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
@@ -317,6 +352,54 @@ impl Pipeline {
                 return Ok(DiagnosticReport::failure(vec![diagnostic]));
             }
         };
+
+        diagnostics.extend(outcome.diagnostics.iter().cloned());
+        if outcome.has_errors {
+            return Ok(DiagnosticReport::failure(diagnostics));
+        }
+
+        match fp_optimize::typing::annotate(&mut typed_ast) {
+            Ok(post_outcome) => {
+                let mut saw_error = false;
+                for message in post_outcome.diagnostics {
+                    match message.level {
+                        TypingDiagnosticLevel::Warning => diagnostics.push(
+                            Diagnostic::warning(message.message)
+                                .with_source_context(STAGE_CONST_EVAL),
+                        ),
+                        TypingDiagnosticLevel::Error => {
+                            saw_error = true;
+                            diagnostics.push(
+                                Diagnostic::error(message.message)
+                                    .with_source_context(STAGE_CONST_EVAL),
+                            );
+                        }
+                    }
+                }
+
+                if saw_error || post_outcome.has_errors {
+                    return Ok(DiagnosticReport::failure(diagnostics));
+                }
+            }
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!("AST typing failed after const evaluation: {}", err))
+                        .with_source_context(STAGE_CONST_EVAL),
+                );
+                return Ok(DiagnosticReport::failure(diagnostics));
+            }
+        }
+
+        let hir_report = self.run_hir_stage(&typed_ast, options, file_path, base_path)?;
+        let mut hir_diagnostics = hir_report.diagnostics;
+        let hir_program = match hir_report.value {
+            Some(program) => program,
+            None => {
+                diagnostics.append(&mut hir_diagnostics);
+                return Ok(DiagnosticReport::failure(diagnostics));
+            }
+        };
+        diagnostics.append(&mut hir_diagnostics);
 
         if options.save_intermediates {
             let mut ast_opts = PrettyOptions::default();
@@ -330,10 +413,14 @@ impl Pipeline {
             }
         }
 
-        Ok(DiagnosticReport::success(ConstEvalArtifacts {
-            typed_ast,
-            outcome,
-        }))
+        Ok(DiagnosticReport::success_with_diagnostics(
+            ConstEvalArtifacts {
+                typed_ast,
+                hir_program,
+                outcome,
+            },
+            diagnostics,
+        ))
     }
 
     fn run_type_enrichment_stage(
@@ -343,17 +430,9 @@ impl Pipeline {
         file_path: Option<&Path>,
         base_path: &Path,
     ) -> Result<DiagnosticReport<TypeEnrichmentArtifacts>, CliError> {
-        let DiagnosticReport {
-            value: hir_value,
-            mut diagnostics,
-        } = self.run_hir_stage(ast, options, file_path, base_path)?;
+        let mut diagnostics = Vec::new();
 
-        let hir_program = match hir_value {
-            Some(program) => program,
-            None => {
-                return Ok(DiagnosticReport::failure(diagnostics));
-            }
-        };
+        let _ = file_path;
 
         let mut typed_ast = ast.clone();
         match fp_optimize::typing::annotate(&mut typed_ast) {
@@ -410,10 +489,7 @@ impl Pipeline {
         }
 
         Ok(DiagnosticReport::success_with_diagnostics(
-            TypeEnrichmentArtifacts {
-                typed_ast,
-                hir_program,
-            },
+            TypeEnrichmentArtifacts { typed_ast },
             diagnostics,
         ))
     }
@@ -547,7 +623,6 @@ impl Pipeline {
     fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
         DiagnosticDisplayOptions::new(options.debug.verbose)
     }
-
 }
 
 #[cfg(test)]
@@ -556,7 +631,7 @@ mod tests {
 
     #[test]
     fn rust_frontend_parses_expression() {
-        let pipeline = Pipeline::new();
+        let mut pipeline = Pipeline::new();
         let expr = "1 + 2";
         assert!(pipeline.parse_source_public(expr).is_ok());
     }

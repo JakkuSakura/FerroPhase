@@ -1,5 +1,6 @@
 use super::*;
 use ast::ItemKind;
+use fp_core::pat::PatternKind;
 
 impl HirGenerator {
     /// Transform an AST expression to HIR expression
@@ -31,7 +32,9 @@ impl HirGenerator {
                 // For now, return a placeholder boolean literal
                 hir::ExprKind::Literal(hir::Lit::Bool(false))
             }
-            ExprKind::FormatString(format_str) => self.transform_format_string_to_hir(format_str)?,
+            ExprKind::FormatString(format_str) => {
+                self.transform_format_string_to_hir(format_str)?
+            }
             ExprKind::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
             ExprKind::Reference(reference) => {
                 return self.transform_expr_to_hir(reference.referee.as_ref());
@@ -769,9 +772,7 @@ impl HirGenerator {
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         match expr.kind() {
-            ast::ExprKind::Locator(locator) => {
-                self.locator_to_hir_path_with_scope(locator, scope)
-            }
+            ast::ExprKind::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
             _ => Err(crate::error::optimization_error(format!(
                 "Unsupported path expression: {:?}",
                 expr
@@ -854,8 +855,8 @@ impl HirGenerator {
         &mut self,
         pat: &Pattern,
     ) -> Result<(hir::Pat, Option<hir::TypeExpr>, bool)> {
-        match pat {
-            Pattern::Ident(ident) => {
+        match pat.kind() {
+            PatternKind::Ident(ident) => {
                 let mutable = ident.mutability.unwrap_or(false);
                 Ok((
                     hir::Pat {
@@ -869,7 +870,7 @@ impl HirGenerator {
                     mutable,
                 ))
             }
-            Pattern::Wildcard(_) => Ok((
+            PatternKind::Wildcard(_) => Ok((
                 hir::Pat {
                     hir_id: self.next_id(),
                     kind: hir::PatKind::Wild,
@@ -877,10 +878,10 @@ impl HirGenerator {
                 None,
                 false,
             )),
-            Pattern::Type(pattern_type) => {
+            PatternKind::Type(pattern_type) => {
                 let ty_expr = self.transform_type_to_hir(&pattern_type.ty)?;
                 let (inner_pat, _inner_ty, mutable) =
-                    self.transform_pattern_with_metadata(&pattern_type.pat)?;
+                    self.transform_pattern_with_metadata(pattern_type.pat.as_ref())?;
                 Ok((inner_pat, Some(ty_expr), mutable))
             }
             _ => Ok((
