@@ -7,8 +7,8 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, FieldsNamed, Token};
 
 use fp_core::ast::{
-    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeBounds, TypeFunction,
-    TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
+    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeBounds, TypeFunction, TypeInt,
+    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
 };
 use fp_core::id::{Ident, Path};
 use fp_core::ops::BinOpKind;

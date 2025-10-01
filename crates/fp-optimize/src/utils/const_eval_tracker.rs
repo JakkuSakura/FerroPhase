@@ -332,7 +332,9 @@ fn find_impl_mut<'a>(
                     None
                 }
             }
-            ItemKind::Module(module) => find_impl_in_items_mut(&mut module.items, target, trait_name),
+            ItemKind::Module(module) => {
+                find_impl_in_items_mut(&mut module.items, target, trait_name)
+            }
             _ => None,
         },
         NodeKind::Expr(_) => None,

@@ -1,19 +1,21 @@
-
 use std::collections::HashMap;
 
-use crate::error::{optimization_error, Result};
+use crate::error::optimization_error;
 use fp_core::ast::*;
+use fp_core::error::Result;
 use fp_core::id::{Ident, Locator};
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::pat::{Pattern, PatternKind};
 
 type TypeVarId = usize;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TypeVar {
     kind: TypeVarKind,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum TypeVarKind {
     Unbound { level: usize },
     Link(TypeVarId),
@@ -46,6 +48,7 @@ enum TypeTerm {
 
 #[derive(Clone)]
 struct TypeScheme {
+    #[allow(dead_code)]
     vars: usize,
     body: SchemeType,
 }
@@ -98,6 +101,7 @@ impl PatternInfo {
         self
     }
 
+    #[allow(dead_code)]
     fn extend_bindings(&mut self, other: PatternInfo) {
         self.bindings.extend(other.bindings);
     }
@@ -171,10 +175,7 @@ impl AstTypeInferencer {
             NodeKind::Item(item) => {
                 self.predeclare_item(item);
                 self.infer_item(item)?;
-                let ty = item
-                    .ty()
-                    .cloned()
-                    .unwrap_or_else(|| Ty::Unit(TypeUnit));
+                let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
                 node.set_ty(ty);
             }
             NodeKind::File(file) => {
@@ -210,7 +211,8 @@ impl AstTypeInferencer {
             ItemKind::DefStatic(def) => {
                 self.register_symbol(&def.name);
                 if let Ty::Struct(ty) = &def.ty {
-                    self.struct_defs.insert(ty.name.as_str().to_string(), ty.clone());
+                    self.struct_defs
+                        .insert(ty.name.as_str().to_string(), ty.clone());
                 }
             }
             ItemKind::DefFunction(def) => {
@@ -247,7 +249,6 @@ impl AstTypeInferencer {
         let ty = match item.kind_mut() {
             ItemKind::DefStruct(def) => {
                 let ty = Ty::Struct(def.value.clone());
-                def.ty_annotation = Some(ty.clone());
                 let placeholder = self.symbol_var(&def.name);
                 let var = self.type_from_ast_ty(&ty)?;
                 self.unify(placeholder, var)?;
@@ -478,32 +479,19 @@ impl AstTypeInferencer {
             ExprKind::Dereference(dereference) => self.infer_dereference(dereference)?,
             ExprKind::Index(index) => self.infer_index(index)?,
             ExprKind::Closure(closure) => self.infer_closure(closure)?,
-            ExprKind::IntrinsicCall(call) => {
-                let message = format!(
-                    "intrinsic call {:?} is not yet supported by the AST type inferencer",
-                    call.kind()
-                );
-                self.emit_error(message.clone());
-                self.error_type_var()
-            }
-            ExprKind::Range(_) => {
-                let message = "range expressions are not yet supported by the type inferencer".to_string();
-                self.emit_error(message.clone());
-                self.error_type_var()
-            }
-            ExprKind::Splat(_) | ExprKind::SplatDict(_) => {
-                let message = "splat expressions are not yet supported in type inference".to_string();
-                self.emit_error(message.clone());
-                self.error_type_var()
-            }
-            ExprKind::Any(_) | ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
-                let message = "dynamic AST nodes are not yet supported by the type inferencer".to_string();
-                self.emit_error(message.clone());
+            ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
+            ExprKind::Range(range) => self.infer_range(range)?,
+            ExprKind::Splat(splat) => self.infer_splat(splat)?,
+            ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
+            ExprKind::Any(_)
+            | ExprKind::Item(_)
+            | ExprKind::Closured(_)
+            | ExprKind::Structural(_) => {
+                self.emit_error("dynamic AST nodes are not yet supported by the type inferencer");
                 self.error_type_var()
             }
             ExprKind::Id(_) => {
-                let message = "detached expression identifiers are not supported".to_string();
-                self.emit_error(message.clone());
+                self.emit_error("detached expression identifiers are not supported");
                 self.error_type_var()
             }
         };
@@ -553,7 +541,8 @@ impl AstTypeInferencer {
                     self.bind(last, TypeTerm::Unit);
                 }
                 BlockStmt::Any(_) => {
-                    let message = "custom block statements are not supported by type inference".to_string();
+                    let message =
+                        "custom block statements are not supported by type inference".to_string();
                     self.emit_error(message);
                     last = self.error_type_var();
                 }
@@ -676,6 +665,203 @@ impl AstTypeInferencer {
         Ok(elem_slice_var)
     }
 
+    fn infer_range(&mut self, range: &mut ExprRange) -> Result<TypeVarId> {
+        let element_var = self.fresh_type_var();
+
+        if let Some(start) = range.start.as_mut() {
+            let start_var = self.infer_expr(start)?;
+            self.unify(element_var, start_var)?;
+        }
+
+        if let Some(end) = range.end.as_mut() {
+            let end_var = self.infer_expr(end)?;
+            self.unify(element_var, end_var)?;
+        }
+
+        if let Some(step) = range.step.as_mut() {
+            let step_var = self.infer_expr(step)?;
+            self.ensure_numeric(step_var, "range step")?;
+        }
+
+        self.ensure_numeric(element_var, "range bounds")?;
+
+        let range_var = self.fresh_type_var();
+        self.bind(range_var, TypeTerm::Vec(element_var));
+        Ok(range_var)
+    }
+
+    fn infer_splat(&mut self, splat: &mut ExprSplat) -> Result<TypeVarId> {
+        self.infer_expr(splat.iter.as_mut())
+    }
+
+    fn infer_splat_dict(&mut self, splat: &mut ExprSplatDict) -> Result<TypeVarId> {
+        self.infer_expr(splat.dict.as_mut())
+    }
+
+    fn infer_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Result<TypeVarId> {
+        let mut arg_vars = Vec::new();
+
+        match &mut call.payload {
+            IntrinsicCallPayload::Args { args } => {
+                for arg in args {
+                    arg_vars.push(self.infer_expr(arg)?);
+                }
+            }
+            IntrinsicCallPayload::Format { template } => {
+                for arg in &mut template.args {
+                    arg_vars.push(self.infer_expr(arg)?);
+                }
+                for kwarg in &mut template.kwargs {
+                    arg_vars.push(self.infer_expr(&mut kwarg.value)?);
+                }
+            }
+        }
+
+        match call.kind {
+            IntrinsicCallKind::ConstBlock => {
+                if let Some(&body_var) = arg_vars.first() {
+                    return Ok(body_var);
+                }
+                self.emit_error("const block intrinsic expects a body expression");
+                return Ok(self.error_type_var());
+            }
+            IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
+                self.emit_error(format!(
+                    "control-flow intrinsic {:?} must be lowered before typing",
+                    call.kind
+                ));
+                return Ok(self.error_type_var());
+            }
+            _ => {}
+        }
+
+        let result_var = self.fresh_type_var();
+        match call.kind {
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                self.bind(result_var, TypeTerm::Unit);
+            }
+            IntrinsicCallKind::Len
+            | IntrinsicCallKind::SizeOf
+            | IntrinsicCallKind::FieldCount
+            | IntrinsicCallKind::MethodCount
+            | IntrinsicCallKind::StructSize => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(
+                    result_var,
+                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                );
+            }
+            IntrinsicCallKind::DebugAssertions
+            | IntrinsicCallKind::HasField
+            | IntrinsicCallKind::HasMethod => {
+                let expected = if matches!(call.kind, IntrinsicCallKind::DebugAssertions) {
+                    0
+                } else {
+                    2
+                };
+                if arg_vars.len() != expected {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects {} argument(s), found {}",
+                        call.kind,
+                        expected,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+            }
+            IntrinsicCallKind::Input => {
+                if arg_vars.len() > 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects at most 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+            }
+            IntrinsicCallKind::TypeName => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+            }
+            IntrinsicCallKind::ReflectFields => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Any);
+            }
+            IntrinsicCallKind::CreateStruct
+            | IntrinsicCallKind::CloneStruct
+            | IntrinsicCallKind::AddField
+            | IntrinsicCallKind::FieldType => {
+                let expected = match call.kind {
+                    IntrinsicCallKind::AddField => 3,
+                    IntrinsicCallKind::FieldType => 2,
+                    _ => 1,
+                };
+                if arg_vars.len() != expected {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects {} argument(s), found {}",
+                        call.kind,
+                        expected,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+            }
+            IntrinsicCallKind::GenerateMethod => {
+                if arg_vars.len() != 2 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 2 arguments, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Unit);
+            }
+            IntrinsicCallKind::CompileError => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Nothing);
+            }
+            IntrinsicCallKind::CompileWarning => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Unit);
+            }
+            _ => {
+                self.bind(result_var, TypeTerm::Any);
+            }
+        }
+
+        Ok(result_var)
+    }
+
     fn infer_closure(&mut self, closure: &mut ExprClosure) -> Result<TypeVarId> {
         self.enter_scope();
         let mut param_vars = Vec::new();
@@ -706,9 +892,28 @@ impl AstTypeInferencer {
         Ok(closure_var)
     }
 
-    fn infer_match(&mut self, _match_expr: &mut ExprMatch) -> Result<TypeVarId> {
-        self.emit_error("match expressions are not yet supported by the type inferencer");
-        Ok(self.error_type_var())
+    fn infer_match(&mut self, match_expr: &mut ExprMatch) -> Result<TypeVarId> {
+        let mut result_var: Option<TypeVarId> = None;
+
+        for case in &mut match_expr.cases {
+            let cond_var = self.infer_expr(case.cond.as_mut())?;
+            self.ensure_bool(cond_var, "match case condition")?;
+
+            let body_var = self.infer_expr(case.body.as_mut())?;
+            if let Some(existing) = result_var {
+                self.unify(existing, body_var)?;
+            } else {
+                result_var = Some(body_var);
+            }
+        }
+
+        match result_var {
+            Some(var) => Ok(var),
+            None => {
+                self.emit_error("match expression requires at least one case");
+                Ok(self.error_type_var())
+            }
+        }
     }
 
     fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
@@ -745,9 +950,10 @@ impl AstTypeInferencer {
         match value {
             Value::Int(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64))),
             Value::Bool(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Bool)),
-            Value::Decimal(_) => {
-                self.bind(var, TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64)))
-            }
+            Value::Decimal(_) => self.bind(
+                var,
+                TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
+            ),
             Value::String(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::String)),
             Value::Char(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Char)),
             Value::Unit(_) => self.bind(var, TypeTerm::Unit),
@@ -756,7 +962,12 @@ impl AstTypeInferencer {
                 self.bind(var, TypeTerm::Struct(struct_val.ty.clone()));
             }
             Value::Structural(structural) => {
-                self.bind(var, TypeTerm::Structural(structural.clone()));
+                let fields = structural
+                    .fields
+                    .iter()
+                    .map(|field| StructuralField::new(field.name.clone(), Ty::Any(TypeAny)))
+                    .collect();
+                self.bind(var, TypeTerm::Structural(TypeStructural { fields }));
             }
             Value::Tuple(tuple) => {
                 let mut vars = Vec::new();
@@ -789,17 +1000,17 @@ impl AstTypeInferencer {
     }
 
     fn infer_pattern(&mut self, pattern: &mut Pattern) -> Result<PatternInfo> {
-        let mut info = match pattern.kind_mut() {
+        let info = match pattern.kind_mut() {
             PatternKind::Ident(ident) => {
                 let var = self.fresh_type_var();
                 self.insert_env(ident.ident.as_str().to_string(), EnvEntry::Mono(var));
                 PatternInfo::new(var).with_binding(ident.ident.as_str().to_string(), var)
             }
             PatternKind::Type(inner) => {
-                let mut info = self.infer_pattern(inner.pat.as_mut())?;
+                let inner_info = self.infer_pattern(inner.pat.as_mut())?;
                 let annot_var = self.type_from_ast_ty(&inner.ty)?;
-                self.unify(info.var, annot_var)?;
-                info
+                self.unify(inner_info.var, annot_var)?;
+                inner_info
             }
             PatternKind::Wildcard(_) => PatternInfo::new(self.fresh_type_var()),
             PatternKind::Tuple(tuple) => {
@@ -812,7 +1023,10 @@ impl AstTypeInferencer {
                 }
                 let tuple_var = self.fresh_type_var();
                 self.bind(tuple_var, TypeTerm::Tuple(vars));
-                PatternInfo { var: tuple_var, bindings }
+                PatternInfo {
+                    var: tuple_var,
+                    bindings,
+                }
             }
             PatternKind::Struct(struct_pat) => {
                 let struct_name = struct_pat.name.as_str().to_string();
@@ -824,18 +1038,14 @@ impl AstTypeInferencer {
                         if let Some(rename) = field.rename.as_mut() {
                             let child = self.infer_pattern(rename)?;
                             bindings.extend(child.bindings);
-                            if let Some(def_field) = struct_def
-                                .fields
-                                .iter()
-                                .find(|f| f.name == field.name)
+                            if let Some(def_field) =
+                                struct_def.fields.iter().find(|f| f.name == field.name)
                             {
                                 let expected = self.type_from_ast_ty(&def_field.value)?;
                                 self.unify(child.var, expected)?;
                             }
-                        } else if let Some(def_field) = struct_def
-                            .fields
-                            .iter()
-                            .find(|f| f.name == field.name)
+                        } else if let Some(def_field) =
+                            struct_def.fields.iter().find(|f| f.name == field.name)
                         {
                             let var = self.fresh_type_var();
                             self.insert_env(field.name.as_str().to_string(), EnvEntry::Mono(var));
@@ -847,16 +1057,18 @@ impl AstTypeInferencer {
                             });
                         }
                     }
-                    PatternInfo { var: struct_var, bindings }
+                    PatternInfo {
+                        var: struct_var,
+                        bindings,
+                    }
                 } else {
                     let message = format!("unknown struct pattern: {}", struct_name);
                     self.emit_error(message.clone());
                     PatternInfo::new(self.error_type_var())
                 }
             }
-            other => {
-                let message = format!("pattern {:?} is not supported by type inference", other);
-                self.emit_error(message.clone());
+            _ => {
+                self.emit_error("pattern is not supported by type inference");
                 PatternInfo::new(self.error_type_var())
             }
         };
@@ -1163,9 +1375,9 @@ impl AstTypeInferencer {
                 func.params.iter().any(|param| self.occurs_in(var, *param))
                     || self.occurs_in(var, func.ret)
             }
-            TypeTerm::Slice(elem)
-            | TypeTerm::Vec(elem)
-            | TypeTerm::Reference(elem) => self.occurs_in(var, *elem),
+            TypeTerm::Slice(elem) | TypeTerm::Vec(elem) | TypeTerm::Reference(elem) => {
+                self.occurs_in(var, *elem)
+            }
             _ => false,
         }
     }
@@ -1251,7 +1463,7 @@ impl AstTypeInferencer {
                     Ok(())
                 }
             }
-            (TypeTerm::Any, other) | (other, TypeTerm::Any) => Ok(()),
+            (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
             (left, right) => Err(optimization_error(format!(
                 "type mismatch: {:?} vs {:?}",
                 left, right
@@ -1348,7 +1560,13 @@ impl AstTypeInferencer {
                     self.bind(unit, TypeTerm::Unit);
                     unit
                 };
-                self.bind(var, TypeTerm::Function(FunctionTerm { params, ret: ret_var }));
+                self.bind(
+                    var,
+                    TypeTerm::Function(FunctionTerm {
+                        params,
+                        ret: ret_var,
+                    }),
+                );
             }
             Ty::Tuple(tuple) => {
                 let mut vars = Vec::new();
@@ -1369,9 +1587,20 @@ impl AstTypeInferencer {
                 let elem_var = self.type_from_ast_ty(&reference.ty)?;
                 self.bind(var, TypeTerm::Reference(elem_var));
             }
+            Ty::Expr(expr) => {
+                if let ExprKind::Locator(locator) = expr.kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        if let Some(primitive) = Self::primitive_from_name(ident.as_str()) {
+                            self.bind(var, TypeTerm::Primitive(primitive));
+                            return Ok(var);
+                        }
+                    }
+                }
+                self.bind(var, TypeTerm::Custom(ty.clone()));
+            }
             Ty::TypeBounds(_) | Ty::ImplTraits(_) => self.bind(var, TypeTerm::Any),
             Ty::Type(_) => self.bind(var, TypeTerm::Custom(ty.clone())),
-            Ty::Value(_) | Ty::Expr(_) | Ty::Unknown(_) | Ty::AnyBox(_) => {
+            Ty::Value(_) | Ty::Unknown(_) | Ty::AnyBox(_) => {
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
         }
@@ -1388,6 +1617,13 @@ impl AstTypeInferencer {
                 return Ok(var);
             }
         }
+        if let Locator::Path(path) = locator {
+            if let Some(first) = path.segments.first() {
+                if let Some(var) = self.lookup_env_var(first.as_str()) {
+                    return Ok(var);
+                }
+            }
+        }
         self.emit_error(format!("unresolved symbol: {}", key));
         Ok(self.error_type_var())
     }
@@ -1397,7 +1633,10 @@ impl AstTypeInferencer {
             if let Some(entry) = scope.get(name) {
                 return Some(match entry {
                     EnvEntry::Mono(var) => *var,
-                    EnvEntry::Poly(scheme) => self.instantiate_scheme(scheme),
+                    EnvEntry::Poly(scheme) => {
+                        let scheme_clone = scheme.clone();
+                        self.instantiate_scheme(&scheme_clone)
+                    }
                 });
             }
         }
@@ -1427,6 +1666,7 @@ impl AstTypeInferencer {
         self.diagnostics.push(TypingDiagnostic::error(message));
     }
 
+    #[allow(dead_code)]
     fn emit_warning(&mut self, message: impl Into<String>) {
         self.diagnostics.push(TypingDiagnostic::warning(message));
     }
@@ -1435,6 +1675,28 @@ impl AstTypeInferencer {
         let var = self.fresh_type_var();
         self.bind(var, TypeTerm::Unknown);
         var
+    }
+
+    fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
+        match name {
+            "i8" => Some(TypePrimitive::Int(TypeInt::I8)),
+            "u8" => Some(TypePrimitive::Int(TypeInt::U8)),
+            "i16" => Some(TypePrimitive::Int(TypeInt::I16)),
+            "u16" => Some(TypePrimitive::Int(TypeInt::U16)),
+            "i32" => Some(TypePrimitive::Int(TypeInt::I32)),
+            "u32" => Some(TypePrimitive::Int(TypeInt::U32)),
+            "i64" => Some(TypePrimitive::Int(TypeInt::I64)),
+            "u64" => Some(TypePrimitive::Int(TypeInt::U64)),
+            "isize" => Some(TypePrimitive::Int(TypeInt::I64)),
+            "usize" => Some(TypePrimitive::Int(TypeInt::U64)),
+            "f32" => Some(TypePrimitive::Decimal(DecimalType::F32)),
+            "f64" => Some(TypePrimitive::Decimal(DecimalType::F64)),
+            "bool" => Some(TypePrimitive::Bool),
+            "char" => Some(TypePrimitive::Char),
+            "str" | "String" => Some(TypePrimitive::String),
+            "list" | "List" => Some(TypePrimitive::List),
+            _ => None,
+        }
     }
 
     fn expect_reference(&mut self, var: TypeVarId, context: &str) -> Result<TypeVarId> {
@@ -1447,11 +1709,10 @@ impl AstTypeInferencer {
             }
             TypeVarKind::Bound(TypeTerm::Reference(inner)) => Ok(inner),
             TypeVarKind::Link(next) => self.expect_reference(next, context),
-            other => {
+            _other => {
                 self.emit_error(format!("expected reference value for {}", context));
                 let placeholder = self.error_type_var();
-                self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Reference(placeholder));
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Reference(placeholder));
                 Ok(placeholder)
             }
         }
@@ -1467,9 +1728,8 @@ impl AstTypeInferencer {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Primitive(
-                    TypePrimitive::Int(TypeInt::I64),
-                ));
+                self.type_vars[root].kind =
+                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
             }
             TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_)))
@@ -1509,9 +1769,8 @@ impl AstTypeInferencer {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Primitive(
-                    TypePrimitive::Int(TypeInt::I64),
-                ));
+                self.type_vars[root].kind =
+                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())
             }
             TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_))) => Ok(()),
@@ -1542,14 +1801,16 @@ impl AstTypeInferencer {
                 if func.params.len() != arity {
                     self.emit_error(format!(
                         "function arity mismatch: expected {}, found {}",
-                        arity, func.params.len()
+                        arity,
+                        func.params.len()
                     ));
                     let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                     let ret = self.error_type_var();
-                    self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                        params: params.clone(),
-                        ret,
-                    }));
+                    self.type_vars[root].kind =
+                        TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
+                            params: params.clone(),
+                            ret,
+                        }));
                     return Ok(FunctionTypeInfo { params, ret });
                 }
                 Ok(FunctionTypeInfo {
@@ -1575,11 +1836,7 @@ impl AstTypeInferencer {
         let ty = self.resolve_to_ty(obj_var)?;
         match ty {
             Ty::Struct(struct_ty) => {
-                if let Some(def_field) = struct_ty
-                    .fields
-                    .iter()
-                    .find(|f| f.name == *field)
-                {
+                if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
                     let var = self.type_from_ast_ty(&def_field.value)?;
                     Ok(var)
                 } else {
@@ -1591,11 +1848,7 @@ impl AstTypeInferencer {
                 }
             }
             Ty::Structural(structural) => {
-                if let Some(def_field) = structural
-                    .fields
-                    .iter()
-                    .find(|f| f.name == *field)
-                {
+                if let Some(def_field) = structural.fields.iter().find(|f| f.name == *field) {
                     let var = self.type_from_ast_ty(&def_field.value)?;
                     Ok(var)
                 } else {
@@ -1641,10 +1894,7 @@ impl AstTypeInferencer {
             }
             Ok(var)
         } else {
-            self.emit_error(format!(
-                "unknown struct literal target: {}",
-                struct_name
-            ));
+            self.emit_error(format!("unknown struct literal target: {}", struct_name));
             Ok(self.error_type_var())
         }
     }
@@ -1654,10 +1904,7 @@ impl AstTypeInferencer {
         for param in &sig.params {
             params.push(param.ty.clone());
         }
-        let ret_ty = sig
-            .ret_ty
-            .clone()
-            .unwrap_or_else(|| Ty::Unit(TypeUnit));
+        let ret_ty = sig.ret_ty.clone().unwrap_or_else(|| Ty::Unit(TypeUnit));
         Ok(Ty::Function(TypeFunction {
             params,
             generics_params: sig.generics_params.clone(),
