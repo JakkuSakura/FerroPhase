@@ -16,6 +16,7 @@ use fp_core::pretty::{pretty, PrettyOptions};
 use fp_core::hir;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::transformations::HirGenerator;
+use fp_optimize::typing::TypingDiagnosticLevel;
 use fp_optimize::ConstEvaluationOrchestrator;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -354,7 +355,38 @@ impl Pipeline {
             }
         };
 
-        let typed_ast = ast.clone();
+        let mut typed_ast = ast.clone();
+        match fp_optimize::typing::annotate(&mut typed_ast) {
+            Ok(outcome) => {
+                let mut saw_error = false;
+                for message in outcome.diagnostics {
+                    match message.level {
+                        TypingDiagnosticLevel::Warning => diagnostics.push(
+                            Diagnostic::warning(message.message)
+                                .with_source_context(STAGE_TYPE_ENRICH),
+                        ),
+                        TypingDiagnosticLevel::Error => {
+                            saw_error = true;
+                            diagnostics.push(
+                                Diagnostic::error(message.message)
+                                    .with_source_context(STAGE_TYPE_ENRICH),
+                            );
+                        }
+                    }
+                }
+
+                if saw_error || outcome.has_errors {
+                    return Ok(DiagnosticReport::failure(diagnostics));
+                }
+            }
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!("AST typing failed: {}", err))
+                        .with_source_context(STAGE_TYPE_ENRICH),
+                );
+                return Ok(DiagnosticReport::failure(diagnostics));
+            }
+        }
 
         if options.save_intermediates {
             let mut pretty_opts = PrettyOptions::default();
