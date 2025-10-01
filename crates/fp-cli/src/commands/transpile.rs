@@ -122,7 +122,7 @@ async fn transpile_file(
     );
 
     // Parse source
-    let pipeline = Pipeline::new();
+    let mut pipeline = Pipeline::new();
     let source = std::fs::read_to_string(input).map_err(|e| CliError::Io(e))?;
     let ast = pipeline.parse_source_public(&source)?;
 

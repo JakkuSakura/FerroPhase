@@ -1,5 +1,5 @@
 use crate::CliError;
-use fp_core::ast::{Node, NodeKind};
+use fp_core::ast::{AstSerializer, Node, NodeKind};
 use fp_rust::printer::RustPrinter;
 use quote::quote;
 

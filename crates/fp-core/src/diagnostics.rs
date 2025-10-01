@@ -260,10 +260,7 @@ impl DiagnosticManager {
                 continue;
             }
 
-            let context = diagnostic
-                .source_context
-                .as_deref()
-                .or(fallback_context);
+            let context = diagnostic.source_context.as_deref().or(fallback_context);
 
             let message = &diagnostic.message;
 
@@ -302,25 +299,27 @@ pub fn report_warning(message: impl Into<String>) {
     report_diagnostic_trace(None, message.into(), DiagnosticLevel::Warning);
 }
 
-pub fn report_warning_with_context(
-    context: impl Into<String>,
-    message: impl Into<String>,
-) {
-    report_diagnostic_trace(Some(context.into()), message.into(), DiagnosticLevel::Warning);
+pub fn report_warning_with_context(context: impl Into<String>, message: impl Into<String>) {
+    report_diagnostic_trace(
+        Some(context.into()),
+        message.into(),
+        DiagnosticLevel::Warning,
+    );
 }
 
 pub fn report_info(message: impl Into<String>) {
     report_diagnostic_trace(None, message.into(), DiagnosticLevel::Info);
 }
 
-pub fn report_info_with_context(
-    context: impl Into<String>,
-    message: impl Into<String>,
-) {
+pub fn report_info_with_context(context: impl Into<String>, message: impl Into<String>) {
     report_diagnostic_trace(Some(context.into()), message.into(), DiagnosticLevel::Info);
 }
 
-fn report_diagnostic_impl(context: Option<String>, message: String, level: DiagnosticLevel) -> crate::error::Error {
+fn report_diagnostic_impl(
+    context: Option<String>,
+    message: String,
+    level: DiagnosticLevel,
+) -> crate::error::Error {
     let mut diagnostic = match level {
         DiagnosticLevel::Error => Diagnostic::error(message.clone()),
         DiagnosticLevel::Warning => Diagnostic::warning(message.clone()),

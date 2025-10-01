@@ -3,7 +3,8 @@
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    pipeline::{Pipeline, PipelineConfig, PipelineInput, PipelineOutput},
+    config::PipelineConfig,
+    pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
 use fp_core::ast::{RuntimeValue, Value};
