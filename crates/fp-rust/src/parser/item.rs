@@ -159,7 +159,6 @@ fn parse_impl_item(item: syn::ImplItem) -> Result<Item> {
             name: parse_ident(t.ident),
             value: parse_type(t.ty)?,
             visibility: parse_vis(t.vis),
-            ty_annotation: None,
         })
         .into()),
         _ => bail!("Does not support impl item {:?}", item),

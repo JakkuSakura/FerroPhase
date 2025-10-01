@@ -180,12 +180,6 @@ impl Item {
     }
 }
 
-impl From<ItemKind> for Item {
-    fn from(kind: ItemKind) -> Self {
-        Item::new(kind)
-    }
-}
-
 impl<T> From<T> for Item
 where
     ItemKind: From<T>,

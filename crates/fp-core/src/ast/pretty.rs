@@ -1,9 +1,7 @@
 use std::fmt::{self, Formatter};
 use std::result::Result;
 
-use crate::ast::{
-    try_get_threadlocal_serializer, AstSerializer, Expr, File, Item, Node, NodeKind,
-};
+use crate::ast::{try_get_threadlocal_serializer, AstSerializer, Expr, File, Item, Node, NodeKind};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 fn render_with_serializer<T>(

@@ -1,4 +1,4 @@
-use fp_core::ast::BExpr;
+use fp_core::ast::{BlockStmt, Expr, ExprKind, Item, Node, NodeKind};
 use fp_core::error::Result;
 use std::collections::HashMap;
 
@@ -12,9 +12,9 @@ impl Transpiler {
         Self { target }
     }
 
-    pub fn transpile(&self, ast: &BExpr) -> Result<String> {
+    pub fn transpile(&self, node: &Node) -> Result<String> {
         let template = self.get_template();
-        let context = self.extract_context(ast)?;
+        let context = self.extract_context(node)?;
         Ok(template.render(&context))
     }
 
@@ -27,18 +27,29 @@ impl Transpiler {
         }
     }
 
-    fn extract_context(&self, ast: &BExpr) -> Result<TranspileContext> {
+    fn extract_context(&self, node: &Node) -> Result<TranspileContext> {
         // Single method to extract all needed info, removing duplication
         // across generate_typescript_with_structs, generate_javascript_with_structs, etc.
         let mut context = TranspileContext::new();
-        self.visit_ast(ast, &mut context);
+        self.visit_node(node, &mut context);
         Ok(context)
     }
 
-    fn visit_ast(&self, ast: &BExpr, context: &mut TranspileContext) {
-        // Single AST visitor instead of separate extract_types_from_ast functions
-        match ast.as_ref().kind() {
-            fp_core::ast::ExprKind::Block(block) => {
+    fn visit_node(&self, node: &Node, context: &mut TranspileContext) {
+        match node.kind() {
+            NodeKind::File(file) => {
+                for item in &file.items {
+                    self.visit_item(item, context);
+                }
+            }
+            NodeKind::Item(item) => self.visit_item(item, context),
+            NodeKind::Expr(expr) => self.visit_expr(expr, context),
+        }
+    }
+
+    fn visit_expr(&self, expr: &Expr, context: &mut TranspileContext) {
+        match expr.kind() {
+            ExprKind::Block(block) => {
                 for stmt in &block.stmts {
                     self.visit_stmt(stmt, context);
                 }
@@ -47,17 +58,24 @@ impl Transpiler {
         }
     }
 
-    fn visit_stmt(&self, stmt: &fp_core::ast::BlockStmt, context: &mut TranspileContext) {
+    fn visit_stmt(&self, stmt: &BlockStmt, context: &mut TranspileContext) {
         // Consolidate all the scattered AST extraction logic
         match stmt {
-            fp_core::ast::BlockStmt::Item(item) => {
-                if let Some(struct_def) = item.as_struct() {
-                    context.structs.push(struct_def.value.clone());
-                } else if let Some(enum_def) = item.as_enum() {
-                    context.enums.push(enum_def.value.clone());
-                }
-            }
+            BlockStmt::Item(item) => self.visit_item(item.as_ref(), context),
+            BlockStmt::Expr(expr) => self.visit_expr(expr.expr.as_ref(), context),
             _ => {}
+        }
+    }
+
+    fn visit_item(&self, item: &Item, context: &mut TranspileContext) {
+        if let Some(struct_def) = item.as_struct() {
+            context.structs.push(struct_def.value.clone());
+        } else if let Some(enum_def) = item.as_enum() {
+            context.enums.push(enum_def.value.clone());
+        }
+
+        if let Some(expr) = item.as_expr() {
+            self.visit_expr(expr, context);
         }
     }
 }

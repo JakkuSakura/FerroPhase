@@ -1,7 +1,7 @@
 use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ty, TySlot, Value, ValueUnit};
-use crate::{common_enum, common_struct};
 use crate::id::{Ident, Locator, Path};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
+use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
 
 mod closure;
@@ -159,18 +159,12 @@ impl Display for Expr {
         f.write_str(&s)
     }
 }
-impl From<ExprKind> for Expr {
-    fn from(kind: ExprKind) -> Self {
-        Expr::new(kind)
-    }
-}
-
 impl<T> From<T> for Expr
 where
     ExprKind: From<T>,
 {
     fn from(value: T) -> Self {
-        Expr::from(ExprKind::from(value))
+        Expr::new(ExprKind::from(value))
     }
 }
 impl From<BExpr> for Expr {

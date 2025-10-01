@@ -7,7 +7,7 @@ use crate::{RawExpr, RawExprMacro, RawStmtMacro};
 use fp_core::ast::*;
 use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
-use fp_core::pat::{Pattern, PatternIdent};
+use fp_core::pat::{Pattern, PatternIdent, PatternKind};
 use fp_core::printer::AstSerializerConfig;
 use fp_core::utils::anybox::AnyBox;
 use fp_core::{Error, Result};
@@ -91,81 +91,77 @@ impl RustPrinter {
     }
 
     pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
-        match pat {
-            Pattern::Ident(ident) => self.print_pat_ident(ident),
-            Pattern::Tuple(tuple) => {
-                let tuple: Vec<_> = tuple
+        match pat.kind() {
+            PatternKind::Ident(ident) => self.print_pat_ident(ident),
+            PatternKind::Tuple(tuple) => {
+                let elems: Vec<_> = tuple
                     .patterns
                     .iter()
-                    .map(|x| self.print_pattern(x))
+                    .map(|p| self.print_pattern(p))
                     .try_collect()?;
-                Ok(quote!(#(#tuple), *))
+                Ok(quote!(#(#elems), *))
             }
-            Pattern::TupleStruct(tuple) => {
+            PatternKind::TupleStruct(tuple) => {
                 let name = self.print_locator(&tuple.name)?;
-                let tuple: Vec<_> = tuple
+                let elems: Vec<_> = tuple
                     .patterns
                     .iter()
-                    .map(|x| self.print_pattern(x))
+                    .map(|p| self.print_pattern(p))
                     .try_collect()?;
-                Ok(quote!(#name(#(#tuple), *)))
+                Ok(quote!(#name(#(#elems), *)))
             }
-            Pattern::Struct(stru) => {
+            PatternKind::Struct(stru) => {
                 let name = self.print_ident(&stru.name);
                 let fields: Vec<_> = stru
                     .fields
                     .iter()
-                    .map(|x| {
-                        let name = self.print_ident(&x.name);
-                        let rename = if let Some(rename) = &x.rename {
-                            let rename = self.print_pattern(rename)?;
-                            quote!(#name: #rename)
+                    .map(|field| {
+                        let ident = self.print_ident(&field.name);
+                        if let Some(rename) = &field.rename {
+                            let inner = self.print_pattern(rename)?;
+                            Ok::<_, Error>(quote!(#ident: #inner))
                         } else {
-                            quote!(#name)
-                        };
-                        Ok::<_, Error>(rename)
+                            Ok::<_, Error>(quote!(#ident))
+                        }
                     })
                     .try_collect()?;
                 Ok(quote!(#name { #(#fields), * }))
             }
-            Pattern::Structural(stru) => {
+            PatternKind::Structural(stru) => {
                 let fields: Vec<_> = stru
                     .fields
                     .iter()
-                    .map(|x| {
-                        let name = self.print_ident(&x.name);
-                        let rename = if let Some(rename) = &x.rename {
-                            let rename = self.print_pattern(rename)?;
-                            quote!(#name: #rename)
+                    .map(|field| {
+                        let ident = self.print_ident(&field.name);
+                        if let Some(rename) = &field.rename {
+                            let inner = self.print_pattern(rename)?;
+                            Ok::<_, Error>(quote!(#ident: #inner))
                         } else {
-                            quote!(#name)
-                        };
-                        Ok::<_, Error>(rename)
+                            Ok::<_, Error>(quote!(#ident))
+                        }
                     })
                     .try_collect()?;
-                Ok(quote!(struct { #(#fields), * }))
+                Ok(quote!({ #(#fields), * }))
             }
-            Pattern::Box(box_) => {
-                let pattern = self.print_pattern(&box_.pattern)?;
-                // yet this is not stable
-                Ok(quote!(box #pattern))
+            PatternKind::Box(box_pat) => {
+                let inner = self.print_pattern(&box_pat.pattern)?;
+                Ok(quote!(box #inner))
             }
-            Pattern::Variant(variant) => {
+            PatternKind::Variant(variant) => {
                 let name = self.print_expr(&variant.name)?;
-                let pattern = if let Some(pattern) = &variant.pattern {
-                    let pattern = self.print_pattern(pattern)?;
-                    quote!(#pattern)
+                if let Some(pattern) = &variant.pattern {
+                    let inner = self.print_pattern(pattern)?;
+                    Ok(quote!(#name(#inner)))
                 } else {
-                    quote!()
-                };
-                Ok(quote!(#name #pattern))
+                    Ok(quote!(#name))
+                }
             }
-            Pattern::Type(type_) => {
-                let pattern = self.print_pattern(&type_.pat)?;
-                let ty = self.print_type(&type_.ty)?;
-                Ok(quote!(#pattern: #ty))
+            PatternKind::Type(pattern_type) => {
+                let pat_tokens = self.print_pattern(&pattern_type.pat)?;
+                let ty_tokens = self.print_type(&pattern_type.ty)?;
+                Ok(quote!(#pat_tokens: #ty_tokens))
             }
-            _ => todo!("pattern not implemented: {:?}", pat),
+            PatternKind::Wildcard(_) => Ok(quote!(_)),
         }
     }
 

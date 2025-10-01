@@ -1,7 +1,7 @@
 use eyre::ContextCompat;
 use fp_core::ast::{
     Item, ItemDefConst, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType,
-    ItemImpl,
+    ItemImpl, ItemKind,
 };
 use fp_core::{bail, Result};
 use itertools::Itertools;
