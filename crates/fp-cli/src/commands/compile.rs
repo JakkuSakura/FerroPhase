@@ -8,6 +8,7 @@ use crate::{
 };
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -33,10 +34,23 @@ pub struct CompileArgs {
     pub source_language: Option<String>,
     /// Treat build as release (disable debug assertions)
     pub release: bool,
+    /// Execute program via const-eval instead of backend pipeline
+    pub force_const_exec: bool,
 }
 
 /// Execute the compile command
-pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
+pub async fn compile_command(mut args: CompileArgs, config: &CliConfig) -> Result<()> {
+    let original_target = args.target.clone();
+    args.force_const_exec = false;
+
+    if args.exec && original_target == "binary" {
+        warn!(
+            "binary backend not fully ported; falling back to rust target for execution"
+        );
+        args.target = "rust".to_string();
+        args.force_const_exec = true;
+    }
+
     info!("Starting compilation with target: {}", args.target);
 
     // Validate inputs
@@ -73,7 +87,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     ));
 
     // Execute if requested
-    if args.exec {
+    if args.exec && !args.force_const_exec {
         exec_compiled_output(&compiled_files, &args.target).await?;
     }
 
@@ -127,6 +141,7 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     save_intermediates: args.save_intermediates,
                     source_language: args.source_language.clone(),
                     release: args.release,
+                    force_const_exec: args.force_const_exec,
                 },
                 config,
             )
@@ -184,6 +199,7 @@ async fn compile_file(
             continue_on_error: true,
         },
         release: args.release,
+        execute_main: args.force_const_exec,
     };
 
     // Execute pipeline with new options
@@ -191,6 +207,13 @@ async fn compile_file(
     let pipeline_output = pipeline
         .execute_with_options(PipelineInput::File(input.to_path_buf()), pipeline_options)
         .await?;
+
+    if let Some(stdout_chunks) = pipeline.take_last_const_eval_stdout() {
+        for chunk in stdout_chunks {
+            print!("{}", chunk);
+        }
+        let _ = io::stdout().flush();
+    }
 
     // Write output to file
     match pipeline_output {

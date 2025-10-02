@@ -12,11 +12,12 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
 };
-use fp_core::hir;
 use fp_core::pretty::{PrettyOptions, pretty};
+use fp_core::{hir, lir, mir};
+use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
-use fp_optimize::transformations::{HirGenerator, IrTransform};
+use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_optimize::typing::TypingDiagnosticLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +27,7 @@ use tracing::{debug, info_span, warn};
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
+const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
 const STAGE_INTERPRET: &str = "interpret";
 
 const EXT_AST: &str = "ast";
@@ -61,12 +63,25 @@ struct ConstEvalArtifacts {
     outcome: ConstEvalOutcome,
 }
 
+struct BackendArtifacts {
+    mir_program: mir::Program,
+    lir_program: lir::LirProgram,
+    mir_text: String,
+    lir_text: String,
+}
+
+struct LlvmArtifacts {
+    ir_text: String,
+    _ir_path: PathBuf,
+}
+
 pub struct Pipeline {
     frontends: Arc<FrontendRegistry>,
     default_runtime: String,
     serializer: Option<Arc<dyn AstSerializer>>,
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
+    last_const_eval: Option<ConstEvalOutcome>,
 }
 
 impl Pipeline {
@@ -81,6 +96,7 @@ impl Pipeline {
             serializer: None,
             source_language: None,
             frontend_snapshot: None,
+            last_const_eval: None,
         }
     }
 
@@ -97,11 +113,23 @@ impl Pipeline {
             serializer: None,
             source_language: None,
             frontend_snapshot: None,
+            last_const_eval: None,
         }
     }
 
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.default_runtime = runtime_name.to_string();
+    }
+
+    pub fn last_const_eval_outcome(&self) -> Option<&ConstEvalOutcome> {
+        self.last_const_eval.as_ref()
+    }
+
+    pub fn take_last_const_eval_stdout(&mut self) -> Option<Vec<String>> {
+        self
+            .last_const_eval
+            .as_mut()
+            .map(|outcome| std::mem::take(&mut outcome.stdout))
     }
 
     pub async fn execute(
@@ -162,6 +190,7 @@ impl Pipeline {
         self.serializer = None;
         self.source_language = None;
         self.frontend_snapshot = None;
+        self.last_const_eval = None;
 
         options.base_path = Some(base_path.clone());
 
@@ -226,13 +255,20 @@ impl Pipeline {
                 let ConstEvalArtifacts {
                     typed_ast: evaluated_typed_ast,
                     hir_program: _hir_program,
-                    outcome: _,
+                    outcome,
                 } = self.collect_stage(
                     STAGE_CONST_EVAL,
                     const_report,
                     &diagnostic_manager,
                     &options,
                 )?;
+                self.last_const_eval = Some(outcome.clone());
+
+                if options.execute_main {
+                    let diagnostics = diagnostic_manager.get_diagnostics();
+                    self.emit_diagnostics(&diagnostics, None, &options);
+                    return Ok(PipelineOutput::Value(Value::unit()));
+                }
 
                 let rust_span = info_span!("pipeline.codegen", target = "rust");
                 let _enter_rust = rust_span.enter();
@@ -280,18 +316,216 @@ impl Pipeline {
                     }
                 }
             }
-            PipelineTarget::Llvm => Err(CliError::Compilation(
-                "LLVM backend not yet ported to typed AST".to_string(),
-            )),
-            PipelineTarget::Binary => Err(CliError::Compilation(
-                "binary backend not yet ported to typed AST".to_string(),
-            )),
+            PipelineTarget::Llvm => {
+                let base_path = options.base_path.as_ref().ok_or_else(|| {
+                    CliError::Compilation("Missing base path for LLVM generation".to_string())
+                })?;
+
+                let diagnostic_manager = DiagnosticManager::new();
+
+                let type_report = self.run_type_enrichment_stage(
+                    &ast_node,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
+                    STAGE_TYPE_ENRICH,
+                    type_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let const_report = self.run_const_eval_stage(
+                    typed_ast,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let ConstEvalArtifacts {
+                    typed_ast: _evaluated_typed_ast,
+                    hir_program,
+                    outcome,
+                } = self.collect_stage(
+                    STAGE_CONST_EVAL,
+                    const_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+                self.last_const_eval = Some(outcome.clone());
+
+                if options.debug.verbose {
+                    debug!(
+                        mutations = outcome.mutations_applied,
+                        consts = outcome.evaluated_constants.len(),
+                        "const evaluation completed"
+                    );
+                }
+
+                let backend_report =
+                    self.run_backend_lowering_stage(&hir_program, &options, base_path)?;
+                let BackendArtifacts {
+                    mir_program: _mir_program,
+                    lir_program,
+                    mir_text: _mir_text,
+                    lir_text: _lir_text,
+                } = self.collect_stage(
+                    STAGE_BACKEND_LOWERING,
+                    backend_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let llvm_artifacts = self.generate_llvm_artifacts(
+                    &lir_program,
+                    base_path,
+                    input_path.as_deref(),
+                    &options,
+                )?;
+
+                let diagnostics = diagnostic_manager.get_diagnostics();
+                self.emit_diagnostics(&diagnostics, None, &options);
+
+                Ok(PipelineOutput::Code(llvm_artifacts.ir_text))
+            }
+            PipelineTarget::Binary => {
+                let base_path = options.base_path.as_ref().ok_or_else(|| {
+                    CliError::Compilation("Missing base path for binary generation".to_string())
+                })?;
+
+                let diagnostic_manager = DiagnosticManager::new();
+
+                let type_report = self.run_type_enrichment_stage(
+                    &ast_node,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
+                    STAGE_TYPE_ENRICH,
+                    type_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let const_report = self.run_const_eval_stage(
+                    typed_ast,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let ConstEvalArtifacts {
+                    typed_ast: _evaluated_typed_ast,
+                    hir_program,
+                    outcome,
+                } = self.collect_stage(
+                    STAGE_CONST_EVAL,
+                    const_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+                self.last_const_eval = Some(outcome.clone());
+
+                if options.debug.verbose {
+                    debug!(
+                        mutations = outcome.mutations_applied,
+                        consts = outcome.evaluated_constants.len(),
+                        "const evaluation completed"
+                    );
+                }
+
+                let backend_report =
+                    self.run_backend_lowering_stage(&hir_program, &options, base_path)?;
+                let BackendArtifacts {
+                    mir_program: _mir_program,
+                    lir_program,
+                    mir_text: _mir_text,
+                    lir_text: _lir_text,
+                } = self.collect_stage(
+                    STAGE_BACKEND_LOWERING,
+                    backend_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let llvm_artifacts = self.generate_llvm_artifacts(
+                    &lir_program,
+                    base_path,
+                    input_path.as_deref(),
+                    &options,
+                )?;
+
+                let diagnostics = diagnostic_manager.get_diagnostics();
+                self.emit_diagnostics(&diagnostics, None, &options);
+
+                Ok(PipelineOutput::Code(llvm_artifacts.ir_text))
+            }
             PipelineTarget::Bytecode => {
-                let bytecode_span = info_span!("pipeline.bytecode");
-                let _enter_bytecode = bytecode_span.enter();
-                Err(CliError::Compilation(
-                    "Bytecode target is not implemented yet".to_string(),
-                ))
+                let base_path = options.base_path.as_ref().ok_or_else(|| {
+                    CliError::Compilation("Missing base path for bytecode generation".to_string())
+                })?;
+
+                let diagnostic_manager = DiagnosticManager::new();
+
+                let type_report = self.run_type_enrichment_stage(
+                    &ast_node,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
+                    STAGE_TYPE_ENRICH,
+                    type_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let const_report = self.run_const_eval_stage(
+                    typed_ast,
+                    &options,
+                    input_path.as_deref(),
+                    base_path,
+                )?;
+                let ConstEvalArtifacts {
+                    typed_ast: _evaluated_typed_ast,
+                    hir_program,
+                    outcome,
+                } = self.collect_stage(
+                    STAGE_CONST_EVAL,
+                    const_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+                self.last_const_eval = Some(outcome.clone());
+
+                if options.debug.verbose {
+                    debug!(
+                        mutations = outcome.mutations_applied,
+                        consts = outcome.evaluated_constants.len(),
+                        "const evaluation completed"
+                    );
+                }
+
+                let backend_report =
+                    self.run_backend_lowering_stage(&hir_program, &options, base_path)?;
+                let BackendArtifacts {
+                    mir_program: _mir_program,
+                    lir_program: _lir_program,
+                    mir_text,
+                    lir_text,
+                } = self.collect_stage(
+                    STAGE_BACKEND_LOWERING,
+                    backend_report,
+                    &diagnostic_manager,
+                    &options,
+                )?;
+
+                let diagnostics = diagnostic_manager.get_diagnostics();
+                self.emit_diagnostics(&diagnostics, None, &options);
+
+                let bytecode_repr = format!("; MIR\n{}\n\n; LIR\n{}", mir_text, lir_text);
+
+                Ok(PipelineOutput::Code(bytecode_repr))
             }
         }
     }
@@ -341,6 +575,7 @@ impl Pipeline {
         let shared_context = SharedScopedContext::new();
         let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
         const_evaluator.set_debug_assertions(!options.release);
+        const_evaluator.set_execute_main(options.execute_main);
 
         let mut diagnostics = Vec::new();
 
@@ -421,6 +656,87 @@ impl Pipeline {
             },
             diagnostics,
         ))
+    }
+
+    fn run_backend_lowering_stage(
+        &self,
+        hir_program: &hir::Program,
+        options: &PipelineOptions,
+        base_path: &Path,
+    ) -> Result<DiagnosticReport<BackendArtifacts>, CliError> {
+        let mut diagnostics = Vec::new();
+
+        let mut mir_lowering = MirLowering::new();
+        let mir_program = mir_lowering
+            .transform(hir_program)
+            .map_err(|err| CliError::Compilation(format!("HIR→MIR lowering failed: {}", err)))?;
+        let (mut mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
+        diagnostics.append(&mut mir_diags);
+        if mir_had_errors {
+            return Ok(DiagnosticReport::failure(diagnostics));
+        }
+
+        let mut pretty_opts = PrettyOptions::default();
+        pretty_opts.show_spans = options.debug.verbose;
+        let mir_text = format!("{}", pretty(&mir_program, pretty_opts.clone()));
+
+        if options.save_intermediates {
+            if let Err(err) = fs::write(base_path.with_extension("mir"), &mir_text) {
+                debug!(error = %err, "failed to persist MIR intermediate");
+            }
+        }
+
+        let mut lir_generator = LirGenerator::new();
+        let lir_program = lir_generator
+            .transform(mir_program.clone())
+            .map_err(|err| CliError::Compilation(format!("MIR→LIR lowering failed: {}", err)))?;
+
+        let lir_text = format!("{}", pretty(&lir_program, pretty_opts));
+
+        if options.save_intermediates {
+            if let Err(err) = fs::write(base_path.with_extension("lir"), &lir_text) {
+                debug!(error = %err, "failed to persist LIR intermediate");
+            }
+        }
+
+        Ok(DiagnosticReport::success_with_diagnostics(
+            BackendArtifacts {
+                mir_program,
+                lir_program,
+                mir_text,
+                lir_text,
+            },
+            diagnostics,
+        ))
+    }
+
+    fn generate_llvm_artifacts(
+        &self,
+        lir_program: &lir::LirProgram,
+        base_path: &Path,
+        source_path: Option<&Path>,
+        options: &PipelineOptions,
+    ) -> Result<LlvmArtifacts, CliError> {
+        let llvm_path = base_path.with_extension("ll");
+        let config = LlvmConfig::new().with_linker(LinkerConfig::executable(&llvm_path));
+        let compiler = LlvmCompiler::new(config);
+
+        compiler
+            .compile(lir_program.clone(), source_path)
+            .map_err(|err| CliError::Compilation(format!("LIR→LLVM lowering failed: {}", err)))?;
+
+        let ir_text = fs::read_to_string(&llvm_path)?;
+
+        if !options.save_intermediates {
+            if let Err(err) = fs::remove_file(&llvm_path) {
+                debug!(error = %err, "failed to remove temporary LLVM IR file");
+            }
+        }
+
+        Ok(LlvmArtifacts {
+            ir_text,
+            _ir_path: llvm_path,
+        })
     }
 
     fn run_type_enrichment_stage(
