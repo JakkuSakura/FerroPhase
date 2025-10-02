@@ -2,15 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprKind, FormatArgRef,
-    FormatTemplatePart, Item, ItemKind, ItemDefFunction, Node, NodeKind, Ty, Value, ValueField,
-    ValueList, ValueStruct, ValueStructural, ValueTuple,
+    AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprInvokeTarget, ExprKind,
+    FormatArgRef, FormatTemplatePart, Item, ItemDefFunction, ItemKind, Node, NodeKind, Ty, Value,
+    ValueField, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
-use fp_core::ops::{format_value_with_spec, BinOpKind, UnOpKind};
+use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
 use fp_interpret::intrinsics::IntrinsicsRegistry;
 
@@ -157,11 +157,7 @@ impl<'ctx> AstConstEvaluator<'ctx> {
     }
 
     fn execute_main(&mut self) {
-        if let Some(mut body_expr) = self
-            .functions
-            .get("main")
-            .map(|func| (*func.body).clone())
-        {
+        if let Some(mut body_expr) = self.functions.get("main").map(|func| (*func.body).clone()) {
             self.push_scope();
             let _ = self.eval_expr(&mut body_expr);
             self.pop_scope();
@@ -188,12 +184,16 @@ impl<'ctx> AstConstEvaluator<'ctx> {
             ItemKind::DefConst(def) => {
                 let value = self.eval_expr(def.value.as_mut());
                 let qualified = self.qualified_name(def.name.as_str());
+                let expr_value = Expr::value(value.clone());
                 self.insert_value(def.name.as_str(), value.clone());
                 self.evaluated_constants.insert(qualified, value);
+                *def.value = expr_value;
             }
             ItemKind::DefStatic(def) => {
                 let value = self.eval_expr(def.value.as_mut());
+                let expr_value = Expr::value(value.clone());
                 self.insert_value(def.name.as_str(), value);
+                *def.value = expr_value;
             }
             ItemKind::Module(module) => {
                 self.module_stack.push(module.name.as_str().to_string());
@@ -214,6 +214,7 @@ impl<'ctx> AstConstEvaluator<'ctx> {
             ItemKind::DefFunction(func) => {
                 self.functions
                     .insert(func.name.as_str().to_string(), func.clone());
+                self.evaluate_function_body(func.body.as_mut());
             }
             ItemKind::Expr(expr) => {
                 self.eval_expr(expr);
@@ -322,7 +323,17 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                 let target = self.eval_expr(select.obj.as_mut());
                 self.evaluate_select(target, &select.field.name)
             }
-            ExprKind::IntrinsicCall(call) => self.eval_intrinsic(call),
+            ExprKind::IntrinsicCall(call) => {
+                let kind = call.kind;
+                let value = self.eval_intrinsic(call);
+                if self.should_replace_intrinsic_with_value(kind, &value) {
+                    let mut replacement = Expr::value(value.clone());
+                    replacement.ty = expr.ty.clone();
+                    *expr = replacement;
+                    return value;
+                }
+                value
+            }
             ExprKind::Reference(reference) => self.eval_expr(reference.referee.as_mut()),
             ExprKind::Paren(paren) => self.eval_expr(paren.expr.as_mut()),
             ExprKind::Assign(assign) => {
@@ -334,6 +345,41 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                 self.bind_pattern(&expr_let.pat, value.clone());
                 value
             }
+            ExprKind::Invoke(invoke) => {
+                if let ExprInvokeTarget::Function(locator) = &invoke.target {
+                    if locator
+                        .as_ident()
+                        .map(|id| id.as_str() == "printf")
+                        .unwrap_or(false)
+                    {
+                        let mut evaluated = Vec::with_capacity(invoke.args.len());
+                        for arg in invoke.args.iter_mut() {
+                            evaluated.push(self.eval_expr(arg));
+                        }
+                        if let Some(Value::String(format_str)) = evaluated.first() {
+                            match format_runtime_string(&format_str.value, &evaluated[1..]) {
+                                Ok(output) => {
+                                    if !output.is_empty() {
+                                        self.stdout.push(output);
+                                    }
+                                }
+                                Err(err) => self.emit_error(err.to_string()),
+                            }
+                        } else {
+                            self.emit_error("printf expects a string literal as the first argument during const evaluation");
+                        }
+                        Value::unit()
+                    } else {
+                        self.emit_error("function calls are not supported in const evaluation");
+                        Value::undefined()
+                    }
+                } else {
+                    self.emit_error(
+                        "indirect function calls are not supported in const evaluation",
+                    );
+                    Value::undefined()
+                }
+            }
             _ => {
                 self.emit_error("expression not supported in const evaluation");
                 Value::undefined()
@@ -341,6 +387,24 @@ impl<'ctx> AstConstEvaluator<'ctx> {
         };
 
         result
+    }
+
+    fn should_replace_intrinsic_with_value(&self, kind: IntrinsicCallKind, value: &Value) -> bool {
+        if matches!(value, Value::Undefined(_)) {
+            return false;
+        }
+
+        matches!(
+            kind,
+            IntrinsicCallKind::SizeOf
+                | IntrinsicCallKind::FieldCount
+                | IntrinsicCallKind::FieldType
+                | IntrinsicCallKind::StructSize
+                | IntrinsicCallKind::TypeName
+                | IntrinsicCallKind::HasField
+                | IntrinsicCallKind::HasMethod
+                | IntrinsicCallKind::MethodCount
+        )
     }
 
     fn eval_block(&mut self, block: &mut ExprBlock) -> Value {
@@ -519,6 +583,152 @@ impl<'ctx> AstConstEvaluator<'ctx> {
         }
     }
 
+    fn evaluate_function_body(&mut self, expr: &mut Expr) {
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                for stmt in block.stmts.iter_mut() {
+                    match stmt {
+                        BlockStmt::Item(item) => self.evaluate_item(item.as_mut()),
+                        BlockStmt::Expr(expr_stmt) => {
+                            self.evaluate_function_body(expr_stmt.expr.as_mut())
+                        }
+                        BlockStmt::Let(stmt_let) => {
+                            if let Some(init) = stmt_let.init.as_mut() {
+                                self.evaluate_function_body(init);
+                            }
+                            if let Some(diverge) = stmt_let.diverge.as_mut() {
+                                self.evaluate_function_body(diverge);
+                            }
+                        }
+                        BlockStmt::Noop | BlockStmt::Any(_) => {}
+                    }
+                }
+            }
+            ExprKind::If(if_expr) => {
+                self.evaluate_function_body(if_expr.then.as_mut());
+                if let Some(else_expr) = if_expr.elze.as_mut() {
+                    self.evaluate_function_body(else_expr);
+                }
+                self.evaluate_function_body(if_expr.cond.as_mut());
+            }
+            ExprKind::Loop(loop_expr) => self.evaluate_function_body(loop_expr.body.as_mut()),
+            ExprKind::While(while_expr) => {
+                self.evaluate_function_body(while_expr.cond.as_mut());
+                self.evaluate_function_body(while_expr.body.as_mut());
+            }
+            ExprKind::Match(match_expr) => {
+                for case in match_expr.cases.iter_mut() {
+                    self.evaluate_function_body(case.cond.as_mut());
+                    self.evaluate_function_body(case.body.as_mut());
+                }
+            }
+            ExprKind::Let(expr_let) => self.evaluate_function_body(expr_let.expr.as_mut()),
+            ExprKind::Invoke(invoke) => {
+                match &mut invoke.target {
+                    ExprInvokeTarget::Function(locator)
+                        if locator
+                            .as_ident()
+                            .map(|id| id.as_str() == "printf")
+                            .unwrap_or(false) =>
+                    {
+                        let mut evaluated = Vec::with_capacity(invoke.args.len());
+                        for arg in invoke.args.iter_mut() {
+                            evaluated.push(self.eval_expr(arg));
+                        }
+
+                        if let Some(Value::String(format_str)) = evaluated.first() {
+                            match format_runtime_string(&format_str.value, &evaluated[1..]) {
+                                Ok(output) => {
+                                    if !output.is_empty() {
+                                        self.stdout.push(output);
+                                    }
+                                }
+                                Err(err) => self.emit_error(err.to_string()),
+                            }
+                        } else {
+                            self.emit_error("printf expects a string literal as the first argument during const evaluation");
+                        }
+                    }
+                    ExprInvokeTarget::Expr(inner) => self.evaluate_function_body(inner.as_mut()),
+                    ExprInvokeTarget::Method(select) => {
+                        self.evaluate_function_body(select.obj.as_mut())
+                    }
+                    ExprInvokeTarget::Type(_)
+                    | ExprInvokeTarget::Function(_)
+                    | ExprInvokeTarget::Closure(_)
+                    | ExprInvokeTarget::BinOp(_) => {}
+                }
+
+                for arg in invoke.args.iter_mut() {
+                    self.evaluate_function_body(arg);
+                }
+            }
+            ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
+            ExprKind::Closured(closured) => self.evaluate_function_body(closured.expr.as_mut()),
+            ExprKind::Closure(closure) => self.evaluate_function_body(closure.body.as_mut()),
+            ExprKind::Try(expr_try) => self.evaluate_function_body(expr_try.expr.as_mut()),
+            ExprKind::Reference(reference) => {
+                self.evaluate_function_body(reference.referee.as_mut())
+            }
+            ExprKind::Paren(paren) => self.evaluate_function_body(paren.expr.as_mut()),
+            ExprKind::Assign(assign) => {
+                self.evaluate_function_body(assign.target.as_mut());
+                self.evaluate_function_body(assign.value.as_mut());
+            }
+            ExprKind::Select(select) => self.evaluate_function_body(select.obj.as_mut()),
+            ExprKind::IntrinsicCall(call) => {
+                if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
+                    let value = self.eval_intrinsic(call);
+                    if !matches!(value, Value::Undefined(_)) {
+                        let ty = expr.ty.clone();
+                        *expr = Expr::value(value);
+                        expr.ty = ty;
+                        return;
+                    }
+                }
+
+                match &mut call.payload {
+                    fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                        for arg in template.args.iter_mut() {
+                            self.evaluate_function_body(arg);
+                        }
+                        for kwarg in template.kwargs.iter_mut() {
+                            self.evaluate_function_body(&mut kwarg.value);
+                        }
+                    }
+                    fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                        for arg in args.iter_mut() {
+                            self.evaluate_function_body(arg);
+                        }
+                    }
+                }
+            }
+            ExprKind::FormatString(template) => {
+                for arg in template.args.iter_mut() {
+                    self.evaluate_function_body(arg);
+                }
+                for kwarg in template.kwargs.iter_mut() {
+                    self.evaluate_function_body(&mut kwarg.value);
+                }
+            }
+            ExprKind::Value(_)
+            | ExprKind::Locator(_)
+            | ExprKind::Any(_)
+            | ExprKind::Id(_)
+            | ExprKind::UnOp(_)
+            | ExprKind::BinOp(_)
+            | ExprKind::Dereference(_)
+            | ExprKind::Index(_)
+            | ExprKind::Range(_)
+            | ExprKind::Tuple(_)
+            | ExprKind::Array(_)
+            | ExprKind::Struct(_)
+            | ExprKind::Structural(_)
+            | ExprKind::Splat(_)
+            | ExprKind::SplatDict(_) => {}
+        }
+    }
+
     fn render_intrinsic_call(
         &mut self,
         call: &mut fp_core::ast::ExprIntrinsicCall,
@@ -531,8 +741,8 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                 let mut rendered = Vec::with_capacity(args.len());
                 for expr in args.iter_mut() {
                     let value = self.eval_expr(expr);
-                    let text = format_value_with_spec(&value, None)
-                        .map_err(|err| err.to_string())?;
+                    let text =
+                        format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
                     rendered.push(text);
                 }
                 Ok(rendered.join(" "))
@@ -549,6 +759,19 @@ impl<'ctx> AstConstEvaluator<'ctx> {
             .iter_mut()
             .map(|expr| self.eval_expr(expr))
             .collect();
+
+        for (expr, value) in template.args.iter_mut().zip(positional.iter()) {
+            if let Some(kind) = match expr.kind() {
+                ExprKind::IntrinsicCall(call) => Some(call.kind),
+                _ => None,
+            } {
+                if self.should_replace_intrinsic_with_value(kind, value) {
+                    let mut replacement = Expr::value(value.clone());
+                    replacement.ty = expr.ty.clone();
+                    *expr = replacement;
+                }
+            }
+        }
 
         let mut named = HashMap::new();
         for kwarg in template.kwargs.iter_mut() {
@@ -572,27 +795,23 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                         FormatArgRef::Positional(index) => positional.get(*index),
                         FormatArgRef::Named(name) => named.get(name),
                     }
-                    .ok_or_else(|| {
-                        match &placeholder.arg_ref {
-                            FormatArgRef::Implicit => format!(
-                                "implicit format placeholder {{}} has no argument at position {}",
-                                implicit_index.saturating_sub(1)
-                            ),
-                            FormatArgRef::Positional(index) => format!(
-                                "format placeholder {{{}}} references missing positional argument",
-                                index
-                            ),
-                            FormatArgRef::Named(name) => format!(
-                                "format placeholder {{{name}}} references undefined keyword argument"
-                            ),
-                        }
+                    .ok_or_else(|| match &placeholder.arg_ref {
+                        FormatArgRef::Implicit => format!(
+                            "implicit format placeholder {{}} has no argument at position {}",
+                            implicit_index.saturating_sub(1)
+                        ),
+                        FormatArgRef::Positional(index) => format!(
+                            "format placeholder {{{}}} references missing positional argument",
+                            index
+                        ),
+                        FormatArgRef::Named(name) => format!(
+                            "format placeholder {{{name}}} references undefined keyword argument"
+                        ),
                     })?;
 
-                    let formatted = format_value_with_spec(
-                        value,
-                        placeholder.format_spec.as_deref(),
-                    )
-                    .map_err(|err| err.to_string())?;
+                    let formatted =
+                        format_value_with_spec(value, placeholder.format_spec.as_deref())
+                            .map_err(|err| err.to_string())?;
                     output.push_str(&formatted);
                 }
             }
@@ -812,6 +1031,12 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                 return Some(value.clone());
             }
         }
+        if self.is_printf_symbol(name) {
+            return Some(Value::unit());
+        }
+        if name.contains("printf") {
+            return Some(Value::unit());
+        }
         None
     }
 
@@ -831,6 +1056,9 @@ impl<'ctx> AstConstEvaluator<'ctx> {
         if let Some(ty) = self.global_types.get(&symbol) {
             return Value::Type(ty.clone());
         }
+        if symbol == "printf" {
+            return Value::unit();
+        }
         self.emit_error(format!(
             "unresolved symbol '{}' in const evaluation",
             symbol
@@ -839,6 +1067,10 @@ impl<'ctx> AstConstEvaluator<'ctx> {
     }
 
     fn qualified_name(&self, name: &str) -> String {
+        if self.is_printf_symbol(name) {
+            return name.trim_start_matches("#").to_string();
+        }
+
         if self.module_stack.is_empty() {
             name.to_string()
         } else {
@@ -847,6 +1079,11 @@ impl<'ctx> AstConstEvaluator<'ctx> {
             qualified.push_str(name);
             qualified
         }
+    }
+
+    fn is_printf_symbol(&self, name: &str) -> bool {
+        let base = name.trim_start_matches("#");
+        base == "printf" || base.ends_with("::printf")
     }
 
     fn push_scope(&mut self) {
