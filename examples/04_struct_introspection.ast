@@ -2,13 +2,47 @@ File {
     path: "examples/04_struct_introspection.fp",
     items: [
         Item {
-            ty: None,
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
             kind: DefFunction(
                 ItemDefFunction {
-                    ty_annotation: None,
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
                     attrs: [],
                     name: #main,
-                    ty: None,
+                    ty: Some(
+                        TypeFunction {
+                            params: [],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
                     sig: FunctionSignature {
                         name: Some(
                             #main,
@@ -16,16 +50,48 @@ File {
                         receiver: None,
                         params: [],
                         generics_params: [],
-                        ret_ty: None,
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
                     },
                     body: Expr {
-                        ty: None,
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
                         kind: Block(
                             ExprBlock {
                                 stmts: [
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Point,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Decimal(
+                                                                        F64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Decimal(
+                                                                        F64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
                                             kind: DefStruct(
                                                 ItemDefStruct {
                                                     visibility: Private,
@@ -57,7 +123,39 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Color,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #r,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        U8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #g,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        U8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #b,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        U8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
                                             kind: DefStruct(
                                                 ItemDefStruct {
                                                     visibility: Private,
@@ -97,10 +195,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #POINT_SIZE,
                                                     ty: Some(
@@ -114,14 +224,44 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: SizeOf,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Point,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #x,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #y,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Point,
                                                                             ),
@@ -137,10 +277,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #COLOR_SIZE,
                                                     ty: Some(
@@ -154,14 +306,52 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: SizeOf,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Color,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #r,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #g,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #b,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Color,
                                                                             ),
@@ -177,10 +367,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #POINT_FIELDS,
                                                     ty: Some(
@@ -194,14 +396,44 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: FieldCount,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Point,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #x,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #y,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Point,
                                                                             ),
@@ -217,10 +449,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #COLOR_FIELDS,
                                                     ty: Some(
@@ -234,14 +478,52 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: FieldCount,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Color,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #r,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #g,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #b,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Color,
                                                                             ),
@@ -257,10 +539,18 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #POINT_HAS_X,
                                                     ty: Some(
@@ -274,20 +564,52 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Bool,
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: HasField,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Point,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #x,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #y,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Point,
                                                                             ),
                                                                         },
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    String,
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 String(
                                                                                     ValueString {
@@ -308,10 +630,18 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #POINT_HAS_Z,
                                                     ty: Some(
@@ -325,20 +655,52 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Bool,
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: HasField,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Point,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #x,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #y,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Point,
                                                                             ),
                                                                         },
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    String,
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 String(
                                                                                     ValueString {
@@ -359,10 +721,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #POINT_METHODS,
                                                     ty: Some(
@@ -376,14 +750,44 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: MethodCount,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Point,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #x,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #y,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Point,
                                                                             ),
@@ -399,10 +803,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #COLOR_METHODS,
                                                     ty: Some(
@@ -416,14 +832,52 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: MethodCount,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Color,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #r,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #g,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #b,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Color,
                                                                             ),
@@ -440,7 +894,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -466,7 +924,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -488,14 +950,44 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: SizeOf,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Point,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #x,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #y,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Point,
                                                                                             ),
@@ -520,7 +1012,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -542,14 +1038,52 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: SizeOf,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Color,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #r,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #g,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #b,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Color,
                                                                                             ),
@@ -574,7 +1108,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -593,14 +1131,44 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: FieldCount,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Point,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #x,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #y,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Point,
                                                                                             ),
@@ -625,7 +1193,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -644,14 +1216,52 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: FieldCount,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Color,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #r,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #g,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #b,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Color,
                                                                                             ),
@@ -676,7 +1286,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -695,20 +1309,52 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Bool,
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: HasField,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Point,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #x,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #y,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Point,
                                                                                             ),
                                                                                         },
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Primitive(
+                                                                                                    String,
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Value(
                                                                                                 String(
                                                                                                     ValueString {
@@ -738,7 +1384,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -757,20 +1407,52 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Bool,
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: HasField,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Point,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #x,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #y,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Point,
                                                                                             ),
                                                                                         },
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Primitive(
+                                                                                                    String,
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Value(
                                                                                                 String(
                                                                                                     ValueString {
@@ -800,7 +1482,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -819,14 +1505,44 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: MethodCount,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Point,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #x,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #y,
+                                                                                                                value: Primitive(
+                                                                                                                    Decimal(
+                                                                                                                        F64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Point,
                                                                                             ),
@@ -851,7 +1567,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -870,14 +1590,52 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: IntrinsicCall(
                                                                             IntrinsicCall {
                                                                                 kind: MethodCount,
                                                                                 payload: Args {
                                                                                     args: [
                                                                                         Expr {
-                                                                                            ty: None,
+                                                                                            ty: Some(
+                                                                                                Struct(
+                                                                                                    TypeStruct {
+                                                                                                        name: #Color,
+                                                                                                        fields: [
+                                                                                                            StructuralField {
+                                                                                                                name: #r,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #g,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                            StructuralField {
+                                                                                                                name: #b,
+                                                                                                                value: Primitive(
+                                                                                                                    Int(
+                                                                                                                        U8,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            },
+                                                                                                        ],
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
                                                                                             kind: Locator(
                                                                                                 #Color,
                                                                                             ),
@@ -902,7 +1660,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -928,7 +1690,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -953,10 +1719,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #POINT_SIZE_CONST,
                                                     ty: Some(
@@ -970,14 +1748,44 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: SizeOf,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Point,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #x,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #y,
+                                                                                                value: Primitive(
+                                                                                                    Decimal(
+                                                                                                        F64,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Point,
                                                                             ),
@@ -993,10 +1801,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #COLOR_SIZE_CONST,
                                                     ty: Some(
@@ -1010,14 +1830,52 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: IntrinsicCall(
                                                             IntrinsicCall {
                                                                 kind: SizeOf,
                                                                 payload: Args {
                                                                     args: [
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Struct(
+                                                                                    TypeStruct {
+                                                                                        name: #Color,
+                                                                                        fields: [
+                                                                                            StructuralField {
+                                                                                                name: #r,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #g,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                            StructuralField {
+                                                                                                name: #b,
+                                                                                                value: Primitive(
+                                                                                                    Int(
+                                                                                                        U8,
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                            ),
                                                                             kind: Locator(
                                                                                 #Color,
                                                                             ),
@@ -1033,10 +1891,22 @@ File {
                                     ),
                                     Item(
                                         Item {
-                                            ty: None,
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
                                             kind: DefConst(
                                                 ItemDefConst {
-                                                    ty_annotation: None,
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
                                                     visibility: Private,
                                                     name: #TOTAL_SIZE,
                                                     ty: Some(
@@ -1050,18 +1920,36 @@ File {
                                                         ),
                                                     ),
                                                     value: Expr {
-                                                        ty: None,
+                                                        ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    U64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                         kind: BinOp(
                                                             ExprBinOp {
                                                                 kind: Add,
                                                                 lhs: Expr {
-                                                                    ty: None,
+                                                                    ty: Some(
+                                                                        Primitive(
+                                                                            Int(
+                                                                                U64,
+                                                                            ),
+                                                                        ),
+                                                                    ),
                                                                     kind: Locator(
                                                                         #POINT_SIZE_CONST,
                                                                     ),
                                                                 },
                                                                 rhs: Expr {
-                                                                    ty: None,
+                                                                    ty: Some(
+                                                                        Primitive(
+                                                                            Int(
+                                                                                U64,
+                                                                            ),
+                                                                        ),
+                                                                    ),
                                                                     kind: Locator(
                                                                         #COLOR_SIZE_CONST,
                                                                     ),
@@ -1076,7 +1964,11 @@ File {
                                     Let(
                                         StmtLet {
                                             pat: Pattern {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
                                                 kind: Ident(
                                                     PatternIdent {
                                                         ident: #origin,
@@ -1086,7 +1978,31 @@ File {
                                             },
                                             init: Some(
                                                 Expr {
-                                                    ty: None,
+                                                    ty: Some(
+                                                        Struct(
+                                                            TypeStruct {
+                                                                name: #Point,
+                                                                fields: [
+                                                                    StructuralField {
+                                                                        name: #x,
+                                                                        value: Primitive(
+                                                                            Decimal(
+                                                                                F64,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    StructuralField {
+                                                                        name: #y,
+                                                                        value: Primitive(
+                                                                            Decimal(
+                                                                                F64,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        ),
+                                                    ),
                                                     kind: Struct(
                                                         ExprStruct {
                                                             name: Expr {
@@ -1100,7 +2016,13 @@ File {
                                                                     name: #x,
                                                                     value: Some(
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    Decimal(
+                                                                                        F64,
+                                                                                    ),
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 Decimal(
                                                                                     ValueDecimal {
@@ -1115,7 +2037,13 @@ File {
                                                                     name: #y,
                                                                     value: Some(
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    Decimal(
+                                                                                        F64,
+                                                                                    ),
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 Decimal(
                                                                                     ValueDecimal {
@@ -1137,7 +2065,11 @@ File {
                                     Let(
                                         StmtLet {
                                             pat: Pattern {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
                                                 kind: Ident(
                                                     PatternIdent {
                                                         ident: #red,
@@ -1147,7 +2079,39 @@ File {
                                             },
                                             init: Some(
                                                 Expr {
-                                                    ty: None,
+                                                    ty: Some(
+                                                        Struct(
+                                                            TypeStruct {
+                                                                name: #Color,
+                                                                fields: [
+                                                                    StructuralField {
+                                                                        name: #r,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                U8,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    StructuralField {
+                                                                        name: #g,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                U8,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    StructuralField {
+                                                                        name: #b,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                U8,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        ),
+                                                    ),
                                                     kind: Struct(
                                                         ExprStruct {
                                                             name: Expr {
@@ -1161,7 +2125,13 @@ File {
                                                                     name: #r,
                                                                     value: Some(
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 Int(
                                                                                     ValueInt {
@@ -1176,7 +2146,13 @@ File {
                                                                     name: #g,
                                                                     value: Some(
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 Int(
                                                                                     ValueInt {
@@ -1191,7 +2167,13 @@ File {
                                                                     name: #b,
                                                                     value: Some(
                                                                         Expr {
-                                                                            ty: None,
+                                                                            ty: Some(
+                                                                                Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            ),
                                                                             kind: Value(
                                                                                 Int(
                                                                                     ValueInt {
@@ -1213,7 +2195,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1239,7 +2225,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1261,7 +2251,13 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Locator(
                                                                             #POINT_SIZE_CONST,
                                                                         ),
@@ -1281,7 +2277,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1303,7 +2303,13 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Locator(
                                                                             #COLOR_SIZE_CONST,
                                                                         ),
@@ -1323,7 +2329,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1345,7 +2355,13 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Locator(
                                                                             #TOTAL_SIZE,
                                                                         ),
@@ -1365,7 +2381,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1391,7 +2411,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1422,11 +2446,41 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Decimal(
+                                                                                    F64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Select(
                                                                             ExprSelect {
                                                                                 obj: Expr {
-                                                                                    ty: None,
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Point,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #x,
+                                                                                                        value: Primitive(
+                                                                                                            Decimal(
+                                                                                                                F64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #y,
+                                                                                                        value: Primitive(
+                                                                                                            Decimal(
+                                                                                                                F64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
                                                                                     kind: Locator(
                                                                                         #origin,
                                                                                     ),
@@ -1437,11 +2491,41 @@ File {
                                                                         ),
                                                                     },
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Decimal(
+                                                                                    F64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Select(
                                                                             ExprSelect {
                                                                                 obj: Expr {
-                                                                                    ty: None,
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Point,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #x,
+                                                                                                        value: Primitive(
+                                                                                                            Decimal(
+                                                                                                                F64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #y,
+                                                                                                        value: Primitive(
+                                                                                                            Decimal(
+                                                                                                                F64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
                                                                                     kind: Locator(
                                                                                         #origin,
                                                                                     ),
@@ -1466,7 +2550,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
@@ -1506,11 +2594,49 @@ File {
                                                                 ],
                                                                 args: [
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U8,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Select(
                                                                             ExprSelect {
                                                                                 obj: Expr {
-                                                                                    ty: None,
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Color,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #r,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #g,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #b,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
                                                                                     kind: Locator(
                                                                                         #red,
                                                                                     ),
@@ -1521,11 +2647,49 @@ File {
                                                                         ),
                                                                     },
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U8,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Select(
                                                                             ExprSelect {
                                                                                 obj: Expr {
-                                                                                    ty: None,
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Color,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #r,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #g,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #b,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
                                                                                     kind: Locator(
                                                                                         #red,
                                                                                     ),
@@ -1536,11 +2700,49 @@ File {
                                                                         ),
                                                                     },
                                                                     Expr {
-                                                                        ty: None,
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U8,
+                                                                                ),
+                                                                            ),
+                                                                        ),
                                                                         kind: Select(
                                                                             ExprSelect {
                                                                                 obj: Expr {
-                                                                                    ty: None,
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Color,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #r,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #g,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #b,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                U8,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
                                                                                     kind: Locator(
                                                                                         #red,
                                                                                     ),
@@ -1565,7 +2767,11 @@ File {
                                     Expr(
                                         BlockStmtExpr {
                                             expr: Expr {
-                                                ty: None,
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
                                                 kind: IntrinsicCall(
                                                     IntrinsicCall {
                                                         kind: Println,
