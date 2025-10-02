@@ -10,6 +10,7 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
 /// Arguments for the compile command
@@ -34,23 +35,10 @@ pub struct CompileArgs {
     pub source_language: Option<String>,
     /// Treat build as release (disable debug assertions)
     pub release: bool,
-    /// Execute program via const-eval instead of backend pipeline
-    pub force_const_exec: bool,
 }
 
 /// Execute the compile command
-pub async fn compile_command(mut args: CompileArgs, config: &CliConfig) -> Result<()> {
-    let original_target = args.target.clone();
-    args.force_const_exec = false;
-
-    if args.exec && original_target == "binary" {
-        warn!(
-            "binary backend not fully ported; falling back to rust target for execution"
-        );
-        args.target = "rust".to_string();
-        args.force_const_exec = true;
-    }
-
+pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
     info!("Starting compilation with target: {}", args.target);
 
     // Validate inputs
@@ -87,7 +75,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     ));
 
     // Execute if requested
-    if args.exec && !args.force_const_exec {
+    if args.exec && args.target == "binary" {
         exec_compiled_output(&compiled_files, &args.target).await?;
     }
 
@@ -141,7 +129,6 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
                     save_intermediates: args.save_intermediates,
                     source_language: args.source_language.clone(),
                     release: args.release,
-                    force_const_exec: args.force_const_exec,
                 },
                 config,
             )
@@ -173,6 +160,8 @@ async fn compile_file(
         _ => PipelineTarget::Interpret,
     };
 
+    let execute_const_main = false;
+
     let pipeline_options = PipelineOptions {
         target,
         runtime: RuntimeConfig {
@@ -199,7 +188,7 @@ async fn compile_file(
             continue_on_error: true,
         },
         release: args.release,
-        execute_main: args.force_const_exec,
+        execute_main: execute_const_main,
     };
 
     // Execute pipeline with new options
@@ -208,18 +197,21 @@ async fn compile_file(
         .execute_with_options(PipelineInput::File(input.to_path_buf()), pipeline_options)
         .await?;
 
-    if let Some(stdout_chunks) = pipeline.take_last_const_eval_stdout() {
-        for chunk in stdout_chunks {
-            print!("{}", chunk);
+    // Const-eval output is only surfaced directly when we explicitly request it (not for binary).
+    if execute_const_main && args.target != "binary" {
+        if let Some(stdout_chunks) = pipeline.take_last_const_eval_stdout() {
+            for chunk in stdout_chunks {
+                print!("{}", chunk);
+            }
+            let _ = io::stdout().flush();
         }
-        let _ = io::stdout().flush();
     }
 
     // Write output to file
     match pipeline_output {
         PipelineOutput::Code(code) => match args.target.as_str() {
             "binary" => {
-                compile_llvm_to_binary(&code, output, args).await?;
+                compile_rust_to_binary(&code, output, args).await?;
                 info!("Generated binary: {}", output.display());
             }
             _ => {
@@ -472,13 +464,46 @@ async fn compile_llvm_to_binary(llvm_ir: &str, output: &Path, args: &CompileArgs
     Ok(())
 }
 
+async fn compile_rust_to_binary(rust_src: &str, output: &Path, args: &CompileArgs) -> Result<()> {
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    let rs_path = output.with_extension("tmp.rs");
+
+    async_fs::write(&rs_path, rust_src)
+        .await
+        .map_err(CliError::Io)?;
+
+    let mut rustc_cmd = Command::new("rustc");
+    rustc_cmd.arg(&rs_path).arg("-o").arg(output);
+
+    if args.release {
+        rustc_cmd.arg("-O");
+    }
+
+    let status = rustc_cmd
+        .output()
+        .await
+        .map_err(|e| CliError::Compilation(format!("Failed to run rustc: {}", e)))?;
+
+    if !status.status.success() {
+        let stderr = String::from_utf8_lossy(&status.stderr);
+        return Err(CliError::Compilation(format!("rustc failed: {}", stderr)));
+    }
+
+    if !args.save_intermediates {
+        let _ = async_fs::remove_file(&rs_path).await;
+    }
+
+    Ok(())
+}
+
 async fn compile_with_llvm_tools(
     llvm_ir_file: &Path,
     output: &Path,
     args: &CompileArgs,
 ) -> Result<()> {
-    use tokio::process::Command;
-
     // Check if LLVM tools are available
     if Command::new("llc").arg("--version").output().await.is_err() {
         return Err(CliError::Compilation(

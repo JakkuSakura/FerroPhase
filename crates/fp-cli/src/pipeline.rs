@@ -126,8 +126,7 @@ impl Pipeline {
     }
 
     pub fn take_last_const_eval_stdout(&mut self) -> Option<Vec<String>> {
-        self
-            .last_const_eval
+        self.last_const_eval
             .as_mut()
             .map(|outcome| std::mem::take(&mut outcome.stdout))
     }
@@ -415,9 +414,9 @@ impl Pipeline {
                     base_path,
                 )?;
                 let ConstEvalArtifacts {
-                    typed_ast: _evaluated_typed_ast,
-                    hir_program,
+                    typed_ast: evaluated_typed_ast,
                     outcome,
+                    ..
                 } = self.collect_stage(
                     STAGE_CONST_EVAL,
                     const_report,
@@ -434,31 +433,18 @@ impl Pipeline {
                     );
                 }
 
-                let backend_report =
-                    self.run_backend_lowering_stage(&hir_program, &options, base_path)?;
-                let BackendArtifacts {
-                    mir_program: _mir_program,
-                    lir_program,
-                    mir_text: _mir_text,
-                    lir_text: _lir_text,
-                } = self.collect_stage(
-                    STAGE_BACKEND_LOWERING,
-                    backend_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
+                let rust_code = CodeGenerator::generate_rust_code(&evaluated_typed_ast)?;
 
-                let llvm_artifacts = self.generate_llvm_artifacts(
-                    &lir_program,
-                    base_path,
-                    input_path.as_deref(),
-                    &options,
-                )?;
+                if options.save_intermediates {
+                    if let Err(err) = fs::write(base_path.with_extension("rs"), &rust_code) {
+                        debug!(error = %err, "failed to persist generated Rust code");
+                    }
+                }
 
                 let diagnostics = diagnostic_manager.get_diagnostics();
                 self.emit_diagnostics(&diagnostics, None, &options);
 
-                Ok(PipelineOutput::Code(llvm_artifacts.ir_text))
+                Ok(PipelineOutput::Code(rust_code))
             }
             PipelineTarget::Bytecode => {
                 let base_path = options.base_path.as_ref().ok_or_else(|| {
@@ -625,6 +611,49 @@ impl Pipeline {
             }
         }
 
+        if let Err(err) = fp_optimize::materialize_runtime_intrinsics(&mut typed_ast) {
+            diagnostics.push(
+                Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
+                    .with_source_context(STAGE_CONST_EVAL),
+            );
+            return Ok(DiagnosticReport::failure(diagnostics));
+        }
+
+        match fp_optimize::typing::annotate(&mut typed_ast) {
+            Ok(outcome) => {
+                let mut saw_error = false;
+                for message in outcome.diagnostics {
+                    match message.level {
+                        TypingDiagnosticLevel::Warning => diagnostics.push(
+                            Diagnostic::warning(message.message)
+                                .with_source_context(STAGE_CONST_EVAL),
+                        ),
+                        TypingDiagnosticLevel::Error => {
+                            saw_error = true;
+                            diagnostics.push(
+                                Diagnostic::error(message.message)
+                                    .with_source_context(STAGE_CONST_EVAL),
+                            );
+                        }
+                    }
+                }
+
+                if saw_error || outcome.has_errors {
+                    return Ok(DiagnosticReport::failure(diagnostics));
+                }
+            }
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "AST typing failed after intrinsic materialization: {}",
+                        err
+                    ))
+                    .with_source_context(STAGE_CONST_EVAL),
+                );
+                return Ok(DiagnosticReport::failure(diagnostics));
+            }
+        }
+
         let hir_report = self.run_hir_stage(&typed_ast, options, file_path, base_path)?;
         let mut hir_diagnostics = hir_report.diagnostics;
         let hir_program = match hir_report.value {
@@ -751,6 +780,15 @@ impl Pipeline {
         let _ = file_path;
 
         let mut typed_ast = ast.clone();
+
+        if let Err(err) = fp_optimize::normalize_intrinsics(&mut typed_ast) {
+            diagnostics.push(
+                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                    .with_source_context(STAGE_TYPE_ENRICH),
+            );
+            return Ok(DiagnosticReport::failure(diagnostics));
+        }
+
         match fp_optimize::typing::annotate(&mut typed_ast) {
             Ok(outcome) => {
                 let mut saw_error = false;

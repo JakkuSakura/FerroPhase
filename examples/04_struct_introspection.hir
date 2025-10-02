@@ -11,48 +11,70 @@ hir::Program {
                 pub b: u8,
             }
             const POINT_SIZE: usize =
-                std::SizeOf(1 args);
+                16;
             const COLOR_SIZE: usize =
-                std::SizeOf(1 args);
+                24;
             const POINT_FIELDS: usize =
-                std::FieldCount(1 args);
+                2;
             const COLOR_FIELDS: usize =
-                std::FieldCount(1 args);
+                3;
             const POINT_HAS_X: bool =
-                std::HasField(2 args);
+                true;
             const POINT_HAS_Z: bool =
-                std::HasField(2 args);
+                false;
             const POINT_METHODS: usize =
-                std::MethodCount(1 args);
+                0;
             const COLOR_METHODS: usize =
-                std::MethodCount(1 args);
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(0 args);
+                0;
+            printf("=== Struct Introspection ===
+");
+            printf("Point size: %lld bytes
+", 16);
+            printf("Color size: %lld bytes
+", 24);
+            printf("Point fields: %lld
+", 2);
+            printf("Color fields: %lld
+", 3);
+            printf("Point has x: %d
+", true);
+            printf("Point has z: %d
+", false);
+            printf("Point methods: %lld
+", 0);
+            printf("Color methods: %lld
+", 0);
+            printf("
+✓ Introspection completed!
+");
+            printf("
+=== Transpilation Demo ===
+");
             const POINT_SIZE_CONST: usize =
-                std::SizeOf(1 args);
+                16;
             const COLOR_SIZE_CONST: usize =
-                std::SizeOf(1 args);
+                24;
             const TOTAL_SIZE: usize =
-                (POINT_SIZE_CONST + COLOR_SIZE_CONST);
+                40;
             let origin = Point { x: 0, y: 0 };
             let red = Color { r: 255, g: 0, b: 0 };
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(2 args);
-            std::Println(3 args);
-            std::Println(0 args);
+            printf("Transpilation target sizes:
+");
+            printf("  Point: %llu bytes (const)
+", POINT_SIZE_CONST);
+            printf("  Color: %llu bytes (const)
+", COLOR_SIZE_CONST);
+            printf("  Combined: %llu bytes
+", TOTAL_SIZE);
+            printf("Runtime instances:
+");
+            printf("  Origin: (%f, %f)
+", origin.x, origin.y);
+            printf("  Red: rgb(%hhu, %hhu, %hhu)
+", red.r, red.g, red.b);
+            printf("
+✓ Introspection enables external code generation!
+");
         }
     }
 }
