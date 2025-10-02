@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::error::optimization_error;
 use fp_core::ast::*;
@@ -151,6 +151,7 @@ pub struct AstTypeInferencer {
     current_level: usize,
     diagnostics: Vec<TypingDiagnostic>,
     has_errors: bool,
+    literal_ints: HashSet<TypeVarId>,
 }
 
 impl AstTypeInferencer {
@@ -162,6 +163,7 @@ impl AstTypeInferencer {
             current_level: 0,
             diagnostics: Vec::new(),
             has_errors: false,
+            literal_ints: HashSet::new(),
         }
     }
 
@@ -948,7 +950,10 @@ impl AstTypeInferencer {
     fn infer_value(&mut self, value: &Value) -> Result<TypeVarId> {
         let var = self.fresh_type_var();
         match value {
-            Value::Int(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64))),
+            Value::Int(_) => {
+                self.literal_ints.insert(var);
+                self.bind(var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+            }
             Value::Bool(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Bool)),
             Value::Decimal(_) => self.bind(
                 var,
@@ -1359,6 +1364,22 @@ impl AstTypeInferencer {
                 }
                 self.type_vars[b_root].kind = TypeVarKind::Bound(term);
                 Ok(())
+            }
+            (
+                TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(int_a))),
+                TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(int_b))),
+            ) => {
+                if int_a == int_b {
+                    Ok(())
+                } else if self.literal_ints.remove(&a_root) {
+                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                    Ok(())
+                } else if self.literal_ints.remove(&b_root) {
+                    self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
+                    Ok(())
+                } else {
+                    Err(optimization_error("primitive type mismatch".to_string()))
+                }
             }
             (TypeVarKind::Bound(term_a), TypeVarKind::Bound(term_b)) => {
                 self.unify_terms(term_a, term_b)

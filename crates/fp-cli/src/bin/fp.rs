@@ -344,6 +344,7 @@ async fn main() -> Result<()> {
                 max_errors: args.max_errors,
                 save_intermediates: args.save_intermediates,
                 source_language: args.language,
+                force_const_exec: false,
             };
             commands::compile_command(compile_args, &config).await
         }
