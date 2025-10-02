@@ -28,7 +28,9 @@ const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
 const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
-const STAGE_INTERPRET: &str = "interpret";
+const STAGE_TYPE_POST_CONST: &str = "ast→typed(post-const)";
+const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
+const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
@@ -46,21 +48,6 @@ pub enum PipelineOutput {
     Value(Value),
     RuntimeValue(RuntimeValue),
     Code(String),
-}
-
-struct TypeEnrichmentArtifacts {
-    typed_ast: Node,
-}
-
-struct CompilationArtifacts {
-    llvm_ir: PathBuf,
-    diagnostics: Vec<Diagnostic>,
-}
-
-struct ConstEvalArtifacts {
-    typed_ast: Node,
-    hir_program: hir::Program,
-    outcome: ConstEvalOutcome,
 }
 
 struct BackendArtifacts {
@@ -168,9 +155,54 @@ impl Pipeline {
         input: PipelineInput,
         mut options: PipelineOptions,
     ) -> Result<PipelineOutput, CliError> {
-        let read_span = info_span!("pipeline.read_input");
-        let _enter_read = read_span.enter();
-        let (source, base_path, input_path) = match input {
+        let (source, base_path, input_path) = self.read_input(input)?;
+        options.base_path = Some(base_path.clone());
+
+        self.reset_state();
+
+        let language = self.resolve_language(&options, input_path.as_ref());
+        let frontend = self.frontends.get(&language).ok_or_else(|| {
+            CliError::Compilation(format!("Unsupported source language: {}", language))
+        })?;
+
+        let ast = self.parse_with_frontend(&frontend, &source, input_path.as_deref())?;
+
+        match options.target {
+            PipelineTarget::Interpret => {
+                self.execute_interpret_target(ast, &options, input_path.as_deref())
+                    .await
+            }
+            ref target => {
+                let base_path = options.base_path.as_ref().ok_or_else(|| {
+                    let msg = match target {
+                        PipelineTarget::Rust => "Missing base path for transpilation",
+                        PipelineTarget::Llvm => "Missing base path for LLVM generation",
+                        PipelineTarget::Binary => "Missing base path for binary generation",
+                        PipelineTarget::Bytecode => "Missing base path for bytecode generation",
+                        PipelineTarget::Interpret => unreachable!(),
+                    };
+                    CliError::Compilation(msg.to_string())
+                })?;
+
+                self.execute_compilation_target(
+                    target,
+                    ast,
+                    &options,
+                    base_path,
+                    input_path.as_deref(),
+                )
+            }
+        }
+    }
+
+    fn read_input(
+        &self,
+        input: PipelineInput,
+    ) -> Result<(String, PathBuf, Option<PathBuf>), CliError> {
+        let span = info_span!("pipeline.read_input");
+        let _enter = span.enter();
+
+        let (source, base_path, path) = match input {
             PipelineInput::Expression(expr) => (expr, PathBuf::from("expression"), None),
             PipelineInput::File(path) => {
                 let source = std::fs::read_to_string(&path).map_err(|e| {
@@ -183,389 +215,277 @@ impl Pipeline {
                 (source, base_path, Some(path))
             }
         };
-        drop(_enter_read);
-        debug!(path = ?input_path, "loaded input source");
 
+        debug!(path = ?path, "loaded input source");
+        Ok((source, base_path, path))
+    }
+
+    fn reset_state(&mut self) {
         self.serializer = None;
         self.source_language = None;
         self.frontend_snapshot = None;
         self.last_const_eval = None;
+    }
 
-        options.base_path = Some(base_path.clone());
-
+    fn resolve_language(
+        &mut self,
+        options: &PipelineOptions,
+        input_path: Option<&PathBuf>,
+    ) -> String {
         let language = options
             .source_language
             .clone()
             .or_else(|| {
                 input_path
-                    .as_ref()
                     .and_then(|path| detect_source_language(path).map(|lang| lang.name.to_string()))
             })
             .unwrap_or_else(|| languages::FERROPHASE.to_string());
 
         self.source_language = Some(language.clone());
+        language
+    }
 
-        let frontend = self.frontends.get(&language).ok_or_else(|| {
-            CliError::Compilation(format!("Unsupported source language: {}", language))
-        })?;
+    fn parse_with_frontend(
+        &mut self,
+        frontend: &Arc<dyn LanguageFrontend>,
+        source: &str,
+        input_path: Option<&Path>,
+    ) -> Result<Node, CliError> {
+        let span = info_span!("pipeline.frontend", language = %frontend.language());
+        let _enter = span.enter();
 
-        let parse_span = info_span!("pipeline.frontend", language = %language);
-        let _enter_parse = parse_span.enter();
         let FrontendResult {
             last: _last,
-            ast: ast_node,
+            ast,
             serializer,
             snapshot,
-        } = frontend.parse(&source, input_path.as_deref())?;
-        drop(_enter_parse);
+        } = frontend.parse(source, input_path)?;
 
         register_threadlocal_serializer(serializer.clone());
-
         self.serializer = Some(serializer.clone());
         self.frontend_snapshot = snapshot;
 
-        match options.target {
-            PipelineTarget::Rust => {
-                let base_path = options.base_path.as_ref().ok_or_else(|| {
-                    CliError::Compilation("Missing base path for transpilation".to_string())
-                })?;
+        Ok(ast)
+    }
 
-                let diagnostic_manager = DiagnosticManager::new();
+    async fn execute_interpret_target(
+        &mut self,
+        ast: Node,
+        options: &PipelineOptions,
+        input_path: Option<&Path>,
+    ) -> Result<PipelineOutput, CliError> {
+        let runtime = if options.runtime.runtime_type.is_empty() {
+            self.default_runtime.clone()
+        } else {
+            options.runtime.runtime_type.clone()
+        };
 
-                let type_report = self.run_type_enrichment_stage(
-                    &ast_node,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
-                    STAGE_TYPE_ENRICH,
-                    type_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let const_report = self.run_const_eval_stage(
-                    typed_ast,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let ConstEvalArtifacts {
-                    typed_ast: evaluated_typed_ast,
-                    hir_program: _hir_program,
-                    outcome,
-                } = self.collect_stage(
-                    STAGE_CONST_EVAL,
-                    const_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-                self.last_const_eval = Some(outcome.clone());
-
-                if options.execute_main {
-                    let diagnostics = diagnostic_manager.get_diagnostics();
-                    self.emit_diagnostics(&diagnostics, None, &options);
-                    return Ok(PipelineOutput::Value(Value::unit()));
-                }
-
-                let rust_span = info_span!("pipeline.codegen", target = "rust");
-                let _enter_rust = rust_span.enter();
-                let rust_code = CodeGenerator::generate_rust_code(&evaluated_typed_ast)?;
-                drop(_enter_rust);
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                self.emit_diagnostics(&diagnostics, None, &options);
-
-                Ok(PipelineOutput::Code(rust_code))
+        match runtime.as_str() {
+            "literal" => {
+                let span = info_span!("pipeline.interpret", runtime = "literal");
+                let _enter = span.enter();
+                let value = self.interpret_ast(&ast, options, input_path).await?;
+                Ok(PipelineOutput::Value(value))
             }
-            PipelineTarget::Interpret => {
-                let runtime = if options.runtime.runtime_type.is_empty() {
-                    self.default_runtime.clone()
-                } else {
-                    options.runtime.runtime_type.clone()
-                };
-
-                match runtime.as_str() {
-                    "literal" => {
-                        let interpret_span = info_span!("pipeline.interpret", runtime = "literal");
-                        let _enter_interp = interpret_span.enter();
-                        let result = self
-                            .interpret_ast(&ast_node, &options, input_path.as_deref())
-                            .await?;
-                        drop(_enter_interp);
-                        Ok(PipelineOutput::Value(result))
-                    }
-                    _ => {
-                        let interpret_span = info_span!(
-                            "pipeline.interpret",
-                            runtime = %runtime
-                        );
-                        let _enter_interp = interpret_span.enter();
-                        let result = self
-                            .interpret_ast_runtime(
-                                &ast_node,
-                                &runtime,
-                                &options,
-                                input_path.as_deref(),
-                            )
-                            .await?;
-                        drop(_enter_interp);
-                        Ok(PipelineOutput::RuntimeValue(result))
-                    }
-                }
-            }
-            PipelineTarget::Llvm => {
-                let base_path = options.base_path.as_ref().ok_or_else(|| {
-                    CliError::Compilation("Missing base path for LLVM generation".to_string())
-                })?;
-
-                let diagnostic_manager = DiagnosticManager::new();
-
-                let type_report = self.run_type_enrichment_stage(
-                    &ast_node,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
-                    STAGE_TYPE_ENRICH,
-                    type_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let const_report = self.run_const_eval_stage(
-                    typed_ast,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let ConstEvalArtifacts {
-                    typed_ast: _evaluated_typed_ast,
-                    hir_program,
-                    outcome,
-                } = self.collect_stage(
-                    STAGE_CONST_EVAL,
-                    const_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-                self.last_const_eval = Some(outcome.clone());
-
-                if options.debug.verbose {
-                    debug!(
-                        mutations = outcome.mutations_applied,
-                        consts = outcome.evaluated_constants.len(),
-                        "const evaluation completed"
-                    );
-                }
-
-                let backend_report =
-                    self.run_backend_lowering_stage(&hir_program, &options, base_path)?;
-                let BackendArtifacts {
-                    mir_program: _mir_program,
-                    lir_program,
-                    mir_text: _mir_text,
-                    lir_text: _lir_text,
-                } = self.collect_stage(
-                    STAGE_BACKEND_LOWERING,
-                    backend_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let llvm_artifacts = self.generate_llvm_artifacts(
-                    &lir_program,
-                    base_path,
-                    input_path.as_deref(),
-                    &options,
-                )?;
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                self.emit_diagnostics(&diagnostics, None, &options);
-
-                Ok(PipelineOutput::Code(llvm_artifacts.ir_text))
-            }
-            PipelineTarget::Binary => {
-                let base_path = options.base_path.as_ref().ok_or_else(|| {
-                    CliError::Compilation("Missing base path for binary generation".to_string())
-                })?;
-
-                let diagnostic_manager = DiagnosticManager::new();
-
-                let type_report = self.run_type_enrichment_stage(
-                    &ast_node,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
-                    STAGE_TYPE_ENRICH,
-                    type_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let const_report = self.run_const_eval_stage(
-                    typed_ast,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let ConstEvalArtifacts {
-                    typed_ast: evaluated_typed_ast,
-                    outcome,
-                    ..
-                } = self.collect_stage(
-                    STAGE_CONST_EVAL,
-                    const_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-                self.last_const_eval = Some(outcome.clone());
-
-                if options.debug.verbose {
-                    debug!(
-                        mutations = outcome.mutations_applied,
-                        consts = outcome.evaluated_constants.len(),
-                        "const evaluation completed"
-                    );
-                }
-
-                let rust_code = CodeGenerator::generate_rust_code(&evaluated_typed_ast)?;
-
-                if options.save_intermediates {
-                    if let Err(err) = fs::write(base_path.with_extension("rs"), &rust_code) {
-                        debug!(error = %err, "failed to persist generated Rust code");
-                    }
-                }
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                self.emit_diagnostics(&diagnostics, None, &options);
-
-                Ok(PipelineOutput::Code(rust_code))
-            }
-            PipelineTarget::Bytecode => {
-                let base_path = options.base_path.as_ref().ok_or_else(|| {
-                    CliError::Compilation("Missing base path for bytecode generation".to_string())
-                })?;
-
-                let diagnostic_manager = DiagnosticManager::new();
-
-                let type_report = self.run_type_enrichment_stage(
-                    &ast_node,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let TypeEnrichmentArtifacts { typed_ast } = self.collect_stage(
-                    STAGE_TYPE_ENRICH,
-                    type_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let const_report = self.run_const_eval_stage(
-                    typed_ast,
-                    &options,
-                    input_path.as_deref(),
-                    base_path,
-                )?;
-                let ConstEvalArtifacts {
-                    typed_ast: _evaluated_typed_ast,
-                    hir_program,
-                    outcome,
-                } = self.collect_stage(
-                    STAGE_CONST_EVAL,
-                    const_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-                self.last_const_eval = Some(outcome.clone());
-
-                if options.debug.verbose {
-                    debug!(
-                        mutations = outcome.mutations_applied,
-                        consts = outcome.evaluated_constants.len(),
-                        "const evaluation completed"
-                    );
-                }
-
-                let backend_report =
-                    self.run_backend_lowering_stage(&hir_program, &options, base_path)?;
-                let BackendArtifacts {
-                    mir_program: _mir_program,
-                    lir_program: _lir_program,
-                    mir_text,
-                    lir_text,
-                } = self.collect_stage(
-                    STAGE_BACKEND_LOWERING,
-                    backend_report,
-                    &diagnostic_manager,
-                    &options,
-                )?;
-
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                self.emit_diagnostics(&diagnostics, None, &options);
-
-                let bytecode_repr = format!("; MIR\n{}\n\n; LIR\n{}", mir_text, lir_text);
-
-                Ok(PipelineOutput::Code(bytecode_repr))
+            _ => {
+                let span = info_span!("pipeline.interpret", runtime = %runtime);
+                let _enter = span.enter();
+                let value = self
+                    .interpret_ast_runtime(&ast, &runtime, options, input_path)
+                    .await?;
+                Ok(PipelineOutput::RuntimeValue(value))
             }
         }
     }
 
-    fn compile(
-        &self,
-        ast: Node,
+    fn execute_compilation_target(
+        &mut self,
+        target: &PipelineTarget,
+        mut ast: Node,
         options: &PipelineOptions,
-        file_path: Option<&Path>,
-    ) -> Result<CompilationArtifacts, CliError> {
-        let base_path = options.base_path.as_ref().ok_or_else(|| {
-            CliError::Compilation("Missing base path for compilation".to_string())
-        })?;
-
+        base_path: &Path,
+        input_path: Option<&Path>,
+    ) -> Result<PipelineOutput, CliError> {
         let diagnostic_manager = DiagnosticManager::new();
 
-        let type_report = self.run_type_enrichment_stage(&ast, options, file_path, base_path)?;
-        let TypeEnrichmentArtifacts { typed_ast } =
-            self.collect_stage(STAGE_TYPE_ENRICH, type_report, &diagnostic_manager, options)?;
+        let normalize_report = self.stage_normalize_intrinsics(&mut ast);
+        self.collect_stage(
+            STAGE_TYPE_ENRICH,
+            normalize_report,
+            &diagnostic_manager,
+            options,
+        )?;
 
-        let const_report = self.run_const_eval_stage(typed_ast, options, file_path, base_path)?;
-        let ConstEvalArtifacts {
-            typed_ast: _evaluated_typed,
-            hir_program: _hir_program,
-            outcome: _,
-        } = self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
+        let pre_const_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_ENRICH);
+        self.collect_stage(
+            STAGE_TYPE_ENRICH,
+            pre_const_type_report,
+            &diagnostic_manager,
+            options,
+        )?;
 
-        let _diagnostics = diagnostic_manager.get_diagnostics();
+        if options.save_intermediates {
+            self.save_pretty(&ast, base_path, EXT_AST, options)?;
+            self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
+        }
 
-        Err(CliError::Compilation(
-            "typed backend pipeline not yet implemented".to_string(),
-        ))
+        let const_report = self.stage_const_eval(&mut ast, options)?;
+        let outcome =
+            self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
+        self.last_const_eval = Some(outcome.clone());
+
+        if options.save_intermediates {
+            self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
+        }
+
+        if matches!(target, PipelineTarget::Rust) && options.execute_main {
+            let diagnostics = diagnostic_manager.get_diagnostics();
+            self.emit_diagnostics(&diagnostics, None, options);
+            return Ok(PipelineOutput::Value(Value::unit()));
+        }
+
+        let post_const_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_POST_CONST);
+        self.collect_stage(
+            STAGE_TYPE_POST_CONST,
+            post_const_type_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let materialize_report = self.stage_materialize_runtime_intrinsics(&mut ast);
+        self.collect_stage(
+            STAGE_RUNTIME_MATERIALIZE,
+            materialize_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let post_materialize_type_report =
+            self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
+        self.collect_stage(
+            STAGE_TYPE_POST_MATERIALIZE,
+            post_materialize_type_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let output = if matches!(target, PipelineTarget::Rust) {
+            let span = info_span!("pipeline.codegen", target = "rust");
+            let _enter = span.enter();
+            let code = CodeGenerator::generate_rust_code(&ast)?;
+            PipelineOutput::Code(code)
+        } else {
+            let hir_report = self.stage_hir_generation(&ast, options, input_path, base_path)?;
+            let hir_program =
+                self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
+
+            match target {
+                PipelineTarget::Llvm | PipelineTarget::Binary => {
+                    let backend_report =
+                        self.stage_backend_lowering(&hir_program, options, base_path)?;
+                    let backend = self.collect_stage(
+                        STAGE_BACKEND_LOWERING,
+                        backend_report,
+                        &diagnostic_manager,
+                        options,
+                    )?;
+
+                    let llvm = self.generate_llvm_artifacts(
+                        &backend.lir_program,
+                        base_path,
+                        input_path,
+                        options,
+                    )?;
+                    PipelineOutput::Code(llvm.ir_text)
+                }
+                PipelineTarget::Bytecode => {
+                    let backend_report =
+                        self.stage_backend_lowering(&hir_program, options, base_path)?;
+                    let backend = self.collect_stage(
+                        STAGE_BACKEND_LOWERING,
+                        backend_report,
+                        &diagnostic_manager,
+                        options,
+                    )?;
+
+                    let repr =
+                        format!("; MIR\n{}\n\n; LIR\n{}", backend.mir_text, backend.lir_text);
+                    PipelineOutput::Code(repr)
+                }
+                PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
+            }
+        };
+
+        let diagnostics = diagnostic_manager.get_diagnostics();
+        self.emit_diagnostics(&diagnostics, None, options);
+
+        Ok(output)
     }
 
-    fn run_const_eval_stage(
-        &self,
-        mut typed_ast: Node,
+    fn stage_normalize_intrinsics(&self, ast: &mut Node) -> DiagnosticReport<()> {
+        match fp_optimize::normalize_intrinsics(ast) {
+            Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
+            Err(err) => DiagnosticReport::failure(vec![
+                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                    .with_source_context(STAGE_TYPE_ENRICH),
+            ]),
+        }
+    }
+
+    fn stage_type_check(&self, ast: &mut Node, stage_label: &'static str) -> DiagnosticReport<()> {
+        let mut diagnostics = Vec::new();
+
+        match fp_optimize::typing::annotate(ast) {
+            Ok(outcome) => {
+                let mut saw_error = false;
+                for message in outcome.diagnostics {
+                    match message.level {
+                        TypingDiagnosticLevel::Warning => diagnostics.push(
+                            Diagnostic::warning(message.message).with_source_context(stage_label),
+                        ),
+                        TypingDiagnosticLevel::Error => {
+                            saw_error = true;
+                            diagnostics.push(
+                                Diagnostic::error(message.message).with_source_context(stage_label),
+                            );
+                        }
+                    }
+                }
+
+                if saw_error || outcome.has_errors {
+                    return DiagnosticReport::failure(diagnostics);
+                }
+            }
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!("AST typing failed: {}", err))
+                        .with_source_context(stage_label),
+                );
+                return DiagnosticReport::failure(diagnostics);
+            }
+        }
+
+        DiagnosticReport::success_with_diagnostics((), diagnostics)
+    }
+
+    fn stage_const_eval(
+        &mut self,
+        ast: &mut Node,
         options: &PipelineOptions,
-        file_path: Option<&Path>,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<ConstEvalArtifacts>, CliError> {
+    ) -> Result<DiagnosticReport<ConstEvalOutcome>, CliError> {
         let serializer = self.serializer.clone().ok_or_else(|| {
             CliError::Compilation("No serializer registered for const-eval".to_string())
         })?;
         register_threadlocal_serializer(serializer.clone());
 
         let shared_context = SharedScopedContext::new();
-        let mut const_evaluator = ConstEvaluationOrchestrator::new(serializer.clone());
-        const_evaluator.set_debug_assertions(!options.release);
-        const_evaluator.set_execute_main(options.execute_main);
+        let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
+        orchestrator.set_debug_assertions(!options.release);
+        orchestrator.set_execute_main(options.execute_main);
 
         let mut diagnostics = Vec::new();
 
-        let outcome = match const_evaluator.evaluate(&mut typed_ast, &shared_context) {
+        let outcome = match orchestrator.evaluate(ast, &shared_context) {
             Ok(outcome) => outcome,
             Err(e) => {
                 let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
@@ -579,115 +499,23 @@ impl Pipeline {
             return Ok(DiagnosticReport::failure(diagnostics));
         }
 
-        match fp_optimize::typing::annotate(&mut typed_ast) {
-            Ok(post_outcome) => {
-                let mut saw_error = false;
-                for message in post_outcome.diagnostics {
-                    match message.level {
-                        TypingDiagnosticLevel::Warning => diagnostics.push(
-                            Diagnostic::warning(message.message)
-                                .with_source_context(STAGE_CONST_EVAL),
-                        ),
-                        TypingDiagnosticLevel::Error => {
-                            saw_error = true;
-                            diagnostics.push(
-                                Diagnostic::error(message.message)
-                                    .with_source_context(STAGE_CONST_EVAL),
-                            );
-                        }
-                    }
-                }
-
-                if saw_error || post_outcome.has_errors {
-                    return Ok(DiagnosticReport::failure(diagnostics));
-                }
-            }
-            Err(err) => {
-                diagnostics.push(
-                    Diagnostic::error(format!("AST typing failed after const evaluation: {}", err))
-                        .with_source_context(STAGE_CONST_EVAL),
-                );
-                return Ok(DiagnosticReport::failure(diagnostics));
-            }
-        }
-
-        if let Err(err) = fp_optimize::materialize_runtime_intrinsics(&mut typed_ast) {
-            diagnostics.push(
-                Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
-                    .with_source_context(STAGE_CONST_EVAL),
-            );
-            return Ok(DiagnosticReport::failure(diagnostics));
-        }
-
-        match fp_optimize::typing::annotate(&mut typed_ast) {
-            Ok(outcome) => {
-                let mut saw_error = false;
-                for message in outcome.diagnostics {
-                    match message.level {
-                        TypingDiagnosticLevel::Warning => diagnostics.push(
-                            Diagnostic::warning(message.message)
-                                .with_source_context(STAGE_CONST_EVAL),
-                        ),
-                        TypingDiagnosticLevel::Error => {
-                            saw_error = true;
-                            diagnostics.push(
-                                Diagnostic::error(message.message)
-                                    .with_source_context(STAGE_CONST_EVAL),
-                            );
-                        }
-                    }
-                }
-
-                if saw_error || outcome.has_errors {
-                    return Ok(DiagnosticReport::failure(diagnostics));
-                }
-            }
-            Err(err) => {
-                diagnostics.push(
-                    Diagnostic::error(format!(
-                        "AST typing failed after intrinsic materialization: {}",
-                        err
-                    ))
-                    .with_source_context(STAGE_CONST_EVAL),
-                );
-                return Ok(DiagnosticReport::failure(diagnostics));
-            }
-        }
-
-        let hir_report = self.run_hir_stage(&typed_ast, options, file_path, base_path)?;
-        let mut hir_diagnostics = hir_report.diagnostics;
-        let hir_program = match hir_report.value {
-            Some(program) => program,
-            None => {
-                diagnostics.append(&mut hir_diagnostics);
-                return Ok(DiagnosticReport::failure(diagnostics));
-            }
-        };
-        diagnostics.append(&mut hir_diagnostics);
-
-        if options.save_intermediates {
-            let mut ast_opts = PrettyOptions::default();
-            ast_opts.show_spans = options.debug.verbose;
-            let rendered_ast = format!("{}", pretty(&typed_ast, ast_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_AST_EVAL), rendered_ast) {
-                debug!(
-                    error = %err,
-                    "failed to persist evaluated AST (ast-eval) intermediate after const eval"
-                );
-            }
-        }
-
         Ok(DiagnosticReport::success_with_diagnostics(
-            ConstEvalArtifacts {
-                typed_ast,
-                hir_program,
-                outcome,
-            },
+            outcome,
             diagnostics,
         ))
     }
 
-    fn run_backend_lowering_stage(
+    fn stage_materialize_runtime_intrinsics(&self, ast: &mut Node) -> DiagnosticReport<()> {
+        match fp_optimize::materialize_runtime_intrinsics(ast) {
+            Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
+            Err(err) => DiagnosticReport::failure(vec![
+                Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
+                    .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+            ]),
+        }
+    }
+
+    fn stage_backend_lowering(
         &self,
         hir_program: &hir::Program,
         options: &PipelineOptions,
@@ -739,6 +567,32 @@ impl Pipeline {
         ))
     }
 
+    fn save_pretty(
+        &self,
+        ast: &Node,
+        base_path: &Path,
+        extension: &str,
+        options: &PipelineOptions,
+    ) -> Result<(), CliError> {
+        if !options.save_intermediates {
+            return Ok(());
+        }
+
+        let mut pretty_opts = PrettyOptions::default();
+        pretty_opts.show_spans = options.debug.verbose;
+        let rendered = format!("{}", pretty(ast, pretty_opts));
+        if let Err(err) = fs::write(base_path.with_extension(extension), rendered) {
+            debug!(
+                error = %err,
+                extension = extension,
+                "failed to persist {} intermediate",
+                extension
+            );
+        }
+
+        Ok(())
+    }
+
     fn generate_llvm_artifacts(
         &self,
         lir_program: &lir::LirProgram,
@@ -768,87 +622,7 @@ impl Pipeline {
         })
     }
 
-    fn run_type_enrichment_stage(
-        &self,
-        ast: &Node,
-        options: &PipelineOptions,
-        file_path: Option<&Path>,
-        base_path: &Path,
-    ) -> Result<DiagnosticReport<TypeEnrichmentArtifacts>, CliError> {
-        let mut diagnostics = Vec::new();
-
-        let _ = file_path;
-
-        let mut typed_ast = ast.clone();
-
-        if let Err(err) = fp_optimize::normalize_intrinsics(&mut typed_ast) {
-            diagnostics.push(
-                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
-                    .with_source_context(STAGE_TYPE_ENRICH),
-            );
-            return Ok(DiagnosticReport::failure(diagnostics));
-        }
-
-        match fp_optimize::typing::annotate(&mut typed_ast) {
-            Ok(outcome) => {
-                let mut saw_error = false;
-                for message in outcome.diagnostics {
-                    match message.level {
-                        TypingDiagnosticLevel::Warning => diagnostics.push(
-                            Diagnostic::warning(message.message)
-                                .with_source_context(STAGE_TYPE_ENRICH),
-                        ),
-                        TypingDiagnosticLevel::Error => {
-                            saw_error = true;
-                            diagnostics.push(
-                                Diagnostic::error(message.message)
-                                    .with_source_context(STAGE_TYPE_ENRICH),
-                            );
-                        }
-                    }
-                }
-
-                if saw_error || outcome.has_errors {
-                    return Ok(DiagnosticReport::failure(diagnostics));
-                }
-            }
-            Err(err) => {
-                diagnostics.push(
-                    Diagnostic::error(format!("AST typing failed: {}", err))
-                        .with_source_context(STAGE_TYPE_ENRICH),
-                );
-                return Ok(DiagnosticReport::failure(diagnostics));
-            }
-        }
-
-        if options.save_intermediates {
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-
-            let rendered_ast = format!("{}", pretty(ast, pretty_opts.clone()));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_AST), rendered_ast) {
-                debug!(
-                    error = %err,
-                    "failed to persist AST intermediate"
-                );
-            }
-
-            let rendered_typed = format!("{}", pretty(&typed_ast, pretty_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_AST_TYPED), rendered_typed) {
-                debug!(
-                    error = %err,
-                    "failed to persist typed AST intermediate"
-                );
-            }
-        }
-
-        Ok(DiagnosticReport::success_with_diagnostics(
-            TypeEnrichmentArtifacts { typed_ast },
-            diagnostics,
-        ))
-    }
-
-    fn run_hir_stage(
+    fn stage_hir_generation(
         &self,
         ast: &Node,
         options: &PipelineOptions,
