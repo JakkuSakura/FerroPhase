@@ -303,7 +303,7 @@ fn default_value_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.value.clone(),
         Value::Int(i) => i.value.to_string(),
-        Value::Decimal(d) => d.value.to_string(),
+        Value::Decimal(d) => format!("{:?}", d.value),
         Value::Bool(b) => b.value.to_string(),
         Value::Unit(_) => "()".to_string(),
         Value::None(_) => "None".to_string(),
