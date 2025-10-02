@@ -2,14 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, BlockStmt, Expr, ExprBlock, ExprKind, Item, ItemKind, Node, NodeKind, Ty, Value,
-    ValueField, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprKind, FormatArgRef,
+    FormatTemplatePart, Item, ItemKind, ItemDefFunction, Node, NodeKind, Ty, Value, ValueField,
+    ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
-use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::ops::{format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
 use fp_interpret::intrinsics::IntrinsicsRegistry;
 
@@ -19,18 +20,20 @@ use crate::utils::ConstEvalTracker;
 const DIAGNOSTIC_CONTEXT: &str = "const-eval";
 
 /// Result of running const evaluation on the typed AST.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ConstEvalOutcome {
     pub evaluated_constants: HashMap<String, Value>,
     pub mutations_applied: bool,
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
+    pub stdout: Vec<String>,
 }
 
 /// Const-evaluation orchestrator that operates directly on the typed AST.
 pub struct ConstEvaluationOrchestrator {
     diagnostics: Option<Arc<DiagnosticManager>>,
     debug_assertions: bool,
+    execute_main: bool,
 }
 
 impl ConstEvaluationOrchestrator {
@@ -38,6 +41,7 @@ impl ConstEvaluationOrchestrator {
         Self {
             diagnostics: None,
             debug_assertions: false,
+            execute_main: false,
         }
     }
 
@@ -50,6 +54,10 @@ impl ConstEvaluationOrchestrator {
         self.debug_assertions = enabled;
     }
 
+    pub fn set_execute_main(&mut self, enabled: bool) {
+        self.execute_main = enabled;
+    }
+
     pub fn evaluate(
         &mut self,
         ast: &mut Node,
@@ -58,12 +66,16 @@ impl ConstEvaluationOrchestrator {
         let mut evaluator =
             AstConstEvaluator::new(ctx, self.diagnostics.clone(), self.debug_assertions);
         evaluator.evaluate(ast);
+        if self.execute_main {
+            evaluator.execute_main();
+        }
         let mutations_applied = evaluator.apply_tracker(ast)?;
         Ok(ConstEvalOutcome {
             evaluated_constants: evaluator.take_constants(),
             mutations_applied,
             diagnostics: evaluator.take_diagnostics(),
             has_errors: evaluator.has_errors(),
+            stdout: evaluator.take_stdout(),
         })
     }
 }
@@ -82,6 +94,8 @@ struct AstConstEvaluator<'ctx> {
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     evaluated_constants: HashMap<String, Value>,
+    stdout: Vec<String>,
+    functions: HashMap<String, ItemDefFunction>,
 }
 
 impl<'ctx> AstConstEvaluator<'ctx> {
@@ -103,6 +117,8 @@ impl<'ctx> AstConstEvaluator<'ctx> {
             diagnostics: Vec::new(),
             has_errors: false,
             evaluated_constants: HashMap::new(),
+            stdout: Vec::new(),
+            functions: HashMap::new(),
         }
     }
 
@@ -134,6 +150,22 @@ impl<'ctx> AstConstEvaluator<'ctx> {
 
     fn has_errors(&self) -> bool {
         self.has_errors
+    }
+
+    fn take_stdout(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.stdout)
+    }
+
+    fn execute_main(&mut self) {
+        if let Some(mut body_expr) = self
+            .functions
+            .get("main")
+            .map(|func| (*func.body).clone())
+        {
+            self.push_scope();
+            let _ = self.eval_expr(&mut body_expr);
+            self.pop_scope();
+        }
     }
 
     fn evaluate_item(&mut self, item: &mut Item) {
@@ -179,6 +211,10 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                 }
                 self.pop_scope();
             }
+            ItemKind::DefFunction(func) => {
+                self.functions
+                    .insert(func.name.as_str().to_string(), func.clone());
+            }
             ItemKind::Expr(expr) => {
                 self.eval_expr(expr);
             }
@@ -187,7 +223,6 @@ impl<'ctx> AstConstEvaluator<'ctx> {
             | ItemKind::DeclFunction(_)
             | ItemKind::DeclType(_)
             | ItemKind::Import(_)
-            | ItemKind::DefFunction(_)
             | ItemKind::DefTrait(_)
             | ItemKind::Any(_) => {}
         }
@@ -413,6 +448,18 @@ impl<'ctx> AstConstEvaluator<'ctx> {
 
     fn eval_intrinsic(&mut self, call: &mut fp_core::ast::ExprIntrinsicCall) -> Value {
         match call.kind {
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                match self.render_intrinsic_call(call) {
+                    Ok(mut text) => {
+                        if matches!(call.kind, IntrinsicCallKind::Println) {
+                            text.push('\n');
+                        }
+                        self.stdout.push(text);
+                    }
+                    Err(err) => self.emit_error(err),
+                }
+                Value::unit()
+            }
             IntrinsicCallKind::DebugAssertions => Value::bool(self.debug_assertions),
             IntrinsicCallKind::ConstBlock => {
                 if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
@@ -470,6 +517,88 @@ impl<'ctx> AstConstEvaluator<'ctx> {
                 }
             }
         }
+    }
+
+    fn render_intrinsic_call(
+        &mut self,
+        call: &mut fp_core::ast::ExprIntrinsicCall,
+    ) -> std::result::Result<String, String> {
+        match &mut call.payload {
+            fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                self.render_format_template(template)
+            }
+            fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                let mut rendered = Vec::with_capacity(args.len());
+                for expr in args.iter_mut() {
+                    let value = self.eval_expr(expr);
+                    let text = format_value_with_spec(&value, None)
+                        .map_err(|err| err.to_string())?;
+                    rendered.push(text);
+                }
+                Ok(rendered.join(" "))
+            }
+        }
+    }
+
+    fn render_format_template(
+        &mut self,
+        template: &mut ExprFormatString,
+    ) -> std::result::Result<String, String> {
+        let positional: Vec<Value> = template
+            .args
+            .iter_mut()
+            .map(|expr| self.eval_expr(expr))
+            .collect();
+
+        let mut named = HashMap::new();
+        for kwarg in template.kwargs.iter_mut() {
+            let value = self.eval_expr(&mut kwarg.value);
+            named.insert(kwarg.name.clone(), value);
+        }
+
+        let mut output = String::new();
+        let mut implicit_index = 0usize;
+
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(literal) => output.push_str(literal),
+                FormatTemplatePart::Placeholder(placeholder) => {
+                    let value = match &placeholder.arg_ref {
+                        FormatArgRef::Implicit => {
+                            let index = implicit_index;
+                            implicit_index += 1;
+                            positional.get(index)
+                        }
+                        FormatArgRef::Positional(index) => positional.get(*index),
+                        FormatArgRef::Named(name) => named.get(name),
+                    }
+                    .ok_or_else(|| {
+                        match &placeholder.arg_ref {
+                            FormatArgRef::Implicit => format!(
+                                "implicit format placeholder {{}} has no argument at position {}",
+                                implicit_index.saturating_sub(1)
+                            ),
+                            FormatArgRef::Positional(index) => format!(
+                                "format placeholder {{{}}} references missing positional argument",
+                                index
+                            ),
+                            FormatArgRef::Named(name) => format!(
+                                "format placeholder {{{name}}} references undefined keyword argument"
+                            ),
+                        }
+                    })?;
+
+                    let formatted = format_value_with_spec(
+                        value,
+                        placeholder.format_spec.as_deref(),
+                    )
+                    .map_err(|err| err.to_string())?;
+                    output.push_str(&formatted);
+                }
+            }
+        }
+
+        Ok(output)
     }
 
     fn evaluate_binop(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {

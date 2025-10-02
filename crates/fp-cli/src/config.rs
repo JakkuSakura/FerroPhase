@@ -22,6 +22,8 @@ pub struct PipelineOptions {
     pub error_tolerance: ErrorToleranceOptions,
     /// Whether the current build is in release mode
     pub release: bool,
+    /// Execute `main` during const evaluation instead of running backend
+    pub execute_main: bool,
 }
 
 /// Compilation targets
@@ -102,6 +104,7 @@ impl Default for PipelineOptions {
             },
             error_tolerance: ErrorToleranceOptions::default(),
             release: false,
+            execute_main: false,
         }
     }
 }
@@ -143,6 +146,7 @@ impl From<&PipelineConfig> for PipelineOptions {
             },
             error_tolerance: ErrorToleranceOptions::default(),
             release: false,
+            execute_main: false,
         }
     }
 }

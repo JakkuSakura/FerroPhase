@@ -1,0 +1,1600 @@
+File {
+    path: "examples/04_struct_introspection.fp",
+    items: [
+        Item {
+            ty: None,
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: None,
+                    attrs: [],
+                    name: #main,
+                    ty: None,
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: None,
+                    },
+                    body: Expr {
+                        ty: None,
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefStruct(
+                                                ItemDefStruct {
+                                                    visibility: Private,
+                                                    name: #Point,
+                                                    value: TypeStruct {
+                                                        name: #Point,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Decimal(
+                                                                        F64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Decimal(
+                                                                        F64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefStruct(
+                                                ItemDefStruct {
+                                                    visibility: Private,
+                                                    name: #Color,
+                                                    value: TypeStruct {
+                                                        name: #Color,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #r,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        U8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #g,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        U8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #b,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        U8,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #POINT_SIZE,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: SizeOf,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Point,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #COLOR_SIZE,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: SizeOf,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Color,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #POINT_FIELDS,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: FieldCount,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Point,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #COLOR_FIELDS,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: FieldCount,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Color,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #POINT_HAS_X,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: HasField,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Point,
+                                                                            ),
+                                                                        },
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                String(
+                                                                                    ValueString {
+                                                                                        value: "x",
+                                                                                        owned: false,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #POINT_HAS_Z,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: HasField,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Point,
+                                                                            ),
+                                                                        },
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                String(
+                                                                                    ValueString {
+                                                                                        value: "z",
+                                                                                        owned: false,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #POINT_METHODS,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: MethodCount,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Point,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #COLOR_METHODS,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: MethodCount,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Color,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "=== Struct Introspection ===",
+                                                                    ),
+                                                                ],
+                                                                args: [],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Point size: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " bytes",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: SizeOf,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Point,
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Color size: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " bytes",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: SizeOf,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Color,
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Point fields: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: FieldCount,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Point,
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Color fields: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: FieldCount,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Color,
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Point has x: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: HasField,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Point,
+                                                                                            ),
+                                                                                        },
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Value(
+                                                                                                String(
+                                                                                                    ValueString {
+                                                                                                        value: "x",
+                                                                                                        owned: false,
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Point has z: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: HasField,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Point,
+                                                                                            ),
+                                                                                        },
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Value(
+                                                                                                String(
+                                                                                                    ValueString {
+                                                                                                        value: "z",
+                                                                                                        owned: false,
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Point methods: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: MethodCount,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Point,
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Color methods: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: IntrinsicCall(
+                                                                            IntrinsicCall {
+                                                                                kind: MethodCount,
+                                                                                payload: Args {
+                                                                                    args: [
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #Color,
+                                                                                            ),
+                                                                                        },
+                                                                                    ],
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "\n✓ Introspection completed!",
+                                                                    ),
+                                                                ],
+                                                                args: [],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "\n=== Transpilation Demo ===",
+                                                                    ),
+                                                                ],
+                                                                args: [],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #POINT_SIZE_CONST,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: SizeOf,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Point,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #COLOR_SIZE_CONST,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: IntrinsicCall(
+                                                            IntrinsicCall {
+                                                                kind: SizeOf,
+                                                                payload: Args {
+                                                                    args: [
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Locator(
+                                                                                #Color,
+                                                                            ),
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: None,
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: None,
+                                                    visibility: Private,
+                                                    name: #TOTAL_SIZE,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: BinOp(
+                                                            ExprBinOp {
+                                                                kind: Add,
+                                                                lhs: Expr {
+                                                                    ty: None,
+                                                                    kind: Locator(
+                                                                        #POINT_SIZE_CONST,
+                                                                    ),
+                                                                },
+                                                                rhs: Expr {
+                                                                    ty: None,
+                                                                    kind: Locator(
+                                                                        #COLOR_SIZE_CONST,
+                                                                    ),
+                                                                },
+                                                            },
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: None,
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #origin,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: None,
+                                                    kind: Struct(
+                                                        ExprStruct {
+                                                            name: Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #Point,
+                                                                ),
+                                                            },
+                                                            fields: [
+                                                                ExprField {
+                                                                    name: #x,
+                                                                    value: Some(
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                Decimal(
+                                                                                    ValueDecimal {
+                                                                                        value: 0.0,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                },
+                                                                ExprField {
+                                                                    name: #y,
+                                                                    value: Some(
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                Decimal(
+                                                                                    ValueDecimal {
+                                                                                        value: 0.0,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                },
+                                                            ],
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: None,
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #red,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: None,
+                                                    kind: Struct(
+                                                        ExprStruct {
+                                                            name: Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #Color,
+                                                                ),
+                                                            },
+                                                            fields: [
+                                                                ExprField {
+                                                                    name: #r,
+                                                                    value: Some(
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                Int(
+                                                                                    ValueInt {
+                                                                                        value: 255,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                },
+                                                                ExprField {
+                                                                    name: #g,
+                                                                    value: Some(
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                Int(
+                                                                                    ValueInt {
+                                                                                        value: 0,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                },
+                                                                ExprField {
+                                                                    name: #b,
+                                                                    value: Some(
+                                                                        Expr {
+                                                                            ty: None,
+                                                                            kind: Value(
+                                                                                Int(
+                                                                                    ValueInt {
+                                                                                        value: 0,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                },
+                                                            ],
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Transpilation target sizes:",
+                                                                    ),
+                                                                ],
+                                                                args: [],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "  Point: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " bytes (const)",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #POINT_SIZE_CONST,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "  Color: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " bytes (const)",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #COLOR_SIZE_CONST,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "  Combined: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " bytes",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #TOTAL_SIZE,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Runtime instances:",
+                                                                    ),
+                                                                ],
+                                                                args: [],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "  Origin: (",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ")",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: None,
+                                                                                    kind: Locator(
+                                                                                        #origin,
+                                                                                    ),
+                                                                                },
+                                                                                field: #x,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: None,
+                                                                                    kind: Locator(
+                                                                                        #origin,
+                                                                                    ),
+                                                                                },
+                                                                                field: #y,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "  Red: rgb(",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ")",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: None,
+                                                                                    kind: Locator(
+                                                                                        #red,
+                                                                                    ),
+                                                                                },
+                                                                                field: #r,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: None,
+                                                                                    kind: Locator(
+                                                                                        #red,
+                                                                                    ),
+                                                                                },
+                                                                                field: #g,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: None,
+                                                                                    kind: Locator(
+                                                                                        #red,
+                                                                                    ),
+                                                                                },
+                                                                                field: #b,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: None,
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "\n✓ Introspection enables external code generation!",
+                                                                    ),
+                                                                ],
+                                                                args: [],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+    ],
+}
