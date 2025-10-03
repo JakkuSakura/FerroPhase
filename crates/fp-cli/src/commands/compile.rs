@@ -75,8 +75,24 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     ));
 
     // Execute if requested
-    if args.exec && args.target == "binary" {
-        exec_compiled_output(&compiled_files, &args.target).await?;
+    if args.exec {
+        if args.target == "binary" {
+            match compiled_files.as_slice() {
+                [] => {
+                    warn!("No compiled binaries available to execute");
+                }
+                [path] => {
+                    exec_compiled_binary(path).await?;
+                }
+                _ => {
+                    return Err(CliError::Compilation(
+                        "--exec currently supports compiling a single binary at a time".to_string(),
+                    ));
+                }
+            }
+        } else {
+            warn!("--exec is only supported for binary targets");
+        }
     }
 
     Ok(())
@@ -171,7 +187,7 @@ async fn compile_file(
         source_language: args.source_language.clone(),
         optimization_level: args.opt_level,
         save_intermediates: args.save_intermediates,
-        base_path: Some(output.with_extension("")),
+        base_path: Some(output.to_path_buf()),
         debug: DebugOptions {
             print_ast: false,
             print_passes: false,
@@ -209,21 +225,30 @@ async fn compile_file(
 
     // Write output to file
     match pipeline_output {
-        PipelineOutput::Code(code) => match args.target.as_str() {
-            "binary" => {
-                compile_rust_to_binary(&code, output, args).await?;
-                info!("Generated binary: {}", output.display());
+        PipelineOutput::Code(code) => {
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
             }
-            _ => {
+
+            std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
+
+            info!("Generated code: {}", output.display());
+        }
+        PipelineOutput::Binary(path) => {
+            let binary_path = path;
+            if binary_path != *output {
                 if let Some(parent) = output.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
                 }
-
-                std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
-
-                info!("Generated code: {}", output.display());
+                async_fs::copy(&binary_path, output)
+                    .await
+                    .map_err(|e| CliError::Io(e))?;
+                if !args.save_intermediates {
+                    let _ = async_fs::remove_file(&binary_path).await;
+                }
             }
-        },
+            info!("Generated binary: {}", output.display());
+        }
         PipelineOutput::Value(_) => {
             // For interpret target or binary target (already compiled), we don't write to file
             info!("Operation completed");
@@ -237,362 +262,44 @@ async fn compile_file(
     Ok(())
 }
 
-async fn exec_compiled_output(files: &[PathBuf], target: &str) -> Result<()> {
-    use std::ffi::CString;
-    use std::os::raw::c_char;
+async fn exec_compiled_binary(path: &Path) -> Result<()> {
+    let is_executable = path
+        .extension()
+        .map_or(false, |ext| ext == "out" || ext == "exe")
+        || (cfg!(unix) && path.extension().is_none());
 
-    unsafe extern "C" {
-        fn execve(
-            pathname: *const c_char,
-            argv: *const *const c_char,
-            envp: *const *const c_char,
-        ) -> i32;
-    }
-
-    match target {
-        "binary" => {
-            for file in files {
-                // Check if file is executable (has .out extension or no extension on Unix, .exe on Windows)
-                let is_executable = file
-                    .extension()
-                    .map_or(false, |ext| ext == "out" || ext == "exe")
-                    || (cfg!(unix) && file.extension().is_none());
-
-                if is_executable {
-                    println!(
-                        "{} Executing compiled binary: {}",
-                        style("🚀").cyan(),
-                        file.display()
-                    );
-
-                    // Use fork and exec on Unix systems for proper process replacement
-                    #[cfg(unix)]
-                    {
-                        unsafe {
-                            let pid = libc::fork();
-
-                            if pid == 0 {
-                                // Child process - exec the binary
-                                let path_cstring = CString::new(file.to_string_lossy().as_bytes())
-                                    .map_err(|e| {
-                                        CliError::Compilation(format!("Invalid path: {}", e))
-                                    })?;
-
-                                let argv = vec![path_cstring.as_ptr(), std::ptr::null()];
-                                let envp = vec![std::ptr::null()]; // Use current environment
-
-                                execve(path_cstring.as_ptr(), argv.as_ptr(), envp.as_ptr());
-
-                                // If exec returns, there was an error
-                                std::process::exit(1);
-                            } else if pid > 0 {
-                                // Parent process - wait for child
-                                let mut status: i32 = 0;
-                                libc::waitpid(pid, &mut status, 0);
-
-                                if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
-                                    let exit_code = if libc::WIFEXITED(status) {
-                                        libc::WEXITSTATUS(status)
-                                    } else {
-                                        -1
-                                    };
-                                    println!(
-                                        "{} Process exited with code: {}",
-                                        style("⚠").yellow(),
-                                        exit_code
-                                    );
-                                }
-                            } else {
-                                return Err(CliError::Compilation(
-                                    "Failed to fork process".to_string(),
-                                ));
-                            }
-                        }
-                    }
-
-                    // Fallback for non-Unix systems or if fork is not available
-                    #[cfg(not(unix))]
-                    {
-                        let run_output = tokio::process::Command::new(file)
-                            .output()
-                            .await
-                            .map_err(|e| {
-                                CliError::Compilation(format!(
-                                    "Failed to execute binary '{}': {}",
-                                    file.display(),
-                                    e
-                                ))
-                            })?;
-
-                        // Print stdout
-                        let stdout = String::from_utf8_lossy(&run_output.stdout);
-                        if !stdout.is_empty() {
-                            println!("{}", stdout.trim_end());
-                        }
-
-                        // Print stderr if present
-                        if !run_output.stderr.is_empty() {
-                            let stderr = String::from_utf8_lossy(&run_output.stderr);
-                            eprintln!("{}", stderr.trim_end());
-                        }
-
-                        // Check exit status
-                        if !run_output.status.success() {
-                            let exit_code = run_output.status.code().unwrap_or(-1);
-                            println!(
-                                "{} Process exited with code: {}",
-                                style("⚠").yellow(),
-                                exit_code
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        "rust" => {
-            for file in files {
-                if file.extension().map_or(false, |ext| ext == "rs") {
-                    println!(
-                        "{} Compiling and executing Rust code...",
-                        style("🚀").cyan()
-                    );
-
-                    // Compile with rustc
-                    let output = tokio::process::Command::new("rustc")
-                        .arg(file)
-                        .arg("-o")
-                        .arg(file.with_extension(""))
-                        .output()
-                        .await
-                        .map_err(|e| {
-                            CliError::Compilation(format!("Failed to run rustc: {}", e))
-                        })?;
-
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        return Err(CliError::Compilation(format!("rustc failed: {}", stderr)));
-                    }
-
-                    // Execute the compiled binary
-                    let exe_path = file.with_extension("");
-
-                    #[cfg(unix)]
-                    {
-                        unsafe {
-                            let pid = libc::fork();
-
-                            if pid == 0 {
-                                let path_cstring =
-                                    CString::new(exe_path.to_string_lossy().as_bytes()).map_err(
-                                        |e| CliError::Compilation(format!("Invalid path: {}", e)),
-                                    )?;
-
-                                let argv = vec![path_cstring.as_ptr(), std::ptr::null()];
-                                let envp = vec![std::ptr::null()];
-
-                                execve(path_cstring.as_ptr(), argv.as_ptr(), envp.as_ptr());
-                                std::process::exit(1);
-                            } else if pid > 0 {
-                                let mut status: i32 = 0;
-                                libc::waitpid(pid, &mut status, 0);
-                            } else {
-                                return Err(CliError::Compilation(
-                                    "Failed to fork process".to_string(),
-                                ));
-                            }
-                        }
-                    }
-
-                    #[cfg(not(unix))]
-                    {
-                        let run_output = tokio::process::Command::new(&exe_path)
-                            .output()
-                            .await
-                            .map_err(|e| {
-                                CliError::Compilation(format!("Failed to execute: {}", e))
-                            })?;
-
-                        println!("{}", String::from_utf8_lossy(&run_output.stdout));
-                        if !run_output.stderr.is_empty() {
-                            eprintln!("{}", String::from_utf8_lossy(&run_output.stderr));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {
-            warn!("Executing {} output not yet supported", target);
-        }
-    }
-
-    Ok(())
-}
-
-async fn compile_llvm_to_binary(llvm_ir: &str, output: &Path, args: &CompileArgs) -> Result<()> {
-    use tokio::fs;
-
-    // Create a temporary LLVM IR file (use different name to avoid conflict)
-    let temp_ll = output.with_extension("tmp.ll");
-
-    // Ensure output directory exists
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
-    }
-
-    // Write LLVM IR to temporary file
-    fs::write(&temp_ll, llvm_ir)
-        .await
-        .map_err(|e| CliError::Io(e))?;
-
-    info!("Generated LLVM IR: {}", temp_ll.display());
-
-    // Try to compile with LLVM tools (llc + ld/clang)
-    compile_with_llvm_tools(&temp_ll, output, args)
-        .await
-        .map_err(|e| {
-            warn!("LLVM compilation failed: {}", e);
-            CliError::Compilation(format!(
-                "LLVM compilation failed: {}. Intermediate IR left at {}",
-                e,
-                temp_ll.display()
-            ))
-        })?;
-
-    // Clean up temporary LLVM IR file
-    let _ = fs::remove_file(&temp_ll).await;
-
-    Ok(())
-}
-
-async fn compile_rust_to_binary(rust_src: &str, output: &Path, args: &CompileArgs) -> Result<()> {
-    if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
-    }
-
-    let rs_path = output.with_extension("tmp.rs");
-
-    async_fs::write(&rs_path, rust_src)
-        .await
-        .map_err(CliError::Io)?;
-
-    let mut rustc_cmd = Command::new("rustc");
-    rustc_cmd.arg(&rs_path).arg("-o").arg(output);
-
-    if args.release {
-        rustc_cmd.arg("-O");
-    }
-
-    let status = rustc_cmd
-        .output()
-        .await
-        .map_err(|e| CliError::Compilation(format!("Failed to run rustc: {}", e)))?;
-
-    if !status.status.success() {
-        let stderr = String::from_utf8_lossy(&status.stderr);
-        return Err(CliError::Compilation(format!("rustc failed: {}", stderr)));
-    }
-
-    if !args.save_intermediates {
-        let _ = async_fs::remove_file(&rs_path).await;
-    }
-
-    Ok(())
-}
-
-async fn compile_with_llvm_tools(
-    llvm_ir_file: &Path,
-    output: &Path,
-    args: &CompileArgs,
-) -> Result<()> {
-    // Check if LLVM tools are available
-    if Command::new("llc").arg("--version").output().await.is_err() {
-        return Err(CliError::Compilation(
-            "llc (LLVM compiler) not found. Please install LLVM toolchain.".to_string(),
-        ));
-    }
-
-    let assembly_file = output.with_extension("s");
-
-    // Step 1: Compile LLVM IR to assembly with llc
-    let mut llc_cmd = Command::new("llc");
-    llc_cmd.arg(llvm_ir_file);
-    llc_cmd.arg("-o");
-    llc_cmd.arg(&assembly_file);
-
-    // Add optimization flags
-    match args.opt_level {
-        0 => {
-            llc_cmd.arg("-O0");
-        }
-        1 => {
-            llc_cmd.arg("-O1");
-        }
-        2 => {
-            llc_cmd.arg("-O2");
-        }
-        3 => {
-            llc_cmd.arg("-O3");
-        }
-        _ => {
-            llc_cmd.arg("-O2");
-        }
-    }
-
-    info!("Compiling LLVM IR to assembly...");
-    let llc_output = llc_cmd
-        .output()
-        .await
-        .map_err(|e| CliError::Compilation(format!("Failed to run llc: {}", e)))?;
-
-    if !llc_output.status.success() {
-        let stderr = String::from_utf8_lossy(&llc_output.stderr);
-        return Err(CliError::Compilation(format!("llc failed:\n{}", stderr)));
-    }
-
-    // Step 2: Link assembly to executable with clang/gcc
-    let linker = if Command::new("clang")
-        .arg("--version")
-        .output()
-        .await
-        .is_ok()
-    {
-        "clang"
-    } else if Command::new("gcc").arg("--version").output().await.is_ok() {
-        "gcc"
-    } else {
-        return Err(CliError::Compilation(
-            "No suitable linker found (clang or gcc required)".to_string(),
-        ));
-    };
-
-    let mut link_cmd = Command::new(linker);
-    link_cmd.arg(&assembly_file);
-    link_cmd.arg("-o");
-    link_cmd.arg(output);
-
-    // Add debug info if requested
-    if args.debug {
-        link_cmd.arg("-g");
-    }
-
-    info!("Linking to binary: {}", output.display());
-    let link_output = link_cmd
-        .output()
-        .await
-        .map_err(|e| CliError::Compilation(format!("Failed to run {}: {}", linker, e)))?;
-
-    if !link_output.status.success() {
-        let stderr = String::from_utf8_lossy(&link_output.stderr);
+    if !is_executable {
         return Err(CliError::Compilation(format!(
-            "{} linking failed:\n{}",
-            linker, stderr
+            "Refusing to execute '{}': unsupported binary extension",
+            path.display()
         )));
     }
 
-    // Clean up assembly file
-    let _ = tokio::fs::remove_file(&assembly_file).await;
+    println!(
+        "{} Executing compiled binary: {}",
+        style("🚀").cyan(),
+        path.display()
+    );
 
-    info!("Successfully compiled binary: {}", output.display());
+    let output = Command::new(path).output().await.map_err(|e| {
+        CliError::Compilation(format!("Failed to execute '{}': {}", path.display(), e))
+    })?;
+
+    if !output.stdout.is_empty() {
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        return Err(CliError::Compilation(format!(
+            "Process exited with status {}",
+            code
+        )));
+    }
+
     Ok(())
 }
 
