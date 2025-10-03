@@ -77,14 +77,13 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 
 ## Outstanding Tasks
 
-1. Finalise the AST type inference port and expose the querying API.
-2. Replace THIR interpreter plumbing with the new AST evaluator across const and
-   runtime orchestrators.
-3. Update backends to consume `HIRᵗ` instead of THIR-derived snapshots.
-4. Migrate intrinsic implementations into the new resolver and remove
-   THIR-specific normalisers.
-5. Refresh tooling/docs (CLI help, architecture notes) to reflect the AST-centric
-   design.
+1. Expand `hir_to_mir` to cover richer control flow, method dispatch, and
+   runtime array operations.
+2. Harden intrinsic materialisation across backends with regression coverage for
+   interpreter, MIR/LIR, and transpiler outputs.
+3. Deduplicate CLI pipeline target handling so `binary`, `llvm`, and `bytecode`
+   share the same staged driver.
+4. Continue updating tooling/docs as the AST-centric pipeline stabilises.
 
 This design keeps the pipeline leaner while still supporting the breadth of
 FerroPhase targets and surface languages. Every mode benefits from a single

@@ -1,8 +1,8 @@
-//! THIR-level type aliases and helpers.
+//! Typed HIR type aliases and helpers.
 //!
-//! The THIR stage re-uses the shared type definitions from
+//! The HIR lowering stage re-uses the shared type definitions from
 //! `fp_core::hir::ty`, but we expose them through this module so that
-//! transformations can depend on THIR types without importing the
+//! transformations can depend on typed HIR types without importing the
 //! entire shared namespace.
 
 pub use crate::hir::ty::{

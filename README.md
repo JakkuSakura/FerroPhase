@@ -29,7 +29,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 
 - Const evaluation with intrinsics like `sizeof!`, `hasfield!`, `implements!`, plus structural editors (`addfield!`, `addmethod!`).
 - Declarative type creation (`type T = { ... }`) with conditionals and loops embedded in compile-time blocks.
-- Unified pipeline: CST → LAST → AST → EAST (evaluated AST) → HIR → THIR/TAST → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR, shared by all execution modes.
+- Unified pipeline: CST → LAST → AST → ASTᵗ (typed) → ASTᶜ (const-evaluated) → HIRᵗ → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR, shared by all execution modes.
 - Multi-target outputs: native/LLVM, custom bytecode + VM, high-level Rust transpilation with optional type annotations.
 
 ## Architecture at a Glance
@@ -38,8 +38,8 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 - Language-specific intrinsic helpers are imported at the LAST layer and immediately re-railed into a canonical, language-agnostic `std` package as part of the LAST → AST conversion so every downstream stage sees the same primitives.
 - Deterministic comptime interpreter produces a canonical EAST snapshot that every backend consumes.
 - Type system phases:
-  - `AstType`: flexible descriptors for inference and generation.
-  - `ConcreteType`: layout-ready definitions embedded in THIR/MIR/LIR.
+  - `Ty`: canonical AST-level descriptors populated by Algorithm W.
+  - `hir::Ty`: lowered, layout-aware types shared with MIR/LIR.
   - Optional backend-specific intermediate types.
 
 ## Example Workflow
