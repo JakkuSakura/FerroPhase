@@ -990,7 +990,11 @@ impl AstTypeInferencer {
                 var,
                 TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
             ),
-            Value::String(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::String)),
+            Value::String(_) => {
+                let inner = self.fresh_type_var();
+                self.bind(inner, TypeTerm::Primitive(TypePrimitive::String));
+                self.bind(var, TypeTerm::Reference(inner));
+            }
             Value::Char(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Char)),
             Value::Unit(_) => self.bind(var, TypeTerm::Unit),
             Value::Null(_) | Value::None(_) => self.bind(var, TypeTerm::Nothing),
@@ -1508,6 +1512,16 @@ impl AstTypeInferencer {
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
             | (TypeTerm::Vec(a), TypeTerm::Vec(b))
             | (TypeTerm::Reference(a), TypeTerm::Reference(b)) => self.unify(a, b),
+            (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String)) => {
+                let temp = self.fresh_type_var();
+                self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
+                self.unify(inner, temp)
+            }
+            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Reference(inner)) => {
+                let temp = self.fresh_type_var();
+                self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
+                self.unify(inner, temp)
+            }
             (TypeTerm::Unknown, other) | (other, TypeTerm::Unknown) => {
                 if let TypeTerm::Unknown = other {
                     Ok(())
