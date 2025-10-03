@@ -26,8 +26,8 @@ const RESULT: i32 = {
 
 - Blocks execute during compilation using the AST interpreter in const mode.
 - Evaluation observes principal types (`expr.ty`) inferred earlier.
-- Intrinsics route through the shared registry and can query the
-  `TypeQueryEngine` without rebuilding THIR.
+- Intrinsics route through the shared registry and consult the
+  `TypeQueryEngine` without synthesising intermediate representations.
 - Structural edits (new structs, impls, generated functions) update the AST and
   promote any provisional `mut type` tokens to concrete entries.
 

@@ -37,7 +37,7 @@ pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
         print_ast(&ast)?;
     }
 
-    // Execute directly using AST interpretation (bypass HIR/THIR/MIR/LIR)
+    // Execute directly using AST interpretation (bypass HIR/MIR/LIR)
     let runtime = args.runtime.unwrap_or_else(|| "literal".to_string());
     match runtime.as_str() {
         "literal" => {
