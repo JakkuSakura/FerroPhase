@@ -27,6 +27,10 @@ impl HirGenerator {
             ExprKind::Assign(assign) => self.transform_assign_to_hir(assign)?,
             ExprKind::Paren(paren) => self.transform_paren_to_hir(paren)?,
             ExprKind::Let(let_expr) => self.transform_let_to_hir(let_expr)?,
+            ExprKind::Array(array_expr) => self.transform_array_to_hir(array_expr)?,
+            ExprKind::ArrayRepeat(array_repeat) => {
+                self.transform_array_repeat_to_hir(array_repeat)?
+            }
             ExprKind::Any(_) => {
                 // Handle macro expressions and other "any" expressions
                 // For now, return a placeholder boolean literal
@@ -316,12 +320,41 @@ impl HirGenerator {
 
                 Ok(hir::ExprKind::Struct(path, fields))
             }
+            Value::List(list) => {
+                let mut elements = Vec::with_capacity(list.values.len());
+                for value in &list.values {
+                    let expr_kind = self.transform_value_to_hir(&Box::new(value.clone()))?;
+                    elements.push(hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: expr_kind,
+                        span: self.create_span(1),
+                    });
+                }
+                Ok(hir::ExprKind::Array(elements))
+            }
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
             _ => Err(crate::error::optimization_error(format!(
                 "Unimplemented AST value type for HIR transformation: {:?}",
                 std::mem::discriminant(value.as_ref())
             ))),
         }
+    }
+
+    fn transform_array_to_hir(&mut self, array: &ast::ExprArray) -> Result<hir::ExprKind> {
+        let mut elements = Vec::with_capacity(array.values.len());
+        for value in &array.values {
+            elements.push(self.transform_expr_to_hir(value)?);
+        }
+        Ok(hir::ExprKind::Array(elements))
+    }
+
+    fn transform_array_repeat_to_hir(
+        &mut self,
+        repeat: &ast::ExprArrayRepeat,
+    ) -> Result<hir::ExprKind> {
+        let elem = Box::new(self.transform_expr_to_hir(repeat.elem.as_ref())?);
+        let len = Box::new(self.transform_expr_to_hir(repeat.len.as_ref())?);
+        Ok(hir::ExprKind::ArrayRepeat { elem, len })
     }
 
     /// Transform binary operation to HIR

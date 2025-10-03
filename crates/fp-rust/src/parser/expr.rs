@@ -37,6 +37,7 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
         syn::Expr::Let(l) => parse_expr_let(l)?.into(),
         syn::Expr::Closure(c) => parse_expr_closure(c)?.into(),
         syn::Expr::Array(a) => parse_expr_array(a)?.into(),
+        syn::Expr::Repeat(r) => parse_expr_repeat(r)?.into(),
         syn::Expr::Assign(a) => parse_expr_assign(a)?.into(),
         syn::Expr::Break(b) => parse_expr_break(b)?,
         syn::Expr::Continue(_) => parse_expr_continue()?,
@@ -51,6 +52,12 @@ pub fn parse_expr(expr: syn::Expr) -> Result<Expr> {
 fn parse_expr_array(a: syn::ExprArray) -> Result<ExprArray> {
     Ok(ExprArray {
         values: a.elems.into_iter().map(parse_expr).try_collect()?,
+    })
+}
+fn parse_expr_repeat(r: syn::ExprRepeat) -> Result<ExprArrayRepeat> {
+    Ok(ExprArrayRepeat {
+        elem: parse_expr(*r.expr)?.into(),
+        len: parse_expr(*r.len)?.into(),
     })
 }
 fn parse_expr_closure(c: syn::ExprClosure) -> Result<ExprClosure> {

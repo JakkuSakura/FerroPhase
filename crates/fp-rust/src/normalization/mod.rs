@@ -124,6 +124,10 @@ fn normalize_expr(expr: &mut Expr) {
                 normalize_expr(value);
             }
         }
+        ExprKind::ArrayRepeat(array_repeat) => {
+            normalize_bexpr(&mut array_repeat.elem);
+            normalize_bexpr(&mut array_repeat.len);
+        }
         ExprKind::Paren(paren) => normalize_bexpr(&mut paren.expr),
         ExprKind::Range(range) => {
             if let Some(start) = &mut range.start {

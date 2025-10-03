@@ -461,6 +461,13 @@ common_struct! {
         pub values: Vec<Expr>,
     }
 }
+
+common_struct! {
+    pub struct ExprArrayRepeat {
+        pub elem: BExpr,
+        pub len: BExpr,
+    }
+}
 common_struct! {
     /// To "splat" or expand an iterable.
     /// For example, in Python, `*a` will expand `a` into the arguments of a function

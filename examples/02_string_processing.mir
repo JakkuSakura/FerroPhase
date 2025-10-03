@@ -7,17 +7,17 @@ mir::Program {
             locals:
                 _0: ()
                 _1: <??>
-                _2: usize
+                _2: u64
                 _3: i32
                 _4: <??>
-                _5: usize
+                _5: u64
                 _6: i32
                 _7: bool
                 _8: bool
                 _9: i32
                 _10: <??>
                 _11: i32
-                _12: usize
+                _12: u64
                 _13: i32
             blocks:
                 bb0:

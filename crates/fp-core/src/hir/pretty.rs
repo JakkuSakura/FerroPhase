@@ -371,6 +371,21 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .join(", ");
             format!("{} {{ {} }}", fmt_path(path, ctx), fields)
         }
+        ExprKind::Array(elements) => {
+            let elems = elements
+                .iter()
+                .map(|elem| format_expr_inline(elem, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{}]", elems)
+        }
+        ExprKind::ArrayRepeat { elem, len } => {
+            format!(
+                "[{}; {}]",
+                format_expr_inline(elem, ctx),
+                format_expr_inline(len, ctx)
+            )
+        }
         ExprKind::IntrinsicCall(call) => match &call.payload {
             crate::intrinsics::IntrinsicCallPayload::Format { template } => {
                 let arg_count = template.args.len() + template.kwargs.len();
