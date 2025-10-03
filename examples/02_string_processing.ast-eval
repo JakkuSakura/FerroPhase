@@ -1,0 +1,785 @@
+File {
+    path: "examples/02_string_processing.fp",
+    items: [
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #main,
+                    ty: Some(
+                        TypeFunction {
+                            params: [],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Reference(
+                                                    TypeReference {
+                                                        ty: Primitive(
+                                                            String,
+                                                        ),
+                                                        mutability: None,
+                                                        lifetime: None,
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Primitive(
+                                                                    String,
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #NAME,
+                                                    ty: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Expr(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #str,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: "FerroPhase",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Reference(
+                                                    TypeReference {
+                                                        ty: Primitive(
+                                                            String,
+                                                        ),
+                                                        mutability: None,
+                                                        lifetime: None,
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Primitive(
+                                                                    String,
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #VERSION,
+                                                    ty: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Expr(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #str,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: "0.1.0",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #NAME_LEN,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 10,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #VERSION_LEN,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 5,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "name='",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        "' len=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #NAME,
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #NAME_LEN,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "version='",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        "' len=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #VERSION,
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #VERSION_LEN,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #IS_EMPTY,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Bool(
+                                                                ValueBool {
+                                                                    value: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #IS_LONG,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Bool(
+                                                                ValueBool {
+                                                                    value: true,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "empty=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", long=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Bool,
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #IS_EMPTY,
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Bool,
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #IS_LONG,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Reference(
+                                                    TypeReference {
+                                                        ty: Primitive(
+                                                            String,
+                                                        ),
+                                                        mutability: None,
+                                                        lifetime: None,
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Primitive(
+                                                                    String,
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #BANNER,
+                                                    ty: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Expr(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #str,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: "FerroPhase v0.1.0",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "banner='",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        "'",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #BANNER,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #BUFFER_SIZE,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #usize,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 256,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "buffer_size=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #BUFFER_SIZE,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+    ],
+}
