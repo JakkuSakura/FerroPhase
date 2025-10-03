@@ -430,9 +430,10 @@ impl LirGenerator {
                 result_value = Some(lir::LirValue::Register(instr_id));
             }
             mir::Rvalue::Aggregate(kind, fields) => {
-                let mut aggregate_insts = self.handle_aggregate(place, kind, fields)?;
+                let (mut aggregate_insts, aggregate_value) =
+                    self.handle_aggregate(place, kind, fields)?;
                 instructions.append(&mut aggregate_insts);
-                return Ok(instructions);
+                result_value = aggregate_value;
             }
             mir::Rvalue::Ref(_, _, borrowed_place) => {
                 let borrowed_access = self.resolve_place(borrowed_place)?;
@@ -1346,71 +1347,280 @@ impl LirGenerator {
         place: &mir::Place,
         kind: &mir::AggregateKind,
         fields: &[mir::Operand],
-    ) -> Result<Vec<lir::LirInstruction>> {
+    ) -> Result<(Vec<lir::LirInstruction>, Option<lir::LirValue>)> {
         let mut instructions = Vec::new();
-        let mut lir_values = Vec::with_capacity(fields.len());
+        let mut raw_values = Vec::with_capacity(fields.len());
         let mut constants = Vec::with_capacity(fields.len());
         let mut all_constants = true;
 
         for operand in fields {
             let value = self.transform_operand(operand)?;
             instructions.extend(self.take_queued_instructions());
-            all_constants &= matches!(value, lir::LirValue::Constant(_));
-            if let lir::LirValue::Constant(ref c) = value {
-                constants.push(c.clone());
+            let is_constant = matches!(value, lir::LirValue::Constant(_));
+            if let lir::LirValue::Constant(ref constant) = value {
+                constants.push(constant.clone());
             }
-            lir_values.push(value);
+            if !is_constant {
+                all_constants = false;
+            }
+            raw_values.push(value);
         }
 
+        let place_ty = self.lookup_place_type(place);
+        let aggregate_ty = place_ty.as_ref().map(|ty| self.lir_type_from_ty(ty));
+        let expected_field_tys = self.expected_aggregate_element_types(
+            place_ty.as_ref(),
+            aggregate_ty.as_ref(),
+            raw_values.len(),
+        );
+
         if fields.is_empty() {
-            if let Some(place_ty) = self.lookup_place_type(place) {
-                let lir_ty = self.lir_type_from_ty(&place_ty);
-                let value =
-                    lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty.clone()));
-                self.register_map.insert(place.local, value);
-                return Ok(instructions);
+            if let Some(lir_ty) = aggregate_ty {
+                let value = lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty));
+                return Ok((instructions, Some(value)));
             }
+            return Ok((instructions, None));
         }
 
         if all_constants {
-            if let Some(place_ty) = self.lookup_place_type(place) {
-                if let Some(constant) = self.constant_from_aggregate(kind, constants, &place_ty) {
-                    self.register_map
-                        .insert(place.local, lir::LirValue::Constant(constant));
-                    return Ok(instructions);
+            let adjusted_consts =
+                self.adjust_constants_for_aggregate(constants, &expected_field_tys);
+            if let Some(place_ty) = place_ty.as_ref() {
+                if let Some(constant) =
+                    self.constant_from_aggregate(kind, adjusted_consts, place_ty)
+                {
+                    return Ok((instructions, Some(lir::LirValue::Constant(constant))));
                 }
             }
         }
 
-        if let Some(place_ty) = self.lookup_place_type(place) {
-            let aggregate_ty = self.lir_type_from_ty(&place_ty);
+        if let Some(agg_ty) = aggregate_ty {
             let mut current_value =
-                lir::LirValue::Constant(lir::LirConstant::Undef(aggregate_ty.clone()));
+                lir::LirValue::Constant(lir::LirConstant::Undef(agg_ty.clone()));
 
-            for (index, value) in lir_values.into_iter().enumerate() {
+            for (index, value) in raw_values.into_iter().enumerate() {
+                let mut element = value;
+                if let Some(field_ty) = expected_field_tys.get(index) {
+                    element = self.coerce_aggregate_value(element, field_ty, &mut instructions);
+                }
                 let instr_id = self.next_id();
                 instructions.push(lir::LirInstruction {
                     id: instr_id,
                     kind: lir::LirInstructionKind::InsertValue {
                         aggregate: current_value.clone(),
-                        element: value,
+                        element,
                         indices: vec![index as u32],
                     },
-                    type_hint: Some(aggregate_ty.clone()),
+                    type_hint: Some(agg_ty.clone()),
                     debug_info: None,
                 });
                 current_value = lir::LirValue::Register(instr_id);
             }
 
-            self.register_map.insert(place.local, current_value);
-            return Ok(instructions);
+            return Ok((instructions, Some(current_value)));
         }
 
-        self.register_map.insert(
-            place.local,
-            lir::LirValue::Constant(lir::LirConstant::Undef(lir::LirType::Void)),
-        );
-        Ok(instructions)
+        Ok((instructions, None))
+    }
+
+    fn expected_aggregate_element_types(
+        &self,
+        place_ty: Option<&Ty>,
+        aggregate_ty: Option<&lir::LirType>,
+        element_count: usize,
+    ) -> Vec<lir::LirType> {
+        if let Some(ty) = place_ty {
+            match &ty.kind {
+                TyKind::Tuple(elements) => {
+                    if elements.len() == element_count {
+                        return elements
+                            .iter()
+                            .map(|elem| self.lir_type_from_ty(elem))
+                            .collect();
+                    }
+                }
+                TyKind::Array(element_ty, _) => {
+                    let lir_elem_ty = self.lir_type_from_ty(element_ty);
+                    return (0..element_count).map(|_| lir_elem_ty.clone()).collect();
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(lir::LirType::Struct { fields, .. }) = aggregate_ty {
+            if fields.len() == element_count {
+                return fields.clone();
+            }
+        }
+
+        if let Some(lir::LirType::Array(element_ty, _)) = aggregate_ty {
+            let elem_ty = *element_ty.clone();
+            return (0..element_count).map(|_| elem_ty.clone()).collect();
+        }
+
+        aggregate_ty
+            .cloned()
+            .map(|ty| (0..element_count).map(|_| ty.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    fn adjust_constants_for_aggregate(
+        &self,
+        constants: Vec<lir::LirConstant>,
+        expected_field_tys: &[lir::LirType],
+    ) -> Vec<lir::LirConstant> {
+        constants
+            .into_iter()
+            .enumerate()
+            .map(|(index, constant)| {
+                if let Some(field_ty) = expected_field_tys.get(index) {
+                    self.cast_constant_to_lir_type(constant, field_ty)
+                } else {
+                    constant
+                }
+            })
+            .collect()
+    }
+
+    fn coerce_aggregate_value(
+        &mut self,
+        value: lir::LirValue,
+        target_ty: &lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> lir::LirValue {
+        match value {
+            lir::LirValue::Constant(constant) => {
+                lir::LirValue::Constant(self.cast_constant_to_lir_type(constant, target_ty))
+            }
+            other => self.cast_runtime_value_to_lir_type(other, target_ty.clone(), instructions),
+        }
+    }
+
+    fn cast_runtime_value_to_lir_type(
+        &mut self,
+        value: lir::LirValue,
+        target_ty: lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> lir::LirValue {
+        if let Some(current_ty) = self.infer_lir_value_type(&value) {
+            if current_ty == target_ty {
+                return value;
+            }
+
+            if self.is_integral_type(&current_ty) && self.is_integral_type(&target_ty) {
+                let current_bits = self.type_bit_width(&current_ty).unwrap_or(64);
+                let target_bits = self.type_bit_width(&target_ty).unwrap_or(64);
+                let instr_id = self.next_id();
+                let kind = if target_bits < current_bits {
+                    lir::LirInstructionKind::Trunc(value.clone(), target_ty.clone())
+                } else if target_bits > current_bits {
+                    lir::LirInstructionKind::ZExt(value.clone(), target_ty.clone())
+                } else {
+                    lir::LirInstructionKind::Bitcast(value.clone(), target_ty.clone())
+                };
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind,
+                    type_hint: Some(target_ty.clone()),
+                    debug_info: None,
+                });
+                return lir::LirValue::Register(instr_id);
+            }
+
+            if self.is_float_type(&current_ty) && self.is_float_type(&target_ty) {
+                let current_bits = self.type_bit_width(&current_ty).unwrap_or(64);
+                let target_bits = self.type_bit_width(&target_ty).unwrap_or(64);
+                let instr_id = self.next_id();
+                let kind = if target_bits > current_bits {
+                    lir::LirInstructionKind::FPExt(value.clone(), target_ty.clone())
+                } else if target_bits < current_bits {
+                    lir::LirInstructionKind::FPTrunc(value.clone(), target_ty.clone())
+                } else {
+                    lir::LirInstructionKind::Bitcast(value.clone(), target_ty.clone())
+                };
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind,
+                    type_hint: Some(target_ty.clone()),
+                    debug_info: None,
+                });
+                return lir::LirValue::Register(instr_id);
+            }
+        }
+
+        value
+    }
+
+    fn cast_constant_to_lir_type(
+        &self,
+        constant: lir::LirConstant,
+        target_ty: &lir::LirType,
+    ) -> lir::LirConstant {
+        match constant {
+            lir::LirConstant::Int(value, _) if self.is_integral_type(target_ty) => {
+                let bits = self.type_bit_width(target_ty).unwrap_or(64);
+                let adjusted = if bits >= 64 {
+                    value
+                } else {
+                    let shift = 64 - bits;
+                    (value << shift) >> shift
+                };
+                lir::LirConstant::Int(adjusted, target_ty.clone())
+            }
+            lir::LirConstant::UInt(value, _) if self.is_integral_type(target_ty) => {
+                let bits = self.type_bit_width(target_ty).unwrap_or(64);
+                let mask = if bits >= 64 {
+                    u64::MAX
+                } else if bits == 0 {
+                    0
+                } else {
+                    (1u64 << bits) - 1
+                };
+                let adjusted = value & mask;
+                lir::LirConstant::UInt(adjusted, target_ty.clone())
+            }
+            lir::LirConstant::Float(value, _) if self.is_float_type(target_ty) => match target_ty {
+                lir::LirType::F32 => {
+                    lir::LirConstant::Float((value as f32) as f64, target_ty.clone())
+                }
+                lir::LirType::F64 => lir::LirConstant::Float(value, target_ty.clone()),
+                _ => lir::LirConstant::Float(value, target_ty.clone()),
+            },
+            lir::LirConstant::Struct(fields, _) => {
+                if let lir::LirType::Struct {
+                    fields: target_fields,
+                    ..
+                } = target_ty
+                {
+                    let adjusted = fields
+                        .into_iter()
+                        .enumerate()
+                        .map(|(idx, field_const)| {
+                            let field_ty =
+                                target_fields.get(idx).cloned().unwrap_or(lir::LirType::I64);
+                            self.cast_constant_to_lir_type(field_const, &field_ty)
+                        })
+                        .collect();
+                    lir::LirConstant::Struct(adjusted, target_ty.clone())
+                } else {
+                    lir::LirConstant::Struct(fields, target_ty.clone())
+                }
+            }
+            lir::LirConstant::Array(elements, _) => {
+                if let lir::LirType::Array(element_ty, _) = target_ty {
+                    let adjusted = elements
+                        .into_iter()
+                        .map(|elem| self.cast_constant_to_lir_type(elem, element_ty))
+                        .collect();
+                    lir::LirConstant::Array(adjusted, target_ty.clone())
+                } else {
+                    lir::LirConstant::Array(elements, target_ty.clone())
+                }
+            }
+            lir::LirConstant::Null(_) => lir::LirConstant::Null(target_ty.clone()),
+            lir::LirConstant::Undef(_) => lir::LirConstant::Undef(target_ty.clone()),
+            other => other,
+        }
     }
 
     fn lower_call_argument(
