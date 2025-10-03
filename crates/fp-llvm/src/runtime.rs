@@ -128,7 +128,7 @@ fn build_printf_format(
     }
 
     if newline {
-        result.push_str("\\n");
+        result.push('\n');
     }
 
     Ok(result)
