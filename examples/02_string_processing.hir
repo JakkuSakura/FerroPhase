@@ -1,0 +1,32 @@
+hir::Program {
+    fn main() -> () {
+        {
+            const NAME: &str =
+                "FerroPhase";
+            const VERSION: &str =
+                "0.1.0";
+            const NAME_LEN: usize =
+                10;
+            const VERSION_LEN: usize =
+                5;
+            printf("name='%s' len=%d
+", NAME, NAME_LEN);
+            printf("version='%s' len=%d
+", VERSION, VERSION_LEN);
+            const IS_EMPTY: bool =
+                false;
+            const IS_LONG: bool =
+                true;
+            printf("empty=%d, long=%d
+", IS_EMPTY, IS_LONG);
+            const BANNER: &str =
+                "FerroPhase v0.1.0";
+            printf("banner='%s'
+", BANNER);
+            const BUFFER_SIZE: usize =
+                256;
+            printf("buffer_size=%d
+", BUFFER_SIZE);
+        }
+    }
+}

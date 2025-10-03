@@ -213,6 +213,16 @@ impl MirLowering {
                         .collect(),
                 ),
             },
+            hir::TypeExprKind::Ref(inner) => {
+                let inner_ty = self.lower_type_expr(inner);
+                Ty {
+                    kind: TyKind::Ref(
+                        mir::ty::Region::ReErased,
+                        Box::new(inner_ty),
+                        Mutability::Not,
+                    ),
+                }
+            }
             hir::TypeExprKind::Path(path) => self.lower_path_type(path, ty_expr.span),
             hir::TypeExprKind::Never => Ty {
                 kind: TyKind::Never,
@@ -325,6 +335,13 @@ impl MirLowering {
                 }
                 "bool" => return Ty { kind: TyKind::Bool },
                 "char" => return Ty { kind: TyKind::Char },
+                "str" => {
+                    return Ty {
+                        kind: TyKind::Slice(Box::new(Ty {
+                            kind: TyKind::Int(IntTy::I8),
+                        })),
+                    }
+                }
                 _ => {}
             }
         }
