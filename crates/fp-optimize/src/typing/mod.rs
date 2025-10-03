@@ -470,6 +470,27 @@ impl AstTypeInferencer {
                 self.bind(array_var, TypeTerm::Vec(elem_var));
                 array_var
             }
+            ExprKind::ArrayRepeat(array_repeat) => {
+                let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
+                let len_var = self.infer_expr(array_repeat.len.as_mut())?;
+                let expected_len = self.fresh_type_var();
+                self.bind(
+                    expected_len,
+                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                );
+                self.unify(len_var, expected_len)?;
+
+                let elem_ty = self.resolve_to_ty(elem_var)?;
+                let length_expr = array_repeat.len.as_ref().get();
+                let array_ty = Ty::Array(TypeArray {
+                    elem: Box::new(elem_ty.clone()),
+                    len: length_expr.into(),
+                });
+                let array_var = self.fresh_type_var();
+                self.bind(array_var, TypeTerm::Custom(array_ty.clone()));
+                expr.set_ty(array_ty);
+                array_var
+            }
             ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             ExprKind::FormatString(_) => {
                 let var = self.fresh_type_var();
@@ -946,6 +967,18 @@ impl AstTypeInferencer {
             ExprInvokeTarget::Type(ty) => self.type_from_ast_ty(ty)?,
             ExprInvokeTarget::Method(select) => {
                 let obj_var = self.infer_expr(select.obj.as_mut())?;
+                if select.field.name.as_str() == "len" && invoke.args.is_empty() {
+                    if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
+                        if matches!(obj_ty, Ty::Array(_)) {
+                            let result_var = self.fresh_type_var();
+                            self.bind(
+                                result_var,
+                                TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                            );
+                            return Ok(result_var);
+                        }
+                    }
+                }
                 self.lookup_struct_field(obj_var, &select.field)?
             }
         };
@@ -994,6 +1027,26 @@ impl AstTypeInferencer {
                 let inner = self.fresh_type_var();
                 self.bind(inner, TypeTerm::Primitive(TypePrimitive::String));
                 self.bind(var, TypeTerm::Reference(inner));
+            }
+            Value::List(list) => {
+                let elem_var = if let Some(first) = list.values.first() {
+                    self.infer_value(first)?
+                } else {
+                    let fresh = self.fresh_type_var();
+                    self.bind(fresh, TypeTerm::Any);
+                    fresh
+                };
+                for value in list.values.iter().skip(1) {
+                    let next_var = self.infer_value(value)?;
+                    self.unify(elem_var, next_var)?;
+                }
+                let len = list.values.len() as i64;
+                let elem_ty = self.resolve_to_ty(elem_var)?;
+                let array_ty = Ty::Array(TypeArray {
+                    elem: Box::new(elem_ty),
+                    len: Expr::value(Value::int(len)).into(),
+                });
+                self.bind(var, TypeTerm::Custom(array_ty));
             }
             Value::Char(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Char)),
             Value::Unit(_) => self.bind(var, TypeTerm::Unit),
@@ -1487,8 +1540,20 @@ impl AstTypeInferencer {
             (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
                 if a == b {
                     Ok(())
+                } else if matches!(a, Ty::Array(_)) && matches!(b, Ty::Array(_)) {
+                    if format!("{}", a) == format!("{}", b) {
+                        Ok(())
+                    } else {
+                        Err(optimization_error(format!(
+                            "custom type mismatch: {} vs {}",
+                            a, b
+                        )))
+                    }
                 } else {
-                    Err(optimization_error("custom type mismatch".to_string()))
+                    Err(optimization_error(format!(
+                        "custom type mismatch: {} vs {}",
+                        a, b
+                    )))
                 }
             }
             (TypeTerm::Tuple(a_elems), TypeTerm::Tuple(b_elems)) => {
@@ -1652,6 +1717,9 @@ impl AstTypeInferencer {
             Ty::Reference(reference) => {
                 let elem_var = self.type_from_ast_ty(&reference.ty)?;
                 self.bind(var, TypeTerm::Reference(elem_var));
+            }
+            Ty::Array(_) => {
+                self.bind(var, TypeTerm::Custom(ty.clone()));
             }
             Ty::Expr(expr) => {
                 if let ExprKind::Locator(locator) = expr.kind() {

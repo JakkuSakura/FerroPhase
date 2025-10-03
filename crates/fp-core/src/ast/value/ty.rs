@@ -20,6 +20,7 @@ common_enum! {
         Value(TypeValue),
         Tuple(TypeTuple),
         Vec(TypeVec),
+        Array(TypeArray),
         Any(TypeAny),
         Unit(TypeUnit),
         Unknown(TypeUnknown),
@@ -202,6 +203,13 @@ impl Display for TypePrimitive {
 common_struct! {
     pub struct TypeVec {
         pub ty: BType,
+    }
+}
+
+common_struct! {
+    pub struct TypeArray {
+        pub elem: BType,
+        pub len: BExpr,
     }
 }
 

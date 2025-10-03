@@ -121,6 +121,10 @@ fn normalize_expr(expr: &mut Expr) -> Result<()> {
                 normalize_expr(value)?;
             }
         }
+        ExprKind::ArrayRepeat(array_repeat) => {
+            normalize_expr(array_repeat.elem.as_mut())?;
+            normalize_expr(array_repeat.len.as_mut())?;
+        }
         ExprKind::Tuple(tuple_expr) => {
             for value in &mut tuple_expr.values {
                 normalize_expr(value)?;

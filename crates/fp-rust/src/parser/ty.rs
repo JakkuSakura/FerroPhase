@@ -7,13 +7,14 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, FieldsNamed, Token};
 
 use fp_core::ast::{
-    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
+    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeArray, TypeBounds,
+    TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
 };
 use fp_core::id::{Ident, Path};
 use fp_core::ops::BinOpKind;
 
 use crate::parser;
+use crate::parser::expr::parse_expr;
 use crate::parser::item::parse_impl_trait;
 use crate::parser::{item, parse_path};
 
@@ -54,6 +55,7 @@ pub fn parse_type(t: syn::Type) -> Result<Ty> {
                 "u32" => int(TypeInt::U32),
                 "u16" => int(TypeInt::U16),
                 "u8" => int(TypeInt::U8),
+                "usize" => int(TypeInt::U64),
                 "f64" => float(DecimalType::F64),
                 "f32" => float(DecimalType::F32),
                 _ => Ty::locator(parser::parse_locator(p.path)?),
@@ -62,6 +64,7 @@ pub fn parse_type(t: syn::Type) -> Result<Ty> {
         syn::Type::ImplTrait(im) => Ty::ImplTraits(parse_impl_trait(im)?),
         syn::Type::Tuple(t) if t.elems.is_empty() => Ty::unit().into(),
         syn::Type::Slice(s) => parse_type_slice(s)?,
+        syn::Type::Array(a) => parse_type_array(a)?,
         // types like t!{ }
         syn::Type::Macro(m) if m.mac.path == parse_quote!(t) => {
             Ty::expr(parse_custom_type_expr(m)?)
@@ -74,6 +77,12 @@ pub fn parse_type(t: syn::Type) -> Result<Ty> {
 fn parse_type_slice(s: syn::TypeSlice) -> Result<Ty> {
     Ok(Ty::Slice(TypeSlice {
         elem: parse_type(*s.elem)?.into(),
+    }))
+}
+fn parse_type_array(a: syn::TypeArray) -> Result<Ty> {
+    Ok(Ty::Array(TypeArray {
+        elem: parse_type(*a.elem)?.into(),
+        len: parse_expr(a.len)?.into(),
     }))
 }
 fn parse_type_reference(r: syn::TypeReference) -> Result<TypeReference> {

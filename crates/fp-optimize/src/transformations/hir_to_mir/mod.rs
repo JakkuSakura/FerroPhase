@@ -5,7 +5,8 @@ use fp_core::hir;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::mir;
 use fp_core::mir::ty::{
-    ErrorGuaranteed, FloatTy, IntTy, Mutability, Ty, TyKind, TypeAndMut, UintTy,
+    ConstKind, ConstValue, ErrorGuaranteed, FloatTy, IntTy, Mutability, Scalar, ScalarInt, Ty,
+    TyKind, TypeAndMut, UintTy,
 };
 use fp_core::span::Span;
 use std::collections::HashMap;
@@ -213,6 +214,22 @@ impl MirLowering {
                         .collect(),
                 ),
             },
+            hir::TypeExprKind::Array(elem, len_expr) => {
+                let elem_ty = self.lower_type_expr(elem);
+                let len = len_expr
+                    .as_ref()
+                    .and_then(|expr| self.eval_type_length(expr))
+                    .unwrap_or(0);
+                Ty {
+                    kind: TyKind::Array(
+                        Box::new(elem_ty),
+                        ConstKind::Value(ConstValue::Scalar(Scalar::Int(ScalarInt {
+                            data: len as u128,
+                            size: 8,
+                        }))),
+                    ),
+                }
+            }
             hir::TypeExprKind::Ref(inner) => {
                 let inner_ty = self.lower_type_expr(inner);
                 Ty {
@@ -231,6 +248,26 @@ impl MirLowering {
                 self.emit_error(ty_expr.span, "type lowering not yet supported");
                 self.error_ty()
             }
+        }
+    }
+
+    fn eval_type_length(&self, expr: &hir::Expr) -> Option<u64> {
+        match &expr.kind {
+            hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
+            hir::ExprKind::Path(path) => {
+                if let Some(hir::Res::Def(def_id)) = &path.res {
+                    self.const_values
+                        .get(def_id)
+                        .and_then(|info| match &info.value.literal {
+                            mir::ConstantKind::Int(value) => Some(*value as u64),
+                            mir::ConstantKind::UInt(value) => Some(*value),
+                            _ => None,
+                        })
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 
@@ -1455,8 +1492,151 @@ impl<'a> BodyBuilder<'a> {
                     );
                 }
             }
+            hir::ExprKind::MethodCall(receiver, method_name, args) => {
+                if method_name == "len" && args.is_empty() {
+                    if let hir::ExprKind::Path(path) = &receiver.kind {
+                        if let Some(hir::Res::Def(def_id)) = &path.res {
+                            if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                                if let TyKind::Array(
+                                    _,
+                                    ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),
+                                ) = &const_info.ty.kind
+                                {
+                                    let statement = mir::Statement {
+                                        source_info: expr.span,
+                                        kind: mir::StatementKind::Assign(
+                                            place,
+                                            mir::Rvalue::Use(mir::Operand::Constant(
+                                                mir::Constant {
+                                                    span: expr.span,
+                                                    user_ty: None,
+                                                    literal: mir::ConstantKind::Int(
+                                                        len.data as i64,
+                                                    ),
+                                                },
+                                            )),
+                                        ),
+                                    };
+                                    self.push_statement(statement);
+                                    return Ok(());
+                                }
+                            }
+                            if let Some(konst) = self.const_items.get(def_id) {
+                                let ty = self.lowering.lower_type_expr(&konst.ty);
+                                if let TyKind::Array(
+                                    _,
+                                    ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),
+                                ) = ty.kind
+                                {
+                                    let statement = mir::Statement {
+                                        source_info: expr.span,
+                                        kind: mir::StatementKind::Assign(
+                                            place,
+                                            mir::Rvalue::Use(mir::Operand::Constant(
+                                                mir::Constant {
+                                                    span: expr.span,
+                                                    user_ty: None,
+                                                    literal: mir::ConstantKind::Int(
+                                                        len.data as i64,
+                                                    ),
+                                                },
+                                            )),
+                                        ),
+                                    };
+                                    self.push_statement(statement);
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                    self.lowering.emit_error(
+                        expr.span,
+                        "len() method is only supported on constant arrays during lowering",
+                    );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place,
+                            mir::Rvalue::Use(mir::Operand::Constant(
+                                self.lowering.error_constant(expr.span),
+                            )),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(());
+                }
+                self.lowering.emit_error(
+                    expr.span,
+                    "method calls are not yet supported in MIR lowering",
+                );
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place,
+                        mir::Rvalue::Use(mir::Operand::Constant(
+                            self.lowering.error_constant(expr.span),
+                        )),
+                    ),
+                };
+                self.push_statement(statement);
+            }
             hir::ExprKind::Call(callee, args) => {
                 self.lower_call(expr, callee, args, Some((place, expected_ty.clone())))?;
+            }
+            hir::ExprKind::Array(elements) => {
+                let element_ty = self
+                    .expect_array_element_ty(expected_ty)
+                    .unwrap_or_else(|| {
+                        self.lowering
+                            .emit_error(expr.span, "array expression expected array type");
+                        self.lowering.error_ty()
+                    });
+
+                let mut operands = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let lowered = self.lower_operand(element, Some(&element_ty))?;
+                    operands.push(lowered.operand);
+                }
+
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::Aggregate(
+                            mir::AggregateKind::Array(element_ty.clone()),
+                            operands,
+                        ),
+                    ),
+                };
+                self.push_statement(statement);
+            }
+            hir::ExprKind::ArrayRepeat { elem, len } => {
+                let element_ty = self
+                    .expect_array_element_ty(expected_ty)
+                    .unwrap_or_else(|| {
+                        self.lowering
+                            .emit_error(expr.span, "array repeat expression expected array type");
+                        self.lowering.error_ty()
+                    });
+
+                let lowered_elem = self.lower_operand(elem, Some(&element_ty))?;
+                let repeat_len = match self.evaluate_array_length(len) {
+                    Some(len) => len,
+                    None => {
+                        self.lowering
+                            .emit_error(len.span, "array repeat length must be a constant integer");
+                        0
+                    }
+                };
+
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::Repeat(lowered_elem.operand, repeat_len),
+                    ),
+                };
+                self.push_statement(statement);
             }
             _ => {
                 self.lowering.emit_error(
@@ -1525,6 +1705,35 @@ impl<'a> BodyBuilder<'a> {
             | hir::BinOp::Le
             | hir::BinOp::Gt
             | hir::BinOp::Ge => Ty { kind: TyKind::Bool },
+        }
+    }
+
+    fn expect_array_element_ty(&self, ty: &Ty) -> Option<Ty> {
+        match &ty.kind {
+            TyKind::Array(elem, _) => Some(*elem.clone()),
+            _ => None,
+        }
+    }
+
+    fn evaluate_array_length(&self, expr: &hir::Expr) -> Option<u64> {
+        match &expr.kind {
+            hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value as u64),
+            hir::ExprKind::Path(path) => {
+                if let Some(hir::Res::Def(def_id)) = path.res {
+                    if let Some(const_info) = self.lowering.const_values.get(&def_id) {
+                        match &const_info.value.literal {
+                            mir::ConstantKind::Int(value) => Some(*value as u64),
+                            mir::ConstantKind::UInt(value) => Some(*value),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 

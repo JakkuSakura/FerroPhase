@@ -42,6 +42,7 @@ common_enum! {
         Let(ExprLet),
         Closure(ExprClosure),
         Array(ExprArray),
+        ArrayRepeat(ExprArrayRepeat),
         IntrinsicCall(ExprIntrinsicCall),
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosured),

@@ -198,6 +198,11 @@ pub enum ExprKind {
         rhs: Box<Expr>,
     },
     Use(Box<Expr>),
+    Array(Vec<Expr>),
+    ArrayRepeat {
+        elem: Box<Expr>,
+        len: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

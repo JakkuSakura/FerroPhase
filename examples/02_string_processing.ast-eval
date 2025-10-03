@@ -204,13 +204,10 @@ File {
                                                     visibility: Private,
                                                     name: #NAME_LEN,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -248,13 +245,10 @@ File {
                                                     visibility: Private,
                                                     name: #VERSION_LEN,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -701,13 +695,10 @@ File {
                                                     visibility: Private,
                                                     name: #BUFFER_SIZE,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {

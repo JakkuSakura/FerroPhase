@@ -826,8 +826,14 @@ File {
                                             init: Some(
                                                 Expr {
                                                     ty: Some(
-                                                        Primitive(
-                                                            String,
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Primitive(
+                                                                    String,
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
                                                         ),
                                                     ),
                                                     kind: IntrinsicCall(
@@ -837,8 +843,14 @@ File {
                                                                 args: [
                                                                     Expr {
                                                                         ty: Some(
-                                                                            Primitive(
-                                                                                String,
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
                                                                             ),
                                                                         ),
                                                                         kind: If(
@@ -885,8 +897,14 @@ File {
                                                                                 },
                                                                                 then: Expr {
                                                                                     ty: Some(
-                                                                                        Primitive(
-                                                                                            String,
+                                                                                        Reference(
+                                                                                            TypeReference {
+                                                                                                ty: Primitive(
+                                                                                                    String,
+                                                                                                ),
+                                                                                                mutability: None,
+                                                                                                lifetime: None,
+                                                                                            },
                                                                                         ),
                                                                                     ),
                                                                                     kind: Value(
@@ -901,8 +919,14 @@ File {
                                                                                 elze: Some(
                                                                                     Expr {
                                                                                         ty: Some(
-                                                                                            Primitive(
-                                                                                                String,
+                                                                                            Reference(
+                                                                                                TypeReference {
+                                                                                                    ty: Primitive(
+                                                                                                        String,
+                                                                                                    ),
+                                                                                                    mutability: None,
+                                                                                                    lifetime: None,
+                                                                                                },
                                                                                             ),
                                                                                         ),
                                                                                         kind: Value(
@@ -1086,8 +1110,14 @@ File {
                                                                     },
                                                                     Expr {
                                                                         ty: Some(
-                                                                            Primitive(
-                                                                                String,
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
                                                                             ),
                                                                         ),
                                                                         kind: Locator(

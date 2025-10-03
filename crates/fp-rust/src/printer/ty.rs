@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use fp_core::ast::{
-    DecimalType, ExprInvoke, StructuralField, Ty, TypeInt, TypePrimitive, TypeReference, TypeSlice,
-    TypeStruct, TypeStructural,
+    DecimalType, ExprInvoke, StructuralField, Ty, TypeArray, TypeInt, TypePrimitive, TypeReference,
+    TypeSlice, TypeStruct, TypeStructural,
 };
 use fp_core::bail;
 use fp_core::error::Result;
@@ -18,6 +18,7 @@ impl RustPrinter {
             Ty::Structural(s) => self.print_structural_type(s)?,
             Ty::Expr(e) => self.print_expr(e)?,
             Ty::Slice(t) => self.print_type_slice(t)?,
+            Ty::Array(t) => self.print_type_array(t)?,
             Ty::ImplTraits(t) => self.print_impl_traits(t)?,
             Ty::TypeBounds(t) => self.print_type_bounds(t)?,
             Ty::Unit(_) => quote!(()),
@@ -103,5 +104,11 @@ impl RustPrinter {
     pub fn print_type_slice(&self, ty: &TypeSlice) -> Result<TokenStream> {
         let elem = self.print_type(&*ty.elem)?;
         Ok(quote!([#elem]))
+    }
+
+    pub fn print_type_array(&self, ty: &TypeArray) -> Result<TokenStream> {
+        let elem = self.print_type(&*ty.elem)?;
+        let len = self.print_expr(ty.len.as_ref())?;
+        Ok(quote!([#elem ; #len]))
     }
 }
