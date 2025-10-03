@@ -1647,6 +1647,12 @@ impl AstTypeInferencer {
                             return Ok(var);
                         }
                     }
+
+                    let locator_name = locator.to_string();
+                    if let Some(struct_def) = self.struct_defs.get(&locator_name).cloned() {
+                        self.bind(var, TypeTerm::Struct(struct_def));
+                        return Ok(var);
+                    }
                 }
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
