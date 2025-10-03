@@ -46,14 +46,26 @@ enum TypeTerm {
     Unknown,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct TypeScheme {
     #[allow(dead_code)]
     vars: usize,
     body: SchemeType,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+struct MethodRecord {
+    receiver_ty: Option<Ty>,
+    scheme: Option<TypeScheme>,
+}
+
+#[derive(Clone, Debug)]
+struct ImplContext {
+    struct_name: String,
+    self_ty: Ty,
+}
+
+#[derive(Clone, Debug)]
 enum SchemeType {
     Var(u32),
     Primitive(TypePrimitive),
@@ -148,6 +160,8 @@ pub struct AstTypeInferencer {
     type_vars: Vec<TypeVar>,
     env: Vec<HashMap<String, EnvEntry>>,
     struct_defs: HashMap<String, TypeStruct>,
+    struct_methods: HashMap<String, HashMap<String, MethodRecord>>,
+    impl_stack: Vec<Option<ImplContext>>,
     current_level: usize,
     diagnostics: Vec<TypingDiagnostic>,
     has_errors: bool,
@@ -160,6 +174,8 @@ impl AstTypeInferencer {
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
             struct_defs: HashMap::new(),
+            struct_methods: HashMap::new(),
+            impl_stack: Vec::new(),
             current_level: 0,
             diagnostics: Vec::new(),
             has_errors: false,
@@ -200,6 +216,79 @@ impl AstTypeInferencer {
         }
     }
 
+    fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
+        match self.struct_name_from_expr(self_ty) {
+            Some(name) => {
+                if let Some(def) = self.struct_defs.get(&name).cloned() {
+                    Some(ImplContext {
+                        struct_name: name,
+                        self_ty: Ty::Struct(def),
+                    })
+                } else {
+                    self.emit_error(format!("impl target {} is not a known struct", name));
+                    None
+                }
+            }
+            None => {
+                self.emit_error("impl self type must resolve to a struct");
+                None
+            }
+        }
+    }
+
+    fn ty_for_receiver(&self, ctx: &ImplContext, receiver: &FunctionParamReceiver) -> Ty {
+        match receiver {
+            FunctionParamReceiver::Implicit
+            | FunctionParamReceiver::Value
+            | FunctionParamReceiver::MutValue => ctx.self_ty.clone(),
+            FunctionParamReceiver::Ref | FunctionParamReceiver::RefStatic => Ty::Reference(
+                TypeReference {
+                    ty: Box::new(ctx.self_ty.clone()),
+                    mutability: Some(false),
+                    lifetime: None,
+                }
+                .into(),
+            ),
+            FunctionParamReceiver::RefMut | FunctionParamReceiver::RefMutStatic => Ty::Reference(
+                TypeReference {
+                    ty: Box::new(ctx.self_ty.clone()),
+                    mutability: Some(true),
+                    lifetime: None,
+                }
+                .into(),
+            ),
+        }
+    }
+
+    fn register_method_stub(&mut self, ctx: &ImplContext, func: &ItemDefFunction) {
+        let receiver_ty = func
+            .sig
+            .receiver
+            .as_ref()
+            .map(|receiver| self.ty_for_receiver(ctx, receiver));
+        let entry = self
+            .struct_methods
+            .entry(ctx.struct_name.clone())
+            .or_default();
+        entry
+            .entry(func.name.as_str().to_string())
+            .or_insert(MethodRecord {
+                receiver_ty,
+                scheme: None,
+            });
+    }
+
+    fn peel_reference(mut ty: Ty) -> Ty {
+        loop {
+            match ty {
+                Ty::Reference(reference) => {
+                    ty = (*reference.ty).clone();
+                }
+                other => return other,
+            }
+        }
+    }
+
     fn predeclare_item(&mut self, item: &Item) {
         match item.kind() {
             ItemKind::DefStruct(def) => {
@@ -231,15 +320,25 @@ impl AstTypeInferencer {
                 self.exit_scope();
             }
             ItemKind::Impl(impl_block) => {
+                let ctx = self.resolve_impl_context(&impl_block.self_ty);
+                self.impl_stack.push(ctx.clone());
                 self.enter_scope();
+                if let Some(ref ctx) = ctx {
+                    for child in &impl_block.items {
+                        if let ItemKind::DefFunction(func) = child.kind() {
+                            self.register_method_stub(ctx, func);
+                        }
+                    }
+                }
                 for child in &impl_block.items {
                     self.predeclare_item(child);
                 }
                 self.exit_scope();
+                self.impl_stack.pop();
             }
             ItemKind::Expr(expr) => {
                 if let ExprKind::Struct(struct_expr) = expr.kind() {
-                    if let Some(name) = Self::struct_name_from_expr(&struct_expr.name) {
+                    if let Some(name) = self.struct_name_from_expr(&struct_expr.name) {
                         if let Some(def) = self.struct_defs.get(&name).cloned() {
                             self.struct_defs.insert(name, def);
                         }
@@ -326,6 +425,8 @@ impl AstTypeInferencer {
                 Ty::Unit(TypeUnit)
             }
             ItemKind::Impl(impl_block) => {
+                let ctx = self.resolve_impl_context(&impl_block.self_ty);
+                self.impl_stack.push(ctx.clone());
                 self.enter_scope();
                 for child in &impl_block.items {
                     self.predeclare_item(child);
@@ -334,6 +435,7 @@ impl AstTypeInferencer {
                     self.infer_item(child)?;
                 }
                 self.exit_scope();
+                self.impl_stack.pop();
                 Ty::Unit(TypeUnit)
             }
             ItemKind::Expr(expr) => {
@@ -353,6 +455,24 @@ impl AstTypeInferencer {
     fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
         let fn_var = self.symbol_var(&func.name);
         self.enter_scope();
+
+        let impl_ctx = self.impl_stack.last().cloned().flatten();
+        let mut receiver_ty: Option<Ty> = None;
+        if let Some(receiver) = func.sig.receiver.as_ref() {
+            if let Some(ctx) = impl_ctx.as_ref() {
+                let receiver_type = self.ty_for_receiver(ctx, receiver);
+                let self_var = self.fresh_type_var();
+                let expected = self.type_from_ast_ty(&receiver_type)?;
+                self.unify(self_var, expected)?;
+                self.insert_env("self".to_string(), EnvEntry::Mono(self_var));
+                receiver_ty = Some(receiver_type);
+            } else {
+                self.emit_error(format!(
+                    "method {} defined without an impl context",
+                    func.name
+                ));
+            }
+        }
 
         if !func.sig.generics_params.is_empty() {
             self.emit_error(format!(
@@ -404,7 +524,25 @@ impl AstTypeInferencer {
         );
 
         let scheme = self.generalize(fn_var)?;
-        self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme));
+        let scheme_env = scheme.clone();
+        self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme_env));
+
+        if let Some(ctx) = impl_ctx.as_ref() {
+            let entry = self
+                .struct_methods
+                .entry(ctx.struct_name.clone())
+                .or_default();
+            let record = entry
+                .entry(func.name.as_str().to_string())
+                .or_insert(MethodRecord {
+                    receiver_ty: receiver_ty.clone(),
+                    scheme: None,
+                });
+            if record.receiver_ty.is_none() && receiver_ty.is_some() {
+                record.receiver_ty = receiver_ty.clone();
+            }
+            record.scheme = Some(scheme.clone());
+        }
 
         let func_ty = TypeFunction {
             params: param_tys.clone(),
@@ -952,7 +1090,13 @@ impl AstTypeInferencer {
         }
 
         let func_var = match &mut invoke.target {
-            ExprInvokeTarget::Function(locator) => self.lookup_locator(locator)?,
+            ExprInvokeTarget::Function(locator) => {
+                if let Some(var) = self.lookup_associated_function(locator)? {
+                    var
+                } else {
+                    self.lookup_locator(locator)?
+                }
+            }
             ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
             ExprInvokeTarget::Closure(_) => {
                 let message = "invoking closure values is not yet supported".to_string();
@@ -979,7 +1123,7 @@ impl AstTypeInferencer {
                         }
                     }
                 }
-                self.lookup_struct_field(obj_var, &select.field)?
+                self.lookup_struct_method(obj_var, &select.field)?
             }
         };
 
@@ -1731,6 +1875,14 @@ impl AstTypeInferencer {
                     }
 
                     let locator_name = locator.to_string();
+                    if locator_name == "Self" {
+                        if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
+                            if let Ty::Struct(struct_ty) = ctx.self_ty.clone() {
+                                self.bind(var, TypeTerm::Struct(struct_ty));
+                                return Ok(var);
+                            }
+                        }
+                    }
                     if let Some(struct_def) = self.struct_defs.get(&locator_name).cloned() {
                         self.bind(var, TypeTerm::Struct(struct_def));
                         return Ok(var);
@@ -1745,6 +1897,31 @@ impl AstTypeInferencer {
             }
         }
         Ok(var)
+    }
+
+    fn lookup_associated_function(&mut self, locator: &Locator) -> Result<Option<TypeVarId>> {
+        if let Locator::Path(path) = locator {
+            if path.segments.len() >= 2 {
+                if let (Some(struct_segment), Some(method_segment)) = (
+                    path.segments.get(path.segments.len() - 2),
+                    path.segments.last(),
+                ) {
+                    let struct_name = struct_segment.as_str();
+                    let method_name = method_segment.as_str();
+                    if let Some(methods) = self.struct_methods.get(struct_name) {
+                        if let Some(record) = methods.get(method_name) {
+                            if let Some(scheme) = record.scheme.as_ref() {
+                                return Ok(Some(self.instantiate_scheme(&scheme.clone())));
+                            }
+                            if let Some(var) = self.lookup_env_var(method_name) {
+                                return Ok(Some(var));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn lookup_locator(&mut self, locator: &Locator) -> Result<TypeVarId> {
@@ -1972,9 +2149,41 @@ impl AstTypeInferencer {
         }
     }
 
+    fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
+        let ty = self.resolve_to_ty(obj_var)?;
+        let struct_name = match ty {
+            Ty::Struct(struct_ty) => struct_ty.name.as_str().to_string(),
+            other => {
+                self.emit_error(format!(
+                    "cannot call method {} on value of type {}",
+                    field, other
+                ));
+                return Ok(self.error_type_var());
+            }
+        };
+
+        if let Some(methods) = self.struct_methods.get(&struct_name) {
+            if let Some(record) = methods.get(field.as_str()) {
+                if let Some(scheme) = record.scheme.as_ref() {
+                    return Ok(self.instantiate_scheme(&scheme.clone()));
+                }
+                if let Some(var) = self.lookup_env_var(field.as_str()) {
+                    return Ok(var);
+                }
+            }
+        }
+
+        self.emit_error(format!(
+            "unknown method {} on struct {}",
+            field, struct_name
+        ));
+        Ok(self.error_type_var())
+    }
+
     fn lookup_struct_field(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var)?;
-        match ty {
+        let resolved_ty = Self::peel_reference(ty);
+        match resolved_ty {
             Ty::Struct(struct_ty) => {
                 if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
                     let var = self.type_from_ast_ty(&def_field.value)?;
@@ -2007,7 +2216,7 @@ impl AstTypeInferencer {
     }
 
     fn resolve_struct_literal(&mut self, struct_expr: &mut ExprStruct) -> Result<TypeVarId> {
-        let struct_name = match Self::struct_name_from_expr(&struct_expr.name) {
+        let struct_name = match self.struct_name_from_expr(&struct_expr.name) {
             Some(name) => name,
             None => {
                 self.emit_error("struct literal target could not be resolved");
@@ -2052,9 +2261,19 @@ impl AstTypeInferencer {
         }))
     }
 
-    fn struct_name_from_expr(expr: &Expr) -> Option<String> {
+    fn struct_name_from_expr(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Locator(locator) => Some(locator.to_string()),
+            ExprKind::Locator(locator) => {
+                let name = locator.to_string();
+                if name == "Self" {
+                    self.impl_stack
+                        .last()
+                        .and_then(|ctx| ctx.as_ref())
+                        .map(|ctx| ctx.struct_name.clone())
+                } else {
+                    Some(name)
+                }
+            }
             ExprKind::Value(value) => match &**value {
                 Value::Type(Ty::Struct(struct_ty)) => Some(struct_ty.name.as_str().to_string()),
                 _ => None,
