@@ -15,6 +15,7 @@ use fp_core::diagnostics::{
 use fp_core::intrinsics::runtime::RuntimeIntrinsicStrategy;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir};
+use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome};
 use fp_llvm::{
     LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicStrategy,
 };
@@ -24,6 +25,7 @@ use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_optimize::typing::TypingDiagnosticLevel;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -38,6 +40,7 @@ const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_LINK_BINARY: &str = "link-binary";
 const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
+const STAGE_AST_INTERPRET: &str = "ast-interpret";
 
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
@@ -827,27 +830,92 @@ impl Pipeline {
         }
     }
 
+    fn run_ast_interpreter(
+        &self,
+        ast: &Node,
+        options: &PipelineOptions,
+        mode: InterpreterMode,
+    ) -> Result<(Value, InterpreterOutcome), CliError> {
+        let mut working_ast = ast.clone();
+        let ctx = SharedScopedContext::new();
+        let interpreter_opts = InterpreterOptions {
+            mode,
+            debug_assertions: !options.release,
+            diagnostics: None,
+            diagnostic_context: STAGE_AST_INTERPRET,
+        };
+        let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
+
+        let value = match working_ast.kind_mut() {
+            NodeKind::File(_) => {
+                interpreter.interpret(&mut working_ast);
+                interpreter.execute_main().unwrap_or_else(Value::unit)
+            }
+            NodeKind::Expr(expr) => interpreter.evaluate_expression(expr),
+            NodeKind::Item(_) => {
+                return Err(CliError::Compilation(
+                    "Standalone item interpretation is not supported".to_string(),
+                ));
+            }
+        };
+
+        let outcome = interpreter.take_outcome();
+        self.emit_diagnostics(&outcome.diagnostics, Some(STAGE_AST_INTERPRET), options);
+
+        if outcome.has_errors {
+            return Err(CliError::Compilation(
+                "AST interpretation failed; see diagnostics for details".to_string(),
+            ));
+        }
+
+        Ok((value, outcome))
+    }
+
     async fn interpret_ast(
         &self,
-        _ast: &Node,
-        _options: &PipelineOptions,
+        ast: &Node,
+        options: &PipelineOptions,
         _file_path: Option<&Path>,
     ) -> Result<Value, CliError> {
-        Err(CliError::Compilation(
-            "AST interpreter not yet ported".to_string(),
-        ))
+        let (value, mut outcome) =
+            self.run_ast_interpreter(ast, options, InterpreterMode::RunTime)?;
+
+        if !outcome.stdout.is_empty() {
+            for chunk in outcome.stdout.drain(..) {
+                print!("{}", chunk);
+            }
+            let _ = io::stdout().flush();
+        }
+
+        Ok(value)
     }
 
     async fn interpret_ast_runtime(
         &self,
-        _ast: &Node,
-        _runtime_name: &str,
-        _options: &PipelineOptions,
+        ast: &Node,
+        runtime_name: &str,
+        options: &PipelineOptions,
         _file_path: Option<&Path>,
     ) -> Result<RuntimeValue, CliError> {
-        Err(CliError::Compilation(
-            "AST runtime interpreter not yet ported".to_string(),
-        ))
+        match runtime_name {
+            "rust" | "literal" => {
+                let (value, mut outcome) =
+                    self.run_ast_interpreter(ast, options, InterpreterMode::RunTime)?;
+
+                if !outcome.stdout.is_empty() {
+                    for chunk in outcome.stdout.drain(..) {
+                        print!("{}", chunk);
+                    }
+                    let _ = io::stdout().flush();
+                }
+
+                Ok(RuntimeValue::literal(value))
+            }
+            other => Err(CliError::Compilation(format!(
+                "Unsupported interpreter runtime: {}",
+                other
+            ))),
+        }
     }
 
     fn emit_diagnostics(
