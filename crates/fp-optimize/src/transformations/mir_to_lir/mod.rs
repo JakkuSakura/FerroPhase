@@ -495,28 +495,15 @@ impl LirGenerator {
             }
         }
 
-        if let Some(mut value) = result_value.clone() {
-            let (target_lir_ty, target_is_zst) = match &target_access {
+        if let Some(value) = result_value.clone() {
+            let (_target_lir_ty, target_is_zst) = match &target_access {
                 PlaceAccess::Address(addr) => (addr.lir_ty.clone(), Self::is_zero_sized(&addr.ty)),
                 PlaceAccess::Value { ty, lir_ty, .. } => (lir_ty.clone(), Self::is_zero_sized(ty)),
             };
 
             if !target_is_zst {
-                let value_is_zst_constant = matches!(
-                    value,
-                    lir::LirValue::Constant(lir::LirConstant::Struct(ref fields, _))
-                        if fields.is_empty()
-                ) || matches!(
-                    value,
-                    lir::LirValue::Constant(lir::LirConstant::Undef(ref ty))
-                        if matches!(ty, lir::LirType::Void)
-                );
-
-                if value_is_zst_constant {
-                    value = self
-                        .zero_value_for_lir_type(&target_lir_ty)
-                        .expect("zero value must be available for ZST constant");
-                }
+                // No additional handling needed for zero-sized constants; they will be
+                // materialised as undef where appropriate when consumed.
             }
 
             if let PlaceAccess::Address(addr) = &target_access {
@@ -555,9 +542,6 @@ impl LirGenerator {
             }
 
             if should_update_register_map {
-                if target_is_zst && !matches!(value, lir::LirValue::Function(_)) {
-                    value = lir::LirValue::Constant(lir::LirConstant::Undef(target_lir_ty));
-                }
                 self.register_map.insert(place.local, value);
             }
         }
@@ -974,9 +958,9 @@ impl LirGenerator {
 
     fn apply_field_projection(
         &mut self,
-        base_place: &mir::Place,
+        _base_place: &mir::Place,
         access: PlaceAccess,
-        local: mir::LocalId,
+        _local: mir::LocalId,
         field_index: usize,
         field_ty: &Ty,
     ) -> Result<PlaceAccess> {
@@ -990,23 +974,13 @@ impl LirGenerator {
         };
 
         let field_lir_ty = self.lir_type_from_ty(field_ty);
-        let key = self.place_layout_key(local, &base_place.projection);
-        let layout = self.struct_layouts.entry(key).or_insert_with(Vec::new);
-        if layout.len() <= field_index {
-            layout.resize(field_index + 1, None);
-        }
-        if layout[field_index].is_none() {
-            layout[field_index] = Some(field_lir_ty.clone());
-        }
 
         let mut offset = 0u64;
-        for idx in 0..field_index {
-            let ty = layout
-                .get(idx)
-                .and_then(|entry| entry.as_ref())
-                .cloned()
-                .expect("struct field type must be known");
-            offset = offset.saturating_add(Self::size_of_lir_type(&ty));
+        if let TyKind::Tuple(elements) = &base_addr.ty.kind {
+            for elem_ty in elements.iter().take(field_index) {
+                let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                offset = offset.saturating_add(Self::size_of_lir_type(&elem_lir_ty));
+            }
         }
 
         let desired_ptr_ty = lir::LirType::Ptr(Box::new(field_lir_ty.clone()));
@@ -1068,49 +1042,6 @@ impl LirGenerator {
             lir_ty: field_lir_ty,
             alignment,
         }))
-    }
-
-    fn place_layout_key(&self, local: mir::LocalId, projection: &[mir::PlaceElem]) -> String {
-        let mut key = local.to_string();
-        for elem in projection {
-            key.push('|');
-            match elem {
-                mir::PlaceElem::Deref => key.push_str("d"),
-                mir::PlaceElem::Field(idx, _) => {
-                    key.push_str("f");
-                    key.push_str(&idx.to_string());
-                }
-                mir::PlaceElem::Index(local_id) => {
-                    key.push_str("i");
-                    key.push_str(&local_id.to_string());
-                }
-                mir::PlaceElem::ConstantIndex {
-                    offset, from_end, ..
-                } => {
-                    key.push_str("ci");
-                    key.push_str(&offset.to_string());
-                    key.push('_');
-                    key.push_str(if *from_end { "1" } else { "0" });
-                }
-                mir::PlaceElem::Subslice { from, to, from_end } => {
-                    key.push_str("ss");
-                    key.push_str(&from.to_string());
-                    key.push('_');
-                    key.push_str(&to.to_string());
-                    key.push('_');
-                    key.push_str(if *from_end { "1" } else { "0" });
-                }
-                mir::PlaceElem::Downcast(name, variant) => {
-                    key.push_str("dc");
-                    if let Some(n) = name {
-                        key.push_str(n);
-                    }
-                    key.push('_');
-                    key.push_str(&variant.to_string());
-                }
-            }
-        }
-        key
     }
 
     fn size_of_lir_type(ty: &lir::LirType) -> u64 {
@@ -1239,10 +1170,7 @@ impl LirGenerator {
     ) -> lir::LirValue {
         match source_lir_ty {
             lir::LirType::I1 | lir::LirType::I8 | lir::LirType::I16 => {
-                let signed = matches!(
-                    source_ty.map(|ty| &ty.kind),
-                    Some(TyKind::Int(_) | TyKind::Bool)
-                );
+                let signed = matches!(source_ty.map(|ty| &ty.kind), Some(TyKind::Int(_)));
                 self.extend_integer_value(
                     value,
                     source_lir_ty.clone(),
