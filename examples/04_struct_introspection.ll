@@ -66,44 +66,53 @@ bb11:
   %call_17 = call i32 (ptr, ...) @printf(ptr @.str.11)
   br label %bb12
 bb12:
-  %call_18 = call i32 (ptr, ...) @printf(ptr @.str.12, i64 16)
+  %alloca_18 = alloca i64, align 8
+  store i64 16, ptr %alloca_18
+  %load_20 = load i64, ptr %alloca_18
+  %call_21 = call i32 (ptr, ...) @printf(ptr @.str.12, i64 %load_20)
   br label %bb13
 bb13:
-  %call_19 = call i32 (ptr, ...) @printf(ptr @.str.13, i64 24)
+  %alloca_22 = alloca i64, align 8
+  store i64 24, ptr %alloca_22
+  %load_24 = load i64, ptr %alloca_22
+  %call_25 = call i32 (ptr, ...) @printf(ptr @.str.13, i64 %load_24)
   br label %bb14
 bb14:
-  %call_20 = call i32 (ptr, ...) @printf(ptr @.str.14, i64 40)
+  %alloca_26 = alloca i64, align 8
+  store i64 40, ptr %alloca_26
+  %load_28 = load i64, ptr %alloca_26
+  %call_29 = call i32 (ptr, ...) @printf(ptr @.str.14, i64 %load_28)
   br label %bb15
 bb15:
-  %call_21 = call i32 (ptr, ...) @printf(ptr @.str.15)
+  %call_30 = call i32 (ptr, ...) @printf(ptr @.str.15)
   br label %bb16
 bb16:
-  %bitcast_22 = bitcast ptr %alloca_13 to ptr
-  %load_23 = load double, ptr %bitcast_22
-  %bitcast_24 = bitcast ptr %alloca_13 to ptr
-  %gep_25 = getelementptr inbounds i8, ptr %bitcast_24, i64 8
-  %bitcast_26 = bitcast ptr %gep_25 to ptr
-  %load_27 = load double, ptr %bitcast_26
-  %call_28 = call i32 (ptr, ...) @printf(ptr @.str.16, double %load_23, double %load_27)
+  %bitcast_31 = bitcast ptr %alloca_13 to ptr
+  %load_32 = load double, ptr %bitcast_31
+  %bitcast_33 = bitcast ptr %alloca_13 to ptr
+  %gep_34 = getelementptr inbounds i8, ptr %bitcast_33, i64 8
+  %bitcast_35 = bitcast ptr %gep_34 to ptr
+  %load_36 = load double, ptr %bitcast_35
+  %call_37 = call i32 (ptr, ...) @printf(ptr @.str.16, double %load_32, double %load_36)
   br label %bb17
 bb17:
-  %bitcast_29 = bitcast ptr %alloca_15 to ptr
-  %load_30 = load i8, ptr %bitcast_29
-  %zext_31 = zext i8 %load_30 to i32
-  %bitcast_32 = bitcast ptr %alloca_15 to ptr
-  %gep_33 = getelementptr inbounds i8, ptr %bitcast_32, i64 1
-  %bitcast_34 = bitcast ptr %gep_33 to ptr
-  %load_35 = load i8, ptr %bitcast_34
-  %zext_36 = zext i8 %load_35 to i32
-  %bitcast_37 = bitcast ptr %alloca_15 to ptr
-  %gep_38 = getelementptr inbounds i8, ptr %bitcast_37, i64 2
-  %bitcast_39 = bitcast ptr %gep_38 to ptr
-  %load_40 = load i8, ptr %bitcast_39
-  %zext_41 = zext i8 %load_40 to i32
-  %call_42 = call i32 (ptr, ...) @printf(ptr @.str.17, i32 %zext_31, i32 %zext_36, i32 %zext_41)
+  %bitcast_38 = bitcast ptr %alloca_15 to ptr
+  %load_39 = load i8, ptr %bitcast_38
+  %zext_40 = zext i8 %load_39 to i32
+  %bitcast_41 = bitcast ptr %alloca_15 to ptr
+  %gep_42 = getelementptr inbounds i8, ptr %bitcast_41, i64 1
+  %bitcast_43 = bitcast ptr %gep_42 to ptr
+  %load_44 = load i8, ptr %bitcast_43
+  %zext_45 = zext i8 %load_44 to i32
+  %bitcast_46 = bitcast ptr %alloca_15 to ptr
+  %gep_47 = getelementptr inbounds i8, ptr %bitcast_46, i64 2
+  %bitcast_48 = bitcast ptr %gep_47 to ptr
+  %load_49 = load i8, ptr %bitcast_48
+  %zext_50 = zext i8 %load_49 to i32
+  %call_51 = call i32 (ptr, ...) @printf(ptr @.str.17, i32 %zext_40, i32 %zext_45, i32 %zext_50)
   br label %bb18
 bb18:
-  %call_43 = call i32 (ptr, ...) @printf(ptr @.str.18)
+  %call_52 = call i32 (ptr, ...) @printf(ptr @.str.18)
   br label %bb19
 bb19:
   ret i32 0

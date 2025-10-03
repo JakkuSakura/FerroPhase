@@ -166,6 +166,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.insert_type(def.name.as_str(), def.value.clone());
             }
             ItemKind::DefConst(def) => {
+                if let Some(inner_ty) = def.ty_annotation_mut().as_mut() {
+                    self.evaluate_ty(inner_ty);
+                }
+                if let Some(inner_ty) = def.ty.as_mut() {
+                    self.evaluate_ty(inner_ty);
+                }
                 let value = self.eval_expr(def.value.as_mut());
                 let qualified = self.qualified_name(def.name.as_str());
                 let expr_value = Expr::value(value.clone());
@@ -227,6 +233,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Locator(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
+                        let mut replacement = Expr::value(value.clone());
+                        replacement.ty = expr.ty.clone();
+                        *expr = replacement;
                         value
                     } else if let Some(ty) = self.lookup_type(ident.as_str()) {
                         Value::Type(ty)
@@ -281,6 +290,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     .collect();
                 Value::List(ValueList::new(values))
             }
+            ExprKind::ArrayRepeat(repeat) => self.eval_array_repeat(repeat),
             ExprKind::Struct(struct_expr) => self.evaluate_struct_literal(struct_expr),
             ExprKind::Structural(struct_expr) => {
                 let fields = struct_expr
@@ -332,7 +342,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.bind_pattern(&expr_let.pat, value.clone());
                 value
             }
-            ExprKind::Invoke(invoke) => self.eval_invoke(invoke),
+            ExprKind::Invoke(invoke) => {
+                if let ExprInvokeTarget::Method(select) = &mut invoke.target {
+                    if select.field.name.as_str() == "len" && invoke.args.is_empty() {
+                        let value = self.eval_expr(select.obj.as_mut());
+                        if let Value::List(list) = value {
+                            let len_value = Value::int(list.values.len() as i64);
+                            let mut replacement = Expr::value(len_value.clone());
+                            replacement.ty = expr.ty.clone();
+                            *expr = replacement;
+                            self.mark_mutated();
+                            return len_value;
+                        }
+                    }
+                }
+                self.eval_invoke(invoke)
+            }
             _ => {
                 self.emit_error("expression not supported in AST interpretation");
                 Value::undefined()
@@ -466,6 +491,59 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         Value::Struct(ValueStruct::new(struct_ty, fields))
+    }
+
+    fn eval_array_repeat(&mut self, repeat: &mut fp_core::ast::ExprArrayRepeat) -> Value {
+        let elem_value = self.eval_expr(repeat.elem.as_mut());
+        let len_value = self.eval_expr(repeat.len.as_mut());
+
+        let len = match len_value {
+            Value::Int(int) if int.value >= 0 => int.value as usize,
+            Value::Int(_) => {
+                self.emit_error("array repeat length must be non-negative");
+                return Value::undefined();
+            }
+            Value::Decimal(decimal) if decimal.value >= 0.0 => decimal.value as usize,
+            other => {
+                self.emit_error(format!(
+                    "array repeat length must be an integer constant, found {}",
+                    other
+                ));
+                return Value::undefined();
+            }
+        };
+
+        let mut values = Vec::with_capacity(len);
+        for _ in 0..len {
+            values.push(elem_value.clone());
+        }
+        Value::List(ValueList::new(values))
+    }
+
+    fn evaluate_ty(&mut self, ty: &mut Ty) {
+        match ty {
+            Ty::Array(array_ty) => {
+                let len_value = self.eval_expr(array_ty.len.as_mut());
+                match len_value {
+                    Value::Int(int_value) => {
+                        let replacement = Expr::value(Value::Int(int_value.clone()));
+                        *array_ty.len = replacement.into();
+                    }
+                    Value::Decimal(decimal) => {
+                        let as_int = decimal.value as i64;
+                        let replacement = Expr::value(Value::int(as_int));
+                        *array_ty.len = replacement.into();
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "array length type must be an integer literal, found {}",
+                            other
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn evaluate_select(&mut self, target: Value, field: &str) -> Value {
@@ -654,6 +732,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 for kwarg in template.kwargs.iter_mut() {
                     self.evaluate_function_body(&mut kwarg.value);
                 }
+            }
+            ExprKind::ArrayRepeat(repeat) => {
+                self.evaluate_function_body(repeat.elem.as_mut());
+                self.evaluate_function_body(repeat.len.as_mut());
             }
             ExprKind::Value(_)
             | ExprKind::Locator(_)

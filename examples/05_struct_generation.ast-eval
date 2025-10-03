@@ -1,0 +1,1961 @@
+File {
+    path: "examples/05_struct_generation.fp",
+    items: [
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #main,
+                    ty: Some(
+                        TypeFunction {
+                            params: [],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #FLAG_A,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Bool(
+                                                                ValueBool {
+                                                                    value: true,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #FLAG_B,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Bool(
+                                                                ValueBool {
+                                                                    value: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Config,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefStruct(
+                                                ItemDefStruct {
+                                                    visibility: Private,
+                                                    name: #Config,
+                                                    value: TypeStruct {
+                                                        name: #Config,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Config,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Struct(
+                                                            TypeStruct {
+                                                                name: #Config,
+                                                                fields: [
+                                                                    StructuralField {
+                                                                        name: #x,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                I64,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    StructuralField {
+                                                                        name: #y,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                I64,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #CONFIG,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #Config,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Struct(
+                                                                ValueStruct {
+                                                                    ty: TypeStruct {
+                                                                        name: #Config,
+                                                                        fields: [
+                                                                            StructuralField {
+                                                                                name: #x,
+                                                                                value: Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                            StructuralField {
+                                                                                name: #y,
+                                                                                value: Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                    structural: ValueStructural {
+                                                                        fields: [
+                                                                            ValueField {
+                                                                                name: #x,
+                                                                                value: Int(
+                                                                                    ValueInt {
+                                                                                        value: 100,
+                                                                                    },
+                                                                                ),
+                                                                            },
+                                                                            ValueField {
+                                                                                name: #y,
+                                                                                value: Int(
+                                                                                    ValueInt {
+                                                                                        value: 20,
+                                                                                    },
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "x=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", y=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Config,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #x,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #y,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Locator(
+                                                                                        #CONFIG,
+                                                                                    ),
+                                                                                },
+                                                                                field: #x,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Config,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #x,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #y,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Locator(
+                                                                                        #CONFIG,
+                                                                                    ),
+                                                                                },
+                                                                                field: #y,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #SIZE,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 256,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Array(
+                                                    TypeArray {
+                                                        elem: Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                        len: Expr {
+                                                            ty: Some(
+                                                                Primitive(
+                                                                    Int(
+                                                                        U64,
+                                                                    ),
+                                                                ),
+                                                            ),
+                                                            kind: Locator(
+                                                                #SIZE,
+                                                            ),
+                                                        },
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Array(
+                                                            TypeArray {
+                                                                elem: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                                len: Expr {
+                                                                    ty: None,
+                                                                    kind: Value(
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 256,
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #ITEMS,
+                                                    ty: Some(
+                                                        Array(
+                                                            TypeArray {
+                                                                elem: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                                len: Expr {
+                                                                    ty: None,
+                                                                    kind: Value(
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 256,
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            List(
+                                                                ValueList {
+                                                                    values: [
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                        Int(
+                                                                            ValueInt {
+                                                                                value: 0,
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "array size: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Invoke(
+                                                                            ExprInvoke {
+                                                                                target: Method(
+                                                                                    ExprSelect {
+                                                                                        obj: Expr {
+                                                                                            ty: Some(
+                                                                                                Array(
+                                                                                                    TypeArray {
+                                                                                                        elem: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                        len: Expr {
+                                                                                                            ty: Some(
+                                                                                                                Primitive(
+                                                                                                                    Int(
+                                                                                                                        U64,
+                                                                                                                    ),
+                                                                                                                ),
+                                                                                                            ),
+                                                                                                            kind: Locator(
+                                                                                                                #SIZE,
+                                                                                                            ),
+                                                                                                        },
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
+                                                                                            kind: Locator(
+                                                                                                #ITEMS,
+                                                                                            ),
+                                                                                        },
+                                                                                        field: #len,
+                                                                                        select: Method,
+                                                                                    },
+                                                                                ),
+                                                                                args: [],
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+    ],
+}
