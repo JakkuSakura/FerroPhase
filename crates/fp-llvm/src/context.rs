@@ -785,16 +785,42 @@ impl LlvmContext {
 fn format_type(typ: &Type) -> String {
     match typ {
         Type::IntegerType { bits } => format!("i{}", bits),
-        Type::PointerType { .. } => "ptr".to_string(), // modern LLVM IR uses ptr
+        Type::PointerType { .. } => "ptr".to_string(),
         Type::VoidType => "void".to_string(),
         Type::ArrayType {
             element_type,
             num_elements,
         } => {
-            format!("[{} x {}]", num_elements, format_type(element_type))
+            format!(
+                "[{} x {}]",
+                num_elements,
+                format_type(element_type.as_ref())
+            )
         }
-        Type::StructType { .. } => "{  }".to_string(), // simplified struct type
-        Type::FPType(_) => "double".to_string(),       // simplified float type
+        Type::StructType {
+            element_types,
+            is_packed,
+        } => {
+            let inner = element_types
+                .iter()
+                .map(|t| format_type(t.as_ref()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if *is_packed {
+                format!("<{{ {} }}>", inner)
+            } else {
+                format!("{{ {} }}", inner)
+            }
+        }
+        Type::FPType(fp_ty) => match fp_ty {
+            FPType::Half => "half".to_string(),
+            FPType::BFloat => "bfloat".to_string(),
+            FPType::Single => "float".to_string(),
+            FPType::Double => "double".to_string(),
+            FPType::FP128 => "fp128".to_string(),
+            FPType::X86_FP80 => "x86_fp80".to_string(),
+            FPType::PPC_FP128 => "ppc_fp128".to_string(),
+        },
         Type::FuncType {
             result_type,
             param_types,
@@ -821,7 +847,7 @@ fn format_type(typ: &Type) -> String {
             };
             format!(
                 "{} ({}{})",
-                format_type(result_type),
+                format_type(result_type.as_ref()),
                 params_str,
                 varargs_str
             )
@@ -830,11 +856,113 @@ fn format_type(typ: &Type) -> String {
     }
 }
 
+fn type_string_for_constant(constant_ref: &llvm_ir::ConstantRef) -> String {
+    match constant_ref.as_ref() {
+        llvm_ir::Constant::Int { bits, .. } => format!("i{}", bits),
+        llvm_ir::Constant::Float(Float::Half) => "half".to_string(),
+        llvm_ir::Constant::Float(Float::Single(_)) => "float".to_string(),
+        llvm_ir::Constant::Float(Float::Double(_)) => "double".to_string(),
+        llvm_ir::Constant::Null(ty)
+        | llvm_ir::Constant::Undef(ty)
+        | llvm_ir::Constant::AggregateZero(ty)
+        | llvm_ir::Constant::GlobalReference { ty, .. } => format_type(ty.as_ref()),
+        llvm_ir::Constant::Struct {
+            values, is_packed, ..
+        } => {
+            let inner = values
+                .iter()
+                .map(type_string_for_constant)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if *is_packed {
+                format!("<{{ {} }}>", inner)
+            } else {
+                format!("{{ {} }}", inner)
+            }
+        }
+        llvm_ir::Constant::Array {
+            element_type,
+            elements,
+        } => {
+            let elem_ty = format_type(element_type.as_ref());
+            format!("[{} x {}]", elements.len(), elem_ty)
+        }
+        llvm_ir::Constant::BitCast(bitcast) => format_type(&bitcast.to_type),
+        llvm_ir::Constant::GetElementPtr(_) => "ptr".to_string(),
+        _ => "i32".to_string(),
+    }
+}
+
+fn format_f32(value: f32) -> String {
+    format!("{:.6e}", value)
+}
+
+fn format_f64(value: f64) -> String {
+    format!("{:.6e}", value)
+}
+
+fn typed_constant_string(constant_ref: &llvm_ir::ConstantRef) -> String {
+    match constant_ref.as_ref() {
+        llvm_ir::Constant::Struct {
+            values, is_packed, ..
+        } => {
+            let ty = type_string_for_constant(constant_ref);
+            let value = struct_value_only_string(values, *is_packed);
+            format!("{} {}", ty, value)
+        }
+        llvm_ir::Constant::Array { elements, .. } => {
+            let ty = type_string_for_constant(constant_ref);
+            let value = array_value_only_string(elements);
+            format!("{} {}", ty, value)
+        }
+        llvm_ir::Constant::Int { bits, value } => format!("i{} {}", bits, value),
+        llvm_ir::Constant::Float(Float::Half) => "half 0.000000e+00".to_string(),
+        llvm_ir::Constant::Float(Float::Single(v)) => {
+            format!("float {}", format_f32(*v))
+        }
+        llvm_ir::Constant::Float(Float::Double(v)) => {
+            format!("double {}", format_f64(*v))
+        }
+        llvm_ir::Constant::Null(ty) => format!("{} null", format_type(ty.as_ref())),
+        llvm_ir::Constant::Undef(ty) => format!("{} undef", format_type(ty.as_ref())),
+        llvm_ir::Constant::AggregateZero(ty) => {
+            format!("{} zeroinitializer", format_type(ty.as_ref()))
+        }
+        _ => format!(
+            "{} {}",
+            type_string_for_constant(constant_ref),
+            format_constant_ref(constant_ref)
+        ),
+    }
+}
+
+fn struct_value_only_string(values: &[llvm_ir::ConstantRef], is_packed: bool) -> String {
+    let inner = values
+        .iter()
+        .map(typed_constant_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if is_packed {
+        format!("<{{ {} }}>", inner)
+    } else {
+        format!("{{ {} }}", inner)
+    }
+}
+
+fn array_value_only_string(elements: &[llvm_ir::ConstantRef]) -> String {
+    let inner = elements
+        .iter()
+        .map(typed_constant_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[ {} ]", inner)
+}
+
 fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
     match constant_ref.as_ref() {
         llvm_ir::Constant::Int { value, .. } => value.to_string(),
-        llvm_ir::Constant::Float(Float::Single(v)) => format!("{}", v),
-        llvm_ir::Constant::Float(Float::Double(v)) => format!("{}", v),
+        llvm_ir::Constant::Float(Float::Single(v)) => format_f32(*v),
+        llvm_ir::Constant::Float(Float::Double(v)) => format_f64(*v),
         other @ llvm_ir::Constant::Float(_) => {
             panic!(
                 "Unsupported floating-point constant encountered: {:?}",
@@ -875,6 +1003,11 @@ fn format_constant_ref(constant_ref: &llvm_ir::ConstantRef) -> String {
                 array_type, base_name
             )
         }
+        llvm_ir::Constant::Struct {
+            values, is_packed, ..
+        } => struct_value_only_string(values, *is_packed),
+        llvm_ir::Constant::Array { elements, .. } => array_value_only_string(elements),
+        llvm_ir::Constant::AggregateZero(_) => "zeroinitializer".to_string(),
         other => panic!("Unsupported LLVM constant in formatter: {:?}", other),
     }
 }
@@ -1008,9 +1141,13 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
             )
         }
         llvm_ir::Instruction::Store(store) => {
+            let value_type = match &store.value {
+                llvm_ir::Operand::ConstantOperand(const_ref) => type_string_for_constant(const_ref),
+                _ => format_type(&get_operand_type(&store.value)),
+            };
             format!(
                 "store {} {}, ptr {}",
-                format_type(&get_operand_type(&store.value)),
+                value_type,
                 format_operand(&store.value),
                 format_operand(&store.address)
             )
@@ -1178,6 +1315,18 @@ fn get_operand_type(operand: &llvm_ir::Operand) -> Type {
             | llvm_ir::Constant::Null(ty)
             | llvm_ir::Constant::Undef(ty) => ty.as_ref().clone(),
             llvm_ir::Constant::GetElementPtr(_) => Type::PointerType { addr_space: 0 },
+            llvm_ir::Constant::Struct { is_packed, .. } => Type::StructType {
+                element_types: vec![],
+                is_packed: *is_packed,
+            },
+            llvm_ir::Constant::Array {
+                element_type,
+                elements,
+            } => Type::ArrayType {
+                element_type: element_type.clone(),
+                num_elements: elements.len(),
+            },
+            llvm_ir::Constant::AggregateZero(ty) => ty.as_ref().clone(),
             other => panic!(
                 "Unsupported constant operand type for formatting: {:?}",
                 other
