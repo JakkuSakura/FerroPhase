@@ -809,6 +809,15 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
                 self.record_result(instr_id, Some(target_ty), result_name);
             }
+            lir::LirInstructionKind::SExt(value, target_ty) => {
+                let operand = self.convert_lir_value_to_operand(value)?;
+                let llvm_target_ty = self.convert_lir_type_to_llvm(target_ty.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_sext(operand, llvm_target_ty, &format!("sext_{}", instr_id))
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(target_ty), result_name);
+            }
             lir::LirInstructionKind::GetElementPtr {
                 ptr,
                 indices,

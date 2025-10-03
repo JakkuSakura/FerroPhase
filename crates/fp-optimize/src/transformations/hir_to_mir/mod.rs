@@ -2,6 +2,7 @@ use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::mir;
 use fp_core::mir::ty::{
     ErrorGuaranteed, FloatTy, IntTy, Mutability, Ty, TyKind, TypeAndMut, UintTy,
@@ -392,22 +393,14 @@ impl MirLowering {
         }
 
         let ty = self.lower_type_expr(&konst.ty);
-        match self.lower_literal_expr(&konst.body.value) {
-            Some(constant) => {
-                self.const_values.insert(
-                    def_id,
-                    ConstInfo {
-                        ty,
-                        value: constant,
-                    },
-                );
-            }
-            None => {
-                self.emit_error(
-                    konst.body.value.span,
-                    "only literal const initializers are supported in MIR lowering",
-                );
-            }
+        if let Some(constant) = self.lower_literal_expr(&konst.body.value) {
+            self.const_values.insert(
+                def_id,
+                ConstInfo {
+                    ty,
+                    value: constant,
+                },
+            );
         }
     }
 
@@ -470,10 +463,7 @@ impl MirLowering {
                 user_ty: None,
                 literal: self.lower_literal(lit),
             }),
-            _ => {
-                self.emit_error(expr.span, "only literal expressions are supported in MIR");
-                None
-            }
+            _ => None,
         }
     }
 
@@ -535,6 +525,7 @@ struct BodyBuilder<'a> {
     locals: Vec<mir::LocalDecl>,
     local_map: HashMap<hir::HirId, mir::LocalId>,
     local_structs: HashMap<mir::LocalId, hir::DefId>,
+    const_items: HashMap<hir::DefId, hir::Const>,
     blocks: Vec<mir::BasicBlockData>,
     current_block: mir::BasicBlockId,
     span: Span,
@@ -570,6 +561,7 @@ impl<'a> BodyBuilder<'a> {
             locals,
             local_map: HashMap::new(),
             local_structs: HashMap::new(),
+            const_items: HashMap::new(),
             blocks: vec![mir::BasicBlockData::new(None)],
             current_block: 0,
             span,
@@ -735,6 +727,7 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ItemKind::Const(konst) => {
                 self.lowering.register_const_value(item.def_id, konst);
+                self.const_items.insert(item.def_id, konst.clone());
             }
             _ => {
                 self.lowering.emit_error(
@@ -799,6 +792,7 @@ impl<'a> BodyBuilder<'a> {
             if let Some(def_id) = struct_def {
                 self.local_structs.insert(local_id, def_id);
             }
+            self.locals[local_id as usize].ty = value.ty.clone();
             Ok(())
         }
     }
@@ -1030,6 +1024,34 @@ impl<'a> BodyBuilder<'a> {
                             ty: const_info.ty.clone(),
                         });
                     }
+
+                    if let Some(const_item) = self.program.def_map.get(def_id) {
+                        if let hir::ItemKind::Const(konst) = &const_item.kind {
+                            let ty = self.lowering.lower_type_expr(&konst.ty);
+                            let local_id = self.allocate_temp(ty.clone(), expr.span);
+                            let place = mir::Place::from_local(local_id);
+                            self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
+                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                                self.local_structs.insert(local_id, struct_def);
+                            }
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::copy(place),
+                                ty,
+                            });
+                        }
+                    } else if let Some(konst) = self.const_items.get(def_id).cloned() {
+                        let ty = self.lowering.lower_type_expr(&konst.ty);
+                        let local_id = self.allocate_temp(ty.clone(), expr.span);
+                        let place = mir::Place::from_local(local_id);
+                        self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
+                        if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                            self.local_structs.insert(local_id, struct_def);
+                        }
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::copy(place),
+                            ty,
+                        });
+                    }
                 }
 
                 let name = path
@@ -1040,6 +1062,45 @@ impl<'a> BodyBuilder<'a> {
                     .join("::");
                 self.lowering
                     .emit_error(expr.span, format!("unsupported path operand `{}`", name));
+                Ok(OperandInfo {
+                    operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                    ty: self.lowering.error_ty(),
+                })
+            }
+            hir::ExprKind::IntrinsicCall(call) => {
+                if call.kind == IntrinsicCallKind::ConstBlock {
+                    if let IntrinsicCallPayload::Args { args } = &call.payload {
+                        if let Some(arg) = args.first() {
+                            let ty = expected.cloned().unwrap_or_else(|| Ty {
+                                kind: TyKind::Tuple(Vec::new()),
+                            });
+                            let local_id = self.allocate_temp(ty.clone(), expr.span);
+                            let place = mir::Place::from_local(local_id);
+                            self.lower_expr_into_place(arg, place.clone(), &ty)?;
+                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                                self.local_structs.insert(local_id, struct_def);
+                            }
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::copy(place),
+                                ty,
+                            });
+                        }
+                    }
+                    self.lowering
+                        .emit_error(expr.span, "const block intrinsic expects an argument");
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                        ty: self.lowering.error_ty(),
+                    });
+                }
+
+                self.lowering.emit_error(
+                    expr.span,
+                    format!(
+                        "intrinsic {:?} is not yet supported in MIR operand lowering",
+                        call.kind
+                    ),
+                );
                 Ok(OperandInfo {
                     operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
                     ty: self.lowering.error_ty(),
@@ -1064,6 +1125,12 @@ impl<'a> BodyBuilder<'a> {
         let mut decl = self.lowering.make_local_decl(&ty, span);
         decl.mutability = mir::Mutability::Mut;
         self.push_local(decl)
+    }
+
+    fn set_current_terminator(&mut self, terminator: mir::Terminator) {
+        if let Some(block) = self.blocks.get_mut(self.current_block as usize) {
+            block.terminator = Some(terminator);
+        }
     }
 
     fn lower_literal(&mut self, lit: &hir::Lit, expected: Option<&Ty>) -> (mir::ConstantKind, Ty) {
@@ -1121,16 +1188,58 @@ impl<'a> BodyBuilder<'a> {
     fn lower_place(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
         match &expr.kind {
             hir::ExprKind::Path(path) => {
-                if let Some(hir::Res::Local(hir_id)) = &path.res {
-                    if let Some(local_id) = self.local_map.get(hir_id) {
-                        let ty = self.locals[*local_id as usize].ty.clone();
-                        let struct_def = self.local_structs.get(local_id).copied();
-                        return Ok(Some(PlaceInfo {
-                            place: mir::Place::from_local(*local_id),
-                            ty,
-                            struct_def,
-                        }));
+                match &path.res {
+                    Some(hir::Res::Local(hir_id)) => {
+                        if let Some(local_id) = self.local_map.get(hir_id) {
+                            let ty = self.locals[*local_id as usize].ty.clone();
+                            let struct_def = self.local_structs.get(local_id).copied();
+                            return Ok(Some(PlaceInfo {
+                                place: mir::Place::from_local(*local_id),
+                                ty,
+                                struct_def,
+                            }));
+                        }
                     }
+                    Some(hir::Res::Def(def_id)) => {
+                        if let Some(const_item) = self.program.def_map.get(def_id) {
+                            if let hir::ItemKind::Const(konst) = &const_item.kind {
+                                let ty = self.lowering.lower_type_expr(&konst.ty);
+                                let local_id = self.allocate_temp(ty.clone(), expr.span);
+                                let place_local = mir::Place::from_local(local_id);
+                                self.lower_expr_into_place(
+                                    &konst.body.value,
+                                    place_local.clone(),
+                                    &ty,
+                                )?;
+                                if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                                    self.local_structs.insert(local_id, struct_def);
+                                }
+                                return Ok(Some(PlaceInfo {
+                                    place: place_local,
+                                    ty: ty.clone(),
+                                    struct_def: self.struct_def_from_ty(&ty),
+                                }));
+                            }
+                        } else if let Some(konst) = self.const_items.get(def_id).cloned() {
+                            let ty = self.lowering.lower_type_expr(&konst.ty);
+                            let local_id = self.allocate_temp(ty.clone(), expr.span);
+                            let place_local = mir::Place::from_local(local_id);
+                            self.lower_expr_into_place(
+                                &konst.body.value,
+                                place_local.clone(),
+                                &ty,
+                            )?;
+                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
+                                self.local_structs.insert(local_id, struct_def);
+                            }
+                            return Ok(Some(PlaceInfo {
+                                place: place_local,
+                                ty: ty.clone(),
+                                struct_def: self.struct_def_from_ty(&ty),
+                            }));
+                        }
+                    }
+                    _ => {}
                 }
                 Ok(None)
             }
@@ -1188,23 +1297,158 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<()> {
         match &expr.kind {
             hir::ExprKind::Literal(_) | hir::ExprKind::Path(_) => {
+                let assignment_place = place.clone();
                 let value = self.lower_operand(expr, Some(expected_ty))?;
                 let statement = mir::Statement {
                     source_info: expr.span,
-                    kind: mir::StatementKind::Assign(place, mir::Rvalue::Use(value.operand)),
+                    kind: mir::StatementKind::Assign(
+                        assignment_place.clone(),
+                        mir::Rvalue::Use(value.operand),
+                    ),
                 };
                 self.push_statement(statement);
+                if assignment_place.projection.is_empty() {
+                    self.locals[assignment_place.local as usize].ty = value.ty.clone();
+                    if let Some(struct_def) = self.struct_def_from_ty(&value.ty) {
+                        self.local_structs
+                            .insert(assignment_place.local, struct_def);
+                    }
+                }
             }
             hir::ExprKind::Struct(path, fields) => {
                 let local_id = place.local;
                 self.lower_struct_literal(local_id, Some(expected_ty), path, fields, expr.span)?;
             }
+            hir::ExprKind::Binary(op, lhs, rhs) => {
+                let left = self.lower_operand(lhs, None)?;
+                let right = self.lower_operand(rhs, None)?;
+                let mir_op = Self::convert_bin_op(op);
+                let result_ty = Self::binary_result_ty(op, &left.ty);
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::BinaryOp(mir_op, left.operand, right.operand),
+                    ),
+                };
+                self.push_statement(statement);
+                if place.projection.is_empty() {
+                    self.locals[place.local as usize].ty = result_ty;
+                }
+            }
+            hir::ExprKind::Block(block) => {
+                for stmt in &block.stmts {
+                    self.lower_stmt(stmt)?;
+                }
+
+                if let Some(expr) = &block.expr {
+                    self.lower_expr_into_place(expr, place, expected_ty)?;
+                } else {
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place,
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(statement);
+                }
+            }
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
+                let bool_ty = Ty { kind: TyKind::Bool };
+                let cond_operand = self.lower_operand(cond, Some(&bool_ty))?;
+
+                let then_block = self.new_block();
+                let else_block = self.new_block();
+                let continue_block = self.new_block();
+
+                let switch = mir::Terminator {
+                    source_info: cond.span,
+                    kind: mir::TerminatorKind::SwitchInt {
+                        discr: cond_operand.operand,
+                        switch_ty: bool_ty,
+                        targets: mir::SwitchTargets {
+                            values: vec![1],
+                            targets: vec![then_block],
+                            otherwise: else_block,
+                        },
+                    },
+                };
+                self.set_current_terminator(switch);
+
+                // Then branch
+                self.current_block = then_block;
+                self.lower_expr_into_place(then_expr, place.clone(), expected_ty)?;
+                let then_goto = mir::Terminator {
+                    source_info: then_expr.span,
+                    kind: mir::TerminatorKind::Goto {
+                        target: continue_block,
+                    },
+                };
+                self.set_current_terminator(then_goto);
+
+                // Else branch (if present)
+                self.current_block = else_block;
+                if let Some(else_expr) = else_expr {
+                    self.lower_expr_into_place(else_expr, place, expected_ty)?;
+                    let else_goto = mir::Terminator {
+                        source_info: else_expr.span,
+                        kind: mir::TerminatorKind::Goto {
+                            target: continue_block,
+                        },
+                    };
+                    self.set_current_terminator(else_goto);
+                } else {
+                    let unit_assign = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place,
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(unit_assign);
+                    let else_goto = mir::Terminator {
+                        source_info: expr.span,
+                        kind: mir::TerminatorKind::Goto {
+                            target: continue_block,
+                        },
+                    };
+                    self.set_current_terminator(else_goto);
+                }
+
+                self.current_block = continue_block;
+            }
+            hir::ExprKind::IntrinsicCall(call) => {
+                if call.kind == IntrinsicCallKind::ConstBlock {
+                    if let IntrinsicCallPayload::Args { args } = &call.payload {
+                        if let Some(arg) = args.first() {
+                            self.lower_expr_into_place(arg, place, expected_ty)?;
+                            return Ok(());
+                        }
+                    }
+                    self.lowering
+                        .emit_error(expr.span, "const block intrinsic expects an argument");
+                } else {
+                    self.lowering.emit_error(
+                        expr.span,
+                        format!(
+                            "intrinsic {:?} is not yet supported for MIR assignment",
+                            call.kind
+                        ),
+                    );
+                }
+            }
             hir::ExprKind::Call(callee, args) => {
                 self.lower_call(expr, callee, args, Some((place, expected_ty.clone())))?;
             }
             _ => {
-                self.lowering
-                    .emit_error(expr.span, "expression not yet supported for MIR assignment");
+                self.lowering.emit_error(
+                    expr.span,
+                    format!(
+                        "expression not yet supported for MIR assignment: {:?}",
+                        expr.kind
+                    ),
+                );
                 let statement = mir::Statement {
                     source_info: expr.span,
                     kind: mir::StatementKind::Assign(
@@ -1219,6 +1463,52 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(())
+    }
+
+    fn convert_bin_op(op: &hir::BinOp) -> mir::BinOp {
+        match op {
+            hir::BinOp::Add => mir::BinOp::Add,
+            hir::BinOp::Sub => mir::BinOp::Sub,
+            hir::BinOp::Mul => mir::BinOp::Mul,
+            hir::BinOp::Div => mir::BinOp::Div,
+            hir::BinOp::Rem => mir::BinOp::Rem,
+            hir::BinOp::And => mir::BinOp::And,
+            hir::BinOp::Or => mir::BinOp::Or,
+            hir::BinOp::BitXor => mir::BinOp::BitXor,
+            hir::BinOp::BitAnd => mir::BinOp::BitAnd,
+            hir::BinOp::BitOr => mir::BinOp::BitOr,
+            hir::BinOp::Shl => mir::BinOp::Shl,
+            hir::BinOp::Shr => mir::BinOp::Shr,
+            hir::BinOp::Eq => mir::BinOp::Eq,
+            hir::BinOp::Ne => mir::BinOp::Ne,
+            hir::BinOp::Lt => mir::BinOp::Lt,
+            hir::BinOp::Le => mir::BinOp::Le,
+            hir::BinOp::Gt => mir::BinOp::Gt,
+            hir::BinOp::Ge => mir::BinOp::Ge,
+        }
+    }
+
+    fn binary_result_ty(op: &hir::BinOp, lhs_ty: &Ty) -> Ty {
+        match op {
+            hir::BinOp::Add
+            | hir::BinOp::Sub
+            | hir::BinOp::Mul
+            | hir::BinOp::Div
+            | hir::BinOp::Rem
+            | hir::BinOp::BitXor
+            | hir::BinOp::BitAnd
+            | hir::BinOp::BitOr
+            | hir::BinOp::Shl
+            | hir::BinOp::Shr => lhs_ty.clone(),
+            hir::BinOp::And
+            | hir::BinOp::Or
+            | hir::BinOp::Eq
+            | hir::BinOp::Ne
+            | hir::BinOp::Lt
+            | hir::BinOp::Le
+            | hir::BinOp::Gt
+            | hir::BinOp::Ge => Ty { kind: TyKind::Bool },
+        }
     }
 
     fn new_block(&mut self) -> mir::BasicBlockId {
