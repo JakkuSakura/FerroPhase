@@ -13,7 +13,7 @@ use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
 };
 use fp_core::pretty::{PrettyOptions, pretty};
-use fp_core::{hir, lir, mir};
+use fp_core::{hir, lir};
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
@@ -21,6 +21,7 @@ use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirL
 use fp_optimize::typing::TypingDiagnosticLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info_span, warn};
 
@@ -31,6 +32,8 @@ const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
 const STAGE_TYPE_POST_CONST: &str = "ast→typed(post-const)";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
+const STAGE_LINK_BINARY: &str = "link-binary";
+const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
 
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
@@ -48,10 +51,10 @@ pub enum PipelineOutput {
     Value(Value),
     RuntimeValue(RuntimeValue),
     Code(String),
+    Binary(PathBuf),
 }
 
 struct BackendArtifacts {
-    mir_program: mir::Program,
     lir_program: lir::LirProgram,
     mir_text: String,
     lir_text: String,
@@ -59,7 +62,7 @@ struct BackendArtifacts {
 
 struct LlvmArtifacts {
     ir_text: String,
-    _ir_path: PathBuf,
+    ir_path: PathBuf,
 }
 
 pub struct Pipeline {
@@ -310,7 +313,7 @@ impl Pipeline {
 
         let normalize_report = self.stage_normalize_intrinsics(&mut ast);
         self.collect_stage(
-            STAGE_TYPE_ENRICH,
+            STAGE_INTRINSIC_NORMALIZE,
             normalize_report,
             &diagnostic_manager,
             options,
@@ -380,7 +383,7 @@ impl Pipeline {
                 self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
 
             match target {
-                PipelineTarget::Llvm | PipelineTarget::Binary => {
+                PipelineTarget::Llvm => {
                     let backend_report =
                         self.stage_backend_lowering(&hir_program, options, base_path)?;
                     let backend = self.collect_stage(
@@ -394,9 +397,38 @@ impl Pipeline {
                         &backend.lir_program,
                         base_path,
                         input_path,
+                        false,
                         options,
                     )?;
                     PipelineOutput::Code(llvm.ir_text)
+                }
+                PipelineTarget::Binary => {
+                    let backend_report =
+                        self.stage_backend_lowering(&hir_program, options, base_path)?;
+                    let backend = self.collect_stage(
+                        STAGE_BACKEND_LOWERING,
+                        backend_report,
+                        &diagnostic_manager,
+                        options,
+                    )?;
+
+                    let llvm = self.generate_llvm_artifacts(
+                        &backend.lir_program,
+                        base_path,
+                        input_path,
+                        true,
+                        options,
+                    )?;
+
+                    let link_report = self.stage_link_binary(&llvm.ir_path, base_path, options);
+                    let binary_path = self.collect_stage(
+                        STAGE_LINK_BINARY,
+                        link_report,
+                        &diagnostic_manager,
+                        options,
+                    )?;
+
+                    PipelineOutput::Binary(binary_path)
                 }
                 PipelineTarget::Bytecode => {
                     let backend_report =
@@ -427,7 +459,7 @@ impl Pipeline {
             Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
             Err(err) => DiagnosticReport::failure(vec![
                 Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
-                    .with_source_context(STAGE_TYPE_ENRICH),
+                    .with_source_context(STAGE_INTRINSIC_NORMALIZE),
             ]),
         }
     }
@@ -515,6 +547,79 @@ impl Pipeline {
         }
     }
 
+    fn stage_link_binary(
+        &self,
+        llvm_ir_path: &Path,
+        base_path: &Path,
+        options: &PipelineOptions,
+    ) -> DiagnosticReport<PathBuf> {
+        let binary_path = base_path.to_path_buf();
+
+        if let Some(parent) = binary_path.parent() {
+            if let Err(err) = fs::create_dir_all(parent) {
+                return DiagnosticReport::failure(vec![
+                    Diagnostic::error(format!("Failed to create output directory: {}", err))
+                        .with_source_context(STAGE_LINK_BINARY),
+                ]);
+            }
+        }
+
+        let clang_available = Command::new("clang").arg("--version").output();
+        if matches!(clang_available, Err(_)) {
+            return DiagnosticReport::failure(vec![
+                Diagnostic::error(
+                    "`clang` not found in PATH; install LLVM toolchain to produce binaries"
+                        .to_string(),
+                )
+                .with_source_context(STAGE_LINK_BINARY),
+            ]);
+        }
+
+        let mut cmd = Command::new("clang");
+        cmd.arg(llvm_ir_path).arg("-o").arg(&binary_path);
+        if options.release {
+            cmd.arg("-O2");
+        }
+
+        let output = match cmd.output() {
+            Ok(output) => output,
+            Err(err) => {
+                return DiagnosticReport::failure(vec![
+                    Diagnostic::error(format!("Failed to invoke clang: {}", err))
+                        .with_source_context(STAGE_LINK_BINARY),
+                ]);
+            }
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let mut message = stderr.trim().to_string();
+            if message.is_empty() {
+                message = stdout.trim().to_string();
+            }
+            if message.is_empty() {
+                message = "clang failed without diagnostics".to_string();
+            }
+            return DiagnosticReport::failure(vec![
+                Diagnostic::error(format!("clang failed: {}", message))
+                    .with_source_context(STAGE_LINK_BINARY),
+            ]);
+        }
+
+        if !options.save_intermediates {
+            if let Err(err) = fs::remove_file(llvm_ir_path) {
+                debug!(
+                    error = %err,
+                    path = %llvm_ir_path.display(),
+                    "failed to remove intermediate LLVM IR file after linking"
+                );
+            }
+        }
+
+        DiagnosticReport::success_with_diagnostics(binary_path, Vec::new())
+    }
+
     fn stage_backend_lowering(
         &self,
         hir_program: &hir::Program,
@@ -558,7 +663,6 @@ impl Pipeline {
 
         Ok(DiagnosticReport::success_with_diagnostics(
             BackendArtifacts {
-                mir_program,
                 lir_program,
                 mir_text,
                 lir_text,
@@ -598,6 +702,7 @@ impl Pipeline {
         lir_program: &lir::LirProgram,
         base_path: &Path,
         source_path: Option<&Path>,
+        retain_file: bool,
         options: &PipelineOptions,
     ) -> Result<LlvmArtifacts, CliError> {
         let llvm_path = base_path.with_extension("ll");
@@ -610,7 +715,7 @@ impl Pipeline {
 
         let ir_text = fs::read_to_string(&llvm_path)?;
 
-        if !options.save_intermediates {
+        if !retain_file && !options.save_intermediates {
             if let Err(err) = fs::remove_file(&llvm_path) {
                 debug!(error = %err, "failed to remove temporary LLVM IR file");
             }
@@ -618,7 +723,7 @@ impl Pipeline {
 
         Ok(LlvmArtifacts {
             ir_text,
-            _ir_path: llvm_path,
+            ir_path: llvm_path,
         })
     }
 
