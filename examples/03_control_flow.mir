@@ -1,0 +1,58 @@
+mir::Program {
+    items:
+        fn main() -> () [body: body0]
+    bodies:
+        body0 { arg_count: 0, locals: 15 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i64
+                _2: <??>
+                _3: i32
+                _4: <??>
+                _5: i32
+                _6: i64
+                _7: <??>
+                _8: i32
+                _9: i64
+                _10: ()
+                _11: <??>
+                _12: bool
+                _13: bool
+                _14: i32
+            blocks:
+                bb0:
+                    s0: _1 = const Constant { span: Span { file: 18067511962513181491, lo: 3, hi: 4 }, user_ty: None, literal: Int(25) }
+                    s1: _2 = const Constant { span: Span { file: 18067511962513181491, lo: 5, hi: 6 }, user_ty: None, literal: Str("warm") }
+                    terminator: call const Constant { span: Span { file: 18067511962513181491, lo: 7, hi: 8 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 18067511962513181491, lo: 8, hi: 9 }, user_ty: None, literal: Str("%d°C is %s\n") }, copy _1, copy _2) -> _3 then bb1
+                bb1:
+                    s0: _4 = const Constant { span: Span { file: 18067511962513181491, lo: 16, hi: 17 }, user_ty: None, literal: Str("outdoor") }
+                    terminator: call const Constant { span: Span { file: 18067511962513181491, lo: 18, hi: 19 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 18067511962513181491, lo: 19, hi: 20 }, user_ty: None, literal: Str("Suggested: %s\n") }, copy _4) -> _5 then bb2
+                bb2:
+                    s0: _6 = const Constant { span: Span { file: 18067511962513181491, lo: 22, hi: 23 }, user_ty: None, literal: Int(85) }
+                    s1: _7 = const Constant { span: Span { file: 18067511962513181491, lo: 24, hi: 25 }, user_ty: None, literal: Str("B") }
+                    terminator: call const Constant { span: Span { file: 18067511962513181491, lo: 26, hi: 27 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 18067511962513181491, lo: 27, hi: 28 }, user_ty: None, literal: Str("Score %d = grade %s\n") }, copy _6, copy _7) -> _8 then bb3
+                bb3:
+                    s0: _9 = const Constant { span: Span { file: 18067511962513181491, lo: 30, hi: 31 }, user_ty: None, literal: Int(42) }
+                    s1: _12 = Gt(copy _9, const Constant { span: Span { file: 18067511962513181491, lo: 34, hi: 35 }, user_ty: None, literal: Int(50) })
+                    terminator: switch copy _12 [1 -> bb4] otherwise -> bb5
+                bb4:
+                    s0: _11 = const Constant { span: Span { file: 18067511962513181491, lo: 35, hi: 36 }, user_ty: None, literal: Str("high") }
+                    terminator: goto -> bb6
+                bb5:
+                    s0: _13 = Gt(copy _9, const Constant { span: Span { file: 18067511962513181491, lo: 39, hi: 40 }, user_ty: None, literal: Int(25) })
+                    terminator: switch copy _13 [1 -> bb7] otherwise -> bb8
+                bb6:
+                    s0: _10 = copy _11
+                    terminator: call const Constant { span: Span { file: 18067511962513181491, lo: 43, hi: 44 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 18067511962513181491, lo: 44, hi: 45 }, user_ty: None, literal: Str("Value %d is %s\n") }, copy _9, copy _10) -> _14 then bb10
+                bb7:
+                    s0: _11 = const Constant { span: Span { file: 18067511962513181491, lo: 40, hi: 41 }, user_ty: None, literal: Str("medium") }
+                    terminator: goto -> bb9
+                bb8:
+                    s0: _11 = const Constant { span: Span { file: 18067511962513181491, lo: 41, hi: 42 }, user_ty: None, literal: Str("low") }
+                    terminator: goto -> bb9
+                bb9:
+                    terminator: goto -> bb6
+                bb10:
+                    terminator: return
+}

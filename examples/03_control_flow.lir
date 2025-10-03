@@ -1,0 +1,84 @@
+lir::Program {
+    functions:
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i64
+                %2: ptr i8
+                %3: i32
+                %4: ptr i8
+                %5: i32
+                %6: i64
+                %7: ptr i8
+                %8: i32
+                %9: i64
+                %10: void
+                %11: ptr i8
+                %12: i1
+                %13: i1
+                %14: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
+                i1: %r1 = alloca i32 1 align 8 : ptr i64
+                i2: store i64 25, %r1 align 8
+                i3: %r3 = alloca i32 1 align 8 : ptr ptr i8
+                i4: store c"warm", %r3 align 8
+                i5: %r5 = load %r1 align 8 : i64
+                i6: %r6 = load %r3 align 8 : ptr i8
+                i7: %r7 = call c @printf(c"%d°C is %s
+", %r5, %r6) : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i8: %r8 = alloca i32 1 align 8 : ptr ptr i8
+                i9: store c"outdoor", %r8 align 8
+                i10: %r10 = load %r8 align 8 : ptr i8
+                i11: %r11 = call c @printf(c"Suggested: %s
+", %r10) : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i12: %r12 = alloca i32 1 align 8 : ptr i64
+                i13: store i64 85, %r12 align 8
+                i14: %r14 = alloca i32 1 align 8 : ptr ptr i8
+                i15: store c"B", %r14 align 8
+                i16: %r16 = load %r12 align 8 : i64
+                i17: %r17 = load %r14 align 8 : ptr i8
+                i18: %r18 = call c @printf(c"Score %d = grade %s
+", %r16, %r17) : i32
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4, bb5]:
+                i19: %r19 = alloca i32 1 align 8 : ptr i64
+                i20: store i64 42, %r19 align 8
+                i21: %r21 = alloca i32 1 align 1 : ptr i1
+                i22: %r22 = load %r19 align 8 : i64
+                i23: %r23 = gt %r22, i64 50 : i1
+                i24: store %r23, %r21 align 1
+                i25: %r25 = load %r21 align 1 : i1
+                terminator: cond_br %r25, bb4, bb5
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb6]:
+                i26: store c"high", %r0 align 8
+                terminator: br bb6
+            bb5 // label: bb5 // preds: [bb3] // succs: [bb7, bb8]:
+                i27: %r27 = alloca i32 1 align 1 : ptr i1
+                i28: %r28 = load %r19 align 8 : i64
+                i29: %r29 = gt %r28, i64 25 : i1
+                i30: store %r29, %r27 align 1
+                i31: %r31 = load %r27 align 1 : i1
+                terminator: cond_br %r31, bb7, bb8
+            bb6 // label: bb6 // preds: [bb4, bb9] // succs: [bb10]:
+                i32: %r32 = load %r0 align 8 : ptr i8
+                i33: %r33 = load %r19 align 8 : i64
+                i34: %r34 = call c @printf(c"Value %d is %s
+", %r33, %r32) : i32
+                terminator: br bb10
+            bb7 // label: bb7 // preds: [bb5] // succs: [bb9]:
+                i35: store c"medium", %r0 align 8
+                terminator: br bb9
+            bb8 // label: bb8 // preds: [bb5] // succs: [bb9]:
+                i36: store c"low", %r0 align 8
+                terminator: br bb9
+            bb10 // label: bb10 // preds: [bb6]:
+                terminator: ret void
+            bb9 // label: bb9 // preds: [bb7, bb8] // succs: [bb6]:
+                terminator: br bb6
+        }
+}
