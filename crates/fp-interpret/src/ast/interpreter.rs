@@ -141,6 +141,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.mutations_applied = true;
     }
 
+    pub fn evaluate_expression(&mut self, expr: &mut Expr) -> Value {
+        self.push_scope();
+        let value = self.eval_expr(expr);
+        self.pop_scope();
+        value
+    }
+
     fn evaluate_item(&mut self, item: &mut Item) {
         match item.kind_mut() {
             ItemKind::DefStruct(def) => {
@@ -359,10 +366,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::unit()
             }
             (InterpreterMode::CompileTime, _) => {
-                self.emit_error(
-                    "function calls are not supported during compile-time interpretation",
-                );
-                Value::undefined()
+                for arg in invoke.args.iter_mut() {
+                    self.eval_expr(arg);
+                }
+                Value::unit()
             }
             (InterpreterMode::RunTime, _) => {
                 self.emit_error("runtime function calls not yet supported in interpreter");
@@ -560,8 +567,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 for stmt in block.stmts.iter_mut() {
                     match stmt {
                         BlockStmt::Item(item) => self.evaluate_item(item.as_mut()),
-                        BlockStmt::Expr(_expr_stmt) => {
-                            // Skip runtime expressions during compile-time evaluation.
+                        BlockStmt::Expr(expr_stmt) => {
+                            self.evaluate_function_body(expr_stmt.expr.as_mut());
                         }
                         BlockStmt::Let(stmt_let) => {
                             if let Some(init) = stmt_let.init.as_mut() {
@@ -594,8 +601,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Let(expr_let) => self.evaluate_function_body(expr_let.expr.as_mut()),
-            ExprKind::Invoke(_) => {
-                // Skip runtime invocations during const evaluation.
+            ExprKind::Invoke(invoke) => {
+                for arg in invoke.args.iter_mut() {
+                    self.evaluate_function_body(arg);
+                }
             }
             ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
             ExprKind::Closured(closured) => self.evaluate_function_body(closured.expr.as_mut()),
