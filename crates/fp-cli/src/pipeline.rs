@@ -366,12 +366,6 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
         }
 
-        if options.execute_main {
-            let diagnostics = diagnostic_manager.get_diagnostics();
-            self.emit_diagnostics(&diagnostics, None, options);
-            return Ok(PipelineOutput::Value(Value::unit()));
-        }
-
         let post_const_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_POST_CONST);
         self.collect_stage(
             STAGE_TYPE_POST_CONST,
@@ -410,7 +404,7 @@ impl Pipeline {
             match target {
                 PipelineTarget::Llvm => {
                     let backend_report =
-                        self.stage_backend_lowering(&hir_program, options, base_path)?;
+                        self.stage_backend_lowering(&hir_program.clone(), options, base_path)?;
                     let backend = self.collect_stage(
                         STAGE_BACKEND_LOWERING,
                         backend_report,
@@ -429,7 +423,7 @@ impl Pipeline {
                 }
                 PipelineTarget::Binary => {
                     let backend_report =
-                        self.stage_backend_lowering(&hir_program, options, base_path)?;
+                        self.stage_backend_lowering(&hir_program.clone(), options, base_path)?;
                     let backend = self.collect_stage(
                         STAGE_BACKEND_LOWERING,
                         backend_report,
@@ -585,7 +579,11 @@ impl Pipeline {
         base_path: &Path,
         options: &PipelineOptions,
     ) -> DiagnosticReport<PathBuf> {
-        let binary_path = base_path.to_path_buf();
+        let binary_path = base_path.with_extension(if cfg!(target_os = "windows") {
+            "exe"
+        } else {
+            "out"
+        });
 
         if let Some(parent) = binary_path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
@@ -662,7 +660,7 @@ impl Pipeline {
 
         let mut mir_lowering = MirLowering::new();
         let mir_program = mir_lowering
-            .transform(hir_program)
+            .transform(hir_program.clone())
             .map_err(|err| CliError::Compilation(format!("HIR→MIR lowering failed: {}", err)))?;
         let (mut mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
         diagnostics.append(&mut mir_diags);

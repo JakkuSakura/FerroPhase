@@ -335,7 +335,28 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
 
 fn determine_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -> Result<PathBuf> {
     if let Some(output) = output {
-        Ok(output.clone())
+        if target == "binary" {
+            let mut path = output.clone();
+            let desired_ext = if cfg!(target_os = "windows") {
+                "exe"
+            } else {
+                "out"
+            };
+
+            let needs_update = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext != desired_ext)
+                .unwrap_or(true);
+
+            if needs_update {
+                path.set_extension(desired_ext);
+            }
+
+            Ok(path)
+        } else {
+            Ok(output.clone())
+        }
     } else {
         let extension = match target {
             "binary" => {
