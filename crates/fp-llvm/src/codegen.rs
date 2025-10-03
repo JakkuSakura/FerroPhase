@@ -2079,16 +2079,36 @@ impl<'ctx> LirCodegen<'ctx> {
                 // TODO: Properly implement array type conversion
                 self.convert_lir_type_to_llvm(*element_type)
             }
-            // lir::LirType::Struct(fields) => {
-            //     let field_types: Vec<Type> = fields
-            //         .into_iter()
-            //         .map(|field_type| self.convert_lir_type_to_llvm(field_type))
-            //         .collect::<Result<Vec<_>>>()?;
-            //     Ok(Type::StructType {
-            //         element_types: field_types,
-            //         is_packed: false,
-            //     })
-            // }
+            lir::LirType::Struct { fields, packed, .. } => {
+                let mut element_types = Vec::with_capacity(fields.len());
+                for field in fields {
+                    let field_ty = self.convert_lir_type_to_llvm(field)?;
+                    let field_ref = self.llvm_ctx.module.types.get_for_type(&field_ty);
+                    element_types.push(field_ref);
+                }
+                Ok(Type::StructType {
+                    element_types,
+                    is_packed: packed,
+                })
+            }
+            lir::LirType::Function {
+                return_type,
+                param_types,
+                is_variadic,
+            } => {
+                let result_type = self.convert_lir_type_to_llvm(*return_type)?;
+                let result_ref = self.llvm_ctx.module.types.get_for_type(&result_type);
+                let mut params = Vec::with_capacity(param_types.len());
+                for param in param_types {
+                    let param_ty = self.convert_lir_type_to_llvm(param)?;
+                    params.push(self.llvm_ctx.module.types.get_for_type(&param_ty));
+                }
+                Ok(Type::FuncType {
+                    result_type: result_ref,
+                    param_types: params,
+                    is_var_arg: is_variadic,
+                })
+            }
             _ => unimplemented!(),
         }
     }

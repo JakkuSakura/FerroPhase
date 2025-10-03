@@ -1,0 +1,73 @@
+mir::Program {
+    items:
+        fn main() -> () [body: body0]
+    bodies:
+        body0 { arg_count: 0, locals: 22 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i32
+                _2: i32
+                _3: i32
+                _4: i32
+                _5: i32
+                _6: i32
+                _7: i32
+                _8: i32
+                _9: i32
+                _10: i32
+                _11: i32
+                _12: (f64, f64)
+                _13: (u8, u8, u8)
+                _14: i32
+                _15: i32
+                _16: i32
+                _17: i32
+                _18: i32
+                _19: i32
+                _20: i32
+                _21: i32
+            blocks:
+                bb0:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 21, hi: 22 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 22, hi: 23 }, user_ty: None, literal: Str("=== Struct Introspection ===\n") }) -> _1 then bb1
+                bb1:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 24, hi: 25 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 25, hi: 26 }, user_ty: None, literal: Str("Point size: %d bytes\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 26, hi: 27 }, user_ty: None, literal: Int(16) }) -> _2 then bb2
+                bb2:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 28, hi: 29 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 29, hi: 30 }, user_ty: None, literal: Str("Color size: %d bytes\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 30, hi: 31 }, user_ty: None, literal: Int(24) }) -> _3 then bb3
+                bb3:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 32, hi: 33 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 33, hi: 34 }, user_ty: None, literal: Str("Point fields: %d\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 34, hi: 35 }, user_ty: None, literal: Int(2) }) -> _4 then bb4
+                bb4:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 36, hi: 37 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 37, hi: 38 }, user_ty: None, literal: Str("Color fields: %d\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 38, hi: 39 }, user_ty: None, literal: Int(3) }) -> _5 then bb5
+                bb5:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 40, hi: 41 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 41, hi: 42 }, user_ty: None, literal: Str("Point has x: %d\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 42, hi: 43 }, user_ty: None, literal: Bool(true) }) -> _6 then bb6
+                bb6:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 44, hi: 45 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 45, hi: 46 }, user_ty: None, literal: Str("Point has z: %d\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 46, hi: 47 }, user_ty: None, literal: Bool(false) }) -> _7 then bb7
+                bb7:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 48, hi: 49 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 49, hi: 50 }, user_ty: None, literal: Str("Point methods: %d\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 50, hi: 51 }, user_ty: None, literal: Int(0) }) -> _8 then bb8
+                bb8:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 52, hi: 53 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 53, hi: 54 }, user_ty: None, literal: Str("Color methods: %d\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 54, hi: 55 }, user_ty: None, literal: Int(0) }) -> _9 then bb9
+                bb9:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 56, hi: 57 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 57, hi: 58 }, user_ty: None, literal: Str("\n✓ Introspection completed!\n") }) -> _10 then bb10
+                bb10:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 59, hi: 60 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 60, hi: 61 }, user_ty: None, literal: Str("\n=== Transpilation Demo ===\n") }) -> _11 then bb11
+                bb11:
+                    s0: _12 = aggregate(tuple; [const Constant { span: Span { file: 9039636878970365379, lo: 68, hi: 69 }, user_ty: None, literal: Float(0.0) }, const Constant { span: Span { file: 9039636878970365379, lo: 69, hi: 70 }, user_ty: None, literal: Float(0.0) }])
+                    s1: _13 = aggregate(tuple; [const Constant { span: Span { file: 9039636878970365379, lo: 71, hi: 72 }, user_ty: None, literal: UInt(255) }, const Constant { span: Span { file: 9039636878970365379, lo: 72, hi: 73 }, user_ty: None, literal: UInt(0) }, const Constant { span: Span { file: 9039636878970365379, lo: 73, hi: 74 }, user_ty: None, literal: UInt(0) }])
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 75, hi: 76 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 76, hi: 77 }, user_ty: None, literal: Str("Transpilation target sizes:\n") }) -> _14 then bb12
+                bb12:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 78, hi: 79 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 79, hi: 80 }, user_ty: None, literal: Str("  Point: %d bytes (const)\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 62, hi: 63 }, user_ty: None, literal: Int(16) }) -> _15 then bb13
+                bb13:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 82, hi: 83 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 83, hi: 84 }, user_ty: None, literal: Str("  Color: %d bytes (const)\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 64, hi: 65 }, user_ty: None, literal: Int(24) }) -> _16 then bb14
+                bb14:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 86, hi: 87 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 87, hi: 88 }, user_ty: None, literal: Str("  Combined: %d bytes\n") }, const Constant { span: Span { file: 9039636878970365379, lo: 66, hi: 67 }, user_ty: None, literal: Int(40) }) -> _17 then bb15
+                bb15:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 90, hi: 91 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 91, hi: 92 }, user_ty: None, literal: Str("Runtime instances:\n") }) -> _18 then bb16
+                bb16:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 93, hi: 94 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 94, hi: 95 }, user_ty: None, literal: Str("  Origin: (%f, %f)\n") }, copy _12[Field(0, Ty { kind: Float(F64) })], copy _12[Field(1, Ty { kind: Float(F64) })]) -> _19 then bb17
+                bb17:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 100, hi: 101 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 101, hi: 102 }, user_ty: None, literal: Str("  Red: rgb(%d, %d, %d)\n") }, copy _13[Field(0, Ty { kind: Uint(U8) })], copy _13[Field(1, Ty { kind: Uint(U8) })], copy _13[Field(2, Ty { kind: Uint(U8) })]) -> _20 then bb18
+                bb18:
+                    terminator: call const Constant { span: Span { file: 9039636878970365379, lo: 109, hi: 110 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 9039636878970365379, lo: 110, hi: 111 }, user_ty: None, literal: Str("\n✓ Introspection enables external code generation!\n") }) -> _21 then bb19
+                bb19:
+                    terminator: return
+}

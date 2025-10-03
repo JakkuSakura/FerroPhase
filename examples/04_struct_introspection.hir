@@ -26,19 +26,30 @@ hir::Program {
                 0;
             const COLOR_METHODS: usize =
                 0;
-            printf("=== Struct Introspection ===\n");
-            printf("Point size: %d bytes\n", 16);
-            printf("Color size: %d bytes\n", 24);
-            printf("Point fields: %d\n", 2);
-            printf("Color fields: %d\n", 3);
-            printf("Point has x: %d\n", true);
-            printf("Point has z: %d\n", false);
-            printf("Point methods: %d\n", 0);
-            printf("Color methods: %d\n", 0);
+            printf("=== Struct Introspection ===
+");
+            printf("Point size: %d bytes
+", 16);
+            printf("Color size: %d bytes
+", 24);
+            printf("Point fields: %d
+", 2);
+            printf("Color fields: %d
+", 3);
+            printf("Point has x: %d
+", true);
+            printf("Point has z: %d
+", false);
+            printf("Point methods: %d
+", 0);
+            printf("Color methods: %d
+", 0);
             printf("
-✓ Introspection completed!\n");
+✓ Introspection completed!
+");
             printf("
-=== Transpilation Demo ===\n");
+=== Transpilation Demo ===
+");
             const POINT_SIZE_CONST: usize =
                 16;
             const COLOR_SIZE_CONST: usize =
@@ -47,15 +58,23 @@ hir::Program {
                 40;
             let origin = Point { x: 0, y: 0 };
             let red = Color { r: 255, g: 0, b: 0 };
-            printf("Transpilation target sizes:\n");
-            printf("  Point: %d bytes (const)\n", POINT_SIZE_CONST);
-            printf("  Color: %d bytes (const)\n", COLOR_SIZE_CONST);
-            printf("  Combined: %d bytes\n", TOTAL_SIZE);
-            printf("Runtime instances:\n");
-            printf("  Origin: (%f, %f)\n", origin.x, origin.y);
-            printf("  Red: rgb(%d, %d, %d)\n", red.r, red.g, red.b);
+            printf("Transpilation target sizes:
+");
+            printf("  Point: %d bytes (const)
+", POINT_SIZE_CONST);
+            printf("  Color: %d bytes (const)
+", COLOR_SIZE_CONST);
+            printf("  Combined: %d bytes
+", TOTAL_SIZE);
+            printf("Runtime instances:
+");
+            printf("  Origin: (%f, %f)
+", origin.x, origin.y);
+            printf("  Red: rgb(%d, %d, %d)
+", red.r, red.g, red.b);
             printf("
-✓ Introspection enables external code generation!\n");
+✓ Introspection enables external code generation!
+");
         }
     }
 }
