@@ -62,9 +62,9 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(input_file, args.output.as_ref(), &args.target)?;
 
         // Compile single file
-        compile_file(input_file, &output_file, &args, config).await?;
-
-        compiled_files.push(output_file);
+        if let Some(artifact_path) = compile_file(input_file, &output_file, &args, config).await? {
+            compiled_files.push(artifact_path);
+        }
         progress.inc(1);
     }
 
@@ -164,7 +164,7 @@ async fn compile_file(
     output: &Path,
     args: &CompileArgs,
     _config: &CliConfig,
-) -> Result<()> {
+) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     // Configure pipeline for compilation with new options
@@ -176,7 +176,7 @@ async fn compile_file(
         _ => PipelineTarget::Interpret,
     };
 
-    let execute_const_main = false;
+    let execute_const_main = args.exec;
 
     let pipeline_options = PipelineOptions {
         target,
@@ -213,8 +213,7 @@ async fn compile_file(
         .execute_with_options(PipelineInput::File(input.to_path_buf()), pipeline_options)
         .await?;
 
-    // Const-eval output is only surfaced directly when we explicitly request it (not for binary).
-    if execute_const_main && args.target != "binary" {
+    if execute_const_main {
         if let Some(stdout_chunks) = pipeline.take_last_const_eval_stdout() {
             for chunk in stdout_chunks {
                 print!("{}", chunk);
@@ -224,7 +223,7 @@ async fn compile_file(
     }
 
     // Write output to file
-    match pipeline_output {
+    let artifact = match pipeline_output {
         PipelineOutput::Code(code) => {
             if let Some(parent) = output.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
@@ -233,6 +232,7 @@ async fn compile_file(
             std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
 
             info!("Generated code: {}", output.display());
+            Some(output.to_path_buf())
         }
         PipelineOutput::Binary(path) => {
             let binary_path = path;
@@ -248,18 +248,21 @@ async fn compile_file(
                 }
             }
             info!("Generated binary: {}", output.display());
+            Some(output.to_path_buf())
         }
         PipelineOutput::Value(_) => {
             // For interpret target or binary target (already compiled), we don't write to file
             info!("Operation completed");
+            None
         }
         PipelineOutput::RuntimeValue(_) => {
             // For runtime interpretation, we don't write to file
             info!("Runtime interpretation completed");
+            None
         }
-    }
+    };
 
-    Ok(())
+    Ok(artifact)
 }
 
 async fn exec_compiled_binary(path: &Path) -> Result<()> {

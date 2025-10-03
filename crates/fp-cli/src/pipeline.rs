@@ -366,7 +366,7 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
         }
 
-        if matches!(target, PipelineTarget::Rust) && options.execute_main {
+        if options.execute_main {
             let diagnostics = diagnostic_manager.get_diagnostics();
             self.emit_diagnostics(&diagnostics, None, options);
             return Ok(PipelineOutput::Value(Value::unit()));
