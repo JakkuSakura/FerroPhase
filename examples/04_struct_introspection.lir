@@ -74,55 +74,57 @@ lir::Program {
                 terminator: br bb11
             bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
                 i13: %r13 = alloca i32 1 align 8 : ptr { f64, f64 }
-                i14: %r14 = alloca i32 1 align 1 : ptr { i8, i8, i8 }
-                i15: %r15 = call c @printf(c"Transpilation target sizes:
+                i14: store struct { f64, f64 } { f64 0, f64 0 }, %r13 align 8
+                i15: %r15 = alloca i32 1 align 1 : ptr { i8, i8, i8 }
+                i16: store struct { i8, i8, i8 } { i8 255, i8 0, i8 0 }, %r15 align 1
+                i17: %r17 = call c @printf(c"Transpilation target sizes:
 ") : i32
                 terminator: br bb12
             bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i16: %r16 = call c @printf(c"  Point: %d bytes (const)
+                i18: %r18 = call c @printf(c"  Point: %d bytes (const)
 ", i64 16) : i32
                 terminator: br bb13
             bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i17: %r17 = call c @printf(c"  Color: %d bytes (const)
+                i19: %r19 = call c @printf(c"  Color: %d bytes (const)
 ", i64 24) : i32
                 terminator: br bb14
             bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i18: %r18 = call c @printf(c"  Combined: %d bytes
+                i20: %r20 = call c @printf(c"  Combined: %d bytes
 ", i64 40) : i32
                 terminator: br bb15
             bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i19: %r19 = call c @printf(c"Runtime instances:
+                i21: %r21 = call c @printf(c"Runtime instances:
 ") : i32
                 terminator: br bb16
             bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i20: %r20 = bitcast %r13 to ptr f64 : ptr f64
-                i21: %r21 = load %r20 align 8 : f64
-                i22: %r22 = bitcast %r13 to ptr i8 : ptr i8
-                i23: %r23 = gep inbounds %r22 [i64 8] : ptr i8
-                i24: %r24 = bitcast %r23 to ptr f64 : ptr f64
-                i25: %r25 = load %r24 align 8 : f64
-                i26: %r26 = call c @printf(c"  Origin: (%f, %f)
-", %r21, %r25) : i32
+                i22: %r22 = bitcast %r13 to ptr f64 : ptr f64
+                i23: %r23 = load %r22 align 8 : f64
+                i24: %r24 = bitcast %r13 to ptr i8 : ptr i8
+                i25: %r25 = gep inbounds %r24 [i64 8] : ptr i8
+                i26: %r26 = bitcast %r25 to ptr f64 : ptr f64
+                i27: %r27 = load %r26 align 8 : f64
+                i28: %r28 = call c @printf(c"  Origin: (%f, %f)
+", %r23, %r27) : i32
                 terminator: br bb17
             bb17 // label: bb17 // preds: [bb16] // succs: [bb18]:
-                i27: %r27 = bitcast %r14 to ptr i8 : ptr i8
-                i28: %r28 = load %r27 align 1 : i8
-                i29: %r29 = zext %r28 to i32 : i32
-                i30: %r30 = bitcast %r14 to ptr i8 : ptr i8
-                i31: %r31 = gep inbounds %r30 [i64 1] : ptr i8
-                i32: %r32 = bitcast %r31 to ptr i8 : ptr i8
-                i33: %r33 = load %r32 align 1 : i8
-                i34: %r34 = zext %r33 to i32 : i32
-                i35: %r35 = bitcast %r14 to ptr i8 : ptr i8
-                i36: %r36 = gep inbounds %r35 [i64 2] : ptr i8
-                i37: %r37 = bitcast %r36 to ptr i8 : ptr i8
-                i38: %r38 = load %r37 align 1 : i8
-                i39: %r39 = zext %r38 to i32 : i32
-                i40: %r40 = call c @printf(c"  Red: rgb(%d, %d, %d)
-", %r29, %r34, %r39) : i32
+                i29: %r29 = bitcast %r15 to ptr i8 : ptr i8
+                i30: %r30 = load %r29 align 1 : i8
+                i31: %r31 = zext %r30 to i32 : i32
+                i32: %r32 = bitcast %r15 to ptr i8 : ptr i8
+                i33: %r33 = gep inbounds %r32 [i64 1] : ptr i8
+                i34: %r34 = bitcast %r33 to ptr i8 : ptr i8
+                i35: %r35 = load %r34 align 1 : i8
+                i36: %r36 = zext %r35 to i32 : i32
+                i37: %r37 = bitcast %r15 to ptr i8 : ptr i8
+                i38: %r38 = gep inbounds %r37 [i64 2] : ptr i8
+                i39: %r39 = bitcast %r38 to ptr i8 : ptr i8
+                i40: %r40 = load %r39 align 1 : i8
+                i41: %r41 = zext %r40 to i32 : i32
+                i42: %r42 = call c @printf(c"  Red: rgb(%d, %d, %d)
+", %r31, %r36, %r41) : i32
                 terminator: br bb18
             bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:
-                i41: %r41 = call c @printf(c"
+                i43: %r43 = call c @printf(c"
 ✓ Introspection enables external code generation!
 ") : i32
                 terminator: br bb19

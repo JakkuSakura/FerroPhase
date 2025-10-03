@@ -1837,11 +1837,37 @@ impl<'ctx> LirCodegen<'ctx> {
     /// Convert LIR constant to LLVM constant
     fn convert_lir_constant_to_llvm(&self, lir_const: lir::LirConstant) -> Result<ConstantRef> {
         match lir_const {
-            lir::LirConstant::Int(value, ty) => match ty {
-                lir::LirType::I32 => Ok(self.llvm_ctx.const_i32(value as i32)),
-                lir::LirType::I64 => Ok(self.llvm_ctx.const_i64(value)),
-                _ => Ok(self.llvm_ctx.const_i32(value as i32)),
-            },
+            lir::LirConstant::Int(value, ty) => {
+                let bits = self.int_bit_width(&ty).unwrap_or(32);
+                let encoded = if bits == 64 {
+                    value as u64
+                } else if bits >= 64 {
+                    value as u64
+                } else if bits == 0 {
+                    0
+                } else {
+                    let mask = (1u64 << bits) - 1;
+                    ((value as i128) & mask as i128) as u64
+                };
+                Ok(ConstantRef::new(Constant::Int {
+                    bits,
+                    value: encoded,
+                }))
+            }
+            lir::LirConstant::UInt(value, ty) => {
+                let bits = self.int_bit_width(&ty).unwrap_or(32);
+                let encoded = if bits >= 64 {
+                    value
+                } else if bits == 0 {
+                    0
+                } else {
+                    value & ((1u64 << bits) - 1)
+                };
+                Ok(ConstantRef::new(Constant::Int {
+                    bits,
+                    value: encoded,
+                }))
+            }
             lir::LirConstant::Float(value, ty) => match ty {
                 lir::LirType::F32 => Ok(self.llvm_ctx.const_f32(value as f32)),
                 lir::LirType::F64 => Ok(self.llvm_ctx.const_f64(value)),
@@ -1854,14 +1880,63 @@ impl<'ctx> LirCodegen<'ctx> {
                 )),
             },
             lir::LirConstant::Bool(value) => Ok(self.llvm_ctx.const_bool(value)),
-            lir::LirConstant::String(s) => {
-                // Defer to mutable self method via interior mutability workaround
-                Err(report_error_with_context(
-                    LOG_AREA,
-                    format!("String constant requires mutable context: {}", s),
-                ))
+            lir::LirConstant::Struct(values, ty) => {
+                let is_packed = match &ty {
+                    lir::LirType::Struct { packed, .. } => *packed,
+                    _ => false,
+                };
+                let name = match &ty {
+                    lir::LirType::Struct { name, .. } => name.clone(),
+                    _ => None,
+                };
+                let mut llvm_values = Vec::with_capacity(values.len());
+                for value in values {
+                    llvm_values.push(self.convert_lir_constant_to_llvm(value)?);
+                }
+                Ok(ConstantRef::new(Constant::Struct {
+                    name,
+                    values: llvm_values,
+                    is_packed,
+                }))
             }
-            _ => Err("Unsupported LIR constant in LLVM conversion".into()),
+            lir::LirConstant::Array(elements, elem_ty) => {
+                let llvm_elem_ty = self.convert_lir_type_to_llvm(elem_ty.clone())?;
+                let elem_ref = self.llvm_ctx.module.types.get_for_type(&llvm_elem_ty);
+                let mut llvm_elements = Vec::with_capacity(elements.len());
+                for element in elements {
+                    llvm_elements.push(self.convert_lir_constant_to_llvm(element)?);
+                }
+                Ok(ConstantRef::new(Constant::Array {
+                    element_type: elem_ref,
+                    elements: llvm_elements,
+                }))
+            }
+            lir::LirConstant::Null(ty) => {
+                let llvm_ty = self.convert_lir_type_to_llvm(ty.clone())?;
+                let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
+                Ok(ConstantRef::new(Constant::Null(ty_ref)))
+            }
+            lir::LirConstant::Undef(ty) => {
+                let llvm_ty = self.convert_lir_type_to_llvm(ty.clone())?;
+                let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
+                Ok(ConstantRef::new(Constant::Undef(ty_ref)))
+            }
+            lir::LirConstant::String(s) => Err(report_error_with_context(
+                LOG_AREA,
+                format!("String constant requires mutable context: {}", s),
+            )),
+        }
+    }
+
+    fn int_bit_width(&self, ty: &lir::LirType) -> Option<u32> {
+        match ty {
+            lir::LirType::I1 => Some(1),
+            lir::LirType::I8 => Some(8),
+            lir::LirType::I16 => Some(16),
+            lir::LirType::I32 => Some(32),
+            lir::LirType::I64 => Some(64),
+            lir::LirType::I128 => Some(128),
+            _ => None,
         }
     }
 
