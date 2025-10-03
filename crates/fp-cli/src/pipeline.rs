@@ -12,11 +12,15 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
 };
+use fp_core::intrinsics::runtime::RuntimeIntrinsicStrategy;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir};
-use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
+use fp_llvm::{
+    LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicStrategy,
+};
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
+use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_optimize::typing::TypingDiagnosticLevel;
 use std::fs;
@@ -63,6 +67,27 @@ struct BackendArtifacts {
 struct LlvmArtifacts {
     ir_text: String,
     ir_path: PathBuf,
+}
+
+struct IntrinsicsMaterializer {
+    strategy: Box<dyn RuntimeIntrinsicStrategy>,
+}
+
+impl IntrinsicsMaterializer {
+    fn for_target(target: &PipelineTarget) -> Self {
+        match target {
+            PipelineTarget::Llvm | PipelineTarget::Binary => Self {
+                strategy: Box::new(LlvmRuntimeIntrinsicStrategy),
+            },
+            _ => Self {
+                strategy: Box::new(NoopIntrinsicStrategy),
+            },
+        }
+    }
+
+    fn materialize(&self, ast: &mut Node) -> fp_core::error::Result<()> {
+        fp_optimize::materialize_runtime_intrinsics(ast, self.strategy.as_ref())
+    }
 }
 
 pub struct Pipeline {
@@ -355,7 +380,7 @@ impl Pipeline {
             options,
         )?;
 
-        let materialize_report = self.stage_materialize_runtime_intrinsics(&mut ast);
+        let materialize_report = self.stage_materialize_runtime_intrinsics(&mut ast, target);
         self.collect_stage(
             STAGE_RUNTIME_MATERIALIZE,
             materialize_report,
@@ -537,8 +562,15 @@ impl Pipeline {
         ))
     }
 
-    fn stage_materialize_runtime_intrinsics(&self, ast: &mut Node) -> DiagnosticReport<()> {
-        match fp_optimize::materialize_runtime_intrinsics(ast) {
+    fn stage_materialize_runtime_intrinsics(
+        &self,
+        ast: &mut Node,
+        target: &PipelineTarget,
+    ) -> DiagnosticReport<()> {
+        let materializer = IntrinsicsMaterializer::for_target(target);
+        let result = materializer.materialize(ast);
+
+        match result {
             Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
             Err(err) => DiagnosticReport::failure(vec![
                 Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))

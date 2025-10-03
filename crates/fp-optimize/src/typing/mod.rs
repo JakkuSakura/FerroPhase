@@ -220,6 +220,9 @@ impl AstTypeInferencer {
             ItemKind::DefFunction(def) => {
                 self.register_symbol(&def.name);
             }
+            ItemKind::DeclFunction(decl) => {
+                self.register_symbol(&decl.name);
+            }
             ItemKind::Module(module) => {
                 self.enter_scope();
                 for child in &module.items {
@@ -919,6 +922,14 @@ impl AstTypeInferencer {
     }
 
     fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
+            if let Some(ident) = locator.as_ident() {
+                if ident.as_str() == "printf" {
+                    return self.infer_builtin_printf(invoke);
+                }
+            }
+        }
+
         let func_var = match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => self.lookup_locator(locator)?,
             ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
@@ -945,6 +956,26 @@ impl AstTypeInferencer {
             self.unify(*param_var, arg_var)?;
         }
         Ok(func_info.ret)
+    }
+
+    fn infer_builtin_printf(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.is_empty() {
+            self.emit_error("printf requires a format string argument");
+            return Ok(self.error_type_var());
+        }
+
+        let format_var = self.infer_expr(&mut invoke.args[0])?;
+        let expected_format = self.fresh_type_var();
+        self.bind(expected_format, TypeTerm::Primitive(TypePrimitive::String));
+        self.unify(format_var, expected_format)?;
+
+        for arg in invoke.args.iter_mut().skip(1) {
+            let _ = self.infer_expr(arg)?;
+        }
+
+        let result_var = self.fresh_type_var();
+        self.bind(result_var, TypeTerm::Unit);
+        Ok(result_var)
     }
 
     fn infer_value(&mut self, value: &Value) -> Result<TypeVarId> {

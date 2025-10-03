@@ -6,6 +6,7 @@
 //! language before we introduce the backend-specific resolver.
 
 mod catalog;
+pub mod runtime;
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -15,6 +16,7 @@ pub use catalog::{
     lookup_spec as lookup_intrinsic_spec, IntrinsicBackendBehaviour, IntrinsicBackendSpec,
     IntrinsicSpec, ResolvedCallSpec,
 };
+pub use runtime::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StdIntrinsic {

@@ -687,17 +687,20 @@ impl HirGenerator {
                     self.append_item(program, child)?;
                 }
                 self.pop_module_scope();
+                Ok(())
             }
             ItemKind::Import(import) => {
                 self.handle_import(import)?;
+                Ok(())
             }
+            ItemKind::DeclFunction(_) => Ok(()),
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
                 program.def_map.insert(hir_item.def_id, hir_item.clone());
                 program.items.push(hir_item);
+                Ok(())
             }
         }
-        Ok(())
     }
 
     // Expression lowering helpers live in expressions.rs
