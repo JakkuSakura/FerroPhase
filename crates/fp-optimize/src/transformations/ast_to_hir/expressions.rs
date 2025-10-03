@@ -281,6 +281,41 @@ impl HirGenerator {
             Value::Bool(b) => Ok(hir::ExprKind::Literal(hir::Lit::Bool(b.value))),
             Value::String(s) => Ok(hir::ExprKind::Literal(hir::Lit::Str(s.value.clone()))),
             Value::Decimal(d) => Ok(hir::ExprKind::Literal(hir::Lit::Float(d.value))),
+            Value::Unit(_) => {
+                let block_id = self.next_id();
+                Ok(hir::ExprKind::Block(hir::Block {
+                    hir_id: block_id,
+                    stmts: Vec::new(),
+                    expr: None,
+                }))
+            }
+            Value::Struct(struct_val) => {
+                let struct_name = struct_val.ty.name.name.as_str();
+                let mut segments = Vec::new();
+                segments.push(self.make_path_segment(struct_name, None));
+                let res = self.resolve_type_symbol(struct_name);
+
+                let path = hir::Path { segments, res };
+
+                let mut fields = Vec::with_capacity(struct_val.structural.fields.len());
+                for field in &struct_val.structural.fields {
+                    let field_expr_kind =
+                        self.transform_value_to_hir(&Box::new(field.value.clone()))?;
+                    let field_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: field_expr_kind,
+                        span: self.create_span(1),
+                    };
+
+                    fields.push(hir::StructExprField {
+                        hir_id: self.next_id(),
+                        name: field.name.name.clone(),
+                        expr: field_expr,
+                    });
+                }
+
+                Ok(hir::ExprKind::Struct(path, fields))
+            }
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
             _ => Err(crate::error::optimization_error(format!(
                 "Unimplemented AST value type for HIR transformation: {:?}",

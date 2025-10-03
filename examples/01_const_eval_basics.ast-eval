@@ -1,0 +1,1130 @@
+File {
+    path: "examples/01_const_eval_basics.fp",
+    items: [
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #main,
+                    ty: Some(
+                        TypeFunction {
+                            params: [],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #BUFFER_SIZE,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 4096,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #MAX_CONNECTIONS,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 150,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #FACTORIAL_5,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 120,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Bool,
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Bool,
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #IS_LARGE,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #bool,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Bool(
+                                                                ValueBool {
+                                                                    value: true,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Buffer: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        "KB, factorial(5)=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", large=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: BinOp(
+                                                                            ExprBinOp {
+                                                                                kind: Div,
+                                                                                lhs: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Locator(
+                                                                                        #BUFFER_SIZE,
+                                                                                    ),
+                                                                                },
+                                                                                rhs: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 1024,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #FACTORIAL_5,
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Bool,
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #IS_LARGE,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Config,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #buffer_size,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #max_connections,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefStruct(
+                                                ItemDefStruct {
+                                                    visibility: Private,
+                                                    name: #Config,
+                                                    value: TypeStruct {
+                                                        name: #Config,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #buffer_size,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #max_connections,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Config,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #buffer_size,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #max_connections,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Struct(
+                                                            TypeStruct {
+                                                                name: #Config,
+                                                                fields: [
+                                                                    StructuralField {
+                                                                        name: #buffer_size,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                I64,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    StructuralField {
+                                                                        name: #max_connections,
+                                                                        value: Primitive(
+                                                                            Int(
+                                                                                I64,
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #DEFAULT_CONFIG,
+                                                    ty: Some(
+                                                        Expr(
+                                                            Expr {
+                                                                ty: None,
+                                                                kind: Locator(
+                                                                    #Config,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Struct(
+                                                                ValueStruct {
+                                                                    ty: TypeStruct {
+                                                                        name: #Config,
+                                                                        fields: [
+                                                                            StructuralField {
+                                                                                name: #buffer_size,
+                                                                                value: Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                            StructuralField {
+                                                                                name: #max_connections,
+                                                                                value: Primitive(
+                                                                                    Int(
+                                                                                        I64,
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                    structural: ValueStructural {
+                                                                        fields: [
+                                                                            ValueField {
+                                                                                name: #buffer_size,
+                                                                                value: Int(
+                                                                                    ValueInt {
+                                                                                        value: 4096,
+                                                                                    },
+                                                                                ),
+                                                                            },
+                                                                            ValueField {
+                                                                                name: #max_connections,
+                                                                                value: Int(
+                                                                                    ValueInt {
+                                                                                        value: 150,
+                                                                                    },
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Config: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        "KB buffer, ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " connections",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: BinOp(
+                                                                            ExprBinOp {
+                                                                                kind: Div,
+                                                                                lhs: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Select(
+                                                                                        ExprSelect {
+                                                                                            obj: Expr {
+                                                                                                ty: Some(
+                                                                                                    Struct(
+                                                                                                        TypeStruct {
+                                                                                                            name: #Config,
+                                                                                                            fields: [
+                                                                                                                StructuralField {
+                                                                                                                    name: #buffer_size,
+                                                                                                                    value: Primitive(
+                                                                                                                        Int(
+                                                                                                                            I64,
+                                                                                                                        ),
+                                                                                                                    ),
+                                                                                                                },
+                                                                                                                StructuralField {
+                                                                                                                    name: #max_connections,
+                                                                                                                    value: Primitive(
+                                                                                                                        Int(
+                                                                                                                            I64,
+                                                                                                                        ),
+                                                                                                                    ),
+                                                                                                                },
+                                                                                                            ],
+                                                                                                        },
+                                                                                                    ),
+                                                                                                ),
+                                                                                                kind: Locator(
+                                                                                                    #DEFAULT_CONFIG,
+                                                                                                ),
+                                                                                            },
+                                                                                            field: #buffer_size,
+                                                                                            select: Field,
+                                                                                        },
+                                                                                    ),
+                                                                                },
+                                                                                rhs: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 1024,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Select(
+                                                                            ExprSelect {
+                                                                                obj: Expr {
+                                                                                    ty: Some(
+                                                                                        Struct(
+                                                                                            TypeStruct {
+                                                                                                name: #Config,
+                                                                                                fields: [
+                                                                                                    StructuralField {
+                                                                                                        name: #buffer_size,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                    StructuralField {
+                                                                                                        name: #max_connections,
+                                                                                                        value: Primitive(
+                                                                                                            Int(
+                                                                                                                I64,
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ],
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Locator(
+                                                                                        #DEFAULT_CONFIG,
+                                                                                    ),
+                                                                                },
+                                                                                field: #max_connections,
+                                                                                select: Field,
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #runtime_multiplier,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    kind: Value(
+                                                        Int(
+                                                            ValueInt {
+                                                                value: 3,
+                                                            },
+                                                        ),
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #optimized_size,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    kind: IntrinsicCall(
+                                                        IntrinsicCall {
+                                                            kind: ConstBlock,
+                                                            payload: Args {
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: BinOp(
+                                                                            ExprBinOp {
+                                                                                kind: Mul,
+                                                                                lhs: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Locator(
+                                                                                        #BUFFER_SIZE,
+                                                                                    ),
+                                                                                },
+                                                                                rhs: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Value(
+                                                                                        Int(
+                                                                                            ValueInt {
+                                                                                                value: 2,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #cache_strategy,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: Some(
+                                                        Primitive(
+                                                            String,
+                                                        ),
+                                                    ),
+                                                    kind: IntrinsicCall(
+                                                        IntrinsicCall {
+                                                            kind: ConstBlock,
+                                                            payload: Args {
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                String,
+                                                                            ),
+                                                                        ),
+                                                                        kind: If(
+                                                                            ExprIf {
+                                                                                cond: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Bool,
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: BinOp(
+                                                                                        ExprBinOp {
+                                                                                            kind: Gt,
+                                                                                            lhs: Expr {
+                                                                                                ty: Some(
+                                                                                                    Primitive(
+                                                                                                        Int(
+                                                                                                            I64,
+                                                                                                        ),
+                                                                                                    ),
+                                                                                                ),
+                                                                                                kind: Locator(
+                                                                                                    #BUFFER_SIZE,
+                                                                                                ),
+                                                                                            },
+                                                                                            rhs: Expr {
+                                                                                                ty: Some(
+                                                                                                    Primitive(
+                                                                                                        Int(
+                                                                                                            I64,
+                                                                                                        ),
+                                                                                                    ),
+                                                                                                ),
+                                                                                                kind: Value(
+                                                                                                    Int(
+                                                                                                        ValueInt {
+                                                                                                            value: 2048,
+                                                                                                        },
+                                                                                                    ),
+                                                                                                ),
+                                                                                            },
+                                                                                        },
+                                                                                    ),
+                                                                                },
+                                                                                then: Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            String,
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: Value(
+                                                                                        String(
+                                                                                            ValueString {
+                                                                                                value: "large",
+                                                                                                owned: false,
+                                                                                            },
+                                                                                        ),
+                                                                                    ),
+                                                                                },
+                                                                                elze: Some(
+                                                                                    Expr {
+                                                                                        ty: Some(
+                                                                                            Primitive(
+                                                                                                String,
+                                                                                            ),
+                                                                                        ),
+                                                                                        kind: Value(
+                                                                                            String(
+                                                                                                ValueString {
+                                                                                                    value: "small",
+                                                                                                    owned: false,
+                                                                                                },
+                                                                                            ),
+                                                                                        ),
+                                                                                    },
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #total_memory,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    kind: BinOp(
+                                                        ExprBinOp {
+                                                            kind: Mul,
+                                                            lhs: Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: Locator(
+                                                                    #runtime_multiplier,
+                                                                ),
+                                                            },
+                                                            rhs: Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: IntrinsicCall(
+                                                                    IntrinsicCall {
+                                                                        kind: ConstBlock,
+                                                                        payload: Args {
+                                                                            args: [
+                                                                                Expr {
+                                                                                    ty: Some(
+                                                                                        Primitive(
+                                                                                            Int(
+                                                                                                I64,
+                                                                                            ),
+                                                                                        ),
+                                                                                    ),
+                                                                                    kind: BinOp(
+                                                                                        ExprBinOp {
+                                                                                            kind: Mul,
+                                                                                            lhs: Expr {
+                                                                                                ty: Some(
+                                                                                                    Primitive(
+                                                                                                        Int(
+                                                                                                            I64,
+                                                                                                        ),
+                                                                                                    ),
+                                                                                                ),
+                                                                                                kind: Locator(
+                                                                                                    #BUFFER_SIZE,
+                                                                                                ),
+                                                                                            },
+                                                                                            rhs: Expr {
+                                                                                                ty: Some(
+                                                                                                    Primitive(
+                                                                                                        Int(
+                                                                                                            I64,
+                                                                                                        ),
+                                                                                                    ),
+                                                                                                ),
+                                                                                                kind: Locator(
+                                                                                                    #MAX_CONNECTIONS,
+                                                                                                ),
+                                                                                            },
+                                                                                        },
+                                                                                    ),
+                                                                                },
+                                                                            ],
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            },
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "Const blocks: size=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", strategy=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        ", memory=",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #optimized_size,
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                String,
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #cache_strategy,
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #total_memory,
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+    ],
+}
