@@ -1,0 +1,61 @@
+hir::Program {
+    fn main() -> () {
+        {
+            struct Point {
+                pub x: f64,
+                pub y: f64,
+            }
+            struct Color {
+                pub r: u8,
+                pub g: u8,
+                pub b: u8,
+            }
+            const POINT_SIZE: usize =
+                16;
+            const COLOR_SIZE: usize =
+                24;
+            const POINT_FIELDS: usize =
+                2;
+            const COLOR_FIELDS: usize =
+                3;
+            const POINT_HAS_X: bool =
+                true;
+            const POINT_HAS_Z: bool =
+                false;
+            const POINT_METHODS: usize =
+                0;
+            const COLOR_METHODS: usize =
+                0;
+            printf("=== Struct Introspection ===\n");
+            printf("Point size: %d bytes\n", 16);
+            printf("Color size: %d bytes\n", 24);
+            printf("Point fields: %d\n", 2);
+            printf("Color fields: %d\n", 3);
+            printf("Point has x: %d\n", true);
+            printf("Point has z: %d\n", false);
+            printf("Point methods: %d\n", 0);
+            printf("Color methods: %d\n", 0);
+            printf("
+✓ Introspection completed!\n");
+            printf("
+=== Transpilation Demo ===\n");
+            const POINT_SIZE_CONST: usize =
+                16;
+            const COLOR_SIZE_CONST: usize =
+                24;
+            const TOTAL_SIZE: usize =
+                40;
+            let origin = Point { x: 0, y: 0 };
+            let red = Color { r: 255, g: 0, b: 0 };
+            printf("Transpilation target sizes:\n");
+            printf("  Point: %d bytes (const)\n", POINT_SIZE_CONST);
+            printf("  Color: %d bytes (const)\n", COLOR_SIZE_CONST);
+            printf("  Combined: %d bytes\n", TOTAL_SIZE);
+            printf("Runtime instances:\n");
+            printf("  Origin: (%f, %f)\n", origin.x, origin.y);
+            printf("  Red: rgb(%d, %d, %d)\n", red.r, red.g, red.b);
+            printf("
+✓ Introspection enables external code generation!\n");
+        }
+    }
+}
