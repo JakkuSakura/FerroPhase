@@ -135,6 +135,8 @@ pub enum ExprKind {
     Continue,
     Loop(Block),
     While(Box<Expr>, Block),
+    Array(Vec<Expr>),
+    ArrayRepeat { elem: Box<Expr>, len: Box<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

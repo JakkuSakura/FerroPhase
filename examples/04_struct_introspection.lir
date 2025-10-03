@@ -17,13 +17,16 @@ lir::Program {
                 %12: { f64, f64 }
                 %13: { i8, i8, i8 }
                 %14: i32
-                %15: i32
+                %15: i64
                 %16: i32
-                %17: i32
+                %17: i64
                 %18: i32
-                %19: i32
+                %19: i64
                 %20: i32
                 %21: i32
+                %22: i32
+                %23: i32
+                %24: i32
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = call c @printf(c"=== Struct Introspection ===
 ") : i32
@@ -81,50 +84,59 @@ lir::Program {
 ") : i32
                 terminator: br bb12
             bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i18: %r18 = call c @printf(c"  Point: %d bytes (const)
-", i64 16) : i32
+                i18: %r18 = alloca i32 1 align 8 : ptr i64
+                i19: store i64 16, %r18 align 8
+                i20: %r20 = load %r18 align 8 : i64
+                i21: %r21 = call c @printf(c"  Point: %d bytes (const)
+", %r20) : i32
                 terminator: br bb13
             bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i19: %r19 = call c @printf(c"  Color: %d bytes (const)
-", i64 24) : i32
+                i22: %r22 = alloca i32 1 align 8 : ptr i64
+                i23: store i64 24, %r22 align 8
+                i24: %r24 = load %r22 align 8 : i64
+                i25: %r25 = call c @printf(c"  Color: %d bytes (const)
+", %r24) : i32
                 terminator: br bb14
             bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i20: %r20 = call c @printf(c"  Combined: %d bytes
-", i64 40) : i32
+                i26: %r26 = alloca i32 1 align 8 : ptr i64
+                i27: store i64 40, %r26 align 8
+                i28: %r28 = load %r26 align 8 : i64
+                i29: %r29 = call c @printf(c"  Combined: %d bytes
+", %r28) : i32
                 terminator: br bb15
             bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i21: %r21 = call c @printf(c"Runtime instances:
+                i30: %r30 = call c @printf(c"Runtime instances:
 ") : i32
                 terminator: br bb16
             bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i22: %r22 = bitcast %r13 to ptr f64 : ptr f64
-                i23: %r23 = load %r22 align 8 : f64
-                i24: %r24 = bitcast %r13 to ptr i8 : ptr i8
-                i25: %r25 = gep inbounds %r24 [i64 8] : ptr i8
-                i26: %r26 = bitcast %r25 to ptr f64 : ptr f64
-                i27: %r27 = load %r26 align 8 : f64
-                i28: %r28 = call c @printf(c"  Origin: (%f, %f)
-", %r23, %r27) : i32
+                i31: %r31 = bitcast %r13 to ptr f64 : ptr f64
+                i32: %r32 = load %r31 align 8 : f64
+                i33: %r33 = bitcast %r13 to ptr i8 : ptr i8
+                i34: %r34 = gep inbounds %r33 [i64 8] : ptr i8
+                i35: %r35 = bitcast %r34 to ptr f64 : ptr f64
+                i36: %r36 = load %r35 align 8 : f64
+                i37: %r37 = call c @printf(c"  Origin: (%f, %f)
+", %r32, %r36) : i32
                 terminator: br bb17
             bb17 // label: bb17 // preds: [bb16] // succs: [bb18]:
-                i29: %r29 = bitcast %r15 to ptr i8 : ptr i8
-                i30: %r30 = load %r29 align 1 : i8
-                i31: %r31 = zext %r30 to i32 : i32
-                i32: %r32 = bitcast %r15 to ptr i8 : ptr i8
-                i33: %r33 = gep inbounds %r32 [i64 1] : ptr i8
-                i34: %r34 = bitcast %r33 to ptr i8 : ptr i8
-                i35: %r35 = load %r34 align 1 : i8
-                i36: %r36 = zext %r35 to i32 : i32
-                i37: %r37 = bitcast %r15 to ptr i8 : ptr i8
-                i38: %r38 = gep inbounds %r37 [i64 2] : ptr i8
-                i39: %r39 = bitcast %r38 to ptr i8 : ptr i8
-                i40: %r40 = load %r39 align 1 : i8
-                i41: %r41 = zext %r40 to i32 : i32
-                i42: %r42 = call c @printf(c"  Red: rgb(%d, %d, %d)
-", %r31, %r36, %r41) : i32
+                i38: %r38 = bitcast %r15 to ptr i8 : ptr i8
+                i39: %r39 = load %r38 align 1 : i8
+                i40: %r40 = zext %r39 to i32 : i32
+                i41: %r41 = bitcast %r15 to ptr i8 : ptr i8
+                i42: %r42 = gep inbounds %r41 [i64 1] : ptr i8
+                i43: %r43 = bitcast %r42 to ptr i8 : ptr i8
+                i44: %r44 = load %r43 align 1 : i8
+                i45: %r45 = zext %r44 to i32 : i32
+                i46: %r46 = bitcast %r15 to ptr i8 : ptr i8
+                i47: %r47 = gep inbounds %r46 [i64 2] : ptr i8
+                i48: %r48 = bitcast %r47 to ptr i8 : ptr i8
+                i49: %r49 = load %r48 align 1 : i8
+                i50: %r50 = zext %r49 to i32 : i32
+                i51: %r51 = call c @printf(c"  Red: rgb(%d, %d, %d)
+", %r40, %r45, %r50) : i32
                 terminator: br bb18
             bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:
-                i43: %r43 = call c @printf(c"
+                i52: %r52 = call c @printf(c"
 ✓ Introspection enables external code generation!
 ") : i32
                 terminator: br bb19

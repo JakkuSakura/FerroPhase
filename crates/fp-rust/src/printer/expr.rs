@@ -4,10 +4,10 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use fp_core::ast::{
-    BlockStmt, Expr, ExprArray, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprField, ExprIf,
-    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMatch, ExprParen,
-    ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprStruct, ExprTuple,
-    ExprUnOp, ExprWhile, StmtLet,
+    BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprBinOp, ExprBlock, ExprClosure,
+    ExprField, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop,
+    ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType,
+    ExprStruct, ExprTuple, ExprUnOp, ExprWhile, StmtLet,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 
@@ -52,6 +52,7 @@ impl RustPrinter {
             ExprKind::Let(n) => self.print_expr_let(n),
             ExprKind::Closure(n) => self.print_expr_closure(n),
             ExprKind::Array(n) => self.print_expr_array(n),
+            ExprKind::ArrayRepeat(n) => self.print_expr_array_repeat(n),
 
             _ => bail!("Unable to serialize {:?}", node),
         }
@@ -444,5 +445,11 @@ impl RustPrinter {
             .map(|x| self.print_expr(x))
             .try_collect()?;
         Ok(quote!([#(#values),*]))
+    }
+
+    fn print_expr_array_repeat(&self, array: &ExprArrayRepeat) -> Result<TokenStream> {
+        let elem = self.print_expr(array.elem.as_ref())?;
+        let len = self.print_expr(array.len.as_ref())?;
+        Ok(quote!([#elem; #len]))
     }
 }

@@ -214,13 +214,10 @@ File {
                                                     visibility: Private,
                                                     name: #POINT_SIZE,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -296,13 +293,10 @@ File {
                                                     visibility: Private,
                                                     name: #COLOR_SIZE,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -386,13 +380,10 @@ File {
                                                     visibility: Private,
                                                     name: #POINT_FIELDS,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -468,13 +459,10 @@ File {
                                                     visibility: Private,
                                                     name: #COLOR_FIELDS,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -606,8 +594,14 @@ File {
                                                                         },
                                                                         Expr {
                                                                             ty: Some(
-                                                                                Primitive(
-                                                                                    String,
+                                                                                Reference(
+                                                                                    TypeReference {
+                                                                                        ty: Primitive(
+                                                                                            String,
+                                                                                        ),
+                                                                                        mutability: None,
+                                                                                        lifetime: None,
+                                                                                    },
                                                                                 ),
                                                                             ),
                                                                             kind: Value(
@@ -697,8 +691,14 @@ File {
                                                                         },
                                                                         Expr {
                                                                             ty: Some(
-                                                                                Primitive(
-                                                                                    String,
+                                                                                Reference(
+                                                                                    TypeReference {
+                                                                                        ty: Primitive(
+                                                                                            String,
+                                                                                        ),
+                                                                                        mutability: None,
+                                                                                        lifetime: None,
+                                                                                    },
                                                                                 ),
                                                                             ),
                                                                             kind: Value(
@@ -740,13 +740,10 @@ File {
                                                     visibility: Private,
                                                     name: #POINT_METHODS,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -822,13 +819,10 @@ File {
                                                     visibility: Private,
                                                     name: #COLOR_METHODS,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -1351,8 +1345,14 @@ File {
                                                                                         },
                                                                                         Expr {
                                                                                             ty: Some(
-                                                                                                Primitive(
-                                                                                                    String,
+                                                                                                Reference(
+                                                                                                    TypeReference {
+                                                                                                        ty: Primitive(
+                                                                                                            String,
+                                                                                                        ),
+                                                                                                        mutability: None,
+                                                                                                        lifetime: None,
+                                                                                                    },
                                                                                                 ),
                                                                                             ),
                                                                                             kind: Value(
@@ -1449,8 +1449,14 @@ File {
                                                                                         },
                                                                                         Expr {
                                                                                             ty: Some(
-                                                                                                Primitive(
-                                                                                                    String,
+                                                                                                Reference(
+                                                                                                    TypeReference {
+                                                                                                        ty: Primitive(
+                                                                                                            String,
+                                                                                                        ),
+                                                                                                        mutability: None,
+                                                                                                        lifetime: None,
+                                                                                                    },
                                                                                                 ),
                                                                                             ),
                                                                                             kind: Value(
@@ -1738,13 +1744,10 @@ File {
                                                     visibility: Private,
                                                     name: #POINT_SIZE_CONST,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -1820,13 +1823,10 @@ File {
                                                     visibility: Private,
                                                     name: #COLOR_SIZE_CONST,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -1910,13 +1910,10 @@ File {
                                                     visibility: Private,
                                                     name: #TOTAL_SIZE,
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #usize,
-                                                                ),
-                                                            },
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
                                                         ),
                                                     ),
                                                     value: Expr {

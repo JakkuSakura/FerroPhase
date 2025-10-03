@@ -150,6 +150,10 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn RuntimeIntrinsicStrategy) ->
                 materialize_expr(value, strategy)?;
             }
         }
+        ExprKind::ArrayRepeat(array_repeat) => {
+            materialize_expr(array_repeat.elem.as_mut(), strategy)?;
+            materialize_expr(array_repeat.len.as_mut(), strategy)?;
+        }
         ExprKind::Tuple(tuple_expr) => {
             for value in &mut tuple_expr.values {
                 materialize_expr(value, strategy)?;

@@ -849,6 +849,15 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::Array(array_ty) => {
+                let elem = Box::new(self.transform_type_to_hir(&array_ty.elem)?);
+                let len_expr = Box::new(self.transform_expr_to_hir(array_ty.len.as_ref())?);
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Array(elem, Some(len_expr)),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
             ast::Ty::Expr(expr) => {
                 let path = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)?;
                 Ok(hir::TypeExpr::new(

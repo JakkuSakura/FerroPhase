@@ -10,21 +10,21 @@ hir::Program {
                 pub g: u8,
                 pub b: u8,
             }
-            const POINT_SIZE: usize =
+            const POINT_SIZE: u64 =
                 16;
-            const COLOR_SIZE: usize =
+            const COLOR_SIZE: u64 =
                 24;
-            const POINT_FIELDS: usize =
+            const POINT_FIELDS: u64 =
                 2;
-            const COLOR_FIELDS: usize =
+            const COLOR_FIELDS: u64 =
                 3;
             const POINT_HAS_X: bool =
                 true;
             const POINT_HAS_Z: bool =
                 false;
-            const POINT_METHODS: usize =
+            const POINT_METHODS: u64 =
                 0;
-            const COLOR_METHODS: usize =
+            const COLOR_METHODS: u64 =
                 0;
             printf("=== Struct Introspection ===
 ");
@@ -50,11 +50,11 @@ hir::Program {
             printf("
 === Transpilation Demo ===
 ");
-            const POINT_SIZE_CONST: usize =
+            const POINT_SIZE_CONST: u64 =
                 16;
-            const COLOR_SIZE_CONST: usize =
+            const COLOR_SIZE_CONST: u64 =
                 24;
-            const TOTAL_SIZE: usize =
+            const TOTAL_SIZE: u64 =
                 40;
             let origin = Point { x: 0, y: 0 };
             let red = Color { r: 255, g: 0, b: 0 };
