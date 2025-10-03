@@ -44,10 +44,10 @@ lowerings consume the already-typed structures.
      this step focuses on structural desugaring and borrow checking hooks while
      preserving the attached type metadata.
 
-6. **Backend Lowering (planned)**
-   - Native and optimised targets will eventually lower `HIRᵗ` through MIR/LIR
-     into backend-specific IR. This portion of the pipeline is currently
-     disabled while the typed AST/HIR rewrite lands.
+6. **Backend Lowering**
+   - `hir_to_mir` lowers typed HIR into MIR while surfacing diagnostics for
+     unsupported constructs. MIR is then converted into LIR and LLVM IR so
+     native backends share a single SSA pipeline.
 
 Each step returns a `DiagnosticReport<T>` containing the produced artefact (or a
 placeholder in tolerant mode) and the collected `Diagnostic` entries. The
@@ -55,9 +55,9 @@ pipeline updates its cached serializer/language metadata in place, and
 diagnostics are printed stage-by-stage while also bubbling up for aggregate
 reporting.
 
-7. **Binary Emission (planned)**
-   - Once backend lowering returns, binary emission will invoke the LLVM tool
-     chain (`llc`, system linker) using the evaluated, typed inputs.
+7. **Binary Emission**
+   - The LLVM bridge writes `*.ll` artefacts and invokes `clang` to link final
+     executables when native targets are selected.
 
 ## Pipeline State
 
@@ -118,9 +118,9 @@ stage can produce a placeholder artefact, it returns it while emitting
 
 ## Runtime & Interpretation
 
-Interpretation (interactive `run`/`eval`) will share the same
-`AST → ASTᵗ → ASTᵗ′` pipeline once the new evaluator lands. For now the
-interpreter entrypoints are placeholders while the AST interpreter is rebuilt.
+Interpretation (interactive `run`/`eval`) now drives the same
+`AST → ASTᵗ → ASTᵗ′` pipeline. The CLI invokes the shared AST interpreter in
+runtime mode after const evaluation completes.
 
 ## Extending the Pipeline
 

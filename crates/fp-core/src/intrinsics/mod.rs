@@ -206,21 +206,21 @@ pub struct MaterializedPrint {
     pub printf_function_name: String,
 }
 
-/// Trait for backend-specific THIR intrinsic materialization.
+/// Trait for backend-specific runtime intrinsic materialization.
 ///
 /// Each backend implements this trait to define how intrinsic calls are transformed
-/// at the THIR level into backend-specific representations.
+/// during AST/HIR materialization into backend-specific representations.
 pub trait IntrinsicMaterializer: Send + Sync {
     /// Prepare materialization data for a print/println intrinsic call.
     ///
-    /// Returns `Some(data)` if this backend handles print/println at THIR level,
-    /// or `None` to keep the intrinsic call for later backend-specific handling.
+    /// Returns `Some(data)` if this backend handles print/println while materialising
+    /// intrinsics, or `None` to keep the intrinsic call for later backend-specific handling.
     fn prepare_print(
         &self,
         kind: calls::IntrinsicCallKind,
         template: &crate::hir::typed::FormatString,
     ) -> Option<MaterializedPrint>;
 
-    /// Check if this materializer handles the given intrinsic kind at THIR level.
+    /// Check if this materializer handles the given intrinsic kind at the materialization stage.
     fn can_materialize(&self, kind: calls::IntrinsicCallKind) -> bool;
 }
