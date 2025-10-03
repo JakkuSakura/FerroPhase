@@ -1,0 +1,68 @@
+mir::Program {
+    items:
+        fn main() -> () [body: body0]
+    bodies:
+        body0 { arg_count: 0, locals: 24 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: bool
+                _5: i32
+                _6: i64
+                _7: (i64, i64)
+                _8: (i64, i64)
+                _9: i32
+                _10: i64
+                _11: ()
+                _12: i64
+                _13: i64
+                _14: ()
+                _15: <??>
+                _16: bool
+                _17: i64
+                _18: ()
+                _19: i64
+                _20: i64
+                _21: i64
+                _22: i64
+                _23: i32
+            blocks:
+                bb0:
+                    s0: _2 = const Constant { span: Span { file: 958031099278485038, lo: 3, hi: 4 }, user_ty: None, literal: Int(4096) }
+                    s1: _1 = Div(copy _2, const Constant { span: Span { file: 958031099278485038, lo: 15, hi: 16 }, user_ty: None, literal: Int(1024) })
+                    s2: _3 = const Constant { span: Span { file: 958031099278485038, lo: 7, hi: 8 }, user_ty: None, literal: Int(120) }
+                    s3: _4 = const Constant { span: Span { file: 958031099278485038, lo: 9, hi: 10 }, user_ty: None, literal: Bool(true) }
+                    terminator: call const Constant { span: Span { file: 958031099278485038, lo: 11, hi: 12 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 958031099278485038, lo: 12, hi: 13 }, user_ty: None, literal: Str("Buffer: %dKB, factorial(5)=%d, large=%d\n") }, copy _1, copy _3, copy _4) -> _5 then bb1
+                bb1:
+                    s0: _7 = aggregate(tuple; [const Constant { span: Span { file: 958031099278485038, lo: 21, hi: 22 }, user_ty: None, literal: Int(4096) }, const Constant { span: Span { file: 958031099278485038, lo: 22, hi: 23 }, user_ty: None, literal: Int(150) }])
+                    s1: _6 = Div(copy _7[Field(0, Ty { kind: Int(I64) })], const Constant { span: Span { file: 958031099278485038, lo: 29, hi: 30 }, user_ty: None, literal: Int(1024) })
+                    s2: _8 = aggregate(tuple; [const Constant { span: Span { file: 958031099278485038, lo: 21, hi: 22 }, user_ty: None, literal: Int(4096) }, const Constant { span: Span { file: 958031099278485038, lo: 22, hi: 23 }, user_ty: None, literal: Int(150) }])
+                    terminator: call const Constant { span: Span { file: 958031099278485038, lo: 24, hi: 25 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 958031099278485038, lo: 25, hi: 26 }, user_ty: None, literal: Str("Config: %dKB buffer, %d connections\n") }, copy _6, copy _8[Field(1, Ty { kind: Int(I64) })]) -> _9 then bb2
+                bb2:
+                    s0: _10 = const Constant { span: Span { file: 958031099278485038, lo: 32, hi: 33 }, user_ty: None, literal: Int(3) }
+                    s1: _13 = const Constant { span: Span { file: 958031099278485038, lo: 3, hi: 4 }, user_ty: None, literal: Int(4096) }
+                    s2: _12 = Mul(copy _13, const Constant { span: Span { file: 958031099278485038, lo: 36, hi: 37 }, user_ty: None, literal: Int(2) })
+                    s3: _11 = copy _12
+                    s4: _17 = const Constant { span: Span { file: 958031099278485038, lo: 3, hi: 4 }, user_ty: None, literal: Int(4096) }
+                    s5: _16 = Gt(copy _17, const Constant { span: Span { file: 958031099278485038, lo: 41, hi: 42 }, user_ty: None, literal: Int(2048) })
+                    terminator: switch copy _16 [1 -> bb3] otherwise -> bb4
+                bb3:
+                    s0: _15 = const Constant { span: Span { file: 958031099278485038, lo: 42, hi: 43 }, user_ty: None, literal: Str("large") }
+                    terminator: goto -> bb5
+                bb4:
+                    s0: _15 = const Constant { span: Span { file: 958031099278485038, lo: 43, hi: 44 }, user_ty: None, literal: Str("small") }
+                    terminator: goto -> bb5
+                bb5:
+                    s0: _14 = copy _15
+                    s1: _21 = const Constant { span: Span { file: 958031099278485038, lo: 3, hi: 4 }, user_ty: None, literal: Int(4096) }
+                    s2: _22 = const Constant { span: Span { file: 958031099278485038, lo: 5, hi: 6 }, user_ty: None, literal: Int(150) }
+                    s3: _20 = Mul(copy _21, copy _22)
+                    s4: _19 = Mul(copy _10, copy _20)
+                    s5: _18 = copy _19
+                    terminator: call const Constant { span: Span { file: 958031099278485038, lo: 51, hi: 52 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 958031099278485038, lo: 52, hi: 53 }, user_ty: None, literal: Str("Const blocks: size=%d, strategy=%s, memory=%d\n") }, copy _11, copy _14, copy _18) -> _23 then bb6
+                bb6:
+                    terminator: return
+}

@@ -1,0 +1,113 @@
+lir::Program {
+    functions:
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i64
+                %2: i64
+                %3: i64
+                %4: i1
+                %5: i32
+                %6: i64
+                %7: { i64, i64 }
+                %8: { i64, i64 }
+                %9: i32
+                %10: i64
+                %11: void
+                %12: i64
+                %13: i64
+                %14: void
+                %15: ptr i8
+                %16: i1
+                %17: i64
+                %18: void
+                %19: i64
+                %20: i64
+                %21: i64
+                %22: i64
+                %23: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
+                i1: %r1 = alloca i32 1 align 8 : ptr i64
+                i2: store i64 4096, %r1 align 8
+                i3: %r3 = alloca i32 1 align 8 : ptr i64
+                i4: %r4 = load %r1 align 8 : i64
+                i5: %r5 = div %r4, i64 1024 : i64
+                i6: store %r5, %r3 align 8
+                i7: %r7 = alloca i32 1 align 8 : ptr i64
+                i8: store i64 120, %r7 align 8
+                i9: %r9 = alloca i32 1 align 1 : ptr i1
+                i10: store bool true, %r9 align 1
+                i11: %r11 = load %r3 align 8 : i64
+                i12: %r12 = load %r7 align 8 : i64
+                i13: %r13 = load %r9 align 1 : i1
+                i14: %r14 = zext %r13 to i32 : i32
+                i15: %r15 = call c @printf(c"Buffer: %dKB, factorial(5)=%d, large=%d
+", %r11, %r12, %r14) : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i16: %r16 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i17: store struct { i64, i64 } { i64 4096, i64 150 }, %r16 align 8
+                i18: %r18 = alloca i32 1 align 8 : ptr i64
+                i19: %r19 = bitcast %r16 to ptr i64 : ptr i64
+                i20: %r20 = load %r19 align 8 : i64
+                i21: %r21 = div %r20, i64 1024 : i64
+                i22: store %r21, %r18 align 8
+                i23: %r23 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i24: store struct { i64, i64 } { i64 4096, i64 150 }, %r23 align 8
+                i25: %r25 = load %r18 align 8 : i64
+                i26: %r26 = bitcast %r23 to ptr i8 : ptr i8
+                i27: %r27 = gep inbounds %r26 [i64 8] : ptr i8
+                i28: %r28 = bitcast %r27 to ptr i64 : ptr i64
+                i29: %r29 = load %r28 align 8 : i64
+                i30: %r30 = call c @printf(c"Config: %dKB buffer, %d connections
+", %r25, %r29) : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3, bb4]:
+                i31: %r31 = alloca i32 1 align 8 : ptr i64
+                i32: store i64 3, %r31 align 8
+                i33: %r33 = alloca i32 1 align 8 : ptr i64
+                i34: store i64 4096, %r33 align 8
+                i35: %r35 = alloca i32 1 align 8 : ptr i64
+                i36: %r36 = load %r33 align 8 : i64
+                i37: %r37 = mul %r36, i64 2 : i64
+                i38: store %r37, %r35 align 8
+                i39: %r39 = load %r35 align 8 : i64
+                i40: %r40 = alloca i32 1 align 8 : ptr i64
+                i41: store i64 4096, %r40 align 8
+                i42: %r42 = alloca i32 1 align 1 : ptr i1
+                i43: %r43 = load %r40 align 8 : i64
+                i44: %r44 = gt %r43, i64 2048 : i1
+                i45: store %r44, %r42 align 1
+                i46: %r46 = load %r42 align 1 : i1
+                terminator: cond_br %r46, bb3, bb4
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb5]:
+                i47: store c"large", %r0 align 8
+                terminator: br bb5
+            bb4 // label: bb4 // preds: [bb2] // succs: [bb5]:
+                i48: store c"small", %r0 align 8
+                terminator: br bb5
+            bb5 // label: bb5 // preds: [bb3, bb4] // succs: [bb6]:
+                i49: %r49 = load %r0 align 8 : ptr i8
+                i50: %r50 = alloca i32 1 align 8 : ptr i64
+                i51: store i64 4096, %r50 align 8
+                i52: %r52 = alloca i32 1 align 8 : ptr i64
+                i53: store i64 150, %r52 align 8
+                i54: %r54 = alloca i32 1 align 8 : ptr i64
+                i55: %r55 = load %r50 align 8 : i64
+                i56: %r56 = load %r52 align 8 : i64
+                i57: %r57 = mul %r55, %r56 : i64
+                i58: store %r57, %r54 align 8
+                i59: %r59 = alloca i32 1 align 8 : ptr i64
+                i60: %r60 = load %r31 align 8 : i64
+                i61: %r61 = load %r54 align 8 : i64
+                i62: %r62 = mul %r60, %r61 : i64
+                i63: store %r62, %r59 align 8
+                i64: %r64 = load %r59 align 8 : i64
+                i65: %r65 = call c @printf(c"Const blocks: size=%d, strategy=%s, memory=%d
+", %r39, %r49, %r64) : i32
+                terminator: br bb6
+            bb6 // label: bb6 // preds: [bb5]:
+                terminator: ret void
+        }
+}
