@@ -772,6 +772,24 @@ impl<'ctx> LirCodegen<'ctx> {
                     )
                     .map_err(fp_core::error::Error::from)?;
             }
+            lir::LirInstructionKind::InsertValue {
+                aggregate,
+                element,
+                indices,
+            } => {
+                let aggregate_operand = self.convert_lir_value_to_operand(aggregate)?;
+                let element_operand = self.convert_lir_value_to_operand(element)?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_insert_value(
+                        aggregate_operand,
+                        element_operand,
+                        indices.clone(),
+                        &format!("insertvalue_{}", instr_id),
+                    )
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, ty_hint.clone(), result_name);
+            }
             lir::LirInstructionKind::Alloca { size, alignment } => {
                 let size_operand = self.convert_lir_value_to_operand(size)?;
                 let element_lir_type = match ty_hint.clone() {

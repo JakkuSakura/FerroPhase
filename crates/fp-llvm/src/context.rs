@@ -1,7 +1,8 @@
 use llvm_ir::constant::Float;
 use llvm_ir::function::{CallingConvention, Parameter};
 use llvm_ir::instruction::{
-    Add, Alloca, BitCast, GetElementPtr, ICmp, Load, Mul, SExt, Store, Sub, Trunc, UDiv, ZExt,
+    Add, Alloca, BitCast, GetElementPtr, ICmp, InsertValue, Load, Mul, SExt, Store, Sub, Trunc,
+    UDiv, ZExt,
 };
 use llvm_ir::module::{DLLStorageClass, DataLayout, Linkage, Visibility};
 use llvm_ir::predicates::IntPredicate;
@@ -490,6 +491,25 @@ impl LlvmContext {
         });
         self.add_instruction(instruction)?;
         Ok(())
+    }
+
+    pub fn build_insert_value(
+        &mut self,
+        aggregate: Operand,
+        element: Operand,
+        indices: Vec<u32>,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::InsertValue(InsertValue {
+            aggregate,
+            element,
+            indices,
+            dest: name.clone(),
+            debugloc: None,
+        });
+        self.add_instruction(instruction)?;
+        Ok(name)
     }
 
     pub fn build_gep(
