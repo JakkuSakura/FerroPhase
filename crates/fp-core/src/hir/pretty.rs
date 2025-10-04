@@ -4,8 +4,8 @@ use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
     BinOp, Block, Body, Const, Enum, Expr, ExprKind, Function, GenericArg, GenericParamKind,
-    Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Program, Stmt,
-    StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
+    Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Program, Stmt, StmtKind,
+    Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 impl PrettyPrintable for Program {
@@ -116,7 +116,12 @@ fn write_struct(
     ctx.writeln(f, "}")
 }
 
-fn write_enum(item: &Item, enm: &Enum, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+fn write_enum(
+    item: &Item,
+    enm: &Enum,
+    f: &mut Formatter<'_>,
+    ctx: &mut PrettyCtx<'_>,
+) -> fmt::Result {
     let vis = fmt_visibility(&item.visibility);
     let generics = fmt_generics(&enm.generics, ctx);
     let span_suffix = if ctx.options.show_spans {
@@ -125,7 +130,10 @@ fn write_enum(item: &Item, enm: &Enum, f: &mut Formatter<'_>, ctx: &mut PrettyCt
         String::new()
     };
 
-    ctx.writeln(f, format!("{}enum {}{} {{", vis, enm.name, generics) + &span_suffix)?;
+    ctx.writeln(
+        f,
+        format!("{}enum {}{} {{", vis, enm.name, generics) + &span_suffix,
+    )?;
     ctx.with_indent(|ctx| {
         for variant in &enm.variants {
             let mut line = variant.name.clone();

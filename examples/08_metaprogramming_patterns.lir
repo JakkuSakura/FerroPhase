@@ -1,0 +1,55 @@
+lir::Program {
+    functions:
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i64
+                %2: i64
+                %3: i32
+                %4: i64
+                %5: i8
+                %6: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = call c @type_name() : ptr i64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i1: %r1 = call c @field_count() : i64
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i2: %r2 = call c @printf(c"%s has %d fields
+", %r0, %r1) : i32
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i3: %r3 = alloca i32 1 align 8 : ptr i64
+                i4: store i64 1, %r3 align 8
+                i5: %r5 = alloca i32 1 align 1 : ptr i8
+                i6: %r6 = load %r3 align 8 : i64
+                i7: %r7 = sext_or_trunc %r6 to i8 : i8
+                i8: store %r7, %r5 align 1
+                i9: %r9 = load %r5 align 1 : i8
+                i10: %r10 = zext %r9 to i32 : i32
+                i11: %r11 = call c @printf(c"tag discriminant: %d
+", %r10) : i32
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3]:
+                terminator: ret void
+        }
+
+        fn type_name() -> ptr i64 [cc: c, linkage: internal] {
+            locals:
+                %0: ptr i64
+            bb0 // label: bb0:
+                i12: %r12 = alloca i32 1 align 8 : ptr ptr i64
+                i13: store c"Point3D", %r12 align 8
+                terminator: ret c"Point3D"
+        }
+
+        fn field_count() -> i64 [cc: c, linkage: internal] {
+            locals:
+                %0: i64
+            bb0 // label: bb0:
+                i14: %r14 = alloca i32 1 align 8 : ptr i64
+                i15: store i64 3, %r14 align 8
+                terminator: ret i64 3
+        }
+}

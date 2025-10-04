@@ -1,0 +1,48 @@
+mir::Program {
+    items:
+        fn main() -> () [body: body0]
+
+        fn type_name() -> <??> [body: body1]
+
+        fn field_count() -> u64 [body: body2]
+    bodies:
+        body0 { arg_count: 0, locals: 7 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+                _2: u64
+                _3: i32
+                _4: isize
+                _5: u8
+                _6: i32
+            blocks:
+                bb0:
+                    terminator: call fn type_name() -> _1 then bb1
+                bb1:
+                    terminator: call fn field_count() -> _2 then bb2
+                bb2:
+                    terminator: call global printf("%s has %d fields\n", copy _1, copy _2) -> _3 then bb3
+                bb3:
+                    s0: _4 = 1
+                    s1: _5 = cast(Misc, copy _4, u8)
+                    terminator: call global printf("tag discriminant: %d\n", copy _5) -> _6 then bb4
+                bb4:
+                    terminator: return
+        body1 { arg_count: 0, locals: 1 }
+            return_local: _0
+            locals:
+                _0: <??>
+            blocks:
+                bb0:
+                    s0: _0 = "Point3D"
+                    terminator: return
+        body2 { arg_count: 0, locals: 1 }
+            return_local: _0
+            locals:
+                _0: u64
+            blocks:
+                bb0:
+                    s0: _0 = 3
+                    terminator: return
+}
