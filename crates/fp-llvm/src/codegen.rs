@@ -836,6 +836,61 @@ impl<'ctx> LirCodegen<'ctx> {
                     .map_err(fp_core::error::Error::from)?;
                 self.record_result(instr_id, Some(target_ty), result_name);
             }
+            lir::LirInstructionKind::SextOrTrunc(value, target_ty) => {
+                if let lir::LirValue::Constant(_) = value {
+                    if let lir::LirValue::Constant(constant) =
+                        Self::convert_constant_to_type(value.clone(), &target_ty)
+                    {
+                        self.constant_results.insert(instr_id, constant);
+                        return Ok(());
+                    }
+                }
+
+                let operand = self.convert_lir_value_to_operand(value.clone())?;
+                let llvm_target_ty = self.convert_lir_type_to_llvm(target_ty.clone())?;
+                let source_ty = self
+                    .lir_value_type(&value)
+                    .or_else(|| self.lir_value_type(&lir::LirValue::Register(instr_id)))
+                    .unwrap_or(target_ty.clone());
+
+                let src_bits = Self::int_type_bits(&source_ty);
+                let dst_bits = Self::int_type_bits(&target_ty);
+
+                let result_name = match (src_bits, dst_bits, operand.clone()) {
+                    (Some(src), Some(dst), _) if dst > src => self
+                        .llvm_ctx
+                        .build_sext(
+                            operand,
+                            llvm_target_ty.clone(),
+                            &format!("sext_trunc_{}", instr_id),
+                        )
+                        .map_err(fp_core::error::Error::from)?,
+                    (Some(src), Some(dst), _) if dst < src => self
+                        .llvm_ctx
+                        .build_trunc(
+                            operand,
+                            llvm_target_ty.clone(),
+                            &format!("sext_trunc_{}", instr_id),
+                        )
+                        .map_err(fp_core::error::Error::from)?,
+                    _ => {
+                        if let Operand::LocalOperand { name, .. } = operand {
+                            self.record_result(instr_id, Some(target_ty), name.clone());
+                            return Ok(());
+                        } else {
+                            self.llvm_ctx
+                                .build_bitcast(
+                                    operand,
+                                    llvm_target_ty.clone(),
+                                    &format!("sext_trunc_{}", instr_id),
+                                )
+                                .map_err(fp_core::error::Error::from)?
+                        }
+                    }
+                };
+
+                self.record_result(instr_id, Some(target_ty), result_name);
+            }
             lir::LirInstructionKind::GetElementPtr {
                 ptr,
                 indices,
@@ -1444,6 +1499,18 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirType::I64 => 64,
             lir::LirType::I128 => 128,
             _ => 32,
+        }
+    }
+
+    fn int_type_bits(ty: &lir::LirType) -> Option<u32> {
+        match ty {
+            lir::LirType::I1 => Some(1),
+            lir::LirType::I8 => Some(8),
+            lir::LirType::I16 => Some(16),
+            lir::LirType::I32 => Some(32),
+            lir::LirType::I64 => Some(64),
+            lir::LirType::I128 => Some(128),
+            _ => None,
         }
     }
 

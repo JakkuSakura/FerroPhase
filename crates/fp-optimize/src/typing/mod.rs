@@ -7,6 +7,10 @@ use fp_core::id::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::{Pattern, PatternKind};
+use fp_rust::{
+    parser::{parse_expr as parse_raw_expr, parse_type as parse_raw_type},
+    RawExpr,
+};
 
 type TypeVarId = usize;
 
@@ -687,10 +691,31 @@ impl AstTypeInferencer {
             ExprKind::Range(range) => self.infer_range(range)?,
             ExprKind::Splat(splat) => self.infer_splat(splat)?,
             ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
-            ExprKind::Any(_)
-            | ExprKind::Item(_)
-            | ExprKind::Closured(_)
-            | ExprKind::Structural(_) => {
+            ExprKind::Any(any) => {
+                if let Some(raw) = any.downcast_ref::<RawExpr>() {
+                    if let syn::Expr::Cast(cast_expr) = &raw.raw {
+                        let mut operand_ast =
+                            parse_raw_expr((*cast_expr.expr).clone()).map_err(|err| {
+                                optimization_error(format!("failed to parse cast operand: {err}"))
+                            })?;
+                        let _operand_var = self.infer_expr(&mut operand_ast)?;
+
+                        let target_ty = parse_raw_type((*cast_expr.ty).clone()).map_err(|err| {
+                            optimization_error(format!("failed to parse cast type: {err}"))
+                        })?;
+                        self.type_from_ast_ty(&target_ty)?
+                    } else {
+                        let any_var = self.fresh_type_var();
+                        self.bind(any_var, TypeTerm::Any);
+                        any_var
+                    }
+                } else {
+                    let any_var = self.fresh_type_var();
+                    self.bind(any_var, TypeTerm::Any);
+                    any_var
+                }
+            }
+            ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
                 let any_var = self.fresh_type_var();
                 self.bind(any_var, TypeTerm::Any);
                 any_var

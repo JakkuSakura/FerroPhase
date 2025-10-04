@@ -76,6 +76,8 @@ pub struct MirLowering {
     runtime_functions: HashMap<String, mir::FunctionSig>,
     struct_methods: HashMap<String, HashMap<String, MethodLoweringInfo>>,
     method_lookup: HashMap<String, MethodLoweringInfo>,
+    extra_items: Vec<mir::Item>,
+    extra_bodies: Vec<(mir::BodyId, mir::Body)>,
 }
 
 impl MirLowering {
@@ -107,6 +109,8 @@ impl MirLowering {
             runtime_functions: Self::default_runtime_signatures(),
             struct_methods: HashMap::new(),
             method_lookup: HashMap::new(),
+            extra_items: Vec::new(),
+            extra_bodies: Vec::new(),
         }
     }
 
@@ -131,12 +135,23 @@ impl MirLowering {
                     mir_program.bodies.insert(body_id, body);
                 }
                 hir::ItemKind::Impl(impl_block) => {
-                    self.lower_impl(program, item, impl_block, &mut mir_program)?;
+                    self.lower_impl(program, item, impl_block, Some(&mut mir_program))?;
                 }
             }
         }
 
+        self.flush_extra_items(&mut mir_program);
+
         Ok(mir_program)
+    }
+
+    fn flush_extra_items(&mut self, program: &mut mir::Program) {
+        for item in self.extra_items.drain(..) {
+            program.items.push(item);
+        }
+        for (body_id, body) in self.extra_bodies.drain(..) {
+            program.bodies.insert(body_id, body);
+        }
     }
 
     fn lower_function(
@@ -580,8 +595,16 @@ impl MirLowering {
                     hir::BinOp::Add => Some(left.saturating_add(right)),
                     hir::BinOp::Sub => Some(left.saturating_sub(right)),
                     hir::BinOp::Mul => Some(left.saturating_mul(right)),
-                    hir::BinOp::Div => Some(if right != 0 { left / right } else { return None; }),
-                    hir::BinOp::Rem => Some(if right != 0 { left % right } else { return None; }),
+                    hir::BinOp::Div => Some(if right != 0 {
+                        left / right
+                    } else {
+                        return None;
+                    }),
+                    hir::BinOp::Rem => Some(if right != 0 {
+                        left % right
+                    } else {
+                        return None;
+                    }),
                     _ => None,
                 }
             }
@@ -637,8 +660,21 @@ impl MirLowering {
         program: &hir::Program,
         item: &hir::Item,
         impl_block: &hir::Impl,
-        mir_program: &mut mir::Program,
+        output: Option<&mut mir::Program>,
     ) -> Result<()> {
+        let mut output = output;
+        let mut emit_function =
+            |this: &mut Self, mir_item: mir::Item, body_id: mir::BodyId, body: mir::Body| {
+                if let Some(program_ref) = output.as_mut() {
+                    let program: &mut mir::Program = &mut **program_ref;
+                    program.items.push(mir_item);
+                    program.bodies.insert(body_id, body);
+                } else {
+                    this.extra_items.push(mir_item);
+                    this.extra_bodies.push((body_id, body));
+                }
+            };
+
         let struct_name = match self.struct_name_from_type(&impl_block.self_ty) {
             Some(name) => name,
             None => {
@@ -657,8 +693,7 @@ impl MirLowering {
                 hir::ImplItemKind::Method(function) => {
                     let (mir_item, body_id, body, sig) =
                         self.lower_method(program, function, item.span, method_context.as_ref())?;
-                    mir_program.items.push(mir_item);
-                    mir_program.bodies.insert(body_id, body);
+                    emit_function(self, mir_item, body_id, body);
 
                     let fn_name = function.sig.name.clone();
                     let fn_ty = self.function_pointer_ty(&sig);
@@ -1101,10 +1136,14 @@ impl<'a> BodyBuilder<'a> {
                 self.lowering.register_const_value(item.def_id, konst);
                 self.const_items.insert(item.def_id, konst.clone());
             }
+            hir::ItemKind::Impl(impl_block) => {
+                self.lowering
+                    .lower_impl(self.program, item, impl_block, None)?;
+            }
             _ => {
                 self.lowering.emit_error(
                     item.span,
-                    "only const and struct items are supported inside function bodies",
+                    "only const, struct, enum, and impl items are supported inside function bodies",
                 );
             }
         }
