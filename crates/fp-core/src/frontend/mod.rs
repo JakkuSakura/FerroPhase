@@ -1,4 +1,5 @@
 use crate::ast::{AstSerializer, Last, Node};
+use crate::diagnostics::DiagnosticManager;
 use crate::error::Result;
 use std::path::Path;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ pub struct FrontendResult {
     pub ast: Node,
     pub serializer: Arc<dyn AstSerializer>,
     pub snapshot: Option<FrontendSnapshot>,
+    pub diagnostics: Arc<DiagnosticManager>,
 }
 
 /// Trait implemented by every source-language frontend.
