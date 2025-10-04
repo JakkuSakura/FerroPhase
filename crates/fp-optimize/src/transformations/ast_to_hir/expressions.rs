@@ -1,6 +1,8 @@
 use super::*;
 use ast::ItemKind;
 use fp_core::pat::PatternKind;
+use fp_rust::parser::{parse_expr as parse_raw_expr, parse_type as parse_raw_type};
+use fp_rust::RawExpr;
 
 impl HirGenerator {
     /// Transform an AST expression to HIR expression
@@ -31,10 +33,43 @@ impl HirGenerator {
             ExprKind::ArrayRepeat(array_repeat) => {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
-            ExprKind::Any(_) => {
-                // Handle macro expressions and other "any" expressions
-                // For now, return a placeholder boolean literal
-                hir::ExprKind::Literal(hir::Lit::Bool(false))
+            ExprKind::Any(any) => {
+                if let Some(raw_expr) = any.downcast_ref::<RawExpr>() {
+                    match &raw_expr.raw {
+                        syn::Expr::Cast(cast_expr) => {
+                            let operand_syn = (*cast_expr.expr).clone();
+                            let ty_syn = (*cast_expr.ty).clone();
+
+                            let operand_ast = parse_raw_expr(operand_syn).map_err(|err| {
+                                crate::error::optimization_error(format!(
+                                    "failed to parse cast operand: {}",
+                                    err
+                                ))
+                            })?;
+                            let operand_hir = self.transform_expr_to_hir(&operand_ast)?;
+
+                            let ty_ast = parse_raw_type(ty_syn).map_err(|err| {
+                                crate::error::optimization_error(format!(
+                                    "failed to parse cast type: {}",
+                                    err
+                                ))
+                            })?;
+                            let ty_hir = self.transform_type_to_hir(&ty_ast)?;
+
+                            hir::ExprKind::Cast(Box::new(operand_hir), Box::new(ty_hir))
+                        }
+                        other => {
+                            return Err(crate::error::optimization_error(format!(
+                                "unsupported dynamic expression in cast lowering: {:?}",
+                                other
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "unsupported dynamic expression payload for `Any` node",
+                    ));
+                }
             }
             ExprKind::FormatString(format_str) => {
                 self.transform_format_string_to_hir(format_str)?

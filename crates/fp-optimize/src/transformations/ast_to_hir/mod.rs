@@ -34,6 +34,7 @@ pub struct HirGenerator {
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
     preassigned_def_ids: HashMap<usize, hir::DefId>,
+    enum_variant_def_ids: HashMap<String, hir::DefId>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -88,6 +89,7 @@ impl HirGenerator {
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
+            enum_variant_def_ids: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -369,6 +371,7 @@ impl HirGenerator {
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
+            enum_variant_def_ids: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -396,6 +399,7 @@ impl HirGenerator {
         self.global_value_defs.clear();
         self.global_type_defs.clear();
         self.preassigned_def_ids.clear();
+        self.enum_variant_def_ids.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -520,6 +524,29 @@ impl HirGenerator {
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
+                }
+                ItemKind::DefEnum(def_enum) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_type_def(&def_enum.name.name, def_id, &def_enum.visibility);
+
+                    for variant in &def_enum.value.variants {
+                        let variant_def_id = self.next_def_id();
+                        self.register_value_def(
+                            &variant.name.name,
+                            variant_def_id,
+                            &def_enum.visibility,
+                        );
+
+                        let qualified_variant = format!("{}::{}", def_enum.name.name, variant.name.name);
+                        let fully_qualified = self.qualify_name(&qualified_variant);
+                        self.record_value_symbol(
+                            &qualified_variant,
+                            hir::Res::Def(variant_def_id),
+                            &def_enum.visibility,
+                        );
+                        self.enum_variant_def_ids
+                            .insert(fully_qualified, variant_def_id);
+                    }
                 }
                 ItemKind::DefFunction(def_fn) => {
                     let def_id = self.allocate_def_id_for_item(item);
@@ -754,6 +781,72 @@ impl HirGenerator {
                         generics,
                     }),
                     self.map_visibility(&struct_def.visibility),
+                )
+            }
+            ItemKind::DefEnum(enum_def) => {
+                self.register_type_def(&enum_def.name.name, def_id, &enum_def.visibility);
+                let qualified_enum_name = self.qualify_name(&enum_def.name.name);
+                let generics = hir::Generics {
+                    params: Vec::new(),
+                    where_clause: None,
+                };
+
+                let variants = enum_def
+                    .value
+                    .variants
+                    .iter()
+                    .map(|variant| {
+                        let qualified_variant = format!(
+                            "{}::{}",
+                            enum_def.name.name,
+                            variant.name.name
+                        );
+                        let fully_qualified = self.qualify_name(&qualified_variant);
+
+                        let variant_def_id = if let Some(def_id) =
+                            self.enum_variant_def_ids.get(&fully_qualified).copied()
+                        {
+                            def_id
+                        } else {
+                            let new_id = self.next_def_id();
+                            self.enum_variant_def_ids
+                                .insert(fully_qualified.clone(), new_id);
+                            new_id
+                        };
+
+                        self.register_value_def(
+                            &variant.name.name,
+                            variant_def_id,
+                            &enum_def.visibility,
+                        );
+                        self.record_value_symbol(
+                            &qualified_variant,
+                            hir::Res::Def(variant_def_id),
+                            &enum_def.visibility,
+                        );
+
+                        let discriminant = variant
+                            .discriminant
+                            .as_ref()
+                            .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                            .transpose()?;
+
+                        Ok(hir::EnumVariant {
+                            hir_id: self.next_id(),
+                            def_id: variant_def_id,
+                            name: variant.name.name.clone(),
+                            discriminant,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                (
+                    hir::ItemKind::Enum(hir::Enum {
+                        name: qualified_enum_name,
+                        variants,
+                        generics,
+                    }),
+                    self.map_visibility(&enum_def.visibility),
                 )
             }
             ItemKind::DefFunction(func_def) => {

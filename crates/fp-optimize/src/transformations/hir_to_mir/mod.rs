@@ -70,6 +70,7 @@ pub struct MirLowering {
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     struct_defs: HashMap<hir::DefId, RegisteredStruct>,
+    enum_def_types: HashMap<hir::DefId, Ty>,
     const_values: HashMap<hir::DefId, ConstInfo>,
     function_sigs: HashMap<hir::DefId, mir::FunctionSig>,
     runtime_functions: HashMap<String, mir::FunctionSig>,
@@ -100,6 +101,7 @@ impl MirLowering {
             diagnostics: Vec::new(),
             has_errors: false,
             struct_defs: HashMap::new(),
+            enum_def_types: HashMap::new(),
             const_values: HashMap::new(),
             function_sigs: HashMap::new(),
             runtime_functions: Self::default_runtime_signatures(),
@@ -115,6 +117,9 @@ impl MirLowering {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
                     self.register_struct(item.def_id, def);
+                }
+                hir::ItemKind::Enum(def) => {
+                    self.register_enum(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Const(const_item) => {
                     let mir_item = self.lower_const(item.def_id, const_item)?;
@@ -396,6 +401,9 @@ impl MirLowering {
                 if let Some(info) = self.struct_defs.get(def_id) {
                     return info.ty.clone();
                 }
+                if let Some(enum_ty) = self.enum_def_types.get(def_id) {
+                    return enum_ty.clone();
+                }
                 if let Some(sig) = self.function_sigs.get(def_id) {
                     // Treat function types as function pointers when referenced as types
                     return Ty {
@@ -506,6 +514,95 @@ impl MirLowering {
                 ty: struct_ty,
             },
         );
+    }
+
+    fn register_enum(&mut self, def_id: hir::DefId, enm: &hir::Enum, span: Span) {
+        if self.enum_def_types.contains_key(&def_id) {
+            return;
+        }
+
+        let enum_ty = Ty {
+            kind: TyKind::Int(IntTy::Isize),
+        };
+        self.enum_def_types.insert(def_id, enum_ty.clone());
+
+        let mut next_value: i64 = 0;
+        for variant in &enm.variants {
+            let (value, value_span) = if let Some(expr) = &variant.discriminant {
+                match self.eval_int_expr(expr) {
+                    Some(val) => {
+                        next_value = val.saturating_add(1);
+                        (val, expr.span)
+                    }
+                    None => {
+                        self.emit_error(
+                            expr.span,
+                            format!(
+                                "unable to evaluate discriminant for enum variant `{}`",
+                                variant.name
+                            ),
+                        );
+                        let val = next_value;
+                        next_value = next_value.saturating_add(1);
+                        (val, expr.span)
+                    }
+                }
+            } else {
+                let val = next_value;
+                next_value = next_value.saturating_add(1);
+                (val, span)
+            };
+
+            let constant = mir::Constant {
+                span: value_span,
+                user_ty: None,
+                literal: mir::ConstantKind::Int(value),
+            };
+
+            self.const_values.insert(
+                variant.def_id,
+                ConstInfo {
+                    ty: enum_ty.clone(),
+                    value: constant,
+                },
+            );
+        }
+    }
+
+    fn eval_int_expr(&mut self, expr: &hir::Expr) -> Option<i64> {
+        match &expr.kind {
+            hir::ExprKind::Literal(hir::Lit::Integer(value)) => Some(*value),
+            hir::ExprKind::Unary(hir::UnOp::Neg, inner) => self.eval_int_expr(inner).map(|v| -v),
+            hir::ExprKind::Binary(op, lhs, rhs) => {
+                let left = self.eval_int_expr(lhs)?;
+                let right = self.eval_int_expr(rhs)?;
+                match op {
+                    hir::BinOp::Add => Some(left.saturating_add(right)),
+                    hir::BinOp::Sub => Some(left.saturating_sub(right)),
+                    hir::BinOp::Mul => Some(left.saturating_mul(right)),
+                    hir::BinOp::Div => Some(if right != 0 { left / right } else { return None; }),
+                    hir::BinOp::Rem => Some(if right != 0 { left % right } else { return None; }),
+                    _ => None,
+                }
+            }
+            hir::ExprKind::Path(path) => {
+                if let Some(hir::Res::Def(def_id)) = &path.res {
+                    if let Some(info) = self.const_values.get(def_id) {
+                        match &info.value.literal {
+                            mir::ConstantKind::Int(value) => Some(*value),
+                            mir::ConstantKind::UInt(value) => Some(*value as i64),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            hir::ExprKind::Cast(inner, _) => self.eval_int_expr(inner),
+            _ => None,
+        }
     }
 
     fn register_const_value(&mut self, def_id: hir::DefId, konst: &hir::Const) {
@@ -997,6 +1094,9 @@ impl<'a> BodyBuilder<'a> {
             hir::ItemKind::Struct(def) => {
                 self.lowering.register_struct(item.def_id, def);
             }
+            hir::ItemKind::Enum(enm) => {
+                self.lowering.register_enum(item.def_id, enm, item.span);
+            }
             hir::ItemKind::Const(konst) => {
                 self.lowering.register_const_value(item.def_id, konst);
                 self.const_items.insert(item.def_id, konst.clone());
@@ -1461,6 +1561,24 @@ impl<'a> BodyBuilder<'a> {
                     ty: self.lowering.error_ty(),
                 })
             }
+            hir::ExprKind::Cast(inner, ty_expr) => {
+                let operand = self.lower_operand(inner, None)?;
+                let target_ty = self.lowering.lower_type_expr(ty_expr);
+                let local_id = self.allocate_temp(target_ty.clone(), expr.span);
+                let place_local = mir::Place::from_local(local_id);
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place_local.clone(),
+                        mir::Rvalue::Cast(mir::CastKind::Misc, operand.operand, target_ty.clone()),
+                    ),
+                };
+                self.push_statement(statement);
+                Ok(OperandInfo {
+                    operand: mir::Operand::copy(place_local),
+                    ty: target_ty,
+                })
+            }
             hir::ExprKind::IntrinsicCall(call) => {
                 if call.kind == IntrinsicCallKind::ConstBlock {
                     if let IntrinsicCallPayload::Args { args } = &call.payload {
@@ -1734,6 +1852,21 @@ impl<'a> BodyBuilder<'a> {
                         self.local_structs
                             .insert(assignment_place.local, struct_def);
                     }
+                }
+            }
+            hir::ExprKind::Cast(inner, ty_expr) => {
+                let operand = self.lower_operand(inner, None)?;
+                let target_ty = self.lowering.lower_type_expr(ty_expr);
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place.clone(),
+                        mir::Rvalue::Cast(mir::CastKind::Misc, operand.operand, target_ty.clone()),
+                    ),
+                };
+                self.push_statement(statement);
+                if place.projection.is_empty() {
+                    self.locals[place.local as usize].ty = target_ty;
                 }
             }
             hir::ExprKind::Struct(path, fields) => {

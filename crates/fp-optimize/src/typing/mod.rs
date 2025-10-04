@@ -160,6 +160,8 @@ pub struct AstTypeInferencer {
     type_vars: Vec<TypeVar>,
     env: Vec<HashMap<String, EnvEntry>>,
     struct_defs: HashMap<String, TypeStruct>,
+    enum_defs: HashMap<String, TypeEnum>,
+    enum_variants: HashMap<String, Vec<String>>,
     struct_methods: HashMap<String, HashMap<String, MethodRecord>>,
     impl_stack: Vec<Option<ImplContext>>,
     current_level: usize,
@@ -174,6 +176,8 @@ impl AstTypeInferencer {
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
             struct_defs: HashMap::new(),
+            enum_defs: HashMap::new(),
+            enum_variants: HashMap::new(),
             struct_methods: HashMap::new(),
             impl_stack: Vec::new(),
             current_level: 0,
@@ -296,6 +300,22 @@ impl AstTypeInferencer {
                     .insert(def.name.as_str().to_string(), def.value.clone());
                 self.register_symbol(&def.name);
             }
+            ItemKind::DefEnum(def) => {
+                let enum_name = def.name.as_str().to_string();
+                self.enum_defs.insert(enum_name.clone(), def.value.clone());
+                self.register_symbol(&def.name);
+
+                let mut variant_keys = Vec::new();
+                for variant in &def.value.variants {
+                    let qualified = format!("{}::{}", enum_name, variant.name.as_str());
+                    variant_keys.push(qualified.clone());
+                    if self.lookup_env_var(&qualified).is_none() {
+                        let var = self.fresh_type_var();
+                        self.insert_env(qualified.clone(), EnvEntry::Mono(var));
+                    }
+                }
+                self.enum_variants.insert(enum_name, variant_keys);
+            }
             ItemKind::DefConst(def) => {
                 self.register_symbol(&def.name);
             }
@@ -357,6 +377,26 @@ impl AstTypeInferencer {
                 let var = self.type_from_ast_ty(&ty)?;
                 self.unify(placeholder, var)?;
                 self.generalize_symbol(def.name.as_str(), placeholder)?;
+                ty
+            }
+            ItemKind::DefEnum(def) => {
+                let ty = Ty::Enum(def.value.clone());
+                let placeholder = self.symbol_var(&def.name);
+                let var = self.type_from_ast_ty(&ty)?;
+                self.unify(placeholder, var)?;
+                self.generalize_symbol(def.name.as_str(), placeholder)?;
+
+                let enum_name = def.name.as_str().to_string();
+                if let Some(variant_keys) = self.enum_variants.get(&enum_name).cloned() {
+                    let enum_var = placeholder;
+                    for qualified in variant_keys {
+                        if let Some(variant_var) = self.lookup_env_var(qualified.as_str()) {
+                            let _ = self.unify(enum_var, variant_var);
+                            let _ = self.generalize_symbol(qualified.as_str(), variant_var);
+                        }
+                    }
+                }
+
                 ty
             }
             ItemKind::DefConst(def) => {
@@ -651,8 +691,9 @@ impl AstTypeInferencer {
             | ExprKind::Item(_)
             | ExprKind::Closured(_)
             | ExprKind::Structural(_) => {
-                self.emit_error("dynamic AST nodes are not yet supported by the type inferencer");
-                self.error_type_var()
+                let any_var = self.fresh_type_var();
+                self.bind(any_var, TypeTerm::Any);
+                any_var
             }
             ExprKind::Id(_) => {
                 self.emit_error("detached expression identifiers are not supported");
@@ -731,7 +772,7 @@ impl AstTypeInferencer {
         let lhs = self.infer_expr(binop.lhs.as_mut())?;
         let rhs = self.infer_expr(binop.rhs.as_mut())?;
         match binop.kind {
-            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div => {
+            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod => {
                 self.ensure_numeric(lhs, "binary operand")?;
                 self.unify(lhs, rhs)?;
                 Ok(lhs)
