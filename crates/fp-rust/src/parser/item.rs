@@ -216,7 +216,15 @@ fn parse_item_enum(e: syn::ItemEnum) -> Result<ItemDefEnum> {
                     Ty::any()
                 }
             };
-            Ok(EnumTypeVariant { name, value: ty })
+            let discriminant = x
+                .discriminant
+                .map(|(_, expr)| parse_expr(expr))
+                .transpose()?;
+            Ok(EnumTypeVariant {
+                name,
+                value: ty,
+                discriminant: discriminant.map(Box::new),
+            })
         })
         .try_collect()?;
     Ok(ItemDefEnum {

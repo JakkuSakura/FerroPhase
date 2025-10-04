@@ -3,9 +3,9 @@ use std::fmt::{self, Formatter};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 use super::{
-    BinOp, Block, Body, Const, Expr, ExprKind, Function, GenericArg, GenericParamKind, Generics,
-    Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Program, Stmt, StmtKind, Struct,
-    TypeExpr, TypeExprKind, UnOp, Visibility,
+    BinOp, Block, Body, Const, Enum, Expr, ExprKind, Function, GenericArg, GenericParamKind,
+    Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Program, Stmt,
+    StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 impl PrettyPrintable for Program {
@@ -28,6 +28,7 @@ fn write_item(item: &Item, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
     match &item.kind {
         ItemKind::Function(func) => write_function(item, func, f, ctx),
         ItemKind::Struct(strukt) => write_struct(item, strukt, f, ctx),
+        ItemKind::Enum(enm) => write_enum(item, enm, f, ctx),
         ItemKind::Const(konst) => write_const(item, konst, f, ctx),
         ItemKind::Impl(imp) => write_impl(item, imp, f, ctx),
     }
@@ -107,6 +108,31 @@ fn write_struct(
                 String::new()
             };
             let mut line = format!("{}{}{}", field_vis, field.name, ty);
+            line.push(',');
+            ctx.writeln(f, line)?;
+        }
+        Ok(())
+    })?;
+    ctx.writeln(f, "}")
+}
+
+fn write_enum(item: &Item, enm: &Enum, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+    let vis = fmt_visibility(&item.visibility);
+    let generics = fmt_generics(&enm.generics, ctx);
+    let span_suffix = if ctx.options.show_spans {
+        format!(" // span: {:?}", item.span)
+    } else {
+        String::new()
+    };
+
+    ctx.writeln(f, format!("{}enum {}{} {{", vis, enm.name, generics) + &span_suffix)?;
+    ctx.with_indent(|ctx| {
+        for variant in &enm.variants {
+            let mut line = variant.name.clone();
+            if let Some(expr) = &variant.discriminant {
+                line.push_str(" = ");
+                line.push_str(&format_expr_inline(expr, ctx));
+            }
             line.push(',');
             ctx.writeln(f, line)?;
         }
@@ -359,6 +385,10 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{}.{}({})", format_expr_inline(receiver, ctx), name, args)
+        }
+        ExprKind::Cast(expr, ty) => {
+            let ty_str = fmt_type_expr(ty, ctx);
+            format!("({} as {})", format_expr_inline(expr, ctx), ty_str)
         }
         ExprKind::FieldAccess(base, field) => {
             format!("{}.{}", format_expr_inline(base, ctx), field)
