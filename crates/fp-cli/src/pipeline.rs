@@ -290,7 +290,14 @@ impl Pipeline {
             ast,
             serializer,
             snapshot,
+            diagnostics,
         } = frontend.parse(source, input_path)?;
+
+        if diagnostics.has_errors() {
+            return Err(CliError::Compilation(
+                "frontend stage failed; see diagnostics for details".to_string(),
+            ));
+        }
 
         register_threadlocal_serializer(serializer.clone());
         self.serializer = Some(serializer.clone());
