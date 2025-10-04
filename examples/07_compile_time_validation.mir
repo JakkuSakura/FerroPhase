@@ -1,0 +1,38 @@
+mir::Program {
+    items:
+        fn main() -> () [body: body0]
+    bodies:
+        body0 { arg_count: 0, locals: 12 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: u64
+                _2: u64
+                _3: i32
+                _4: bool
+                _5: bool
+                _6: i32
+                _7: bool
+                _8: bool
+                _9: i32
+                _10: <??>
+                _11: i32
+            blocks:
+                bb0:
+                    s0: _1 = 24u
+                    s1: _2 = 3u
+                    terminator: call global printf("sizeof=%d, fields=%d\n", copy _1, copy _2) -> _3 then bb1
+                bb1:
+                    s0: _4 = true
+                    s1: _5 = false
+                    terminator: call global printf("has_a=%d, has_x=%d\n", copy _4, copy _5) -> _6 then bb2
+                bb2:
+                    s0: _7 = true
+                    s1: _8 = true
+                    terminator: call global printf("size_ok=%d, aligned=%d\n", copy _7, copy _8) -> _9 then bb3
+                bb3:
+                    s0: _10 = "optimized"
+                    terminator: call global printf("mode: %s\n", copy _10) -> _11 then bb4
+                bb4:
+                    terminator: return
+}

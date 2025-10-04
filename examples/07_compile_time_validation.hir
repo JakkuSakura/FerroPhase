@@ -1,0 +1,35 @@
+hir::Program {
+    fn main() -> () {
+        {
+            struct Data {
+                pub a: i64,
+                pub b: i64,
+                pub c: [u8; 16],
+            }
+            const SIZE: u64 =
+                24;
+            const FIELDS: u64 =
+                3;
+            const HAS_A: bool =
+                true;
+            const HAS_X: bool =
+                false;
+            printf("sizeof=%d, fields=%d
+", SIZE, FIELDS);
+            printf("has_a=%d, has_x=%d
+", HAS_A, HAS_X);
+            const MAX_SIZE: u64 =
+                64;
+            const SIZE_OK: bool =
+                true;
+            const IS_ALIGNED: bool =
+                true;
+            printf("size_ok=%d, aligned=%d
+", SIZE_OK, IS_ALIGNED);
+            const MODE: &str =
+                "optimized";
+            printf("mode: %s
+", MODE);
+        }
+    }
+}
