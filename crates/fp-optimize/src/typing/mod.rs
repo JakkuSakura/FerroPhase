@@ -2151,7 +2151,8 @@ impl AstTypeInferencer {
 
     fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var)?;
-        let struct_name = match ty {
+        let resolved_ty = Self::peel_reference(ty.clone());
+        let struct_name = match resolved_ty {
             Ty::Struct(struct_ty) => struct_ty.name.as_str().to_string(),
             other => {
                 self.emit_error(format!(
@@ -2162,14 +2163,27 @@ impl AstTypeInferencer {
             }
         };
 
-        if let Some(methods) = self.struct_methods.get(&struct_name) {
-            if let Some(record) = methods.get(field.as_str()) {
-                if let Some(scheme) = record.scheme.as_ref() {
-                    return Ok(self.instantiate_scheme(&scheme.clone()));
+        let record = self
+            .struct_methods
+            .get(&struct_name)
+            .and_then(|methods| methods.get(field.as_str()))
+            .cloned();
+
+        if let Some(record) = record {
+            if let Some(expected) = record.receiver_ty.as_ref() {
+                let receiver_var = self.type_from_ast_ty(expected)?;
+                let expect_ref = matches!(expected, Ty::Reference(_));
+                let actual_ref = matches!(ty, Ty::Reference(_));
+                if !expect_ref || actual_ref {
+                    self.unify(obj_var, receiver_var)?;
                 }
-                if let Some(var) = self.lookup_env_var(field.as_str()) {
-                    return Ok(var);
-                }
+            }
+
+            if let Some(scheme) = record.scheme.as_ref() {
+                return Ok(self.instantiate_scheme(scheme));
+            }
+            if let Some(var) = self.lookup_env_var(field.as_str()) {
+                return Ok(var);
             }
         }
 
