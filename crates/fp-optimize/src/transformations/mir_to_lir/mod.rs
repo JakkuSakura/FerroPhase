@@ -966,10 +966,42 @@ impl LirGenerator {
     ) -> Result<PlaceAccess> {
         let base_addr = match access {
             PlaceAccess::Address(addr) => addr,
-            PlaceAccess::Value { .. } => {
-                return Err(crate::error::optimization_error(
-                    "MIR→LIR: field projection requires addressable base",
-                ));
+            PlaceAccess::Value { value, ty, lir_ty } => {
+                let alignment = Self::alignment_for_lir_type(&lir_ty).max(1);
+                let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                let size_value =
+                    lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                let alloca_id = self.next_id();
+                self.queued_instructions.push(lir::LirInstruction {
+                    id: alloca_id,
+                    kind: lir::LirInstructionKind::Alloca {
+                        size: size_value,
+                        alignment,
+                    },
+                    type_hint: Some(pointer_type.clone()),
+                    debug_info: None,
+                });
+                let ptr_value = lir::LirValue::Register(alloca_id);
+
+                let store_id = self.next_id();
+                self.queued_instructions.push(lir::LirInstruction {
+                    id: store_id,
+                    kind: lir::LirInstructionKind::Store {
+                        value,
+                        address: ptr_value.clone(),
+                        alignment: Some(alignment),
+                        volatile: false,
+                    },
+                    type_hint: None,
+                    debug_info: None,
+                });
+
+                PlaceAddress {
+                    ptr: ptr_value,
+                    ty,
+                    lir_ty,
+                    alignment,
+                }
             }
         };
 
