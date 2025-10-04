@@ -32,6 +32,7 @@ pub struct Item {
 pub enum ItemKind {
     Function(Function),
     Struct(Struct),
+    Enum(Enum),
     Const(Const),
     Impl(Impl),
 }
@@ -63,6 +64,21 @@ pub struct Struct {
     pub name: Symbol,
     pub fields: Vec<StructField>,
     pub generics: Generics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Enum {
+    pub name: Symbol,
+    pub variants: Vec<EnumVariant>,
+    pub generics: Generics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub hir_id: HirId,
+    pub def_id: DefId,
+    pub name: Symbol,
+    pub discriminant: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +140,7 @@ pub enum ExprKind {
     Call(Box<Expr>, Vec<Expr>),
     MethodCall(Box<Expr>, Symbol, Vec<Expr>),
     FieldAccess(Box<Expr>, Symbol),
+    Cast(Box<Expr>, Box<TypeExpr>),
     Struct(Path, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Block(Block),

@@ -5,6 +5,9 @@ pub mod macros;
 mod pat;
 mod ty;
 
+pub use expr::parse_expr;
+pub use ty::parse_type;
+
 use crate::parser::expr::parse_block;
 
 use crate::parser::item::parse_fn_sig;
