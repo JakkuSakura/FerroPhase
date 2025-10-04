@@ -260,7 +260,41 @@ fn summarize_operand(op: &Operand) -> String {
 }
 
 fn summarize_constant(constant: &Constant) -> String {
-    format!("const {:?}", constant)
+    use super::ConstantKind;
+
+    match &constant.literal {
+        ConstantKind::Int(value) => value.to_string(),
+        ConstantKind::UInt(value) => format!("{}u", value),
+        ConstantKind::Float(value) => format!("{}", value),
+        ConstantKind::Bool(value) => value.to_string(),
+        ConstantKind::Str(value) => format!("\"{}\"", escape_str(value)),
+        ConstantKind::Fn(name, _) => format!("fn {}", name),
+        ConstantKind::Global(name, _) => format!("global {}", name),
+        ConstantKind::Ty(_) => "<type>".into(),
+        ConstantKind::Val(_, ty) => format!("const <{}>", ty),
+    }
+}
+
+fn escape_str(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '"' => {
+                out.push('\\');
+                out.push('"');
+            }
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{{{:x}}}", ch as u32);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 fn summarize_terminator(term: &Terminator) -> String {
