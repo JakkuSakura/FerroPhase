@@ -17,9 +17,11 @@ use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use itertools::Itertools;
 
 use eyre::{ensure, eyre, Context};
-use fp_core::diagnostics::report_error;
+use fp_core::diagnostics::{report_error, DiagnosticManager};
+use fp_core::emit_error;
 use fp_core::error::Result;
 use std::path::PathBuf;
+use std::sync::Arc;
 use syn::parse_str;
 use syn_inline_mod::InlinerBuilder;
 
@@ -105,14 +107,27 @@ pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
         body: Expr::block(body).into(),
     })
 }
-#[derive(Debug, Clone, Default)]
-pub struct RustParser;
+#[derive(Debug, Clone)]
+pub struct RustParser {
+    diagnostics: Arc<DiagnosticManager>,
+}
 
 impl RustParser {
     pub fn new() -> Self {
-        RustParser
+        Self {
+            diagnostics: Arc::new(DiagnosticManager::new()),
+        }
+    }
+
+    pub fn diagnostics(&self) -> Arc<DiagnosticManager> {
+        self.diagnostics.clone()
+    }
+
+    pub fn clear_diagnostics(&self) {
+        self.diagnostics.clear();
     }
     pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
+        self.clear_diagnostics();
         let builder = InlinerBuilder::new();
         let path = path
             .canonicalize()
@@ -141,10 +156,14 @@ impl RustParser {
                     path.display(),
                     e
                 ));
-                Ok(File {
-                    path,
-                    items: Vec::new(),
-                })
+                emit_error!(
+                    self.diagnostics.clone(),
+                    "pipeline.frontend",
+                    "Failed to parse inlined file {}: {}",
+                    path.display(),
+                    e
+                );
+                Err(e)
             }
         }
     }
@@ -166,6 +185,7 @@ impl RustParser {
     }
 
     pub fn parse_file(&mut self, source: &str, path: &std::path::Path) -> Result<File> {
+        self.clear_diagnostics();
         let path_buf = path.to_path_buf();
         let syn_file = match syn::parse_file(source) {
             Ok(file) => file,
@@ -182,10 +202,14 @@ impl RustParser {
             Ok(file) => Ok(file),
             Err(e) => {
                 let _ = report_error(format!("Failed to lower file {}: {}", path.display(), e));
-                Ok(File {
-                    path: path_buf,
-                    items: Vec::new(),
-                })
+                emit_error!(
+                    self.diagnostics.clone(),
+                    "pipeline.frontend",
+                    "Failed to lower file {}: {}",
+                    path.display(),
+                    e
+                );
+                Err(e)
             }
         }
     }
