@@ -1,0 +1,61 @@
+lir::Program {
+    functions:
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i64
+                %2: i64
+                %3: i32
+                %4: i1
+                %5: i1
+                %6: i32
+                %7: i1
+                %8: i1
+                %9: i32
+                %10: ptr i8
+                %11: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = alloca i32 1 align 8 : ptr i64
+                i1: store i64 24, %r0 align 8
+                i2: %r2 = alloca i32 1 align 8 : ptr i64
+                i3: store i64 3, %r2 align 8
+                i4: %r4 = load %r0 align 8 : i64
+                i5: %r5 = load %r2 align 8 : i64
+                i6: %r6 = call c @printf(c"sizeof=%d, fields=%d
+", %r4, %r5) : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i7: %r7 = alloca i32 1 align 1 : ptr i1
+                i8: store bool true, %r7 align 1
+                i9: %r9 = alloca i32 1 align 1 : ptr i1
+                i10: store bool false, %r9 align 1
+                i11: %r11 = load %r7 align 1 : i1
+                i12: %r12 = zext %r11 to i32 : i32
+                i13: %r13 = load %r9 align 1 : i1
+                i14: %r14 = zext %r13 to i32 : i32
+                i15: %r15 = call c @printf(c"has_a=%d, has_x=%d
+", %r12, %r14) : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i16: %r16 = alloca i32 1 align 1 : ptr i1
+                i17: store bool true, %r16 align 1
+                i18: %r18 = alloca i32 1 align 1 : ptr i1
+                i19: store bool true, %r18 align 1
+                i20: %r20 = load %r16 align 1 : i1
+                i21: %r21 = zext %r20 to i32 : i32
+                i22: %r22 = load %r18 align 1 : i1
+                i23: %r23 = zext %r22 to i32 : i32
+                i24: %r24 = call c @printf(c"size_ok=%d, aligned=%d
+", %r21, %r23) : i32
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i25: %r25 = alloca i32 1 align 8 : ptr ptr i8
+                i26: store c"optimized", %r25 align 8
+                i27: %r27 = load %r25 align 8 : ptr i8
+                i28: %r28 = call c @printf(c"mode: %s
+", %r27) : i32
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3]:
+                terminator: ret void
+        }
+}
