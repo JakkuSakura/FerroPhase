@@ -10,7 +10,7 @@ use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
-    Diagnostic, DiagnosticDisplayOptions, DiagnosticManager, DiagnosticReport,
+    Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager, DiagnosticReport,
 };
 use fp_core::intrinsics::runtime::RuntimeIntrinsicStrategy;
 use fp_core::pretty::{PrettyOptions, pretty};
@@ -942,6 +942,17 @@ impl Pipeline {
         let DiagnosticReport { value, diagnostics } = report;
         self.emit_diagnostics(&diagnostics, Some(stage), options);
         manager.add_diagnostics(diagnostics.clone());
+
+        let has_errors = diagnostics
+            .iter()
+            .any(|diag| diag.level == DiagnosticLevel::Error);
+
+        if has_errors {
+            return Err(CliError::Compilation(format!(
+                "{} stage failed; see diagnostics for details",
+                stage
+            )));
+        }
 
         value.ok_or_else(|| {
             CliError::Compilation(format!(

@@ -283,6 +283,18 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
             };
             return Ok(assign.into());
         }
+        syn::BinOp::RemAssign(_) => {
+            let assign = ExprAssign {
+                target: lhs_expr.clone().into(),
+                value: Expr::from(ExprKind::BinOp(ExprBinOp {
+                    kind: BinOpKind::Mod,
+                    lhs: lhs_expr.into(),
+                    rhs: rhs_expr.into(),
+                }))
+                .into(),
+            };
+            return Ok(assign.into());
+        }
         syn::BinOp::DivAssign(_) => {
             let assign = ExprAssign {
                 target: lhs_expr.clone().into(),
@@ -299,6 +311,7 @@ pub fn parse_expr_binary(b: syn::ExprBinary) -> Result<Expr> {
         syn::BinOp::Mul(_) => (BinOpKind::Mul, true),
         syn::BinOp::Sub(_) => (BinOpKind::Sub, false),
         syn::BinOp::Div(_) => (BinOpKind::Div, false),
+        syn::BinOp::Rem(_) => (BinOpKind::Mod, false),
         syn::BinOp::Gt(_) => (BinOpKind::Gt, false),
         syn::BinOp::Ge(_) => (BinOpKind::Ge, false),
         syn::BinOp::Le(_) => (BinOpKind::Le, false),
