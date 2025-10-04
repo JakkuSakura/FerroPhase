@@ -468,7 +468,7 @@ impl MirLowering {
         let mut field_index = HashMap::new();
 
         #[allow(clippy::needless_collect)]
-        let struct_name = strukt.name.clone();
+        let _struct_name = strukt.name.clone();
 
         for (idx, field) in strukt.fields.iter().enumerate() {
             let field_ty = self.lower_type_expr(&field.ty);
@@ -1507,9 +1507,10 @@ impl<'a> BodyBuilder<'a> {
                 });
                 let local_id = self.allocate_temp(ty.clone(), expr.span);
                 self.lower_expr_into_place(expr, mir::Place::from_local(local_id), &ty)?;
+                let actual_ty = self.locals[local_id as usize].ty.clone();
                 Ok(OperandInfo {
                     operand: mir::Operand::copy(mir::Place::from_local(local_id)),
-                    ty,
+                    ty: actual_ty,
                 })
             }
         }
@@ -1931,7 +1932,7 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if let Some((info, cached_place)) = resolved_info {
+                if let Some((info, _cached_place)) = resolved_info {
                     let receiver_expected = info.sig.inputs.get(0);
                     let receiver_operand = self.lower_operand(receiver, receiver_expected)?;
 
