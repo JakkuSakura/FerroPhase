@@ -25,6 +25,7 @@ struct MethodLoweringInfo {
     sig: mir::FunctionSig,
     fn_name: String,
     fn_ty: Ty,
+    struct_def: Option<hir::DefId>,
 }
 
 #[derive(Clone, Debug)]
@@ -466,6 +467,9 @@ impl MirLowering {
         let mut fields = Vec::new();
         let mut field_index = HashMap::new();
 
+        #[allow(clippy::needless_collect)]
+        let struct_name = strukt.name.clone();
+
         for (idx, field) in strukt.fields.iter().enumerate() {
             let field_ty = self.lower_type_expr(&field.ty);
             let struct_def = match &field.ty.kind {
@@ -561,13 +565,17 @@ impl MirLowering {
 
                     let fn_name = function.sig.name.clone();
                     let fn_ty = self.function_pointer_ty(&sig);
+                    let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
                     let info = MethodLoweringInfo {
                         sig: sig.clone(),
                         fn_name: fn_name.clone(),
                         fn_ty: fn_ty.clone(),
+                        struct_def,
                     };
 
                     self.method_lookup.insert(fn_name, info.clone());
+                    self.method_lookup
+                        .insert(format!("{}::{}", struct_name, impl_item.name), info.clone());
                     self.struct_methods
                         .entry(struct_name.clone())
                         .or_default()
@@ -830,14 +838,26 @@ impl<'a> BodyBuilder<'a> {
 
     fn bind_pattern(&mut self, pat: &hir::Pat, local: mir::LocalId, ty: Option<&Ty>) {
         match &pat.kind {
-            hir::PatKind::Binding { mutable, .. } => {
+            hir::PatKind::Binding { name, mutable } => {
                 self.local_map.insert(pat.hir_id, local);
                 if let Some(decl) = self.locals.get_mut(local as usize) {
                     if *mutable {
                         decl.mutability = mir::Mutability::Mut;
                     }
-                    if let Some(struct_def) = ty.and_then(|ty| self.struct_def_from_ty(ty)) {
-                        self.local_structs.insert(local, struct_def);
+                    let mut struct_def = ty.and_then(|ty| self.struct_def_from_ty(ty));
+                    if let Some(ctx) = &self.method_context {
+                        if let Some(def_id) = ctx.def_id {
+                            let name_matches_self = name.as_str() == "self";
+                            let ty_matches_self = ty
+                                .map(|ty| self.ty_matches(ty, &ctx.mir_self_ty))
+                                .unwrap_or(false);
+                            if name_matches_self || ty_matches_self {
+                                struct_def = Some(def_id);
+                            }
+                        }
+                    }
+                    if let Some(def_id) = struct_def {
+                        self.local_structs.insert(local, def_id);
                     }
                 }
             }
@@ -854,10 +874,27 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn struct_def_from_ty(&self, ty: &Ty) -> Option<hir::DefId> {
-        self.lowering
-            .struct_defs
-            .iter()
-            .find_map(|(def_id, info)| (info.ty == *ty).then_some(*def_id))
+        match &ty.kind {
+            TyKind::Ref(_, inner, _) => self.struct_def_from_ty(inner.as_ref()),
+            TyKind::RawPtr(type_and_mut) => self.struct_def_from_ty(type_and_mut.ty.as_ref()),
+            _ => self
+                .lowering
+                .struct_defs
+                .iter()
+                .find_map(|(def_id, info)| (info.ty == *ty).then_some(*def_id)),
+        }
+    }
+
+    fn ty_matches(&self, lhs: &Ty, rhs: &Ty) -> bool {
+        fn strip_refs<'a>(ty: &'a Ty) -> &'a Ty {
+            match &ty.kind {
+                TyKind::Ref(_, inner, _) => strip_refs(inner.as_ref()),
+                TyKind::RawPtr(type_and_mut) => strip_refs(type_and_mut.ty.as_ref()),
+                _ => ty,
+            }
+        }
+
+        strip_refs(lhs) == strip_refs(rhs)
     }
 
     fn lower(mut self) -> Result<mir::Body> {
@@ -976,6 +1013,19 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_expr_statement(&mut self, expr: &hir::Expr) -> Result<()> {
         match &expr.kind {
+            hir::ExprKind::Assign(place_expr, value_expr) => {
+                let place_info = match self.lower_place(place_expr)? {
+                    Some(info) => info,
+                    None => {
+                        self.lowering
+                            .emit_error(place_expr.span, "assignment target is not addressable");
+                        return Ok(());
+                    }
+                };
+
+                let expected_ty = place_info.ty.clone();
+                self.lower_expr_into_place(value_expr, place_info.place, &expected_ty)?;
+            }
             hir::ExprKind::Call(callee, args) => {
                 self.lower_call(expr, callee, args, None)?;
             }
@@ -1122,7 +1172,11 @@ impl<'a> BodyBuilder<'a> {
         args: &[hir::Expr],
         destination: Option<(mir::Place, Ty)>,
     ) -> Result<Option<PlaceInfo>> {
-        let (func_operand, sig, _name) = self.resolve_callee(callee)?;
+        let (func_operand, sig, callee_name) = self.resolve_callee(callee)?;
+        let associated_struct = callee_name
+            .as_ref()
+            .and_then(|name| self.lowering.method_lookup.get(name))
+            .and_then(|info| info.struct_def);
 
         let mut lowered_args = Vec::with_capacity(args.len());
         for (idx, arg) in args.iter().enumerate() {
@@ -1134,11 +1188,19 @@ impl<'a> BodyBuilder<'a> {
         let continue_block = self.new_block();
 
         let (mir_destination, place_info) = match destination {
-            Some((place, ty)) => {
+            Some((place, _ty)) => {
+                let result_ty = sig.output.clone();
+                let struct_def = associated_struct.or_else(|| self.struct_def_from_ty(&result_ty));
+                if (place.local as usize) < self.locals.len() {
+                    self.locals[place.local as usize].ty = result_ty.clone();
+                }
+                if let Some(def_id) = struct_def {
+                    self.local_structs.insert(place.local, def_id);
+                }
                 let info = PlaceInfo {
                     place: place.clone(),
-                    ty: ty.clone(),
-                    struct_def: self.struct_def_from_ty(&ty),
+                    ty: result_ty,
+                    struct_def,
                 };
                 (Some((place, continue_block)), Some(info))
             }
@@ -1164,6 +1226,19 @@ impl<'a> BodyBuilder<'a> {
 
         self.blocks[self.current_block as usize].terminator = Some(terminator);
         self.current_block = continue_block;
+
+        if place_info.is_none() {
+            if let Some((place, _)) = mir_destination {
+                let result_ty = sig.output.clone();
+                if (place.local as usize) < self.locals.len() {
+                    self.locals[place.local as usize].ty = result_ty.clone();
+                }
+                let struct_def = associated_struct.or_else(|| self.struct_def_from_ty(&result_ty));
+                if let Some(def_id) = struct_def {
+                    self.local_structs.insert(place.local, def_id);
+                }
+            }
+        }
 
         Ok(place_info)
     }
@@ -1226,6 +1301,35 @@ impl<'a> BodyBuilder<'a> {
             .collect::<Vec<_>>()
             .join("::");
 
+        if resolved_path.segments.len() >= 2 {
+            let method_name = resolved_path
+                .segments
+                .last()
+                .expect("segments len checked")
+                .name
+                .clone();
+            let struct_name = resolved_path
+                .segments
+                .get(resolved_path.segments.len() - 2)
+                .expect("segments len checked")
+                .name
+                .clone();
+            if let Some(info) = self
+                .lowering
+                .struct_methods
+                .get(&struct_name)
+                .and_then(|methods| methods.get(&method_name))
+            {
+                let operand = mir::Operand::Constant(mir::Constant {
+                    span: callee.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Fn(info.fn_name.clone(), info.fn_ty.clone()),
+                });
+                let qualified_name = format!("{}::{}", struct_name, method_name);
+                return Ok((operand, info.sig.clone(), Some(qualified_name)));
+            }
+        }
+
         if let Some(sig) = self.lowering.runtime_functions.get(&name).cloned() {
             let ty = self.lowering.c_function_pointer_ty(&sig);
             let operand = mir::Operand::Constant(mir::Constant {
@@ -1261,6 +1365,31 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
         if let Some(place) = self.lower_place(expr)? {
+            if let Some(expected_ty) = expected {
+                if let TyKind::Ref(_, _, mutability) = &expected_ty.kind {
+                    let region = ();
+                    let borrow_kind = match mutability {
+                        Mutability::Mut => mir::BorrowKind::Mut {
+                            allow_two_phase_borrow: false,
+                        },
+                        Mutability::Not => mir::BorrowKind::Shared,
+                    };
+                    let temp_local = self.allocate_temp(expected_ty.clone(), expr.span);
+                    let temp_place = mir::Place::from_local(temp_local);
+                    let assign = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            temp_place.clone(),
+                            mir::Rvalue::Ref(region, borrow_kind, place.place.clone()),
+                        ),
+                    };
+                    self.push_statement(assign);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(temp_place),
+                        ty: expected_ty.clone(),
+                    });
+                }
+            }
             return Ok(OperandInfo {
                 operand: mir::Operand::copy(place.place.clone()),
                 ty: place.ty,
@@ -1456,10 +1585,17 @@ impl<'a> BodyBuilder<'a> {
                 match &path.res {
                     Some(hir::Res::Local(hir_id)) => {
                         if let Some(local_id) = self.local_map.get(hir_id) {
-                            let ty = self.locals[*local_id as usize].ty.clone();
-                            let struct_def = self.local_structs.get(local_id).copied();
+                            let local_id = *local_id;
+                            let ty = self.locals[local_id as usize].ty.clone();
+                            let mut struct_def = self.local_structs.get(&local_id).copied();
+                            if struct_def.is_none() {
+                                if let Some(derived) = self.struct_def_from_ty(&ty) {
+                                    self.local_structs.insert(local_id, derived);
+                                    struct_def = Some(derived);
+                                }
+                            }
                             return Ok(Some(PlaceInfo {
-                                place: mir::Place::from_local(*local_id),
+                                place: mir::Place::from_local(local_id),
                                 ty,
                                 struct_def,
                             }));
@@ -1518,7 +1654,29 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let struct_def = match base_place.struct_def {
+                let mut place = base_place.place.clone();
+                let mut base_ty = base_place.ty.clone();
+                let mut struct_def = base_place.struct_def;
+
+                loop {
+                    match &base_ty.kind {
+                        TyKind::Ref(_, inner, _) => {
+                            place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = inner.as_ref().clone();
+                        }
+                        TyKind::RawPtr(type_and_mut) => {
+                            place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = type_and_mut.ty.as_ref().clone();
+                        }
+                        _ => break,
+                    }
+                }
+
+                if struct_def.is_none() {
+                    struct_def = self.struct_def_from_ty(&base_ty);
+                }
+
+                let struct_def = match struct_def {
                     Some(def_id) => def_id,
                     None => {
                         self.lowering
@@ -1537,17 +1695,14 @@ impl<'a> BodyBuilder<'a> {
                         }
                     };
 
-                let mut place = base_place.place.clone();
                 place
                     .projection
                     .push(mir::PlaceElem::Field(field_index, field_info.ty.clone()));
 
-                let struct_def = field_info.struct_def;
-
                 Ok(Some(PlaceInfo {
                     place,
                     ty: field_info.ty.clone(),
-                    struct_def,
+                    struct_def: field_info.struct_def,
                 }))
             }
             _ => Ok(None),
@@ -1601,6 +1756,42 @@ impl<'a> BodyBuilder<'a> {
                     self.locals[place.local as usize].ty = result_ty;
                 }
             }
+            hir::ExprKind::Unary(op, operand_expr) => match op {
+                hir::UnOp::Neg | hir::UnOp::Not => {
+                    let operand = self.lower_operand(operand_expr, None)?;
+                    let mir_op = match Self::convert_un_op(op) {
+                        Some(op) => op,
+                        None => unreachable!("Neg/Not must convert to MIR op"),
+                    };
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::UnaryOp(mir_op, operand.operand),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    if place.projection.is_empty() {
+                        self.locals[place.local as usize].ty = operand.ty.clone();
+                    }
+                }
+                hir::UnOp::Deref => {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "dereference expressions are not yet supported for MIR assignment",
+                    );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place,
+                            mir::Rvalue::Use(mir::Operand::Constant(
+                                self.lowering.error_constant(expr.span),
+                            )),
+                        ),
+                    };
+                    self.push_statement(statement);
+                }
+            },
             hir::ExprKind::Block(block) => {
                 for stmt in &block.stmts {
                     self.lower_stmt(stmt)?;
@@ -1742,14 +1933,7 @@ impl<'a> BodyBuilder<'a> {
 
                 if let Some((info, cached_place)) = resolved_info {
                     let receiver_expected = info.sig.inputs.get(0);
-                    let receiver_operand = if let Some(place_info) = cached_place {
-                        OperandInfo {
-                            operand: mir::Operand::copy(place_info.place.clone()),
-                            ty: place_info.ty.clone(),
-                        }
-                    } else {
-                        self.lower_operand(receiver, receiver_expected)?
-                    };
+                    let receiver_operand = self.lower_operand(receiver, receiver_expected)?;
 
                     let mut lowered_args = Vec::with_capacity(args.len() + 1);
                     lowered_args.push(receiver_operand.operand);
@@ -1983,6 +2167,14 @@ impl<'a> BodyBuilder<'a> {
             hir::BinOp::Le => mir::BinOp::Le,
             hir::BinOp::Gt => mir::BinOp::Gt,
             hir::BinOp::Ge => mir::BinOp::Ge,
+        }
+    }
+
+    fn convert_un_op(op: &hir::UnOp) -> Option<mir::UnOp> {
+        match op {
+            hir::UnOp::Not => Some(mir::UnOp::Not),
+            hir::UnOp::Neg => Some(mir::UnOp::Neg),
+            hir::UnOp::Deref => None,
         }
     }
 
