@@ -16,7 +16,7 @@ use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use itertools::Itertools;
 
-use eyre::{ensure, eyre, Context};
+use eyre::{eyre, Context};
 use fp_core::diagnostics::{report_error, DiagnosticManager};
 use fp_core::emit_error;
 use fp_core::error::Result;
@@ -35,12 +35,16 @@ pub fn parse_path(p: syn::Path) -> Result<Path> {
             .into_iter()
             .map(|x| {
                 let ident = parse_ident(x.ident);
-                ensure!(
-                    x.arguments.is_none(),
-                    "Does not support path arguments: {:?}",
-                    x.arguments
-                );
-                Ok(ident)
+                if matches!(
+                    x.arguments,
+                    syn::PathArguments::None
+                        | syn::PathArguments::AngleBracketed(_)
+                        | syn::PathArguments::Parenthesized(_)
+                ) {
+                    Ok(ident)
+                } else {
+                    bail!("Does not support path arguments: {:?}", x.arguments)
+                }
             })
             .try_collect()?,
     })
