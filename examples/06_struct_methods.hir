@@ -1,0 +1,85 @@
+hir::Program {
+    struct Point {
+        pub x: i64,
+        pub y: i64,
+    }
+
+    impl Point {
+        fn new(x: i64, y: i64) -> Self {
+            // params: [x: i64, y: i64]
+            Self { x: x, y: y }
+        }
+
+        fn translate(self: &Point, dx: i64, dy: i64) -> () {
+            // params: [self: &Point, dx: i64, dy: i64]
+            {
+                self.x = (self.x + dx);
+                self.y = (self.y + dy);
+            }
+        }
+
+        fn distance2(self: &Point, other: &Self) -> i64 {
+            // params: [self: &Point, other: &Self]
+            {
+                let dx = (self.x - other.x);
+                let dy = (self.y - other.y);
+                ((dx * dx) + (dy * dy))
+                ((dx * dx) + (dy * dy))
+            }
+        }
+    }
+
+    struct Rectangle {
+        pub width: i64,
+        pub height: i64,
+    }
+
+    impl Rectangle {
+        fn new(width: i64, height: i64) -> Self {
+            // params: [width: i64, height: i64]
+            Self { width: width, height: height }
+        }
+
+        fn area(self: &Rectangle) -> i64 {
+            // params: [self: &Rectangle]
+            (self.width * self.height)
+        }
+
+        fn perimeter(self: &Rectangle) -> i64 {
+            // params: [self: &Rectangle]
+            (2 * (self.width + self.height))
+        }
+
+        fn is_square(self: &Rectangle) -> bool {
+            // params: [self: &Rectangle]
+            (self.width == self.height)
+        }
+    }
+
+    fn main() -> () {
+        {
+            printf("=== Struct Operations ===
+");
+            let mut p1 = Point::new(10, 20);
+            let p2 = Point::new(5, 15);
+            printf("p1 = (%d, %d)
+", p1.x, p1.y);
+            printf("p2 = (%d, %d)
+", p2.x, p2.y);
+            p1.translate(3, (-4));
+            printf("p1 after translate = (%d, %d)
+", p1.x, p1.y);
+            printf("Distance²(p1, p2) = %d
+", p1.distance2(p2));
+            let rect = Rectangle::new(10, 5);
+            printf("Rectangle: %d×%d
+", rect.width, rect.height);
+            printf("  area = %d
+", rect.area());
+            printf("  perimeter = %d
+", rect.perimeter());
+            printf("  is_square = %d
+", rect.is_square());
+        }
+    }
+}
