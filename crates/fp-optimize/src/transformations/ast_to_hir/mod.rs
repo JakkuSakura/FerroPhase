@@ -537,7 +537,8 @@ impl HirGenerator {
                             &def_enum.visibility,
                         );
 
-                        let qualified_variant = format!("{}::{}", def_enum.name.name, variant.name.name);
+                        let qualified_variant =
+                            format!("{}::{}", def_enum.name.name, variant.name.name);
                         let fully_qualified = self.qualify_name(&qualified_variant);
                         self.record_value_symbol(
                             &qualified_variant,
@@ -796,11 +797,8 @@ impl HirGenerator {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let qualified_variant = format!(
-                            "{}::{}",
-                            enum_def.name.name,
-                            variant.name.name
-                        );
+                        let qualified_variant =
+                            format!("{}::{}", enum_def.name.name, variant.name.name);
                         let fully_qualified = self.qualify_name(&qualified_variant);
 
                         let variant_def_id = if let Some(def_id) =

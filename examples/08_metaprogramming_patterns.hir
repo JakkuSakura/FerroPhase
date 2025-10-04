@@ -1,0 +1,37 @@
+hir::Program {
+    fn main() -> () {
+        {
+            const FIELD_COUNT: u64 =
+                3;
+            const TYPE_NAME: &str =
+                "Point3D";
+            struct Point3D {
+                pub x: i64,
+                pub y: i64,
+                pub z: i64,
+            }
+            impl Point3D {
+                fn type_name() -> &str {
+                    TYPE_NAME
+                }
+
+                fn field_count() -> u64 {
+                    FIELD_COUNT
+                }
+            }
+            printf("%s has %d fields
+", Point3D::type_name(), Point3D::field_count());
+            const VARIANT_A: u8 =
+                1;
+            const VARIANT_B: u8 =
+                2;
+            enum Tag {
+                A = (VARIANT_A as isize),
+                B = (VARIANT_B as isize),
+            }
+            let tag = Tag::A;
+            printf("tag discriminant: %d
+", (tag as u8));
+        }
+    }
+}

@@ -1,0 +1,828 @@
+File {
+    path: "examples/08_metaprogramming_patterns.rs",
+    items: [
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #main,
+                    ty: Some(
+                        TypeFunction {
+                            params: [],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #main,
+                        ),
+                        receiver: None,
+                        params: [],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U64,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #FIELD_COUNT,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 3,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Reference(
+                                                    TypeReference {
+                                                        ty: Primitive(
+                                                            String,
+                                                        ),
+                                                        mutability: None,
+                                                        lifetime: None,
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Primitive(
+                                                                    String,
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #TYPE_NAME,
+                                                    ty: Some(
+                                                        Reference(
+                                                            TypeReference {
+                                                                ty: Expr(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Locator(
+                                                                            #str,
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                                mutability: None,
+                                                                lifetime: None,
+                                                            },
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            String(
+                                                                ValueString {
+                                                                    value: "Point3D",
+                                                                    owned: false,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Struct(
+                                                    TypeStruct {
+                                                        name: #Point3D,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #z,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefStruct(
+                                                ItemDefStruct {
+                                                    visibility: Private,
+                                                    name: #Point3D,
+                                                    value: TypeStruct {
+                                                        name: #Point3D,
+                                                        fields: [
+                                                            StructuralField {
+                                                                name: #x,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #y,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            StructuralField {
+                                                                name: #z,
+                                                                value: Primitive(
+                                                                    Int(
+                                                                        I64,
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Unit(
+                                                    TypeUnit,
+                                                ),
+                                            ),
+                                            kind: Impl(
+                                                ItemImpl {
+                                                    trait_ty: None,
+                                                    self_ty: Expr {
+                                                        ty: None,
+                                                        kind: Locator(
+                                                            #Point3D,
+                                                        ),
+                                                    },
+                                                    items: [
+                                                        Item {
+                                                            ty: Some(
+                                                                Function(
+                                                                    TypeFunction {
+                                                                        params: [],
+                                                                        generics_params: [],
+                                                                        ret_ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            kind: DefFunction(
+                                                                ItemDefFunction {
+                                                                    ty_annotation: Some(
+                                                                        Function(
+                                                                            TypeFunction {
+                                                                                params: [],
+                                                                                generics_params: [],
+                                                                                ret_ty: Some(
+                                                                                    Reference(
+                                                                                        TypeReference {
+                                                                                            ty: Primitive(
+                                                                                                String,
+                                                                                            ),
+                                                                                            mutability: None,
+                                                                                            lifetime: None,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                    attrs: [],
+                                                                    name: #type_name,
+                                                                    ty: Some(
+                                                                        TypeFunction {
+                                                                            params: [],
+                                                                            generics_params: [],
+                                                                            ret_ty: Some(
+                                                                                Reference(
+                                                                                    TypeReference {
+                                                                                        ty: Primitive(
+                                                                                            String,
+                                                                                        ),
+                                                                                        mutability: None,
+                                                                                        lifetime: None,
+                                                                                    },
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    sig: FunctionSignature {
+                                                                        name: Some(
+                                                                            #type_name,
+                                                                        ),
+                                                                        receiver: None,
+                                                                        params: [],
+                                                                        generics_params: [],
+                                                                        ret_ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Expr(
+                                                                                        Expr {
+                                                                                            ty: None,
+                                                                                            kind: Locator(
+                                                                                                #str,
+                                                                                            ),
+                                                                                        },
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: Some(
+                                                                                        #static,
+                                                                                    ),
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    body: Expr {
+                                                                        ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #TYPE_NAME,
+                                                                        ),
+                                                                    },
+                                                                    visibility: Private,
+                                                                },
+                                                            ),
+                                                        },
+                                                        Item {
+                                                            ty: Some(
+                                                                Function(
+                                                                    TypeFunction {
+                                                                        params: [],
+                                                                        generics_params: [],
+                                                                        ret_ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            kind: DefFunction(
+                                                                ItemDefFunction {
+                                                                    ty_annotation: Some(
+                                                                        Function(
+                                                                            TypeFunction {
+                                                                                params: [],
+                                                                                generics_params: [],
+                                                                                ret_ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            U64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                    attrs: [],
+                                                                    name: #field_count,
+                                                                    ty: Some(
+                                                                        TypeFunction {
+                                                                            params: [],
+                                                                            generics_params: [],
+                                                                            ret_ty: Some(
+                                                                                Primitive(
+                                                                                    Int(
+                                                                                        U64,
+                                                                                    ),
+                                                                                ),
+                                                                            ),
+                                                                        },
+                                                                    ),
+                                                                    sig: FunctionSignature {
+                                                                        name: Some(
+                                                                            #field_count,
+                                                                        ),
+                                                                        receiver: None,
+                                                                        params: [],
+                                                                        generics_params: [],
+                                                                        ret_ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                    body: Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Locator(
+                                                                            #FIELD_COUNT,
+                                                                        ),
+                                                                    },
+                                                                    visibility: Private,
+                                                                },
+                                                            ),
+                                                        },
+                                                    ],
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " has ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                    Literal(
+                                                                        " fields",
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Reference(
+                                                                                TypeReference {
+                                                                                    ty: Primitive(
+                                                                                        String,
+                                                                                    ),
+                                                                                    mutability: None,
+                                                                                    lifetime: None,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                        kind: Invoke(
+                                                                            ExprInvoke {
+                                                                                target: Function(
+                                                                                    Path {
+                                                                                        segments: [
+                                                                                            #Point3D,
+                                                                                            #type_name,
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                                args: [],
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Invoke(
+                                                                            ExprInvoke {
+                                                                                target: Function(
+                                                                                    Path {
+                                                                                        segments: [
+                                                                                            #Point3D,
+                                                                                            #field_count,
+                                                                                        ],
+                                                                                    },
+                                                                                ),
+                                                                                args: [],
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U8,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U8,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #VARIANT_A,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U8,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 1,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        U8,
+                                                    ),
+                                                ),
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U8,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    visibility: Private,
+                                                    name: #VARIANT_B,
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                U8,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: None,
+                                                        kind: Value(
+                                                            Int(
+                                                                ValueInt {
+                                                                    value: 2,
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Enum(
+                                                    TypeEnum {
+                                                        name: #Tag,
+                                                        variants: [
+                                                            EnumTypeVariant {
+                                                                name: #A,
+                                                                value: Any(
+                                                                    TypeAny,
+                                                                ),
+                                                                discriminant: Some(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Any(
+                                                                            RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: VARIANT_A, span: bytes(653..662) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: isize, span: bytes(666..671) }, arguments: PathArguments::None }] } } } },
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            },
+                                                            EnumTypeVariant {
+                                                                name: #B,
+                                                                value: Any(
+                                                                    TypeAny,
+                                                                ),
+                                                                discriminant: Some(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Any(
+                                                                            RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: VARIANT_B, span: bytes(685..694) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: isize, span: bytes(698..703) }, arguments: PathArguments::None }] } } } },
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            ),
+                                            kind: DefEnum(
+                                                ItemDefEnum {
+                                                    visibility: Private,
+                                                    name: #Tag,
+                                                    value: TypeEnum {
+                                                        name: #Tag,
+                                                        variants: [
+                                                            EnumTypeVariant {
+                                                                name: #A,
+                                                                value: Any(
+                                                                    TypeAny,
+                                                                ),
+                                                                discriminant: Some(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Any(
+                                                                            RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: VARIANT_A, span: bytes(653..662) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: isize, span: bytes(666..671) }, arguments: PathArguments::None }] } } } },
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            },
+                                                            EnumTypeVariant {
+                                                                name: #B,
+                                                                value: Any(
+                                                                    TypeAny,
+                                                                ),
+                                                                discriminant: Some(
+                                                                    Expr {
+                                                                        ty: None,
+                                                                        kind: Any(
+                                                                            RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: VARIANT_B, span: bytes(685..694) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: isize, span: bytes(698..703) }, arguments: PathArguments::None }] } } } },
+                                                                        ),
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                },
+                                            ),
+                                        },
+                                    ),
+                                    Let(
+                                        StmtLet {
+                                            pat: Pattern {
+                                                ty: Some(
+                                                    Unknown(
+                                                        TypeUnknown,
+                                                    ),
+                                                ),
+                                                kind: Ident(
+                                                    PatternIdent {
+                                                        ident: #tag,
+                                                        mutability: None,
+                                                    },
+                                                ),
+                                            },
+                                            init: Some(
+                                                Expr {
+                                                    ty: Some(
+                                                        Enum(
+                                                            TypeEnum {
+                                                                name: #Tag,
+                                                                variants: [
+                                                                    EnumTypeVariant {
+                                                                        name: #A,
+                                                                        value: Any(
+                                                                            TypeAny,
+                                                                        ),
+                                                                        discriminant: Some(
+                                                                            Expr {
+                                                                                ty: None,
+                                                                                kind: Any(
+                                                                                    RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: VARIANT_A, span: bytes(653..662) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: isize, span: bytes(666..671) }, arguments: PathArguments::None }] } } } },
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                    EnumTypeVariant {
+                                                                        name: #B,
+                                                                        value: Any(
+                                                                            TypeAny,
+                                                                        ),
+                                                                        discriminant: Some(
+                                                                            Expr {
+                                                                                ty: None,
+                                                                                kind: Any(
+                                                                                    RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: VARIANT_B, span: bytes(685..694) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: isize, span: bytes(698..703) }, arguments: PathArguments::None }] } } } },
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        ),
+                                                    ),
+                                                    kind: Locator(
+                                                        Path {
+                                                            segments: [
+                                                                #Tag,
+                                                                #A,
+                                                            ],
+                                                        },
+                                                    ),
+                                                },
+                                            ),
+                                            diverge: None,
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: IntrinsicCall(
+                                                    IntrinsicCall {
+                                                        kind: Println,
+                                                        payload: Format {
+                                                            template: ExprFormatString {
+                                                                parts: [
+                                                                    Literal(
+                                                                        "tag discriminant: ",
+                                                                    ),
+                                                                    Placeholder(
+                                                                        FormatPlaceholder {
+                                                                            arg_ref: Implicit,
+                                                                            format_spec: None,
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    U8,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Any(
+                                                                            RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: tag, span: bytes(896..899) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: u8, span: bytes(903..905) }, arguments: PathArguments::None }] } } } },
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                                kwargs: [],
+                                                            },
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+    ],
+}
