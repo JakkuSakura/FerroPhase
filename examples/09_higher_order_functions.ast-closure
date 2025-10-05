@@ -2,7 +2,23 @@ File {
     path: "examples/09_higher_order_functions.rs",
     items: [
         Item {
-            ty: None,
+            ty: Some(
+                Struct(
+                    TypeStruct {
+                        name: #__Closure0,
+                        fields: [
+                            StructuralField {
+                                name: #n,
+                                value: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                            },
+                        ],
+                    },
+                ),
+            ),
             kind: DefStruct(
                 ItemDefStruct {
                     visibility: Private,
@@ -31,12 +47,19 @@ File {
                         Function(
                             TypeFunction {
                                 params: [
-                                    Expr(
-                                        Expr {
-                                            ty: None,
-                                            kind: Locator(
-                                                #__Closure0,
-                                            ),
+                                    Struct(
+                                        TypeStruct {
+                                            name: #__Closure0,
+                                            fields: [
+                                                StructuralField {
+                                                    name: #n,
+                                                    value: Primitive(
+                                                        Int(
+                                                            I64,
+                                                        ),
+                                                    ),
+                                                },
+                                            ],
                                         },
                                     ),
                                     Primitive(
@@ -61,12 +84,19 @@ File {
                     ty: Some(
                         TypeFunction {
                             params: [
-                                Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure0,
-                                        ),
+                                Struct(
+                                    TypeStruct {
+                                        name: #__Closure0,
+                                        fields: [
+                                            StructuralField {
+                                                name: #n,
+                                                value: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ],
                                     },
                                 ),
                                 Primitive(
@@ -94,12 +124,19 @@ File {
                             FunctionParam {
                                 ty_annotation: None,
                                 name: #__env,
-                                ty: Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure0,
-                                        ),
+                                ty: Struct(
+                                    TypeStruct {
+                                        name: #__Closure0,
+                                        fields: [
+                                            StructuralField {
+                                                name: #n,
+                                                value: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ],
                                     },
                                 ),
                                 default: None,
@@ -165,12 +202,19 @@ File {
                                         ExprSelect {
                                             obj: Expr {
                                                 ty: Some(
-                                                    Expr(
-                                                        Expr {
-                                                            ty: None,
-                                                            kind: Locator(
-                                                                #__Closure0,
-                                                            ),
+                                                    Struct(
+                                                        TypeStruct {
+                                                            name: #__Closure0,
+                                                            fields: [
+                                                                StructuralField {
+                                                                    name: #n,
+                                                                    value: Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ],
                                                         },
                                                     ),
                                                 ),
@@ -191,7 +235,14 @@ File {
             ),
         },
         Item {
-            ty: None,
+            ty: Some(
+                Struct(
+                    TypeStruct {
+                        name: #__Closure1,
+                        fields: [],
+                    },
+                ),
+            ),
             kind: DefStruct(
                 ItemDefStruct {
                     visibility: Private,
@@ -211,12 +262,10 @@ File {
                         Function(
                             TypeFunction {
                                 params: [
-                                    Expr(
-                                        Expr {
-                                            ty: None,
-                                            kind: Locator(
-                                                #__Closure1,
-                                            ),
+                                    Struct(
+                                        TypeStruct {
+                                            name: #__Closure1,
+                                            fields: [],
                                         },
                                     ),
                                     Primitive(
@@ -241,12 +290,10 @@ File {
                     ty: Some(
                         TypeFunction {
                             params: [
-                                Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure1,
-                                        ),
+                                Struct(
+                                    TypeStruct {
+                                        name: #__Closure1,
+                                        fields: [],
                                     },
                                 ),
                                 Primitive(
@@ -274,12 +321,10 @@ File {
                             FunctionParam {
                                 ty_annotation: None,
                                 name: #__env,
-                                ty: Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure1,
-                                        ),
+                                ty: Struct(
+                                    TypeStruct {
+                                        name: #__Closure1,
+                                        fields: [],
                                     },
                                 ),
                                 default: None,
@@ -1461,12 +1506,19 @@ File {
                                 ],
                                 generics_params: [],
                                 ret_ty: Some(
-                                    Expr(
-                                        Expr {
-                                            ty: None,
-                                            kind: Locator(
-                                                #__Closure0,
-                                            ),
+                                    Struct(
+                                        TypeStruct {
+                                            name: #__Closure0,
+                                            fields: [
+                                                StructuralField {
+                                                    name: #n,
+                                                    value: Primitive(
+                                                        Int(
+                                                            I64,
+                                                        ),
+                                                    ),
+                                                },
+                                            ],
                                         },
                                     ),
                                 ),
@@ -1486,12 +1538,19 @@ File {
                             ],
                             generics_params: [],
                             ret_ty: Some(
-                                Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure0,
-                                        ),
+                                Struct(
+                                    TypeStruct {
+                                        name: #__Closure0,
+                                        fields: [
+                                            StructuralField {
+                                                name: #n,
+                                                value: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ],
                                     },
                                 ),
                             ),
@@ -1526,24 +1585,38 @@ File {
                         ],
                         generics_params: [],
                         ret_ty: Some(
-                            Expr(
-                                Expr {
-                                    ty: None,
-                                    kind: Locator(
-                                        #__Closure0,
-                                    ),
+                            Struct(
+                                TypeStruct {
+                                    name: #__Closure0,
+                                    fields: [
+                                        StructuralField {
+                                            name: #n,
+                                            value: Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                        },
+                                    ],
                                 },
                             ),
                         ),
                     },
                     body: Expr {
                         ty: Some(
-                            Expr(
-                                Expr {
-                                    ty: None,
-                                    kind: Locator(
-                                        #__Closure0,
-                                    ),
+                            Struct(
+                                TypeStruct {
+                                    name: #__Closure0,
+                                    fields: [
+                                        StructuralField {
+                                            name: #n,
+                                            value: Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                        },
+                                    ],
                                 },
                             ),
                         ),
@@ -2250,12 +2323,19 @@ File {
                                                                                 args: [
                                                                                     Expr {
                                                                                         ty: Some(
-                                                                                            Expr(
-                                                                                                Expr {
-                                                                                                    ty: None,
-                                                                                                    kind: Locator(
-                                                                                                        #__Closure0,
-                                                                                                    ),
+                                                                                            Struct(
+                                                                                                TypeStruct {
+                                                                                                    name: #__Closure0,
+                                                                                                    fields: [
+                                                                                                        StructuralField {
+                                                                                                            name: #n,
+                                                                                                            value: Primitive(
+                                                                                                                Int(
+                                                                                                                    I64,
+                                                                                                                ),
+                                                                                                            ),
+                                                                                                        },
+                                                                                                    ],
                                                                                                 },
                                                                                             ),
                                                                                         ),
@@ -2313,12 +2393,10 @@ File {
                                             init: Some(
                                                 Expr {
                                                     ty: Some(
-                                                        Expr(
-                                                            Expr {
-                                                                ty: None,
-                                                                kind: Locator(
-                                                                    #__Closure1,
-                                                                ),
+                                                        Struct(
+                                                            TypeStruct {
+                                                                name: #__Closure1,
+                                                                fields: [],
                                                             },
                                                         ),
                                                     ),
@@ -2379,12 +2457,10 @@ File {
                                                                                 args: [
                                                                                     Expr {
                                                                                         ty: Some(
-                                                                                            Expr(
-                                                                                                Expr {
-                                                                                                    ty: None,
-                                                                                                    kind: Locator(
-                                                                                                        #__Closure1,
-                                                                                                    ),
+                                                                                            Struct(
+                                                                                                TypeStruct {
+                                                                                                    name: #__Closure1,
+                                                                                                    fields: [],
                                                                                                 },
                                                                                             ),
                                                                                         ),
