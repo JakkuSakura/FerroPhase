@@ -29,16 +29,6 @@ pub fn lower_closures(node: &mut Node) -> Result<()> {
 
     if !pass.generated_items.is_empty() {
         let mut new_items = pass.generated_items;
-        for ty in pass.generated_env_types.into_values() {
-            let decl = Item::new(ItemKind::DeclStruct(ast::ItemDeclStruct {
-                visibility: ast::Visibility::Private,
-                name: ty.name.clone(),
-                value: ty.clone(),
-                ty_annotation: Some(Ty::Struct(ty.clone())),
-            }));
-            new_items.push(decl);
-        }
-
         new_items.append(&mut file.items);
         file.items = new_items;
     }
@@ -51,7 +41,6 @@ struct ClosureLowering {
     struct_infos: HashMap<String, ClosureInfo>,
     variable_infos: HashMap<String, ClosureInfo>,
     generated_items: Vec<Item>,
-    generated_env_types: HashMap<String, TypeStruct>,
 }
 
 impl ClosureLowering {
@@ -62,7 +51,6 @@ impl ClosureLowering {
             struct_infos: HashMap::new(),
             variable_infos: HashMap::new(),
             generated_items: Vec::new(),
-            generated_env_types: HashMap::new(),
         }
     }
 
@@ -161,16 +149,14 @@ impl ClosureLowering {
                 .map(|capture| StructuralField::new(capture.name.clone(), capture.ty.clone()))
                 .collect(),
         };
-        let env_struct_ty = Ty::ident(struct_ident.clone());
+        let env_struct_ty = Ty::Struct(struct_decl.clone());
 
-        let struct_item = Item::new(ItemKind::DefStruct(ItemDefStruct {
+        let mut struct_item = Item::new(ItemKind::DefStruct(ItemDefStruct {
             visibility: Visibility::Private,
             name: struct_ident.clone(),
             value: struct_decl.clone(),
         }));
-        self.generated_env_types
-            .insert(struct_ident.as_str().to_string(), struct_decl);
-
+        struct_item.set_ty(Ty::Struct(struct_decl.clone()));
         let env_param_ident = Ident::new("__env");
         let mut fn_params = Vec::new();
         let mut fn_param_tys = Vec::new();
