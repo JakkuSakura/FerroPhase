@@ -1855,24 +1855,32 @@ File {
                                             ),
                                         },
                                     ),
-                                    Let(
-                                        StmtLet {
-                                            pat: Pattern {
-                                                ty: Some(
-                                                    Unknown(
-                                                        TypeUnknown,
-                                                    ),
-                                                ),
-                                                kind: Ident(
-                                                    PatternIdent {
-                                                        ident: #add_10,
-                                                        mutability: None,
+                                    Item(
+                                        Item {
+                                            ty: Some(
+                                                Function(
+                                                    TypeFunction {
+                                                        params: [
+                                                            Primitive(
+                                                                Int(
+                                                                    I64,
+                                                                ),
+                                                            ),
+                                                        ],
+                                                        generics_params: [],
+                                                        ret_ty: Some(
+                                                            Primitive(
+                                                                Int(
+                                                                    I64,
+                                                                ),
+                                                            ),
+                                                        ),
                                                     },
                                                 ),
-                                            },
-                                            init: Some(
-                                                Expr {
-                                                    ty: Some(
+                                            ),
+                                            kind: DefConst(
+                                                ItemDefConst {
+                                                    ty_annotation: Some(
                                                         Function(
                                                             TypeFunction {
                                                                 params: [
@@ -1893,34 +1901,63 @@ File {
                                                             },
                                                         ),
                                                     ),
-                                                    kind: Invoke(
-                                                        ExprInvoke {
-                                                            target: Function(
-                                                                #make_adder,
-                                                            ),
-                                                            args: [
-                                                                Expr {
-                                                                    ty: Some(
+                                                    visibility: Private,
+                                                    name: #add_10,
+                                                    ty: Some(
+                                                        Any(
+                                                            TypeAny,
+                                                        ),
+                                                    ),
+                                                    value: Expr {
+                                                        ty: Some(
+                                                            Function(
+                                                                TypeFunction {
+                                                                    params: [
+                                                                        Primitive(
+                                                                            Int(
+                                                                                I64,
+                                                                            ),
+                                                                        ),
+                                                                    ],
+                                                                    generics_params: [],
+                                                                    ret_ty: Some(
                                                                         Primitive(
                                                                             Int(
                                                                                 I64,
                                                                             ),
                                                                         ),
                                                                     ),
-                                                                    kind: Value(
-                                                                        Int(
-                                                                            ValueInt {
-                                                                                value: 10,
-                                                                            },
-                                                                        ),
-                                                                    ),
                                                                 },
-                                                            ],
-                                                        },
-                                                    ),
+                                                            ),
+                                                        ),
+                                                        kind: Invoke(
+                                                            ExprInvoke {
+                                                                target: Function(
+                                                                    #make_adder,
+                                                                ),
+                                                                args: [
+                                                                    Expr {
+                                                                        ty: Some(
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
+                                                                            ),
+                                                                        ),
+                                                                        kind: Value(
+                                                                            Int(
+                                                                                ValueInt {
+                                                                                    value: 10,
+                                                                                },
+                                                                            ),
+                                                                        ),
+                                                                    },
+                                                                ],
+                                                            },
+                                                        ),
+                                                    },
                                                 },
                                             ),
-                                            diverge: None,
                                         },
                                     ),
                                     Expr(
