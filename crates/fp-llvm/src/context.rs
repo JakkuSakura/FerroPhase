@@ -1,8 +1,8 @@
 use llvm_ir::constant::Float;
 use llvm_ir::function::{CallingConvention, Parameter};
 use llvm_ir::instruction::{
-    Add, Alloca, BitCast, GetElementPtr, ICmp, InsertValue, Load, Mul, SExt, Store, Sub, Trunc,
-    UDiv, ZExt,
+    Add, Alloca, BitCast, FAdd, FDiv, FMul, FRem, FSub, GetElementPtr, ICmp, InsertValue, Load,
+    Mul, SExt, Store, Sub, Trunc, UDiv, ZExt,
 };
 use llvm_ir::module::{DLLStorageClass, DataLayout, Linkage, Visibility};
 use llvm_ir::predicates::IntPredicate;
@@ -275,6 +275,25 @@ impl LlvmContext {
         Ok(name)
     }
 
+    /// Create a floating-point add instruction
+    pub fn build_fadd(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::FAdd(FAdd {
+            operand0: lhs,
+            operand1: rhs,
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
     /// Create a subtract instruction
     pub fn build_sub(
         &mut self,
@@ -289,6 +308,25 @@ impl LlvmContext {
             dest: name.clone(),
             nsw: false, // No signed wrap
             nuw: false, // No unsigned wrap
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    /// Create a floating-point subtract instruction
+    pub fn build_fsub(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::FSub(FSub {
+            operand0: lhs,
+            operand1: rhs,
+            dest: name.clone(),
             debugloc: None,
         });
 
@@ -317,6 +355,25 @@ impl LlvmContext {
         Ok(name)
     }
 
+    /// Create a floating-point multiply instruction
+    pub fn build_fmul(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::FMul(FMul {
+            operand0: lhs,
+            operand1: rhs,
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
     /// Create a divide instruction
     pub fn build_udiv(
         &mut self,
@@ -330,6 +387,44 @@ impl LlvmContext {
             operand1: rhs,
             dest: name.clone(),
             exact: false,
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    /// Create a floating-point divide instruction
+    pub fn build_fdiv(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::FDiv(FDiv {
+            operand0: lhs,
+            operand1: rhs,
+            dest: name.clone(),
+            debugloc: None,
+        });
+
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    /// Create a floating-point remainder instruction
+    pub fn build_frem(
+        &mut self,
+        lhs: Operand,
+        rhs: Operand,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::FRem(FRem {
+            operand0: lhs,
+            operand1: rhs,
+            dest: name.clone(),
             debugloc: None,
         });
 

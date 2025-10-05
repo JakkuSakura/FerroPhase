@@ -10,6 +10,7 @@ struct ClosureInfo {
     env_struct_ident: Ident,
     env_struct_ty: Ty,
     call_fn_ident: Ident,
+    fn_ty: Ty,
 }
 
 #[derive(Clone)]
@@ -76,16 +77,12 @@ impl ClosureLowering {
 
     fn transform_function(&mut self, func: &mut ItemDefFunction) -> Result<Option<ClosureInfo>> {
         if let Some(info) = self.transform_closure_expr(func.body.as_mut())? {
-            self.update_function_signature(func, &info);
-            func.body.set_ty(info.env_struct_ty.clone());
             return Ok(Some(info));
         }
 
         if let ExprKind::Block(block) = func.body.kind_mut() {
             if let Some(last_expr) = block.last_expr_mut() {
                 if let Some(info) = self.transform_closure_expr(last_expr)? {
-                    self.update_function_signature(func, &info);
-                    func.body.set_ty(info.env_struct_ty.clone());
                     return Ok(Some(info));
                 }
             }
@@ -94,27 +91,11 @@ impl ClosureLowering {
         Ok(None)
     }
 
-    fn update_function_signature(&self, func: &mut ItemDefFunction, info: &ClosureInfo) {
-        func.sig.ret_ty = Some(info.env_struct_ty.clone());
-        let ty_fn = TypeFunction {
-            params: func
-                .sig
-                .params
-                .iter()
-                .map(|param| param.ty.clone())
-                .collect(),
-            generics_params: func.sig.generics_params.clone(),
-            ret_ty: Some(Box::new(info.env_struct_ty.clone())),
-        };
-        func.ty = Some(ty_fn.clone());
-        func.ty_annotation = Some(Ty::Function(ty_fn));
-    }
-
     fn transform_closure_expr(&mut self, expr: &mut Expr) -> Result<Option<ClosureInfo>> {
         let Some(expr_ty) = expr.ty().cloned() else {
             return Ok(None);
         };
-        let Ty::Function(fn_ty) = expr_ty else {
+        let Ty::Function(fn_ty) = expr_ty.clone() else {
             return Ok(None);
         };
 
@@ -216,7 +197,7 @@ impl ClosureLowering {
             name: struct_name_expr.into(),
             fields,
         }));
-        struct_expr.set_ty(env_struct_ty.clone());
+        struct_expr.set_ty(expr_ty.clone());
 
         *expr = struct_expr;
 
@@ -224,6 +205,7 @@ impl ClosureLowering {
             env_struct_ident: struct_ident,
             env_struct_ty,
             call_fn_ident: call_ident,
+            fn_ty: expr_ty,
         };
 
         Ok(Some(info))
@@ -438,8 +420,24 @@ impl ClosureLowering {
     fn rewrite_in_item(&mut self, item: &mut Item) -> Result<()> {
         match item.kind_mut() {
             ItemKind::Expr(expr) => self.rewrite_in_expr(expr)?,
-            ItemKind::DefConst(def) => self.rewrite_in_expr(def.value.as_mut())?,
-            ItemKind::DefStatic(def) => self.rewrite_in_expr(def.value.as_mut())?,
+            ItemKind::DefConst(def) => {
+                self.rewrite_in_expr(def.value.as_mut())?;
+                if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
+                    self.variable_infos
+                        .insert(def.name.as_str().to_string(), info.clone());
+                    def.ty = Some(info.fn_ty.clone());
+                    def.ty_annotation = Some(info.fn_ty.clone());
+                }
+            }
+            ItemKind::DefStatic(def) => {
+                self.rewrite_in_expr(def.value.as_mut())?;
+                if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
+                    self.variable_infos
+                        .insert(def.name.as_str().to_string(), info.clone());
+                    def.ty = info.fn_ty.clone();
+                    def.ty_annotation = Some(info.fn_ty.clone());
+                }
+            }
             ItemKind::DefFunction(func) => self.rewrite_in_expr(func.body.as_mut())?,
             ItemKind::Module(module) => self.rewrite_usage(&mut module.items)?,
             _ => {}

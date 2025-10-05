@@ -687,9 +687,16 @@ impl AstTypeInferencer {
     }
 
     fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
+        let existing_ty = expr.ty().cloned();
         let var = match expr.kind_mut() {
             ExprKind::Value(value) => self.infer_value(value)?,
-            ExprKind::Locator(locator) => self.lookup_locator(locator)?,
+            ExprKind::Locator(locator) => {
+                if let Some(ty) = existing_ty.as_ref() {
+                    self.type_from_ast_ty(ty)?
+                } else {
+                    self.lookup_locator(locator)?
+                }
+            }
             ExprKind::Block(block) => self.infer_block(block)?,
             ExprKind::If(if_expr) => self.infer_if(if_expr)?,
             ExprKind::BinOp(binop) => self.infer_binop(binop)?,
@@ -712,7 +719,17 @@ impl AstTypeInferencer {
                 let obj_var = self.infer_expr(select.obj.as_mut())?;
                 self.lookup_struct_field(obj_var, &select.field)?
             }
-            ExprKind::Struct(struct_expr) => self.resolve_struct_literal(struct_expr)?,
+            ExprKind::Struct(struct_expr) => {
+                if let Some(ty) = existing_ty.as_ref() {
+                    if matches!(ty, Ty::Function(_)) {
+                        self.type_from_ast_ty(ty)?
+                    } else {
+                        self.resolve_struct_literal(struct_expr)?
+                    }
+                } else {
+                    self.resolve_struct_literal(struct_expr)?
+                }
+            }
             ExprKind::Tuple(tuple) => {
                 let mut element_vars = Vec::new();
                 for expr in &mut tuple.values {
@@ -2080,7 +2097,8 @@ impl AstTypeInferencer {
                 // type from the function body or call sites.
             }
             Ty::Type(_) => self.bind(var, TypeTerm::Custom(ty.clone())),
-            Ty::Value(_) | Ty::Unknown(_) | Ty::AnyBox(_) => {
+            Ty::Unknown(_) => self.bind(var, TypeTerm::Unknown),
+            Ty::Value(_) | Ty::AnyBox(_) => {
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
         }
@@ -2234,6 +2252,7 @@ impl AstTypeInferencer {
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. }
             | TypeVarKind::Bound(TypeTerm::Any)
+            | TypeVarKind::Bound(TypeTerm::Unknown)
             | TypeVarKind::Bound(TypeTerm::Custom(_)) => Ok(()),
             TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_)))
             | TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Decimal(_))) => Ok(()),

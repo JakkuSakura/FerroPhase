@@ -3,10 +3,11 @@ use std::collections::{HashMap, HashSet};
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprFormatString, ExprInvoke, ExprInvokeTarget, ExprKind, Item,
     ItemDeclFunction, ItemDefFunction, ItemKind, Node, NodeKind, Ty, TypeArray, TypeFunction,
-    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec,
+    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value,
 };
 use fp_core::error::{Error as CoreError, Result};
 use fp_core::id::{Ident, Locator};
+use fp_core::intrinsics::IntrinsicCallPayload;
 
 /// Specialize generic function definitions based on the concrete call sites that
 /// appear in the typed AST. This is a best-effort monomorphization pass that
@@ -46,7 +47,7 @@ struct TemplateData {
 struct Specializer {
     templates: HashMap<String, TemplateData>,
     instantiations: HashMap<String, String>,
-    generated: Vec<Item>,
+    generated: Vec<(usize, Item)>,
     specialized_bases: HashSet<String>,
 }
 
@@ -63,7 +64,7 @@ impl Specializer {
     fn collect_templates(&mut self, items: &[Item]) {
         for (idx, item) in items.iter().enumerate() {
             if let ItemKind::DefFunction(func) = item.kind() {
-                if func.sig.generics_params.is_empty() {
+                if func.sig.generics_params.is_empty() && !Self::has_function_pointer_param(func) {
                     continue;
                 }
                 let name = func.name.as_str().to_string();
@@ -85,6 +86,13 @@ impl Specializer {
                 );
             }
         }
+    }
+
+    fn has_function_pointer_param(func: &ItemDefFunction) -> bool {
+        func.sig
+            .params
+            .iter()
+            .any(|param| matches!(param.ty, Ty::Function(_)))
     }
 
     fn specialize_items(&mut self, items: &mut Vec<Item>) -> Result<()> {
@@ -302,14 +310,16 @@ impl Specializer {
             {
                 return Ok(());
             }
-
-            let new_name =
-                self.ensure_specialization(&target_name, &template_generics, &substitution)?;
-            self.specialized_bases.insert(target_name.clone());
-            *locator = Locator::ident(Ident::new(new_name.clone()));
         }
 
-        for (param, arg) in template_params.iter().zip(invoke.args.iter_mut()) {
+        let mut fn_arg_overrides: HashMap<String, Locator> = HashMap::new();
+        let mut override_indices: Vec<usize> = Vec::new();
+
+        for (idx, (param, arg)) in template_params
+            .iter()
+            .zip(invoke.args.iter_mut())
+            .enumerate()
+        {
             let specialized_param_ty = self.substitute_ty(&param.ty, &substitution);
             if let ExprKind::Locator(arg_locator) = arg.kind_mut() {
                 let arg_name = arg_locator.to_string();
@@ -330,10 +340,12 @@ impl Specializer {
                             .iter()
                             .all(|name| nested_subst.contains_key(name))
                         {
+                            let nested_overrides: HashMap<String, Locator> = HashMap::new();
                             let new_arg_name = self.ensure_specialization(
                                 &arg_name,
                                 &arg_template.generic_order,
                                 &nested_subst,
+                                &nested_overrides,
                             )?;
                             self.specialized_bases.insert(arg_name.clone());
                             *arg_locator = Locator::ident(Ident::new(new_arg_name.clone()));
@@ -342,6 +354,31 @@ impl Specializer {
                     }
                 }
             }
+
+            if matches!(specialized_param_ty, Ty::Function(_)) {
+                if let ExprKind::Locator(arg_locator) = arg.kind() {
+                    fn_arg_overrides.insert(param.name.as_str().to_string(), arg_locator.clone());
+                    override_indices.push(idx);
+                }
+            }
+        }
+
+        if !override_indices.is_empty() {
+            override_indices.sort_unstable();
+            for idx in override_indices.into_iter().rev() {
+                invoke.args.remove(idx);
+            }
+        }
+
+        if !template_generics.is_empty() || !fn_arg_overrides.is_empty() {
+            let new_name = self.ensure_specialization(
+                &target_name,
+                &template_generics,
+                &substitution,
+                &fn_arg_overrides,
+            )?;
+            self.specialized_bases.insert(target_name.clone());
+            *locator = Locator::ident(Ident::new(new_name.clone()));
         }
 
         Ok(())
@@ -352,8 +389,10 @@ impl Specializer {
         function_name: &str,
         generic_order: &[String],
         substitution: &HashMap<String, Ty>,
+        fn_arg_overrides: &HashMap<String, Locator>,
     ) -> Result<String> {
-        let key = self.monomorph_key(function_name, generic_order, substitution)?;
+        let key =
+            self.monomorph_key(function_name, generic_order, substitution, fn_arg_overrides)?;
         if let Some(existing) = self.instantiations.get(&key) {
             return Ok(existing.clone());
         }
@@ -366,8 +405,12 @@ impl Specializer {
         })?;
 
         let mut specialized = template.function.clone();
-        let new_ident =
-            Ident::new(self.mangled_name(function_name, generic_order, substitution)?);
+        let new_ident = Ident::new(self.mangled_name(
+            function_name,
+            generic_order,
+            substitution,
+            fn_arg_overrides,
+        )?);
 
         specialized.name = new_ident.clone();
         specialized.sig.name = Some(new_ident.clone());
@@ -378,6 +421,11 @@ impl Specializer {
             param.ty = ty.clone();
             param.ty_annotation = Some(ty);
         }
+
+        specialized
+            .sig
+            .params
+            .retain(|param| !fn_arg_overrides.contains_key(param.name.as_str()));
 
         if let Some(ret_ty) = specialized.sig.ret_ty.as_mut() {
             let ty = self.substitute_ty(ret_ty, substitution);
@@ -402,11 +450,13 @@ impl Specializer {
         specialized.ty_annotation = Some(Ty::Function(function_ty.clone()));
 
         self.clear_expr_types(specialized.body.as_mut());
+        self.apply_fn_arg_overrides(specialized.body.as_mut(), fn_arg_overrides);
 
         let mut new_item = Item::new(ItemKind::DefFunction(specialized));
         new_item.set_ty(Ty::Function(function_ty.clone()));
 
-        self.generated.push(new_item);
+        let insertion_index = 0;
+        self.generated.push((insertion_index, new_item));
         self.instantiations
             .insert(key.clone(), new_ident.as_str().to_string());
 
@@ -654,6 +704,7 @@ impl Specializer {
         function_name: &str,
         generic_order: &[String],
         subst: &HashMap<String, Ty>,
+        fn_arg_overrides: &HashMap<String, Locator>,
     ) -> Result<String> {
         let mut parts = Vec::new();
         for name in generic_order {
@@ -665,7 +716,23 @@ impl Specializer {
             })?;
             parts.push(self.sanitize(&self.mangle_type(ty)));
         }
-        Ok(format!("{}__{}", function_name, parts.join("_")))
+        if !fn_arg_overrides.is_empty() {
+            let mut overrides: Vec<_> = fn_arg_overrides.iter().collect();
+            overrides.sort_by(|a, b| a.0.cmp(b.0));
+            for (param, locator) in overrides {
+                parts.push(format!(
+                    "{}{}{}",
+                    self.sanitize(param),
+                    "_",
+                    self.sanitize(&locator.to_string())
+                ));
+            }
+        }
+        if parts.is_empty() {
+            Ok(function_name.to_string())
+        } else {
+            Ok(format!("{}__{}", function_name, parts.join("_")))
+        }
     }
 
     fn monomorph_key(
@@ -673,6 +740,7 @@ impl Specializer {
         function_name: &str,
         generic_order: &[String],
         subst: &HashMap<String, Ty>,
+        fn_arg_overrides: &HashMap<String, Locator>,
     ) -> Result<String> {
         let mut parts = Vec::new();
         for name in generic_order {
@@ -683,6 +751,13 @@ impl Specializer {
                 ))
             })?;
             parts.push(self.sanitize(&format!("{}", ty)));
+        }
+        if !fn_arg_overrides.is_empty() {
+            let mut overrides: Vec<_> = fn_arg_overrides.iter().collect();
+            overrides.sort_by(|a, b| a.0.cmp(b.0));
+            for (param, locator) in overrides {
+                parts.push(self.sanitize(&format!("{}={}", param, locator)));
+            }
         }
         Ok(format!("{}|{}", function_name, parts.join("|")))
     }
@@ -816,6 +891,13 @@ impl Specializer {
         }
     }
 
+    fn apply_fn_arg_overrides(&self, expr: &mut Expr, overrides: &HashMap<String, Locator>) {
+        if overrides.is_empty() {
+            return;
+        }
+        FnArgOverrideRewriter { overrides }.rewrite_expr(expr);
+    }
+
     fn finalize(mut self, items: &mut Vec<Item>) -> Result<()> {
         self.apply_generated_functions(items)
     }
@@ -842,7 +924,202 @@ impl Specializer {
             }
         }
 
-        items.extend(self.generated.drain(..));
+        while let Some((idx, item)) = self.generated.pop() {
+            let insert_at = idx.min(items.len());
+            items.insert(insert_at, item);
+        }
         Ok(())
+    }
+}
+
+struct FnArgOverrideRewriter<'a> {
+    overrides: &'a HashMap<String, Locator>,
+}
+
+impl<'a> FnArgOverrideRewriter<'a> {
+    fn rewrite_expr(&self, expr: &mut Expr) {
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                for stmt in &mut block.stmts {
+                    self.rewrite_stmt(stmt);
+                }
+                if let Some(last) = block.last_expr_mut() {
+                    self.rewrite_expr(last);
+                }
+            }
+            ExprKind::If(expr_if) => {
+                self.rewrite_expr(expr_if.cond.as_mut());
+                self.rewrite_expr(expr_if.then.as_mut());
+                if let Some(elze) = expr_if.elze.as_mut() {
+                    self.rewrite_expr(elze);
+                }
+            }
+            ExprKind::Loop(expr_loop) => self.rewrite_expr(expr_loop.body.as_mut()),
+            ExprKind::While(expr_while) => {
+                self.rewrite_expr(expr_while.cond.as_mut());
+                self.rewrite_expr(expr_while.body.as_mut());
+            }
+            ExprKind::Match(expr_match) => {
+                for case in &mut expr_match.cases {
+                    self.rewrite_expr(case.cond.as_mut());
+                    self.rewrite_expr(case.body.as_mut());
+                }
+            }
+            ExprKind::Let(expr_let) => self.rewrite_expr(expr_let.expr.as_mut()),
+            ExprKind::Assign(assign) => {
+                self.rewrite_expr(assign.target.as_mut());
+                self.rewrite_expr(assign.value.as_mut());
+            }
+            ExprKind::Invoke(invoke) => self.rewrite_invoke(invoke),
+            ExprKind::Select(select) => self.rewrite_expr(select.obj.as_mut()),
+            ExprKind::Struct(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.rewrite_expr(value);
+                    }
+                }
+            }
+            ExprKind::Structural(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.rewrite_expr(value);
+                    }
+                }
+            }
+            ExprKind::Array(array) => {
+                for value in &mut array.values {
+                    self.rewrite_expr(value);
+                }
+            }
+            ExprKind::ArrayRepeat(array_repeat) => {
+                self.rewrite_expr(array_repeat.elem.as_mut());
+                self.rewrite_expr(array_repeat.len.as_mut());
+            }
+            ExprKind::Tuple(tuple) => {
+                for value in &mut tuple.values {
+                    self.rewrite_expr(value);
+                }
+            }
+            ExprKind::Reference(reference) => self.rewrite_expr(reference.referee.as_mut()),
+            ExprKind::Dereference(deref) => self.rewrite_expr(deref.referee.as_mut()),
+            ExprKind::Index(index) => {
+                self.rewrite_expr(index.obj.as_mut());
+                self.rewrite_expr(index.index.as_mut());
+            }
+            ExprKind::BinOp(binop) => {
+                self.rewrite_expr(binop.lhs.as_mut());
+                self.rewrite_expr(binop.rhs.as_mut());
+            }
+            ExprKind::UnOp(unop) => self.rewrite_expr(unop.val.as_mut()),
+            ExprKind::Range(range) => {
+                if let Some(start) = range.start.as_mut() {
+                    self.rewrite_expr(start.as_mut());
+                }
+                if let Some(end) = range.end.as_mut() {
+                    self.rewrite_expr(end.as_mut());
+                }
+                if let Some(step) = range.step.as_mut() {
+                    self.rewrite_expr(step.as_mut());
+                }
+            }
+            ExprKind::FormatString(format) => {
+                for arg in &mut format.args {
+                    self.rewrite_expr(arg);
+                }
+                for kwarg in &mut format.kwargs {
+                    self.rewrite_expr(&mut kwarg.value);
+                }
+            }
+            ExprKind::IntrinsicCall(call) => match &mut call.payload {
+                IntrinsicCallPayload::Args { args } => {
+                    for arg in args {
+                        self.rewrite_expr(arg);
+                    }
+                }
+                IntrinsicCallPayload::Format { template } => {
+                    for arg in &mut template.args {
+                        self.rewrite_expr(arg);
+                    }
+                    for kwarg in &mut template.kwargs {
+                        self.rewrite_expr(&mut kwarg.value);
+                    }
+                }
+            },
+            ExprKind::Value(value) => self.rewrite_value(value),
+            ExprKind::Item(item) => self.rewrite_item(item.as_mut()),
+            ExprKind::Locator(locator) => self.rewrite_locator(locator),
+            ExprKind::Paren(paren) => self.rewrite_expr(paren.expr.as_mut()),
+            ExprKind::Closure(closure) => self.rewrite_expr(closure.body.as_mut()),
+            ExprKind::Closured(closured) => self.rewrite_expr(closured.expr.as_mut()),
+            ExprKind::Splat(splat) => self.rewrite_expr(splat.iter.as_mut()),
+            ExprKind::SplatDict(dict) => self.rewrite_expr(dict.dict.as_mut()),
+            ExprKind::Try(expr_try) => self.rewrite_expr(expr_try.expr.as_mut()),
+            _ => {}
+        }
+    }
+
+    fn rewrite_stmt(&self, stmt: &mut BlockStmt) {
+        match stmt {
+            BlockStmt::Expr(expr_stmt) => self.rewrite_expr(expr_stmt.expr.as_mut()),
+            BlockStmt::Let(stmt_let) => {
+                if let Some(init) = stmt_let.init.as_mut() {
+                    self.rewrite_expr(init);
+                }
+                if let Some(diverge) = stmt_let.diverge.as_mut() {
+                    self.rewrite_expr(diverge);
+                }
+            }
+            BlockStmt::Item(item) => self.rewrite_item(item.as_mut()),
+            BlockStmt::Noop | BlockStmt::Any(_) => {}
+        }
+    }
+
+    fn rewrite_item(&self, item: &mut Item) {
+        match item.kind_mut() {
+            ItemKind::Expr(expr) => self.rewrite_expr(expr),
+            ItemKind::DefConst(def) => self.rewrite_expr(def.value.as_mut()),
+            ItemKind::DefStatic(def) => self.rewrite_expr(def.value.as_mut()),
+            ItemKind::DefFunction(func) => self.rewrite_expr(func.body.as_mut()),
+            ItemKind::Module(module) => {
+                for child in &mut module.items {
+                    self.rewrite_item(child);
+                }
+            }
+            ItemKind::Impl(impl_block) => {
+                for child in &mut impl_block.items {
+                    self.rewrite_item(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rewrite_invoke(&self, invoke: &mut ExprInvoke) {
+        match &mut invoke.target {
+            ExprInvokeTarget::Function(locator) => self.rewrite_locator(locator),
+            ExprInvokeTarget::Expr(target) => self.rewrite_expr(target.as_mut()),
+            ExprInvokeTarget::Method(select) => self.rewrite_expr(select.obj.as_mut()),
+            ExprInvokeTarget::Closure(func) => self.rewrite_expr(func.body.as_mut()),
+            ExprInvokeTarget::BinOp(_) | ExprInvokeTarget::Type(_) => {}
+        }
+        for arg in &mut invoke.args {
+            self.rewrite_expr(arg);
+        }
+    }
+
+    fn rewrite_value(&self, value: &mut Value) {
+        match value {
+            Value::Expr(expr) => self.rewrite_expr(expr.as_mut()),
+            Value::Function(func) => self.rewrite_expr(func.body.as_mut()),
+            _ => {}
+        }
+    }
+
+    fn rewrite_locator(&self, locator: &mut Locator) {
+        if let Some(ident) = locator.as_ident() {
+            if let Some(new_locator) = self.overrides.get(ident.as_str()) {
+                *locator = new_locator.clone();
+            }
+        }
     }
 }
