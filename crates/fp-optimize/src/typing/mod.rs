@@ -163,6 +163,7 @@ struct FunctionTypeInfo {
 pub struct AstTypeInferencer {
     type_vars: Vec<TypeVar>,
     env: Vec<HashMap<String, EnvEntry>>,
+    generic_scopes: Vec<HashSet<String>>,
     struct_defs: HashMap<String, TypeStruct>,
     enum_defs: HashMap<String, TypeEnum>,
     enum_variants: HashMap<String, Vec<String>>,
@@ -179,6 +180,7 @@ impl AstTypeInferencer {
         Self {
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
+            generic_scopes: vec![HashSet::new()],
             struct_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_variants: HashMap::new(),
@@ -468,6 +470,7 @@ impl AstTypeInferencer {
                 self.exit_scope();
                 Ty::Unit(TypeUnit)
             }
+            ItemKind::Import(_) => Ty::Unit(TypeUnit),
             ItemKind::Impl(impl_block) => {
                 let ctx = self.resolve_impl_context(&impl_block.self_ty);
                 self.impl_stack.push(ctx.clone());
@@ -519,10 +522,10 @@ impl AstTypeInferencer {
         }
 
         if !func.sig.generics_params.is_empty() {
-            self.emit_error(format!(
-                "generic function {} is not yet supported by the AST type inferencer",
-                func.name
-            ));
+            for param in &func.sig.generics_params {
+                // Ignore trait bounds for now; just register the symbol so it can be resolved.
+                self.register_generic_param(param.name.as_str());
+            }
         }
 
         let mut param_vars = Vec::new();
@@ -1578,6 +1581,22 @@ impl AstTypeInferencer {
         }
     }
 
+    fn register_generic_param(&mut self, name: &str) -> TypeVarId {
+        let var = self.fresh_type_var();
+        self.insert_env(name.to_string(), EnvEntry::Mono(var));
+        if let Some(scope) = self.generic_scopes.last_mut() {
+            scope.insert(name.to_string());
+        }
+        var
+    }
+
+    fn generic_name_in_scope(&self, name: &str) -> bool {
+        self.generic_scopes
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn insert_env(&mut self, name: String, entry: EnvEntry) {
         if let Some(scope) = self.env.last_mut() {
             scope.insert(name, entry);
@@ -1599,10 +1618,12 @@ impl AstTypeInferencer {
     fn enter_scope(&mut self) {
         self.current_level += 1;
         self.env.push(HashMap::new());
+        self.generic_scopes.push(HashSet::new());
     }
 
     fn exit_scope(&mut self) {
         self.env.pop();
+        self.generic_scopes.pop();
         if self.current_level > 0 {
             self.current_level -= 1;
         }
@@ -1933,14 +1954,28 @@ impl AstTypeInferencer {
             }
             Ty::Expr(expr) => {
                 if let ExprKind::Locator(locator) = expr.kind() {
+                    let locator_name = locator.to_string();
                     if let Some(ident) = locator.as_ident() {
-                        if let Some(primitive) = Self::primitive_from_name(ident.as_str()) {
+                        let ident_name = ident.as_str();
+                        if let Some(primitive) = Self::primitive_from_name(ident_name) {
                             self.bind(var, TypeTerm::Primitive(primitive));
+                            return Ok(var);
+                        }
+                        if self.generic_name_in_scope(ident_name) {
+                            if let Some(existing) = self.lookup_env_var(ident_name) {
+                                self.unify(var, existing)?;
+                                return Ok(var);
+                            }
+                        }
+                    }
+
+                    if self.generic_name_in_scope(&locator_name) {
+                        if let Some(existing) = self.lookup_env_var(&locator_name) {
+                            self.unify(var, existing)?;
                             return Ok(var);
                         }
                     }
 
-                    let locator_name = locator.to_string();
                     if locator_name == "Self" {
                         if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
                             if let Ty::Struct(struct_ty) = ctx.self_ty.clone() {
@@ -2110,11 +2145,9 @@ impl AstTypeInferencer {
     fn ensure_numeric(&mut self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
-                self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
-                Ok(())
-            }
+            TypeVarKind::Unbound { .. }
+            | TypeVarKind::Bound(TypeTerm::Any)
+            | TypeVarKind::Bound(TypeTerm::Custom(_)) => Ok(()),
             TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_)))
             | TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Decimal(_))) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_numeric(next, context),
@@ -2172,6 +2205,15 @@ impl AstTypeInferencer {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
+                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
+                let ret = self.fresh_type_var();
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
+                    params: params.clone(),
+                    ret,
+                }));
+                Ok(FunctionTypeInfo { params, ret })
+            }
+            TypeVarKind::Bound(TypeTerm::Any) => {
                 let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
                 let ret = self.fresh_type_var();
                 self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
