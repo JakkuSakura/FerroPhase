@@ -12,10 +12,8 @@ pub mod passes;
 pub mod queries;
 pub mod transformations;
 pub mod typing;
-pub mod utils;
 
 // Re-export key types for convenience
 pub use orchestrators::*;
 pub use passes::*;
 pub use queries::*;
-pub use utils::*;
