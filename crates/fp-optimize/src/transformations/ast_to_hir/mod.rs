@@ -908,14 +908,17 @@ impl HirGenerator {
     fn transform_type_to_hir(&mut self, ty: &ast::Ty) -> Result<hir::TypeExpr> {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
-            ast::Ty::Struct(struct_ty) => Ok(hir::TypeExpr::new(
-                self.next_id(),
-                hir::TypeExprKind::Path(hir::Path {
-                    segments: vec![self.make_path_segment(&struct_ty.name.name, None)],
-                    res: None,
-                }),
-                Span::new(self.current_file, 0, 0),
-            )),
+            ast::Ty::Struct(struct_ty) => {
+                let path = self.locator_to_hir_path_with_scope(
+                    &Locator::Ident(struct_ty.name.clone()),
+                    PathResolutionScope::Type,
+                )?;
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Path(path),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
             ast::Ty::Reference(reference) => {
                 let inner = self.transform_type_to_hir(&reference.ty)?;
                 Ok(hir::TypeExpr::new(
