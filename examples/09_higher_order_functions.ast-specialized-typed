@@ -175,12 +175,19 @@ File {
                                     ),
                                 ),
                                 name: #__env,
-                                ty: Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure0,
-                                        ),
+                                ty: Struct(
+                                    TypeStruct {
+                                        name: #__Closure0,
+                                        fields: [
+                                            StructuralField {
+                                                name: #n,
+                                                value: Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            },
+                                        ],
                                     },
                                 ),
                                 default: None,
@@ -406,12 +413,10 @@ File {
                                     ),
                                 ),
                                 name: #__env,
-                                ty: Expr(
-                                    Expr {
-                                        ty: None,
-                                        kind: Locator(
-                                            #__Closure1,
-                                        ),
+                                ty: Struct(
+                                    TypeStruct {
+                                        name: #__Closure1,
+                                        fields: [],
                                     },
                                 ),
                                 default: None,
@@ -1549,12 +1554,19 @@ File {
                         ],
                         generics_params: [],
                         ret_ty: Some(
-                            Expr(
-                                Expr {
-                                    ty: None,
-                                    kind: Locator(
-                                        #__Closure0,
-                                    ),
+                            Struct(
+                                TypeStruct {
+                                    name: #__Closure0,
+                                    fields: [
+                                        StructuralField {
+                                            name: #n,
+                                            value: Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                        },
+                                    ],
                                 },
                             ),
                         ),
