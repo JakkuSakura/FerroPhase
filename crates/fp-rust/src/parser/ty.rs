@@ -7,7 +7,7 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, FieldsNamed, Token};
 
 use fp_core::ast::{
-    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeArray, TypeBounds,
+    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeAny, TypeArray, TypeBounds,
     TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
 };
 use fp_core::id::{Ident, Path};
@@ -70,6 +70,7 @@ pub fn parse_type(t: syn::Type) -> Result<Ty> {
             Ty::expr(parse_custom_type_expr(m)?)
         }
         syn::Type::Reference(r) => Ty::Reference(parse_type_reference(r)?.into()),
+        syn::Type::Infer(_) => Ty::Any(TypeAny),
         t => bail!("Type not supported {:?}", t),
     };
     Ok(t)
