@@ -5,20 +5,15 @@ pub mod macros;
 mod pat;
 mod ty;
 
-pub use expr::parse_expr;
 pub use ty::parse_type;
 
-use crate::parser::expr::parse_block;
-
-use crate::parser::item::parse_fn_sig;
 use fp_core::ast::*;
 use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use itertools::Itertools;
 
 use eyre::{eyre, Context};
-use fp_core::diagnostics::{report_error, DiagnosticManager};
-use fp_core::emit_error;
+use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,37 +44,15 @@ pub fn parse_path(p: syn::Path) -> Result<Path> {
             .try_collect()?,
     })
 }
-pub fn parse_parameter_path(p: syn::Path) -> Result<ParameterPath> {
-    Ok(ParameterPath {
-        segments: p
-            .segments
-            .into_iter()
-            .map(|x| {
-                let args = match x.arguments {
-                    syn::PathArguments::AngleBracketed(a) => a
-                        .args
-                        .into_iter()
-                        .map(|x| match x {
-                            syn::GenericArgument::Type(t) => ty::parse_type(t),
-                            syn::GenericArgument::Const(c) => {
-                                expr::parse_expr(c).map(|x| Ty::value(Value::expr(x.get())))
-                            }
-                            _ => bail!("Does not support path arguments: {:?}", x),
-                        })
-                        .try_collect()?,
-                    _ => bail!("Does not support path arguments: {:?}", x),
-                };
-                let ident = parse_ident(x.ident);
-                Ok::<_, fp_core::Error>(ParameterPathSegment { ident, args })
-            })
-            .try_collect()?,
-    })
-}
+#[allow(dead_code)]
 fn parse_locator(p: syn::Path) -> Result<Locator> {
     if let Ok(path) = parse_path(p.clone()) {
         return Ok(Locator::path(path));
     }
-    let path = parse_parameter_path(p.clone())?;
+    // Fallback to parameter path parsing without diagnostics context.
+    // Callers that need diagnostics should use `RustParser::parse_locator`.
+    let parser = RustParser::new();
+    let path = parser.parse_parameter_path(p.clone())?;
     Ok(Locator::parameter_path(path))
 }
 
@@ -91,26 +64,14 @@ fn parse_vis(v: syn::Visibility) -> Visibility {
     }
 }
 pub fn parse_module(m: syn::ItemMod) -> Result<Module> {
-    Ok(Module {
-        name: parse_ident(m.ident),
-        items: m
-            .content
-            .unwrap()
-            .1
-            .into_iter()
-            .map(item::parse_item)
-            .try_collect()?,
-        visibility: parse_vis(m.vis),
-    })
+    RustParser::new().parse_module(m)
 }
 pub fn parse_value_fn(f: syn::ItemFn) -> Result<ValueFunction> {
-    let sig = parse_fn_sig(f.sig)?;
-    let body = parse_block(*f.block)?;
-    Ok(ValueFunction {
-        sig,
-        body: Expr::block(body).into(),
-    })
+    let parser = RustParser::new();
+    parser.parse_value_fn(f)
 }
+const FRONTEND_CONTEXT: &str = "pipeline.frontend";
+
 #[derive(Debug, Clone)]
 pub struct RustParser {
     diagnostics: Arc<DiagnosticManager>,
@@ -130,6 +91,29 @@ impl RustParser {
     pub fn clear_diagnostics(&self) {
         self.diagnostics.clear();
     }
+
+    fn record_diagnostic(&self, level: DiagnosticLevel, message: impl Into<String>) -> Diagnostic {
+        let message = message.into();
+        let diagnostic = match level {
+            DiagnosticLevel::Error => Diagnostic::error(message),
+            DiagnosticLevel::Warning => Diagnostic::warning(message),
+            DiagnosticLevel::Info => Diagnostic::info(message),
+        }
+        .with_source_context(FRONTEND_CONTEXT.to_string());
+
+        self.diagnostics.add_diagnostic(diagnostic.clone());
+        diagnostic
+    }
+
+    fn push_error(&self, message: impl Into<String>) {
+        self.record_diagnostic(DiagnosticLevel::Error, message);
+    }
+
+    pub(crate) fn error<T>(&self, message: impl Into<String>, fallback: T) -> Result<T> {
+        self.push_error(message);
+        Ok(fallback)
+    }
+
     pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
         self.clear_diagnostics();
         let builder = InlinerBuilder::new();
@@ -146,45 +130,107 @@ impl RustParser {
             errors_str.push_str(&format!("{}\n", err));
         }
         if !errors_str.is_empty() {
-            return Err(report_error(format!(
-                "Errors when parsing {}: {}",
-                path.display(),
-                errors_str
-            )));
+            return self.error(
+                format!("Errors when parsing {}: {}", path.display(), errors_str),
+                File {
+                    path: path.clone(),
+                    items: Vec::new(),
+                },
+            );
         }
         match self.parse_file_content(path.clone(), outputs) {
             Ok(file) => Ok(file),
-            Err(e) => {
-                let _ = report_error(format!(
-                    "Failed to parse inlined file {}: {}",
-                    path.display(),
-                    e
-                ));
-                emit_error!(
-                    self.diagnostics.clone(),
-                    "pipeline.frontend",
-                    "Failed to parse inlined file {}: {}",
-                    path.display(),
-                    e
-                );
-                Err(e)
-            }
+            Err(e) => self.error(
+                format!("Failed to parse inlined file {}: {}", path.display(), e),
+                File {
+                    path: path.clone(),
+                    items: Vec::new(),
+                },
+            ),
         }
     }
     pub fn parse_value(&self, code: syn::Expr) -> Result<Value> {
-        expr::parse_expr(code).map(|x| Value::expr(x.get()))
+        self.expr_parser().parse_expr(code).map(Value::expr)
     }
     pub fn parse_expr(&self, code: syn::Expr) -> Result<Expr> {
-        expr::parse_expr(code).map(|x| x.get())
+        self.expr_parser().parse_expr(code)
+    }
+
+    pub fn parse_block(&self, block: syn::Block) -> Result<ExprBlock> {
+        self.expr_parser().parse_block(block)
+    }
+
+    pub fn parse_stmt(&self, stmt: syn::Stmt) -> Result<(BlockStmt, bool)> {
+        self.expr_parser().parse_stmt(stmt)
+    }
+
+    pub fn parse_value_fn(&self, f: syn::ItemFn) -> Result<ValueFunction> {
+        let sig = self.parse_fn_sig_internal(f.sig)?;
+        let body = self.parse_block(*f.block)?;
+        Ok(ValueFunction {
+            sig,
+            body: Expr::block(body).into(),
+        })
+    }
+
+    pub fn parse_parameter_path(&self, p: syn::Path) -> Result<ParameterPath> {
+        Ok(ParameterPath {
+            segments: p
+                .segments
+                .into_iter()
+                .map(|segment| {
+                    let ident = parse_ident(segment.ident);
+                    let args = match segment.arguments {
+                        syn::PathArguments::AngleBracketed(a) => a
+                            .args
+                            .into_iter()
+                            .map(|arg| match arg {
+                                syn::GenericArgument::Type(t) => ty::parse_type(t),
+                                syn::GenericArgument::Const(c) => {
+                                    self.parse_expr(c).map(|expr| Ty::value(Value::expr(expr)))
+                                }
+                                other => self.error(
+                                    format!("Does not support path arguments: {:?}", other),
+                                    Ty::Any(TypeAny),
+                                ),
+                            })
+                            .try_collect()?,
+                        other => {
+                            return self
+                                .error(
+                                    format!("Does not support path arguments: {:?}", other),
+                                    Vec::<Ty>::new(),
+                                )
+                                .map(|args| ParameterPathSegment { ident, args });
+                        }
+                    };
+                    Ok::<_, fp_core::Error>(ParameterPathSegment { ident, args })
+                })
+                .try_collect()?,
+        })
+    }
+
+    pub fn parse_locator(&self, p: syn::Path) -> Result<Locator> {
+        if let Ok(path) = parse_path(p.clone()) {
+            return Ok(Locator::path(path));
+        }
+        let path = self.parse_parameter_path(p)?;
+        Ok(Locator::parameter_path(path))
     }
     pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
-        item::parse_item(code)
+        self.parse_item_internal(code)
     }
     pub fn parse_items(&self, code: Vec<syn::Item>) -> Result<Vec<Item>> {
-        code.into_iter().map(|x| self.parse_item(x)).try_collect()
+        code.into_iter()
+            .map(|item| self.parse_item_internal(item))
+            .try_collect()
     }
     pub fn parse_file_content(&self, path: PathBuf, code: syn::File) -> Result<File> {
-        let items = code.items.into_iter().map(item::parse_item).try_collect()?;
+        let items = code
+            .items
+            .into_iter()
+            .map(|item| self.parse_item_internal(item))
+            .try_collect()?;
         Ok(File { path, items })
     }
 
@@ -194,7 +240,7 @@ impl RustParser {
         let syn_file = match syn::parse_file(source) {
             Ok(file) => file,
             Err(e) => {
-                let _ = report_error(format!("Failed to parse {} as file: {}", path.display(), e));
+                self.push_error(format!("Failed to parse {} as file: {}", path.display(), e));
                 return Ok(File {
                     path: path_buf,
                     items: Vec::new(),
@@ -204,21 +250,28 @@ impl RustParser {
 
         match self.parse_file_content(path_buf.clone(), syn_file) {
             Ok(file) => Ok(file),
-            Err(e) => {
-                let _ = report_error(format!("Failed to lower file {}: {}", path.display(), e));
-                emit_error!(
-                    self.diagnostics.clone(),
-                    "pipeline.frontend",
-                    "Failed to lower file {}: {}",
-                    path.display(),
-                    e
-                );
-                Err(e)
-            }
+            Err(e) => self.error(
+                format!("Failed to lower file {}: {}", path.display(), e),
+                File {
+                    path: path_buf,
+                    items: Vec::new(),
+                },
+            ),
         }
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
-        parse_module(code)
+        let items = code
+            .content
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|item| self.parse_item_internal(item))
+            .try_collect()?;
+        Ok(Module {
+            name: parse_ident(code.ident),
+            items,
+            visibility: parse_vis(code.vis),
+        })
     }
     pub fn parse_type(&self, code: syn::Type) -> Result<Ty> {
         ty::parse_type(code)
@@ -356,14 +409,14 @@ impl RustParser {
 
                 match syn::parse_str::<syn::Expr>(&wrapped_content) {
                     Ok(syn::Expr::Block(block_expr)) => {
-                        return crate::parser::expr::parse_block(block_expr.block).map(Expr::block);
+                        return self.parse_block(block_expr.block).map(Expr::block);
                     }
                     Ok(other) => {
                         return self.parse_expr(other);
                     }
                     Err(expr_err) => {
                         // Both module and expression parsing failed - report both errors
-                        let _ = report_error(format!(
+                        self.push_error(format!(
                             "Failed to parse FP content as module: {}. Also failed as expression: {}. Content: {}",
                             module_err, expr_err, content
                         ));
@@ -374,7 +427,7 @@ impl RustParser {
         }
 
         // If all parsing attempts fail, return a descriptive error placeholder
-        let _ = report_error(format!("Failed to parse FP content: {}", content));
+        self.push_error(format!("Failed to parse FP content: {}", content));
         Ok(Expr::unit())
     }
 }

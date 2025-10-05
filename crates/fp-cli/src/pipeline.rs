@@ -31,6 +31,7 @@ use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info_span, warn};
 
+const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
@@ -200,7 +201,7 @@ impl Pipeline {
             CliError::Compilation(format!("Unsupported source language: {}", language))
         })?;
 
-        let ast = self.parse_with_frontend(&frontend, &source, input_path.as_deref())?;
+        let ast = self.parse_with_frontend(&frontend, &source, input_path.as_deref(), &options)?;
 
         match options.target {
             PipelineTarget::Interpret => {
@@ -285,6 +286,7 @@ impl Pipeline {
         frontend: &Arc<dyn LanguageFrontend>,
         source: &str,
         input_path: Option<&Path>,
+        options: &PipelineOptions,
     ) -> Result<Node, CliError> {
         let span = info_span!("pipeline.frontend", language = %frontend.language());
         let _enter = span.enter();
@@ -297,7 +299,14 @@ impl Pipeline {
             diagnostics,
         } = frontend.parse(source, input_path)?;
 
-        if diagnostics.has_errors() {
+        let collected_diagnostics = diagnostics.get_diagnostics();
+        self.emit_diagnostics(&collected_diagnostics, Some(STAGE_FRONTEND), options);
+
+        let has_errors = collected_diagnostics
+            .iter()
+            .any(|diag| diag.level == DiagnosticLevel::Error);
+
+        if has_errors {
             return Err(CliError::Compilation(
                 "frontend stage failed; see diagnostics for details".to_string(),
             ));

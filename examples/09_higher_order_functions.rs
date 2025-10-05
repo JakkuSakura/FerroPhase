@@ -37,7 +37,7 @@ fn main() {
 
     // Return function (closure)
     println!("\nClosure factory:");
-    let add_10 = make_adder(10);
+    const add_10: _ = make_adder(10);
     println!("add_10(5) = {}", add_10(5));
 
     // Lambda

@@ -1,8 +1,12 @@
 use super::*;
 use ast::ItemKind;
 use fp_core::pat::PatternKind;
-use fp_rust::parser::{parse_expr as parse_raw_expr, parse_type as parse_raw_type};
+use fp_rust::parser::{parse_type as parse_raw_type, RustParser};
 use fp_rust::RawExpr;
+
+fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<ast::Expr> {
+    RustParser::new().parse_expr(expr)
+}
 
 impl HirGenerator {
     /// Transform an AST expression to HIR expression

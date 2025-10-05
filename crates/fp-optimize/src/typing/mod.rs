@@ -8,9 +8,13 @@ use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::{Pattern, PatternKind};
 use fp_rust::{
-    parser::{parse_expr as parse_raw_expr, parse_type as parse_raw_type},
+    parser::{parse_type as parse_raw_type, RustParser},
     RawExpr,
 };
+
+fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<Expr> {
+    RustParser::new().parse_expr(expr)
+}
 
 type TypeVarId = usize;
 
