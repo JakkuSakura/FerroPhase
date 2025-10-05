@@ -4,7 +4,7 @@ use fp_core::ast::{AstSerializer, Expr, Node, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
 
-use crate::passes::SpecializePass;
+use crate::passes::InlinePass;
 use crate::utils::optimizer::FoldOptimizer;
 
 /// Placeholder expression evaluator for the typed interpreter migration.
@@ -15,10 +15,7 @@ pub struct ExpressionEvaluator {
 impl ExpressionEvaluator {
     pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         // For now we load the default optimizer stack, though it currently only forwards expressions.
-        let opt = FoldOptimizer::new(
-            serializer.clone(),
-            Box::new(SpecializePass::new(serializer)),
-        );
+        let opt = FoldOptimizer::new(serializer.clone(), Box::new(InlinePass::new(serializer)));
         Self { opt }
     }
 

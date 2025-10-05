@@ -1069,8 +1069,24 @@ File {
                         ],
                         generics_params: [],
                         ret_ty: Some(
-                            Any(
-                                TypeAny,
+                            Function(
+                                TypeFunction {
+                                    params: [
+                                        Primitive(
+                                            Int(
+                                                I64,
+                                            ),
+                                        ),
+                                    ],
+                                    generics_params: [],
+                                    ret_ty: Some(
+                                        Primitive(
+                                            Int(
+                                                I64,
+                                            ),
+                                        ),
+                                    ),
+                                },
                             ),
                         ),
                     },
@@ -1090,8 +1106,24 @@ File {
                                 ],
                                 generics_params: [],
                                 ret_ty: Some(
-                                    Any(
-                                        TypeAny,
+                                    Function(
+                                        TypeFunction {
+                                            params: [
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ],
+                                            generics_params: [],
+                                            ret_ty: Some(
+                                                Primitive(
+                                                    Int(
+                                                        I64,
+                                                    ),
+                                                ),
+                                            ),
+                                        },
                                     ),
                                 ),
                             },
@@ -1110,8 +1142,24 @@ File {
                             ],
                             generics_params: [],
                             ret_ty: Some(
-                                Any(
-                                    TypeAny,
+                                Function(
+                                    TypeFunction {
+                                        params: [
+                                            Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                        ],
+                                        generics_params: [],
+                                        ret_ty: Some(
+                                            Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                        ),
+                                    },
                                 ),
                             ),
                         },
@@ -1825,8 +1873,24 @@ File {
                                             init: Some(
                                                 Expr {
                                                     ty: Some(
-                                                        Any(
-                                                            TypeAny,
+                                                        Function(
+                                                            TypeFunction {
+                                                                params: [
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ],
+                                                                generics_params: [],
+                                                                ret_ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                            },
                                                         ),
                                                     ),
                                                     kind: Invoke(
@@ -1886,8 +1950,10 @@ File {
                                                                 args: [
                                                                     Expr {
                                                                         ty: Some(
-                                                                            Unknown(
-                                                                                TypeUnknown,
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
                                                                             ),
                                                                         ),
                                                                         kind: Invoke(

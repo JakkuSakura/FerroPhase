@@ -186,10 +186,11 @@ fn infer_printf_spec(ty: Option<&Ty>) -> Result<String> {
                 "cannot format unit type with printf".to_string(),
             ));
         }
-        _ => {
-            return Err(fp_core::error::Error::from(
-                "printf argument type could not be inferred".to_string(),
-            ));
+        other => {
+            return Err(fp_core::error::Error::from(format!(
+                "printf argument type could not be inferred: {:?}",
+                other
+            )));
         }
     };
     Ok(spec)
