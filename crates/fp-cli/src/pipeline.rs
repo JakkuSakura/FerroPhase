@@ -94,7 +94,7 @@ impl IntrinsicsMaterializer {
     }
 
     fn materialize(&self, ast: &mut Node) -> fp_core::error::Result<()> {
-        fp_optimize::materialize_runtime_intrinsics(ast, self.strategy.as_ref())
+        fp_optimize::materialize_intrinsics(ast, self.strategy.as_ref())
     }
 }
 

@@ -8,7 +8,7 @@ use fp_core::intrinsics::IntrinsicCallPayload;
 pub struct NoopIntrinsicStrategy;
 impl RuntimeIntrinsicStrategy for NoopIntrinsicStrategy {}
 
-pub fn materialize_runtime_intrinsics(
+pub fn materialize_intrinsics(
     ast: &mut Node,
     strategy: &dyn RuntimeIntrinsicStrategy,
 ) -> Result<()> {

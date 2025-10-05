@@ -174,11 +174,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 let value = self.eval_expr(def.value.as_mut());
                 let qualified = self.qualified_name(def.name.as_str());
-                let expr_value = Expr::value(value.clone());
                 self.insert_value(def.name.as_str(), value.clone());
-                self.evaluated_constants.insert(qualified, value);
-                *def.value = expr_value;
-                self.mark_mutated();
+                self.evaluated_constants.insert(qualified, value.clone());
+
+                let should_replace =
+                    !matches!(value, Value::Undefined(_)) && !matches!(value, Value::Unit(_));
+
+                if should_replace {
+                    let expr_value = Expr::value(value);
+                    *def.value = expr_value;
+                    self.mark_mutated();
+                }
             }
             ItemKind::DefStatic(def) => {
                 let value = self.eval_expr(def.value.as_mut());
