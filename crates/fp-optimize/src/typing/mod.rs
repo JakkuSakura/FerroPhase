@@ -333,7 +333,8 @@ impl AstTypeInferencer {
                 }
             }
             ItemKind::DefFunction(def) => {
-                self.register_symbol(&def.name);
+                let fn_var = self.symbol_var(&def.name);
+                self.prebind_function_signature(def, fn_var);
             }
             ItemKind::DeclFunction(decl) => {
                 self.register_symbol(&decl.name);
@@ -373,6 +374,59 @@ impl AstTypeInferencer {
             }
             _ => {}
         }
+    }
+
+    fn prebind_function_signature(&mut self, func: &ItemDefFunction, fn_var: TypeVarId) {
+        if !func.sig.generics_params.is_empty() || func.sig.receiver.is_some() {
+            return;
+        }
+
+        let root = self.find(fn_var);
+        if matches!(
+            self.type_vars[root].kind,
+            TypeVarKind::Bound(TypeTerm::Function(_))
+        ) {
+            return;
+        }
+
+        let mut param_vars = Vec::new();
+        for param in &func.sig.params {
+            match self.type_from_ast_ty(&param.ty) {
+                Ok(var) => param_vars.push(var),
+                Err(err) => {
+                    self.emit_error(format!(
+                        "failed to predeclare parameter type for {}: {}",
+                        func.name, err
+                    ));
+                    return;
+                }
+            }
+        }
+
+        let ret_var = if let Some(ret_ty) = &func.sig.ret_ty {
+            match self.type_from_ast_ty(ret_ty) {
+                Ok(var) => var,
+                Err(err) => {
+                    self.emit_error(format!(
+                        "failed to predeclare return type for {}: {}",
+                        func.name, err
+                    ));
+                    return;
+                }
+            }
+        } else {
+            let unit = self.fresh_type_var();
+            self.bind(unit, TypeTerm::Unit);
+            unit
+        };
+
+        self.bind(
+            fn_var,
+            TypeTerm::Function(FunctionTerm {
+                params: param_vars,
+                ret: ret_var,
+            }),
+        );
     }
 
     fn infer_item(&mut self, item: &mut Item) -> Result<()> {
@@ -501,6 +555,21 @@ impl AstTypeInferencer {
 
     fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
         let fn_var = self.symbol_var(&func.name);
+        let param_count = func.sig.params.len();
+        let existing_signature = {
+            let root = self.find(fn_var);
+            match self.type_vars[root].kind.clone() {
+                TypeVarKind::Bound(TypeTerm::Function(func_term)) => {
+                    if func_term.params.len() == param_count {
+                        Some(func_term)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        };
+
         self.enter_scope();
 
         let impl_ctx = self.impl_stack.last().cloned().flatten();
@@ -529,8 +598,11 @@ impl AstTypeInferencer {
         }
 
         let mut param_vars = Vec::new();
-        for param in &mut func.sig.params {
-            let var = self.fresh_type_var();
+        for (idx, param) in func.sig.params.iter_mut().enumerate() {
+            let var = existing_signature
+                .as_ref()
+                .and_then(|sig| sig.params.get(idx).cloned())
+                .unwrap_or_else(|| self.fresh_type_var());
             let annot_var = self.type_from_ast_ty(&param.ty)?;
             self.unify(var, annot_var)?;
             self.insert_env(param.name.as_str().to_string(), EnvEntry::Mono(var));
@@ -544,7 +616,14 @@ impl AstTypeInferencer {
             self.infer_expr(&mut body)?
         };
 
-        let ret_var = if let Some(ret) = &func.sig.ret_ty {
+        let ret_var = if let Some(existing) = existing_signature.as_ref().map(|sig| sig.ret) {
+            self.unify(existing, body_var)?;
+            if let Some(ret) = &func.sig.ret_ty {
+                let annot_var = self.type_from_ast_ty(ret)?;
+                self.unify(existing, annot_var)?;
+            }
+            existing
+        } else if let Some(ret) = &func.sig.ret_ty {
             let annot_var = self.type_from_ast_ty(ret)?;
             self.unify(body_var, annot_var)?;
             annot_var
@@ -1991,7 +2070,11 @@ impl AstTypeInferencer {
                 }
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
-            Ty::TypeBounds(_) | Ty::ImplTraits(_) => self.bind(var, TypeTerm::Any),
+            Ty::TypeBounds(_) => self.bind(var, TypeTerm::Any),
+            Ty::ImplTraits(_) => {
+                // Leave the variable unbound and let inference derive the concrete
+                // type from the function body or call sites.
+            }
             Ty::Type(_) => self.bind(var, TypeTerm::Custom(ty.clone())),
             Ty::Value(_) | Ty::Unknown(_) | Ty::AnyBox(_) => {
                 self.bind(var, TypeTerm::Custom(ty.clone()));

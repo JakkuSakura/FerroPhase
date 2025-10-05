@@ -1,4 +1,4 @@
-use crate::passes::{InlinePass, SpecializePass};
+use crate::passes::InlinePass;
 use crate::utils::OptimizePass;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
@@ -6,10 +6,8 @@ use fp_core::error::Result;
 use std::sync::Arc;
 
 pub fn load_optimizers(serializer: Arc<dyn AstSerializer>) -> Vec<FoldOptimizer> {
-    let optimizers: Vec<Box<dyn OptimizePass>> = vec![
-        Box::new(SpecializePass::new(serializer.clone())),
-        Box::new(InlinePass::new(serializer.clone())),
-    ];
+    let optimizers: Vec<Box<dyn OptimizePass>> =
+        vec![Box::new(InlinePass::new(serializer.clone()))];
 
     optimizers
         .into_iter()

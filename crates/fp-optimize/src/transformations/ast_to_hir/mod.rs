@@ -187,6 +187,13 @@ impl HirGenerator {
             let type_res = self.lookup_global_res(&path_segments, PathResolutionScope::Type);
 
             if value_res.is_none() && type_res.is_none() {
+                if let Some(first) = path_segments.first() {
+                    if first == "std" || first == "core" || first == "alloc" {
+                        // Standard library imports are not yet modeled; ignore them so
+                        // user code can continue through the pipeline.
+                        continue;
+                    }
+                }
                 if self.error_tolerance {
                     // Collect error and continue instead of early return
                     let continue_processing = self.add_error(
