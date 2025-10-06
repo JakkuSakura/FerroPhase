@@ -35,11 +35,11 @@ fn make_adder (n : i64) -> struct __Closure0{
 }
 fn main () -> (){
     printf ("Generic operations:\n" . to_string ()) ;
-    apply__spec0 (10 , 20 , add) ;
-    apply__spec1 (1.5 , 2.5 , add) ;
+    apply__spec0 (10 , 20 , add__spec0) ;
+    apply__spec1 (1.5 , 2.5 , add__spec1) ;
     printf ("\nConditional:\n" . to_string ()) ;
-    printf ("%d\n" . to_string () , apply_if (true , 5 , 3 , add)) ;
-    printf ("%d\n" . to_string () , apply_if (false , 5 , 3 , add)) ;
+    printf ("%d\n" . to_string () , apply_if (true , 5 , 3 , add__spec0)) ;
+    printf ("%d\n" . to_string () , apply_if (false , 5 , 3 , add__spec0)) ;
     printf ("\nClosure factory:\n" . to_string ()) ;
     const add_10 : struct __Closure0{
         pub n : i64
@@ -54,6 +54,12 @@ fn main () -> (){
 fn apply__spec0 (a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> (){
     printf ("%d\n" . to_string () , op (a , b)) ;
 }
+fn add__spec0 (a : i64 , b : i64) -> i64{
+    a + b
+}
 fn apply__spec1 (a : f64 , b : f64 , op : fn (f64 , f64) -> f64) -> (){
     printf ("%f\n" . to_string () , op (a , b)) ;
+}
+fn add__spec1 (a : f64 , b : f64) -> f64{
+    a + b
 }

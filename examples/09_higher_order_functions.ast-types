@@ -36,7 +36,7 @@ fn main -> Some(Unit(TypeUnit))
 
           Value(Int(ValueInt { value: 20 })) : i64
 
-          Locator(add) : fn (_ , _) -> _
+          Locator(add__spec0) : fn (i64 , i64) -> i64
 
       Invoke : ()
 
@@ -47,13 +47,13 @@ fn main -> Some(Unit(TypeUnit))
 
           Value(Decimal(ValueDecimal { value: 2.5 })) : f64
 
-          Locator(add) : fn (_ , _) -> _
+          Locator(add__spec1) : fn (f64 , f64) -> f64
 
       IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Literal("\nConditional:")], args: [], kwargs: [] } } }) : ()
 
-      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Int(I64))), kind: Invoke(ExprInvoke { target: Function(#apply_if), args: [Expr { ty: Some(Primitive(Bool)), kind: Value(Bool(ValueBool { value: true })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 5 })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 3 })) }, Expr { ty: Some(Function(TypeFunction { params: [Unknown(TypeUnknown), Unknown(TypeUnknown)], generics_params: [], ret_ty: Some(Unknown(TypeUnknown)) })), kind: Locator(#add) }] }) }], kwargs: [] } } }) : ()
+      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Int(I64))), kind: Invoke(ExprInvoke { target: Function(#apply_if), args: [Expr { ty: Some(Primitive(Bool)), kind: Value(Bool(ValueBool { value: true })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 5 })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 3 })) }, Expr { ty: Some(Function(TypeFunction { params: [Primitive(Int(I64)), Primitive(Int(I64))], generics_params: [], ret_ty: Some(Primitive(Int(I64))) })), kind: Locator(#add__spec0) }] }) }], kwargs: [] } } }) : ()
 
-      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Int(I64))), kind: Invoke(ExprInvoke { target: Function(#apply_if), args: [Expr { ty: Some(Primitive(Bool)), kind: Value(Bool(ValueBool { value: false })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 5 })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 3 })) }, Expr { ty: Some(Function(TypeFunction { params: [Unknown(TypeUnknown), Unknown(TypeUnknown)], generics_params: [], ret_ty: Some(Unknown(TypeUnknown)) })), kind: Locator(#add) }] }) }], kwargs: [] } } }) : ()
+      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Int(I64))), kind: Invoke(ExprInvoke { target: Function(#apply_if), args: [Expr { ty: Some(Primitive(Bool)), kind: Value(Bool(ValueBool { value: false })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 5 })) }, Expr { ty: Some(Primitive(Int(I64))), kind: Value(Int(ValueInt { value: 3 })) }, Expr { ty: Some(Function(TypeFunction { params: [Primitive(Int(I64)), Primitive(Int(I64))], generics_params: [], ret_ty: Some(Primitive(Int(I64))) })), kind: Locator(#add__spec0) }] }) }], kwargs: [] } } }) : ()
 
       IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Literal("\nClosure factory:")], args: [], kwargs: [] } } }) : ()
 
@@ -74,6 +74,15 @@ fn apply__spec0 -> Some(Unit(TypeUnit))
 
       IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Int(I64))), kind: Invoke(ExprInvoke { target: Function(#op), args: [Expr { ty: Some(Primitive(Int(I64))), kind: Locator(#a) }, Expr { ty: Some(Primitive(Int(I64))), kind: Locator(#b) }] }) }], kwargs: [] } } }) : ()
 
+fn add__spec0 -> Some(Primitive(Int(I64)))
+  Parameters:
+    a: i64
+
+    b: i64
+
+  Body:
+    BinOp(ExprBinOp { kind: Add, lhs: Expr { ty: Some(Primitive(Int(I64))), kind: Locator(#a) }, rhs: Expr { ty: Some(Primitive(Int(I64))), kind: Locator(#b) } }) : _
+
 fn apply__spec1 -> Some(Unit(TypeUnit))
   Parameters:
     a: f64
@@ -86,4 +95,13 @@ fn apply__spec1 -> Some(Unit(TypeUnit))
     Block : ()
 
       IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Decimal(F64))), kind: Invoke(ExprInvoke { target: Function(#op), args: [Expr { ty: Some(Primitive(Decimal(F64))), kind: Locator(#a) }, Expr { ty: Some(Primitive(Decimal(F64))), kind: Locator(#b) }] }) }], kwargs: [] } } }) : ()
+
+fn add__spec1 -> Some(Primitive(Decimal(F64)))
+  Parameters:
+    a: f64
+
+    b: f64
+
+  Body:
+    BinOp(ExprBinOp { kind: Add, lhs: Expr { ty: Some(Primitive(Decimal(F64))), kind: Locator(#a) }, rhs: Expr { ty: Some(Primitive(Decimal(F64))), kind: Locator(#b) } }) : _
 
