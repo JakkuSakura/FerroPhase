@@ -66,8 +66,11 @@ impl ConstEvaluationOrchestrator {
 
         let mut interpreter = AstInterpreter::new(ctx, options);
 
-        // Take ownership of the typer temporarily and box it as a trait object
-        let typer = std::mem::replace(&mut self.typer, AstTypeInferencer::new());
+        // Initialize the typer with the full AST context before using it incrementally
+        // This ensures the typer knows about all declarations when typing individual expressions
+        let mut typer = std::mem::replace(&mut self.typer, AstTypeInferencer::new());
+        typer.initialize_from_node(ast);
+
         interpreter.set_typer(Box::new(typer));
 
         interpreter.interpret(ast);
