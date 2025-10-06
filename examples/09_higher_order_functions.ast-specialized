@@ -2354,14 +2354,18 @@ File {
                                                 Function(
                                                     TypeFunction {
                                                         params: [
-                                                            Unknown(
-                                                                TypeUnknown,
+                                                            Primitive(
+                                                                Int(
+                                                                    I64,
+                                                                ),
                                                             ),
                                                         ],
                                                         generics_params: [],
                                                         ret_ty: Some(
-                                                            Unknown(
-                                                                TypeUnknown,
+                                                            Primitive(
+                                                                Int(
+                                                                    I64,
+                                                                ),
                                                             ),
                                                         ),
                                                     },
@@ -2373,14 +2377,18 @@ File {
                                                         Function(
                                                             TypeFunction {
                                                                 params: [
-                                                                    Unknown(
-                                                                        TypeUnknown,
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
                                                                     ),
                                                                 ],
                                                                 generics_params: [],
                                                                 ret_ty: Some(
-                                                                    Unknown(
-                                                                        TypeUnknown,
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
                                                                     ),
                                                                 ),
                                                             },
@@ -2389,8 +2397,24 @@ File {
                                                     visibility: Private,
                                                     name: #add_10,
                                                     ty: Some(
-                                                        Any(
-                                                            TypeAny,
+                                                        Function(
+                                                            TypeFunction {
+                                                                params: [
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ],
+                                                                generics_params: [],
+                                                                ret_ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                            },
                                                         ),
                                                     ),
                                                     value: Expr {
@@ -2468,8 +2492,10 @@ File {
                                                                 args: [
                                                                     Expr {
                                                                         ty: Some(
-                                                                            Unknown(
-                                                                                TypeUnknown,
+                                                                            Primitive(
+                                                                                Int(
+                                                                                    I64,
+                                                                                ),
                                                                             ),
                                                                         ),
                                                                         kind: Invoke(

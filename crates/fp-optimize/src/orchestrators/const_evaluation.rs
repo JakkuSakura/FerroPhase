@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fp_core::ast::{AstSerializer, Node, Value};
+use fp_core::ast::{AstSerializer, Node, Ty, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result;
@@ -17,6 +17,7 @@ pub struct ConstEvalOutcome {
     pub diagnostics: Vec<Diagnostic>,
     pub has_errors: bool,
     pub stdout: Vec<String>,
+    pub closure_types: HashMap<String, Ty>,
 }
 
 /// Const-evaluation orchestrator that operates directly on the typed AST.
@@ -75,6 +76,7 @@ impl ConstEvaluationOrchestrator {
             diagnostics: outcome.diagnostics,
             has_errors: outcome.has_errors,
             stdout: outcome.stdout,
+            closure_types: outcome.closure_types,
         })
     }
 }
