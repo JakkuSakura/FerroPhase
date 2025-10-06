@@ -12,7 +12,8 @@ struct ClosureInfo {
     env_struct_ident: Ident,
     env_struct_ty: Ty,
     call_fn_ident: Ident,
-    call_ret_ty: Option<Ty>,
+    call_ret_ty: Ty,
+    fn_ty: Ty,
 }
 
 #[derive(Clone)]
@@ -230,7 +231,7 @@ impl ClosureLowering {
         let call_ret_ty = inferred_ret_ty
             .clone()
             .or(fallback_ret_ty)
-            .unwrap_or_else(|| Ty::Unit(TypeUnit));
+            .unwrap_or_else(|| Ty::Unknown(TypeUnknown));
 
         self.rewrite_captured_usage(
             &mut rewritten_body,
@@ -283,6 +284,7 @@ impl ClosureLowering {
             env_struct_ty,
             call_fn_ident: call_ident,
             call_ret_ty: call_ret_ty.clone(),
+            fn_ty: expr_ty,
         };
 
         Ok(Some(info))

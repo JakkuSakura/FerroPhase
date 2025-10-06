@@ -1,57 +1,91 @@
 hir::Program {
     struct __Closure0 {
-        pub n: i64,
+        pub n: i64
+,
     }
 
-    fn __closure0_call(__env: __Closure0, x: ()) -> () {
-        // params: [__env: __Closure0, x: ()]
+    fn __closure0_call(__env: __Closure0, x: i64
+) -> i64
+ {
+        // params: [__env: __Closure0, x: i64
+]
         (x + __env.n)
     }
 
     struct __Closure1 {
+        pub __fp_no_capture: i8
+,
     }
 
-    fn __closure1_call(__env: __Closure1, x: ()) -> () {
-        // params: [__env: __Closure1, x: ()]
+    fn __closure1_call(__env: __Closure1, x: i64
+) -> i64
+ {
+        // params: [__env: __Closure1, x: i64
+]
         (x * 2)
     }
 
-    fn add__i64(a: i64, b: i64) -> i64 {
-        // params: [a: i64, b: i64]
+    fn add__i64(a: i64
+, b: i64
+) -> i64
+ {
+        // params: [a: i64
+, b: i64
+]
         (a + b)
     }
 
-    fn apply__i64_op_add__i64(a: i64, b: i64) -> () {
-        // params: [a: i64, b: i64]
+    fn apply__i64_op_add__i64(a: i64
+, b: i64
+) -> () {
+        // params: [a: i64
+, b: i64
+]
         {
             printf("%d
 ", add__i64(a, b));
         }
     }
 
-    fn add__f64(a: f64, b: f64) -> f64 {
-        // params: [a: f64, b: f64]
+    fn add__f64(a: f64
+, b: f64
+) -> f64
+ {
+        // params: [a: f64
+, b: f64
+]
         (a + b)
     }
 
-    fn apply__f64_op_add__f64(a: f64, b: f64) -> () {
-        // params: [a: f64, b: f64]
+    fn apply__f64_op_add__f64(a: f64
+, b: f64
+) -> () {
+        // params: [a: f64
+, b: f64
+]
         {
             printf("%f
 ", add__f64(a, b));
         }
     }
 
-    fn apply_if__op_add__i64(cond: bool, a: i64, b: i64) -> i64 {
-        // params: [cond: bool, a: i64, b: i64]
+    fn apply_if__op_add__i64(cond: bool, a: i64
+, b: i64
+) -> i64
+ {
+        // params: [cond: bool, a: i64
+, b: i64
+]
         if (cond)
             add__i64(a, b)
         else
             0
     }
 
-    fn make_adder(n: i64) -> () {
-        // params: [n: i64]
+    fn make_adder(n: i64
+) -> __Closure0 {
+        // params: [n: i64
+]
         __Closure0 { n: n }
     }
 
@@ -71,11 +105,11 @@ Conditional:
             printf("
 Closure factory:
 ");
-            const add_10: () =
+            const add_10: __Closure0 =
                 make_adder(10);
             printf("add_10(5) = %d
 ", __closure0_call(add_10, 5));
-            let double = __Closure1 {  };
+            let double = __Closure1 { __fp_no_capture: 0 };
             printf("double(7) = %d
 ", __closure1_call(double, 7));
         }
