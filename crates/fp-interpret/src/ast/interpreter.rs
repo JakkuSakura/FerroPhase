@@ -1,14 +1,17 @@
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprInvokeTarget, ExprKind,
-    FormatArgRef, FormatTemplatePart, Item, ItemDefFunction, ItemKind, Node, NodeKind, Ty, Value,
-    ValueField, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, Item, ItemDefFunction, ItemKind,
+    Node, NodeKind, Ty, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
+    ValueTuple,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
+use fp_core::id::Locator;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
@@ -52,6 +55,22 @@ pub struct InterpreterOutcome {
     pub mutations_applied: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct ConstClosure {
+    params: Vec<Pattern>,
+    ret_ty: Option<Ty>,
+    body: Expr,
+    captured_values: Vec<HashMap<String, StoredValue>>,
+    captured_types: Vec<HashMap<String, Ty>>,
+    module_stack: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum StoredValue {
+    Plain(Value),
+    Closure(ConstClosure),
+}
+
 pub struct AstInterpreter<'ctx> {
     ctx: &'ctx SharedScopedContext,
     diag_manager: Option<Arc<DiagnosticManager>>,
@@ -61,7 +80,7 @@ pub struct AstInterpreter<'ctx> {
     diagnostic_context: &'static str,
 
     module_stack: Vec<String>,
-    value_env: Vec<HashMap<String, Value>>,
+    value_env: Vec<HashMap<String, StoredValue>>,
     type_env: Vec<HashMap<String, Ty>>,
     global_types: HashMap<String, Ty>,
     diagnostics: Vec<Diagnostic>,
@@ -70,6 +89,7 @@ pub struct AstInterpreter<'ctx> {
     stdout: Vec<String>,
     functions: HashMap<String, ItemDefFunction>,
     mutations_applied: bool,
+    pending_closure: Option<ConstClosure>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -91,6 +111,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             stdout: Vec::new(),
             functions: HashMap::new(),
             mutations_applied: false,
+            pending_closure: None,
         }
     }
 
@@ -243,6 +264,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                         replacement.ty = expr.ty.clone();
                         *expr = replacement;
                         value
+                    } else if let Some(closure) = self.lookup_closure(ident.as_str()) {
+                        self.pending_closure = Some(closure);
+                        Value::unit()
                     } else if let Some(ty) = self.lookup_type(ident.as_str()) {
                         Value::Type(ty)
                     } else {
@@ -348,21 +372,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.bind_pattern(&expr_let.pat, value.clone());
                 value
             }
-            ExprKind::Invoke(invoke) => {
-                if let ExprInvokeTarget::Method(select) = &mut invoke.target {
-                    if select.field.name.as_str() == "len" && invoke.args.is_empty() {
-                        let value = self.eval_expr(select.obj.as_mut());
-                        if let Value::List(list) = value {
-                            let len_value = Value::int(list.values.len() as i64);
-                            let mut replacement = Expr::value(len_value.clone());
-                            replacement.ty = expr.ty.clone();
-                            *expr = replacement;
-                            self.mark_mutated();
-                            return len_value;
-                        }
-                    }
-                }
-                self.eval_invoke(invoke)
+            ExprKind::Invoke(invoke) => self.eval_invoke(invoke),
+            ExprKind::Closure(closure) => {
+                let captured = self.capture_closure(closure);
+                self.pending_closure = Some(captured);
+                Value::unit()
+            }
+            ExprKind::Closured(closured) => {
+                let mut inner = closured.expr.as_ref().clone();
+                self.eval_expr(&mut inner)
             }
             _ => {
                 self.emit_error("expression not supported in AST interpretation");
@@ -371,11 +389,79 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn eval_invoke(&mut self, invoke: &mut fp_core::ast::ExprInvoke) -> Value {
-        match (&self.mode, &mut invoke.target) {
-            (InterpreterMode::RunTime, ExprInvokeTarget::Function(locator))
-                if self.is_printf_symbol(&locator.to_string()) =>
-            {
+    fn eval_invoke(&mut self, invoke: &mut ExprInvoke) -> Value {
+        match self.mode {
+            InterpreterMode::CompileTime => self.eval_invoke_compile_time(invoke),
+            InterpreterMode::RunTime => self.eval_invoke_runtime(invoke),
+        }
+    }
+
+    fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if let ExprInvokeTarget::Method(select) = &mut invoke.target {
+            if select.field.name.as_str() == "len" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                if let Value::List(list) = value {
+                    return Value::int(list.values.len() as i64);
+                }
+                self.emit_error("'len' is only supported on compile-time arrays and lists");
+                return Value::undefined();
+            }
+
+            self.emit_error("method calls are not supported in const evaluation yet");
+            return Value::undefined();
+        }
+
+        match &mut invoke.target {
+            ExprInvokeTarget::Function(locator) => {
+                if let Some(value) = self.lookup_callable_value(locator) {
+                    let args = self.evaluate_args(&mut invoke.args);
+                    return self.apply_callable(value, args);
+                }
+
+                if let Some(ident) = locator.as_ident() {
+                    if let Some(closure) = self.lookup_closure(ident.as_str()) {
+                        let args = self.evaluate_args(&mut invoke.args);
+                        return self.call_const_closure(&closure, args);
+                    }
+                }
+
+                if let Some(function) = self.find_function(locator) {
+                    let args = self.evaluate_args(&mut invoke.args);
+                    return self.call_function(function, args);
+                }
+
+                let _ = self.evaluate_args(&mut invoke.args);
+                let name = locator.to_string();
+                self.emit_error(format!(
+                    "cannot resolve call target '{}' in const evaluation",
+                    name
+                ));
+                Value::undefined()
+            }
+            ExprInvokeTarget::Expr(expr) => {
+                let callee = self.eval_expr(expr.as_mut());
+                if let Some(closure) = self.take_pending_closure() {
+                    let args = self.evaluate_args(&mut invoke.args);
+                    return self.call_const_closure(&closure, args);
+                }
+                let args = self.evaluate_args(&mut invoke.args);
+                self.apply_callable(callee, args)
+            }
+            ExprInvokeTarget::Closure(func) => {
+                let args = self.evaluate_args(&mut invoke.args);
+                self.call_value_function(func, args)
+            }
+            ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
+                self.emit_error("unsupported invocation target in const evaluation");
+                Value::undefined()
+            }
+            ExprInvokeTarget::Method(_) => unreachable!(),
+        }
+    }
+
+    fn eval_invoke_runtime(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
+            if self.is_printf_symbol(&locator.to_string()) {
                 let mut evaluated = Vec::with_capacity(invoke.args.len());
                 for arg in invoke.args.iter_mut() {
                     evaluated.push(self.eval_expr(arg));
@@ -394,19 +480,149 @@ impl<'ctx> AstInterpreter<'ctx> {
                         "printf expects a string literal as the first argument at runtime",
                     );
                 }
-                Value::unit()
-            }
-            (InterpreterMode::CompileTime, _) => {
-                for arg in invoke.args.iter_mut() {
-                    self.eval_expr(arg);
-                }
-                Value::unit()
-            }
-            (InterpreterMode::RunTime, _) => {
-                self.emit_error("runtime function calls not yet supported in interpreter");
-                Value::undefined()
+                return Value::unit();
             }
         }
+
+        for arg in invoke.args.iter_mut() {
+            self.eval_expr(arg);
+        }
+
+        self.emit_error("runtime function calls are not yet supported in interpreter mode");
+        Value::undefined()
+    }
+
+    fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
+        args.iter_mut().map(|arg| self.eval_expr(arg)).collect()
+    }
+
+    fn lookup_callable_value(&mut self, locator: &Locator) -> Option<Value> {
+        locator
+            .as_ident()
+            .and_then(|ident| self.lookup_value(ident.as_str()))
+    }
+
+    fn find_function(&self, locator: &Locator) -> Option<ItemDefFunction> {
+        if let Some(ident) = locator.as_ident() {
+            if let Some(function) = self.functions.get(ident.as_str()) {
+                return Some(function.clone());
+            }
+        }
+
+        let name = locator.to_string();
+        self.functions.get(&name).cloned()
+    }
+
+    fn apply_callable(&mut self, callee: Value, args: Vec<Value>) -> Value {
+        if matches!(callee, Value::Unit(_)) && args.is_empty() {
+            return Value::unit();
+        }
+
+        self.emit_error("unsupported callable in const evaluation");
+        Value::undefined()
+    }
+
+    fn capture_closure(&self, closure: &ExprClosure) -> ConstClosure {
+        ConstClosure {
+            params: closure.params.clone(),
+            ret_ty: closure.ret_ty.as_ref().map(|ty| (**ty).clone()),
+            body: closure.body.as_ref().clone(),
+            captured_values: self.value_env.clone(),
+            captured_types: self.type_env.clone(),
+            module_stack: self.module_stack.clone(),
+        }
+    }
+
+    fn call_const_closure(&mut self, closure: &ConstClosure, args: Vec<Value>) -> Value {
+        if closure.params.len() != args.len() {
+            self.emit_error(format!(
+                "closure expected {} arguments, found {}",
+                closure.params.len(),
+                args.len()
+            ));
+            return Value::undefined();
+        }
+
+        let saved_values = mem::replace(&mut self.value_env, closure.captured_values.clone());
+        let saved_types = mem::replace(&mut self.type_env, closure.captured_types.clone());
+        let saved_modules = mem::replace(&mut self.module_stack, closure.module_stack.clone());
+
+        self.push_scope();
+        for (pattern, value) in closure.params.iter().zip(args.into_iter()) {
+            self.bind_pattern(pattern, value);
+        }
+
+        let mut body = closure.body.clone();
+        let result = self.eval_expr(&mut body);
+
+        self.pop_scope();
+
+        self.value_env = saved_values;
+        self.type_env = saved_types;
+        self.module_stack = saved_modules;
+
+        result
+    }
+
+    fn call_function(&mut self, function: ItemDefFunction, args: Vec<Value>) -> Value {
+        if !function.sig.generics_params.is_empty() {
+            self.emit_error(format!(
+                "generic functions are not supported in const evaluation: {}",
+                function.name.as_str()
+            ));
+            return Value::undefined();
+        }
+
+        if function.sig.params.len() != args.len() {
+            self.emit_error(format!(
+                "function '{}' expected {} arguments, found {}",
+                function.name.as_str(),
+                function.sig.params.len(),
+                args.len()
+            ));
+            return Value::undefined();
+        }
+
+        self.push_scope();
+        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
+            if let Some(scope) = self.type_env.last_mut() {
+                scope.insert(param.name.as_str().to_string(), param.ty.clone());
+            }
+            self.insert_value(param.name.as_str(), value);
+        }
+
+        let mut body = function.body.as_ref().clone();
+        let result = self.eval_expr(&mut body);
+
+        self.pop_scope();
+
+        result
+    }
+
+    fn call_value_function(&mut self, function: &ValueFunction, args: Vec<Value>) -> Value {
+        if function.sig.params.len() != args.len() {
+            self.emit_error(format!(
+                "function literal expected {} arguments, found {}",
+                function.sig.params.len(),
+                args.len()
+            ));
+            return Value::undefined();
+        }
+
+        self.push_scope();
+        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
+            if let Some(scope) = self.type_env.last_mut() {
+                scope.insert(param.name.as_str().to_string(), param.ty.clone());
+            }
+            self.insert_value(param.name.as_str(), value);
+        }
+
+        let mut body = function.body.as_ref().clone();
+        let result = self.eval_expr(&mut body);
+
+        self.pop_scope();
+
+        result
     }
 
     fn should_replace_intrinsic_with_value(&self, kind: IntrinsicCallKind, value: &Value) -> bool {
@@ -1048,7 +1264,11 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn insert_value(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.value_env.last_mut() {
-            scope.insert(name.to_string(), value);
+            if let Some(closure) = self.pending_closure.take() {
+                scope.insert(name.to_string(), StoredValue::Closure(closure));
+            } else {
+                scope.insert(name.to_string(), StoredValue::Plain(value));
+            }
         }
     }
 
@@ -1062,8 +1282,10 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn lookup_value(&self, name: &str) -> Option<Value> {
         for scope in self.value_env.iter().rev() {
-            if let Some(value) = scope.get(name) {
-                return Some(value.clone());
+            match scope.get(name) {
+                Some(StoredValue::Plain(value)) => return Some(value.clone()),
+                Some(StoredValue::Closure(_)) => return None,
+                None => {}
             }
         }
         if self.is_printf_symbol(name) {
@@ -1073,6 +1295,21 @@ impl<'ctx> AstInterpreter<'ctx> {
             return Some(Value::unit());
         }
         None
+    }
+
+    fn lookup_closure(&self, name: &str) -> Option<ConstClosure> {
+        for scope in self.value_env.iter().rev() {
+            match scope.get(name) {
+                Some(StoredValue::Closure(closure)) => return Some(closure.clone()),
+                Some(StoredValue::Plain(_)) => return None,
+                None => {}
+            }
+        }
+        None
+    }
+
+    fn take_pending_closure(&mut self) -> Option<ConstClosure> {
+        self.pending_closure.take()
     }
 
     fn lookup_type(&self, name: &str) -> Option<Ty> {

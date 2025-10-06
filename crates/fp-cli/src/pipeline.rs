@@ -380,26 +380,6 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
         }
 
-        let closure_report = self.stage_closure_lowering(&mut ast);
-        self.collect_stage(
-            STAGE_CLOSURE_LOWERING,
-            closure_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        if options.save_intermediates {
-            self.save_pretty(&ast, base_path, "ast-closure", options)?;
-        }
-
-        let post_closure_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE);
-        self.collect_stage(
-            STAGE_TYPE_POST_CLOSURE,
-            post_closure_type_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
         let const_report = self.stage_const_eval(&mut ast, options)?;
         let outcome =
             self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
@@ -455,6 +435,26 @@ impl Pipeline {
         self.collect_stage(
             STAGE_TYPE_POST_MATERIALIZE,
             post_materialize_type_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        let closure_report = self.stage_closure_lowering(&mut ast);
+        self.collect_stage(
+            STAGE_CLOSURE_LOWERING,
+            closure_report,
+            &diagnostic_manager,
+            options,
+        )?;
+
+        if options.save_intermediates {
+            self.save_pretty(&ast, base_path, "ast-closure", options)?;
+        }
+
+        let post_closure_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE);
+        self.collect_stage(
+            STAGE_TYPE_POST_CLOSURE,
+            post_closure_type_report,
             &diagnostic_manager,
             options,
         )?;
