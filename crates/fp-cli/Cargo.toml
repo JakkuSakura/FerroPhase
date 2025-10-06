@@ -12,6 +12,7 @@ path = "src/bin/fp.rs"
 fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
 fp-optimize = { path = "../fp-optimize" }
+fp-typing = { path = "../fp-typing" }
 fp-rust = { path = "../fp-rust" }
 fp-javascript = { path = "../fp-javascript" }
 fp-csharp = { path = "../fp-csharp" }
