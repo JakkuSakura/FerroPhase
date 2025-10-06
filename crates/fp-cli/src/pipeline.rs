@@ -37,7 +37,6 @@ const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
 const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
-const STAGE_TYPE_POST_CONST: &str = "ast→typed(post-const)";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_TYPE_POST_CLOSURE: &str = "ast→typed(post-closure)";
@@ -388,18 +387,7 @@ impl Pipeline {
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
-        }
-
-        self.run_stage(
-            STAGE_TYPE_POST_CONST,
-            &diagnostic_manager,
-            options,
-            |pipeline| {
-                pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CONST, &diagnostic_manager)
-            },
-        )?;
-
-        if options.save_intermediates {
+            // The AST is already typed after const eval (typer is embedded in const evaluator)
             self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_CONST, options)?;
         }
 

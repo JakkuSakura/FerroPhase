@@ -6,6 +6,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result;
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_typing::AstTypeInferencer;
 
 const DIAGNOSTIC_CONTEXT: &str = "const-eval";
 
@@ -25,6 +26,7 @@ pub struct ConstEvaluationOrchestrator {
     diagnostics: Option<Arc<DiagnosticManager>>,
     debug_assertions: bool,
     execute_main: bool,
+    typer: AstTypeInferencer,
 }
 
 impl ConstEvaluationOrchestrator {
@@ -33,6 +35,7 @@ impl ConstEvaluationOrchestrator {
             diagnostics: None,
             debug_assertions: false,
             execute_main: false,
+            typer: AstTypeInferencer::new(),
         }
     }
 
@@ -62,6 +65,11 @@ impl ConstEvaluationOrchestrator {
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
+
+        // Take ownership of the typer temporarily and box it as a trait object
+        let typer = std::mem::replace(&mut self.typer, AstTypeInferencer::new());
+        interpreter.set_typer(Box::new(typer));
+
         interpreter.interpret(ast);
 
         if self.execute_main {

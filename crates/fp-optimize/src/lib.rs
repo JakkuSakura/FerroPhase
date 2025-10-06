@@ -11,7 +11,9 @@ pub mod orchestrators;
 pub mod passes;
 pub mod queries;
 pub mod transformations;
-pub mod typing;
+
+// Re-export typing from fp-typing crate
+pub use fp_typing as typing;
 
 // Re-export key types for convenience
 pub use orchestrators::*;
