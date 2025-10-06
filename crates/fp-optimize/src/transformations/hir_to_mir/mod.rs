@@ -324,9 +324,36 @@ impl MirLowering {
                 }
             }
             hir::TypeExprKind::Path(path) => self.lower_path_type(path, ty_expr.span),
+            hir::TypeExprKind::FnPtr(fn_ptr) => {
+                let inputs = fn_ptr
+                    .inputs
+                    .iter()
+                    .map(|ty| Box::new(self.lower_type_expr(ty)))
+                    .collect();
+                let output = Box::new(self.lower_type_expr(&fn_ptr.output));
+                Ty {
+                    kind: TyKind::FnPtr(mir::ty::PolyFnSig {
+                        binder: mir::ty::Binder {
+                            value: mir::ty::FnSig {
+                                inputs,
+                                output,
+                                c_variadic: false,
+                                unsafety: mir::ty::Unsafety::Normal,
+                                abi: mir::ty::Abi::Rust,
+                            },
+                            bound_vars: Vec::new(),
+                        },
+                    }),
+                }
+            }
             hir::TypeExprKind::Never => Ty {
                 kind: TyKind::Never,
             },
+            hir::TypeExprKind::Infer => {
+                self.emit_error(ty_expr.span, "type inference markers not supported in HIR→MIR");
+                self.error_ty()
+            }
+            hir::TypeExprKind::Error => self.error_ty(),
             _ => {
                 self.emit_error(ty_expr.span, "type lowering not yet supported");
                 self.error_ty()

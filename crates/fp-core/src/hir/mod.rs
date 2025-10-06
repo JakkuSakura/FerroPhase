@@ -264,8 +264,16 @@ pub enum TypeExprKind {
     Array(Box<TypeExpr>, Option<Box<Expr>>),
     Ptr(Box<TypeExpr>),
     Ref(Box<TypeExpr>),
+    FnPtr(FnPtrType),
     Never,
     Infer,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnPtrType {
+    pub inputs: Vec<Box<TypeExpr>>,
+    pub output: Box<TypeExpr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
