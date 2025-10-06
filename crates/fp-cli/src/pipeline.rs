@@ -27,6 +27,7 @@ use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_optimize::typing::TypingDiagnosticLevel;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -805,7 +806,18 @@ impl Pipeline {
 
         let mut pretty_opts = PrettyOptions::default();
         pretty_opts.show_spans = options.debug.verbose;
-        let rendered = format!("{}", pretty(ast, pretty_opts));
+        let display = pretty(ast, pretty_opts);
+        let mut rendered = String::new();
+        if let Err(err) = write!(&mut rendered, "{}", display) {
+            debug!(
+                error = %err,
+                extension = extension,
+                "failed to format {} intermediate",
+                extension
+            );
+            return Ok(());
+        }
+
         if let Err(err) = fs::write(base_path.with_extension(extension), rendered) {
             debug!(
                 error = %err,

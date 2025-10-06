@@ -1783,6 +1783,14 @@ impl AstTypeInferencer {
             self.type_vars[a_root].kind.clone(),
             self.type_vars[b_root].kind.clone(),
         ) {
+            (TypeVarKind::Bound(TypeTerm::Unknown), _) => {
+                self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
+                Ok(())
+            }
+            (_, TypeVarKind::Bound(TypeTerm::Unknown)) => {
+                self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
+                Ok(())
+            }
             (TypeVarKind::Unbound { .. }, TypeVarKind::Unbound { .. }) => {
                 self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
                 Ok(())
