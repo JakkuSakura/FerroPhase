@@ -49,6 +49,9 @@ const STAGE_AST_INTERPRET: &str = "ast-interpret";
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
 const EXT_AST_EVAL: &str = "ast-eval";
+const EXT_AST_TYPED_POST_CONST: &str = "ast-typed-post-const";
+const EXT_AST_TYPED_POST_MATERIALIZE: &str = "ast-typed-post-materialize";
+const EXT_AST_TYPED_POST_CLOSURE: &str = "ast-typed-post-closure";
 const EXT_HIR: &str = "hir";
 
 #[derive(Debug)]
@@ -396,6 +399,10 @@ impl Pipeline {
             },
         )?;
 
+        if options.save_intermediates {
+            self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_CONST, options)?;
+        }
+
         self.run_stage(
             STAGE_RUNTIME_MATERIALIZE,
             &diagnostic_manager,
@@ -418,6 +425,10 @@ impl Pipeline {
             },
         )?;
 
+        if options.save_intermediates {
+            self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_MATERIALIZE, options)?;
+        }
+
         self.run_stage(
             STAGE_CLOSURE_LOWERING,
             &diagnostic_manager,
@@ -437,6 +448,10 @@ impl Pipeline {
                 pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE, &diagnostic_manager)
             },
         )?;
+
+        if options.save_intermediates {
+            self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_CLOSURE, options)?;
+        }
 
         let output = if matches!(target, PipelineTarget::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
