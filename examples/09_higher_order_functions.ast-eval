@@ -11,11 +11,11 @@ fn make_adder (n : i64) -> impl Fn{
 }
 fn main () -> (){
     println ! ("Generic operations:") ;
-    apply__spec0 (10 , 20 , add) ;
-    apply__spec1 (1.5 , 2.5 , add) ;
+    apply__spec0 (10 , 20 , add__spec0) ;
+    apply__spec1 (1.5 , 2.5 , add__spec1) ;
     println ! ("\nConditional:") ;
-    println ! ("{}" , apply_if (true , 5 , 3 , add)) ;
-    println ! ("{}" , apply_if (false , 5 , 3 , add)) ;
+    println ! ("{}" , apply_if (true , 5 , 3 , add__spec0)) ;
+    println ! ("{}" , apply_if (false , 5 , 3 , add__spec0)) ;
     println ! ("\nClosure factory:") ;
     const add_10 : fn (i64) -> i64 = make_adder (10) ;
     println ! ("add_10(5) = {}" , add_10 (5)) ;
@@ -25,8 +25,14 @@ fn main () -> (){
 fn apply__spec0 (a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> (){
     println ! ("{}" , op (a , b)) ;
 }
+fn add__spec0 (a : i64 , b : i64) -> i64{
+    a + b
+}
 fn apply__spec1 (a : f64 , b : f64 , op : fn (f64 , f64) -> f64) -> (){
     println ! ("{}" , op (a , b)) ;
+}
+fn add__spec1 (a : f64 , b : f64) -> f64{
+    a + b
 }
 
 // Type: ()
