@@ -49,11 +49,10 @@ lowerings consume the already-typed structures.
      unsupported constructs. MIR is then converted into LIR and LLVM IR so
      native backends share a single SSA pipeline.
 
-Each step returns a `DiagnosticReport<T>` containing the produced artefact (or a
-placeholder in tolerant mode) and the collected `Diagnostic` entries. The
-pipeline updates its cached serializer/language metadata in place, and
-diagnostics are printed stage-by-stage while also bubbling up for aggregate
-reporting.
+Each step updates the shared `DiagnosticManager`, returning either the produced
+artefact (or a placeholder when tolerance is enabled) or a stage failure. The
+pipeline maintains its cached serializer/language metadata in place, printing
+diagnostics after each stage while also retaining them for aggregate reporting.
 
 7. **Binary Emission**
    - The LLVM bridge writes `*.ll` artefacts and invokes `clang` to link final
