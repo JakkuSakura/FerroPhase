@@ -1,14 +1,18 @@
 use fp_core::{bail, Result};
 use itertools::Itertools;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
+use syn::LitStr;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprBinOp, ExprBlock, ExprClosure,
-    ExprField, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop,
-    ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType,
-    ExprStruct, ExprTuple, ExprUnOp, ExprWhile, StmtLet,
+    ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit,
+    ExprReference, ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct,
+    ExprStructural, ExprTuple, ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item,
+    StmtLet,
 };
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 
 use crate::printer::RustPrinter;
@@ -53,8 +57,13 @@ impl RustPrinter {
             ExprKind::Closure(n) => self.print_expr_closure(n),
             ExprKind::Array(n) => self.print_expr_array(n),
             ExprKind::ArrayRepeat(n) => self.print_expr_array_repeat(n),
-
-            _ => bail!("Unable to serialize {:?}", node),
+            ExprKind::IntrinsicCall(n) => self.print_intrinsic_call(n),
+            ExprKind::Structural(n) => self.print_structural_expr(n),
+            ExprKind::Dereference(n) => self.print_expr_dereference(n),
+            ExprKind::FormatString(n) => self.print_expr_format_string(n),
+            ExprKind::Splat(n) => self.print_expr_splat(n),
+            ExprKind::SplatDict(n) => self.print_expr_splat_dict(n),
+            ExprKind::Item(item) => self.print_expr_item(item),
         }
     }
 
@@ -451,5 +460,158 @@ impl RustPrinter {
         let elem = self.print_expr(array.elem.as_ref())?;
         let len = self.print_expr(array.len.as_ref())?;
         Ok(quote!([#elem; #len]))
+    }
+
+    fn print_expr_dereference(&self, deref: &ExprDereference) -> Result<TokenStream> {
+        let value = self.print_expr(deref.referee.as_ref())?;
+        Ok(quote!(*#value))
+    }
+
+    fn print_structural_expr(&self, structural: &ExprStructural) -> Result<TokenStream> {
+        let fields: Vec<_> = structural
+            .fields
+            .iter()
+            .map(|field| self.print_expr_field_value(field))
+            .try_collect()?;
+        Ok(quote!({ #(#fields),* }))
+    }
+
+    fn print_expr_splat(&self, splat: &ExprSplat) -> Result<TokenStream> {
+        let iter = self.print_expr(splat.iter.as_ref())?;
+        Ok(quote!(*#iter))
+    }
+
+    fn print_expr_splat_dict(&self, splat: &ExprSplatDict) -> Result<TokenStream> {
+        let dict = self.print_expr(splat.dict.as_ref())?;
+        Ok(quote!(**#dict))
+    }
+
+    fn print_expr_item(&self, item: &Item) -> Result<TokenStream> {
+        let tokens = self.print_item(item)?;
+        Ok(quote!({ #tokens }))
+    }
+
+    fn print_intrinsic_call(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
+        match call.kind {
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                self.print_print_intrinsic(call)
+            }
+            _ => self.print_generic_intrinsic(call),
+        }
+    }
+
+    fn print_print_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
+        let template = match &call.payload {
+            IntrinsicCallPayload::Format { template } => template,
+            IntrinsicCallPayload::Args { .. } => {
+                bail!("print intrinsics expect format payloads")
+            }
+        };
+
+        let (literal, args) = self.prepare_format_args(template)?;
+        let macro_ident = if matches!(call.kind, IntrinsicCallKind::Println) {
+            format_ident!("println")
+        } else {
+            format_ident!("print")
+        };
+
+        Ok({
+            let args_iter = args.iter();
+            quote!(#macro_ident!(#literal #(, #args_iter)* ))
+        })
+    }
+
+    fn print_generic_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
+        let ident = self.intrinsic_function_ident(call.kind);
+        let args: Vec<TokenStream> = match &call.payload {
+            IntrinsicCallPayload::Args { args } => {
+                args.iter().map(|arg| self.print_expr(arg)).try_collect()?
+            }
+            IntrinsicCallPayload::Format { template } => {
+                vec![self.print_expr_format_string(template)?]
+            }
+        };
+
+        if args.is_empty() {
+            Ok(quote!(#ident()))
+        } else {
+            let args_iter = args.iter();
+            Ok(quote!(#ident(#(#args_iter),*)))
+        }
+    }
+
+    fn intrinsic_function_ident(&self, kind: IntrinsicCallKind) -> TokenStream {
+        match kind {
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                unreachable!("print intrinsics handled separately")
+            }
+            IntrinsicCallKind::Len => quote!(len),
+            IntrinsicCallKind::ConstBlock => quote!(intrinsic_const_block),
+            IntrinsicCallKind::DebugAssertions => quote!(intrinsic_debug_assertions),
+            IntrinsicCallKind::Input => quote!(intrinsic_input),
+            IntrinsicCallKind::Break => quote!(intrinsic_break),
+            IntrinsicCallKind::Continue => quote!(intrinsic_continue),
+            IntrinsicCallKind::Return => quote!(intrinsic_return),
+            IntrinsicCallKind::SizeOf => quote!(intrinsic_size_of),
+            IntrinsicCallKind::ReflectFields => quote!(intrinsic_reflect_fields),
+            IntrinsicCallKind::HasMethod => quote!(intrinsic_has_method),
+            IntrinsicCallKind::TypeName => quote!(intrinsic_type_name),
+            IntrinsicCallKind::CreateStruct => quote!(intrinsic_create_struct),
+            IntrinsicCallKind::CloneStruct => quote!(intrinsic_clone_struct),
+            IntrinsicCallKind::AddField => quote!(intrinsic_add_field),
+            IntrinsicCallKind::HasField => quote!(intrinsic_has_field),
+            IntrinsicCallKind::FieldCount => quote!(intrinsic_field_count),
+            IntrinsicCallKind::MethodCount => quote!(intrinsic_method_count),
+            IntrinsicCallKind::FieldType => quote!(intrinsic_field_type),
+            IntrinsicCallKind::StructSize => quote!(intrinsic_struct_size),
+            IntrinsicCallKind::GenerateMethod => quote!(intrinsic_generate_method),
+            IntrinsicCallKind::CompileError => quote!(intrinsic_compile_error),
+            IntrinsicCallKind::CompileWarning => quote!(intrinsic_compile_warning),
+        }
+    }
+
+    fn prepare_format_args(
+        &self,
+        template: &ExprFormatString,
+    ) -> Result<(LitStr, Vec<TokenStream>)> {
+        let mut literal = String::new();
+        for part in &template.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => literal.push_str(text),
+                FormatTemplatePart::Placeholder(placeholder) => {
+                    literal.push('{');
+                    match &placeholder.arg_ref {
+                        FormatArgRef::Implicit => {}
+                        FormatArgRef::Positional(idx) => literal.push_str(&idx.to_string()),
+                        FormatArgRef::Named(name) => literal.push_str(name),
+                    }
+                    if let Some(spec) = &placeholder.format_spec {
+                        literal.push(':');
+                        literal.push_str(spec);
+                    }
+                    literal.push('}');
+                }
+            }
+        }
+
+        let mut args: Vec<TokenStream> = template
+            .args
+            .iter()
+            .map(|arg| self.print_expr(arg))
+            .try_collect()?;
+
+        for kwarg in &template.kwargs {
+            let ident = format_ident!("{}", kwarg.name);
+            let value = self.print_expr(&kwarg.value)?;
+            args.push(quote!(#ident = #value));
+        }
+
+        Ok((LitStr::new(&literal, Span::call_site()), args))
+    }
+
+    fn print_expr_format_string(&self, template: &ExprFormatString) -> Result<TokenStream> {
+        let (literal, args) = self.prepare_format_args(template)?;
+        let args_iter = args.iter();
+        Ok(quote!(format!(#literal #(, #args_iter)* )))
     }
 }

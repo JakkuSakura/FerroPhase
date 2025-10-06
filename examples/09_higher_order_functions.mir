@@ -1,8 +1,8 @@
 mir::Program {
     items:
-        fn __closure0_call(arg0: (i64), arg1: ()) -> () [body: body0]
+        fn __closure0_call(arg0: (i64), arg1: i64) -> i64 [body: body0]
 
-        fn __closure1_call(arg0: (), arg1: ()) -> () [body: body1]
+        fn __closure1_call(arg0: (i8), arg1: i64) -> i64 [body: body1]
 
         fn add__i64(arg0: i64, arg1: i64) -> i64 [body: body2]
 
@@ -14,16 +14,16 @@ mir::Program {
 
         fn apply_if__op_add__i64(arg0: bool, arg1: i64, arg2: i64) -> i64 [body: body6]
 
-        fn make_adder(arg0: i64) -> () [body: body7]
+        fn make_adder(arg0: i64) -> (i64) [body: body7]
 
         fn main() -> () [body: body8]
     bodies:
         body0 { arg_count: 2, locals: 3 }
             return_local: _0
             locals:
-                _0: ()
+                _0: i64
                 _1: (i64)
-                _2: ()
+                _2: i64
             blocks:
                 bb0:
                     s0: _0 = Add(copy _2, copy _1[Field(0, Ty { kind: Int(I64) })])
@@ -31,9 +31,9 @@ mir::Program {
         body1 { arg_count: 2, locals: 3 }
             return_local: _0
             locals:
-                _0: ()
-                _1: ()
-                _2: ()
+                _0: i64
+                _1: (i8)
+                _2: i64
             blocks:
                 bb0:
                     s0: _0 = Mul(copy _2, 2)
@@ -110,7 +110,7 @@ mir::Program {
         body7 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
-                _0: ()
+                _0: (i64)
                 _1: i64
             blocks:
                 bb0:
@@ -129,11 +129,11 @@ mir::Program {
                 _7: i64
                 _8: i32
                 _9: i32
-                _10: ()
-                _11: ()
+                _10: i64
+                _11: (i64)
                 _12: i32
-                _13: ()
-                _14: ()
+                _13: (i8)
+                _14: i64
                 _15: i32
             blocks:
                 bb0:
@@ -161,7 +161,7 @@ mir::Program {
                 bb11:
                     terminator: call global printf("add_10(5) = %d\n", copy _10) -> _12 then bb12
                 bb12:
-                    s0: _13 = aggregate(tuple; [])
+                    s0: _13 = aggregate(tuple; [0])
                     terminator: call fn __closure1_call(copy _13, 7) -> _14 then bb13
                 bb13:
                     terminator: call global printf("double(7) = %d\n", copy _14) -> _15 then bb14

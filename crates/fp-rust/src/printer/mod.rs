@@ -3,7 +3,7 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::*;
 
-use crate::{RawExpr, RawExprMacro, RawStmtMacro};
+use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro};
 use fp_core::ast::*;
 use fp_core::bail;
 use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
@@ -11,6 +11,130 @@ use fp_core::pat::{Pattern, PatternIdent, PatternKind};
 use fp_core::printer::AstSerializerConfig;
 use fp_core::utils::anybox::AnyBox;
 use fp_core::{Error, Result};
+
+fn fallback_layout(code: &str) -> String {
+    let mut out = String::with_capacity(code.len() + 16);
+    let mut indent = 0usize;
+    let indent_unit = "    ";
+    let mut in_string = false;
+    let mut escape = false;
+    let mut chars = code.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                ensure_indent(&mut out, indent, indent_unit);
+                out.push('"');
+                in_string = true;
+                escape = false;
+            }
+            '{' => {
+                trim_trailing_space(&mut out);
+                ensure_indent(&mut out, indent, indent_unit);
+                out.push('{');
+                indent += 1;
+                out.push('\n');
+            }
+            '}' => {
+                indent = indent.saturating_sub(1);
+                trim_trailing_space(&mut out);
+                if !out.is_empty() && last_char(&out) != Some('\n') {
+                    out.push('\n');
+                }
+                ensure_indent(&mut out, indent, indent_unit);
+                out.push('}');
+                let mut lookahead = chars.clone();
+                let mut next_non_ws = None;
+                while let Some(next) = lookahead.next() {
+                    if next.is_whitespace() {
+                        continue;
+                    }
+                    next_non_ws = Some(next);
+                    break;
+                }
+                if matches!(next_non_ws, Some(';')) {
+                    // let semicolon branch handle newline
+                } else if next_non_ws.is_some() {
+                    out.push('\n');
+                }
+            }
+            ';' => {
+                out.push(';');
+                out.push('\n');
+            }
+            ',' => {
+                out.push(',');
+                if let Some(next) = chars.peek() {
+                    if !matches!(next, &' ' | &')' | &']' | &'}') {
+                        out.push(' ');
+                    }
+                }
+            }
+            '\n' | '\r' => {}
+            ' ' | '\t' => {
+                if let Some(prev) = last_char(&out) {
+                    if !prev.is_whitespace() && !matches!(prev, '{' | '(' | '[' | '}') {
+                        out.push(' ');
+                    }
+                }
+            }
+            _ => {
+                ensure_indent(&mut out, indent, indent_unit);
+                out.push(ch);
+            }
+        }
+    }
+
+    let mut formatted = out.trim_end().to_string();
+    if !formatted.is_empty() && !formatted.ends_with('\n') {
+        formatted.push('\n');
+    }
+    formatted
+}
+
+fn ensure_indent(buf: &mut String, indent: usize, indent_unit: &str) {
+    if buf.is_empty() || matches!(last_char(buf), Some('\n')) {
+        for _ in 0..indent {
+            buf.push_str(indent_unit);
+        }
+    }
+}
+
+fn trim_trailing_space(buf: &mut String) {
+    while matches!(last_char(buf), Some(' ' | '\t')) {
+        buf.pop();
+    }
+}
+
+fn last_char(buf: &str) -> Option<char> {
+    buf.chars().rev().next()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fallback_layout;
+
+    #[test]
+    fn fallback_layout_inserts_newlines() {
+        let formatted = fallback_layout("{ const A : i32 = 1 ; const B : i32 = 2 ; }");
+        let lines: Vec<_> = formatted.lines().collect();
+        assert!(lines.len() > 3, "expected multiple lines, got: {formatted}");
+        assert!(lines.iter().any(|line| line.contains("const A")));
+        assert!(lines.iter().any(|line| line.contains("const B")));
+    }
+}
 
 mod attr;
 mod expr;
@@ -32,6 +156,12 @@ impl RustPrinter {
             rustfmt: false,
             config: AstSerializerConfig::standard(),
         }
+    }
+
+    pub fn new_with_rustfmt() -> Self {
+        let mut printer = Self::new();
+        printer.set_rustfmt(true);
+        printer
     }
 
     pub fn with_config(config: AstSerializerConfig) -> Self {
@@ -57,7 +187,7 @@ impl RustPrinter {
             }
         }
 
-        Ok(code.to_string())
+        Ok(fallback_layout(code))
     }
     pub fn print_ident(&self, i: &Ident) -> TokenStream {
         match i.as_str() {
@@ -304,6 +434,9 @@ impl RustPrinter {
             return Ok(n.raw.to_token_stream());
         }
         if let Some(n) = n.downcast_ref::<RawStmtMacro>() {
+            return Ok(n.raw.to_token_stream());
+        }
+        if let Some(n) = n.downcast_ref::<RawItemMacro>() {
             return Ok(n.raw.to_token_stream());
         }
         bail!("Not supported {:?}", n)

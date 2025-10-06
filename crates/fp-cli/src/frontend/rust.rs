@@ -40,7 +40,7 @@ impl LanguageFrontend for RustFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
-        let serializer = Arc::new(RustPrinter::new());
+        let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         if let Some(path) = path {
             let mut parser = self.parser.lock().unwrap();
             parser.clear_diagnostics();

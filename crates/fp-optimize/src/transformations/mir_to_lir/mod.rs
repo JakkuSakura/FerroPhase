@@ -295,8 +295,11 @@ impl LirGenerator {
         let terminator = if let Some(terminator) = &bb_data.terminator {
             self.transform_terminator(terminator, &mut lir_block)?
         } else {
-            // Default terminator if none present
-            lir::LirTerminator::Return(None)
+            // Some MIR producers omit an explicit return on the final block when the
+            // value has already been written to the designated return local. In
+            // that case, synthesize a return terminator and let `prepare_return_value`
+            // materialize the value (loading from the return slot if needed).
+            lir::LirTerminator::Return(self.prepare_return_value(&mut lir_block))
         };
 
         lir_block.terminator = terminator;
@@ -557,7 +560,7 @@ impl LirGenerator {
     ) -> Result<lir::LirTerminator> {
         match &terminator.kind {
             mir::TerminatorKind::Return => {
-                Ok(lir::LirTerminator::Return(self.prepare_return_value()))
+                Ok(lir::LirTerminator::Return(self.prepare_return_value(block)))
             }
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
             mir::TerminatorKind::Call {
@@ -1760,6 +1763,22 @@ impl LirGenerator {
                 Some(ref ty) if !matches!(ty, lir::LirType::Void) => {
                     self.register_map
                         .insert(dest_place.local, lir::LirValue::Register(call_id));
+
+                    if let Some(storage) = self.local_storage.get(&dest_place.local) {
+                        let ptr = storage.ptr_value.clone();
+                        let alignment = storage.alignment;
+                        block.instructions.push(lir::LirInstruction {
+                            id: self.next_id(),
+                            kind: lir::LirInstructionKind::Store {
+                                value: lir::LirValue::Register(call_id),
+                                address: ptr,
+                                alignment: Some(alignment),
+                                volatile: false,
+                            },
+                            type_hint: Some(ty.clone()),
+                            debug_info: None,
+                        });
+                    }
                 }
                 Some(ref ty) => {
                     self.register_map.insert(
@@ -1893,13 +1912,32 @@ impl LirGenerator {
         }
     }
 
-    fn prepare_return_value(&self) -> Option<lir::LirValue> {
+    fn prepare_return_value(&mut self, block: &mut lir::LirBasicBlock) -> Option<lir::LirValue> {
         let return_ty = self.current_return_type.clone()?;
         if matches!(return_ty, lir::LirType::Void) {
             return None;
         }
 
         if let Some(local) = self.return_local {
+            if let Some(storage) = self.local_storage.get(&local) {
+                let ptr_value = storage.ptr_value.clone();
+                let element_ty = storage.element_type.clone();
+                let alignment = storage.alignment;
+
+                let load_id = self.next_id();
+                block.instructions.push(lir::LirInstruction {
+                    id: load_id,
+                    kind: lir::LirInstructionKind::Load {
+                        address: ptr_value,
+                        alignment: Some(alignment),
+                        volatile: false,
+                    },
+                    type_hint: Some(element_ty.clone()),
+                    debug_info: None,
+                });
+                return Some(lir::LirValue::Register(load_id));
+            }
+
             if let Some(value) = self.register_map.get(&local) {
                 return Some(value.clone());
             }

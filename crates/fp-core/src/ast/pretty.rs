@@ -4,21 +4,11 @@ use std::result::Result;
 use crate::ast::{try_get_threadlocal_serializer, AstSerializer, Expr, File, Item, Node, NodeKind};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
-fn render_with_serializer<T>(
-    value: &T,
+fn render_with_serializer(
     render: impl FnOnce(&dyn AstSerializer) -> Result<String, crate::Error>,
-) -> String
-where
-    T: fmt::Debug,
-{
-    if let Some(serializer) = try_get_threadlocal_serializer() {
-        match render(serializer.as_ref()) {
-            Ok(rendered) => rendered,
-            Err(_) => format!("{:#?}", value),
-        }
-    } else {
-        format!("{:#?}", value)
-    }
+) -> Result<String, fmt::Error> {
+    let serializer = try_get_threadlocal_serializer().ok_or(fmt::Error)?;
+    render(serializer.as_ref()).map_err(|_| fmt::Error)
 }
 
 fn emit_lines(ctx: &PrettyCtx<'_>, f: &mut Formatter<'_>, text: &str) -> fmt::Result {
@@ -37,21 +27,21 @@ fn emit_lines(ctx: &PrettyCtx<'_>, f: &mut Formatter<'_>, text: &str) -> fmt::Re
 
 impl PrettyPrintable for Expr {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        let rendered = render_with_serializer(self, |serializer| serializer.serialize_expr(self));
+        let rendered = render_with_serializer(|serializer| serializer.serialize_expr(self))?;
         emit_lines(ctx, f, rendered.as_str())
     }
 }
 
 impl PrettyPrintable for Item {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        let rendered = render_with_serializer(self, |serializer| serializer.serialize_item(self));
+        let rendered = render_with_serializer(|serializer| serializer.serialize_item(self))?;
         emit_lines(ctx, f, rendered.as_str())
     }
 }
 
 impl PrettyPrintable for File {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
-        let rendered = render_with_serializer(self, |serializer| serializer.serialize_file(self));
+        let rendered = render_with_serializer(|serializer| serializer.serialize_file(self))?;
         emit_lines(ctx, f, rendered.as_str())
     }
 }
