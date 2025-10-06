@@ -62,18 +62,14 @@ File {
                                             ],
                                         },
                                     ),
-                                    Primitive(
-                                        Int(
-                                            I64,
-                                        ),
+                                    Unknown(
+                                        TypeUnknown,
                                     ),
                                 ],
                                 generics_params: [],
                                 ret_ty: Some(
-                                    Primitive(
-                                        Int(
-                                            I64,
-                                        ),
+                                    Unknown(
+                                        TypeUnknown,
                                     ),
                                 ),
                             },
@@ -99,18 +95,14 @@ File {
                                         ],
                                     },
                                 ),
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
+                                Unknown(
+                                    TypeUnknown,
                                 ),
                             ],
                             generics_params: [],
                             ret_ty: Some(
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
+                                Unknown(
+                                    TypeUnknown,
                                 ),
                             ),
                         },
@@ -148,10 +140,8 @@ File {
                             FunctionParam {
                                 ty_annotation: None,
                                 name: #x,
-                                ty: Primitive(
-                                    Int(
-                                        I64,
-                                    ),
+                                ty: Unknown(
+                                    TypeUnknown,
                                 ),
                                 default: None,
                                 as_tuple: false,
@@ -162,19 +152,15 @@ File {
                         ],
                         generics_params: [],
                         ret_ty: Some(
-                            Primitive(
-                                Int(
-                                    I64,
-                                ),
+                            Unknown(
+                                TypeUnknown,
                             ),
                         ),
                     },
                     body: Expr {
                         ty: Some(
-                            Primitive(
-                                Int(
-                                    I64,
-                                ),
+                            Unknown(
+                                TypeUnknown,
                             ),
                         ),
                         kind: BinOp(
@@ -268,18 +254,14 @@ File {
                                             fields: [],
                                         },
                                     ),
-                                    Primitive(
-                                        Int(
-                                            I64,
-                                        ),
+                                    Unknown(
+                                        TypeUnknown,
                                     ),
                                 ],
                                 generics_params: [],
                                 ret_ty: Some(
-                                    Primitive(
-                                        Int(
-                                            I64,
-                                        ),
+                                    Unknown(
+                                        TypeUnknown,
                                     ),
                                 ),
                             },
@@ -296,18 +278,14 @@ File {
                                         fields: [],
                                     },
                                 ),
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
+                                Unknown(
+                                    TypeUnknown,
                                 ),
                             ],
                             generics_params: [],
                             ret_ty: Some(
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
+                                Unknown(
+                                    TypeUnknown,
                                 ),
                             ),
                         },
@@ -336,10 +314,8 @@ File {
                             FunctionParam {
                                 ty_annotation: None,
                                 name: #x,
-                                ty: Primitive(
-                                    Int(
-                                        I64,
-                                    ),
+                                ty: Unknown(
+                                    TypeUnknown,
                                 ),
                                 default: None,
                                 as_tuple: false,
@@ -350,19 +326,15 @@ File {
                         ],
                         generics_params: [],
                         ret_ty: Some(
-                            Primitive(
-                                Int(
-                                    I64,
-                                ),
+                            Unknown(
+                                TypeUnknown,
                             ),
                         ),
                     },
                     body: Expr {
                         ty: Some(
-                            Primitive(
-                                Int(
-                                    I64,
-                                ),
+                            Unknown(
+                                TypeUnknown,
                             ),
                         ),
                         kind: BinOp(
@@ -394,6 +366,1175 @@ File {
                                         ),
                                     ),
                                 },
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [
+                            Primitive(
+                                String,
+                            ),
+                            Any(
+                                TypeAny,
+                            ),
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DeclFunction(
+                ItemDeclFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [
+                                    Primitive(
+                                        String,
+                                    ),
+                                    Any(
+                                        TypeAny,
+                                    ),
+                                ],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    name: #printf,
+                    sig: FunctionSignature {
+                        name: Some(
+                            #printf,
+                        ),
+                        receiver: None,
+                        params: [
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        String,
+                                    ),
+                                ),
+                                name: #fmt,
+                                ty: Primitive(
+                                    String,
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Any(
+                                        TypeAny,
+                                    ),
+                                ),
+                                name: #args,
+                                ty: Any(
+                                    TypeAny,
+                                ),
+                                default: None,
+                                as_tuple: true,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                },
+            ),
+        },
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #add__i64,
+                    ty: Some(
+                        TypeFunction {
+                            params: [
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                            ],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #add__i64,
+                        ),
+                        receiver: None,
+                        params: [
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                                name: #a,
+                                ty: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                                name: #b,
+                                ty: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ),
+                        kind: BinOp(
+                            ExprBinOp {
+                                kind: Add,
+                                lhs: Expr {
+                                    ty: Some(
+                                        Primitive(
+                                            Int(
+                                                I64,
+                                            ),
+                                        ),
+                                    ),
+                                    kind: Locator(
+                                        #a,
+                                    ),
+                                },
+                                rhs: Expr {
+                                    ty: Some(
+                                        Primitive(
+                                            Int(
+                                                I64,
+                                            ),
+                                        ),
+                                    ),
+                                    kind: Locator(
+                                        #b,
+                                    ),
+                                },
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #apply__i64_op_add__i64,
+                    ty: Some(
+                        TypeFunction {
+                            params: [
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                            ],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #apply__i64_op_add__i64,
+                        ),
+                        receiver: None,
+                        params: [
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                                name: #a,
+                                ty: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                                name: #b,
+                                ty: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "%d\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: Invoke(
+                                                                    ExprInvoke {
+                                                                        target: Function(
+                                                                            #add__i64,
+                                                                        ),
+                                                                        args: [
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Locator(
+                                                                                    #a,
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Locator(
+                                                                                    #b,
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #add__f64,
+                    ty: Some(
+                        TypeFunction {
+                            params: [
+                                Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                                Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                            ],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #add__f64,
+                        ),
+                        receiver: None,
+                        params: [
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ),
+                                name: #a,
+                                ty: Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ),
+                                name: #b,
+                                ty: Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                        ),
+                        kind: BinOp(
+                            ExprBinOp {
+                                kind: Add,
+                                lhs: Expr {
+                                    ty: Some(
+                                        Primitive(
+                                            Decimal(
+                                                F64,
+                                            ),
+                                        ),
+                                    ),
+                                    kind: Locator(
+                                        #a,
+                                    ),
+                                },
+                                rhs: Expr {
+                                    ty: Some(
+                                        Primitive(
+                                            Decimal(
+                                                F64,
+                                            ),
+                                        ),
+                                    ),
+                                    kind: Locator(
+                                        #b,
+                                    ),
+                                },
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                            Primitive(
+                                Decimal(
+                                    F64,
+                                ),
+                            ),
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Unit(
+                                        TypeUnit,
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #apply__f64_op_add__f64,
+                    ty: Some(
+                        TypeFunction {
+                            params: [
+                                Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                                Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                            ],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Unit(
+                                    TypeUnit,
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #apply__f64_op_add__f64,
+                        ),
+                        receiver: None,
+                        params: [
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ),
+                                name: #a,
+                                ty: Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Decimal(
+                                            F64,
+                                        ),
+                                    ),
+                                ),
+                                name: #b,
+                                ty: Primitive(
+                                    Decimal(
+                                        F64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Unit(
+                                TypeUnit,
+                            ),
+                        ),
+                        kind: Block(
+                            ExprBlock {
+                                stmts: [
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "%f\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                            },
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Decimal(
+                                                                            F64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: Invoke(
+                                                                    ExprInvoke {
+                                                                        target: Function(
+                                                                            #add__f64,
+                                                                        ),
+                                                                        args: [
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Decimal(
+                                                                                            F64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Locator(
+                                                                                    #a,
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Decimal(
+                                                                                            F64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Locator(
+                                                                                    #b,
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    },
+                    visibility: Private,
+                },
+            ),
+        },
+        Item {
+            ty: Some(
+                Function(
+                    TypeFunction {
+                        params: [
+                            Primitive(
+                                Bool,
+                            ),
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ),
+                    },
+                ),
+            ),
+            kind: DefFunction(
+                ItemDefFunction {
+                    ty_annotation: Some(
+                        Function(
+                            TypeFunction {
+                                params: [
+                                    Primitive(
+                                        Bool,
+                                    ),
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ],
+                                generics_params: [],
+                                ret_ty: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                    attrs: [],
+                    name: #apply_if__op_add__i64,
+                    ty: Some(
+                        TypeFunction {
+                            params: [
+                                Primitive(
+                                    Bool,
+                                ),
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                            ],
+                            generics_params: [],
+                            ret_ty: Some(
+                                Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                            ),
+                        },
+                    ),
+                    sig: FunctionSignature {
+                        name: Some(
+                            #apply_if__op_add__i64,
+                        ),
+                        receiver: None,
+                        params: [
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Bool,
+                                    ),
+                                ),
+                                name: #cond,
+                                ty: Expr(
+                                    Expr {
+                                        ty: None,
+                                        kind: Locator(
+                                            #bool,
+                                        ),
+                                    },
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                                name: #a,
+                                ty: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                            FunctionParam {
+                                ty_annotation: Some(
+                                    Primitive(
+                                        Int(
+                                            I64,
+                                        ),
+                                    ),
+                                ),
+                                name: #b,
+                                ty: Primitive(
+                                    Int(
+                                        I64,
+                                    ),
+                                ),
+                                default: None,
+                                as_tuple: false,
+                                as_dict: false,
+                                positional_only: false,
+                                keyword_only: false,
+                            },
+                        ],
+                        generics_params: [],
+                        ret_ty: Some(
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ),
+                    },
+                    body: Expr {
+                        ty: Some(
+                            Primitive(
+                                Int(
+                                    I64,
+                                ),
+                            ),
+                        ),
+                        kind: If(
+                            ExprIf {
+                                cond: Expr {
+                                    ty: Some(
+                                        Primitive(
+                                            Bool,
+                                        ),
+                                    ),
+                                    kind: Locator(
+                                        #cond,
+                                    ),
+                                },
+                                then: Expr {
+                                    ty: Some(
+                                        Primitive(
+                                            Int(
+                                                I64,
+                                            ),
+                                        ),
+                                    ),
+                                    kind: Invoke(
+                                        ExprInvoke {
+                                            target: Function(
+                                                #add__i64,
+                                            ),
+                                            args: [
+                                                Expr {
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    kind: Locator(
+                                                        #a,
+                                                    ),
+                                                },
+                                                Expr {
+                                                    ty: Some(
+                                                        Primitive(
+                                                            Int(
+                                                                I64,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    kind: Locator(
+                                                        #b,
+                                                    ),
+                                                },
+                                            ],
+                                        },
+                                    ),
+                                },
+                                elze: Some(
+                                    Expr {
+                                        ty: Some(
+                                            Primitive(
+                                                Int(
+                                                    I64,
+                                                ),
+                                            ),
+                                        ),
+                                        kind: Value(
+                                            Int(
+                                                ValueInt {
+                                                    value: 0,
+                                                },
+                                            ),
+                                        ),
+                                    },
+                                ),
                             },
                         ),
                     },
@@ -460,26 +1601,51 @@ File {
                 Function(
                     TypeFunction {
                         params: [
-                            Unknown(
-                                TypeUnknown,
+                            Expr(
+                                Expr {
+                                    ty: None,
+                                    kind: Locator(
+                                        #T,
+                                    ),
+                                },
                             ),
-                            Unknown(
-                                TypeUnknown,
+                            Expr(
+                                Expr {
+                                    ty: None,
+                                    kind: Locator(
+                                        #T,
+                                    ),
+                                },
                             ),
                             Function(
                                 TypeFunction {
                                     params: [
-                                        Unknown(
-                                            TypeUnknown,
+                                        Expr(
+                                            Expr {
+                                                ty: None,
+                                                kind: Locator(
+                                                    #T,
+                                                ),
+                                            },
                                         ),
-                                        Unknown(
-                                            TypeUnknown,
+                                        Expr(
+                                            Expr {
+                                                ty: None,
+                                                kind: Locator(
+                                                    #T,
+                                                ),
+                                            },
                                         ),
                                     ],
                                     generics_params: [],
                                     ret_ty: Some(
-                                        Unknown(
-                                            TypeUnknown,
+                                        Expr(
+                                            Expr {
+                                                ty: None,
+                                                kind: Locator(
+                                                    #T,
+                                                ),
+                                            },
                                         ),
                                     ),
                                 },
@@ -514,32 +1680,57 @@ File {
                     },
                 ),
             ),
-            kind: DefFunction(
-                ItemDefFunction {
+            kind: DeclFunction(
+                ItemDeclFunction {
                     ty_annotation: Some(
                         Function(
                             TypeFunction {
                                 params: [
-                                    Unknown(
-                                        TypeUnknown,
+                                    Expr(
+                                        Expr {
+                                            ty: None,
+                                            kind: Locator(
+                                                #T,
+                                            ),
+                                        },
                                     ),
-                                    Unknown(
-                                        TypeUnknown,
+                                    Expr(
+                                        Expr {
+                                            ty: None,
+                                            kind: Locator(
+                                                #T,
+                                            ),
+                                        },
                                     ),
                                     Function(
                                         TypeFunction {
                                             params: [
-                                                Unknown(
-                                                    TypeUnknown,
+                                                Expr(
+                                                    Expr {
+                                                        ty: None,
+                                                        kind: Locator(
+                                                            #T,
+                                                        ),
+                                                    },
                                                 ),
-                                                Unknown(
-                                                    TypeUnknown,
+                                                Expr(
+                                                    Expr {
+                                                        ty: None,
+                                                        kind: Locator(
+                                                            #T,
+                                                        ),
+                                                    },
                                                 ),
                                             ],
                                             generics_params: [],
                                             ret_ty: Some(
-                                                Unknown(
-                                                    TypeUnknown,
+                                                Expr(
+                                                    Expr {
+                                                        ty: None,
+                                                        kind: Locator(
+                                                            #T,
+                                                        ),
+                                                    },
                                                 ),
                                             ),
                                         },
@@ -574,64 +1765,7 @@ File {
                             },
                         ),
                     ),
-                    attrs: [],
                     name: #apply,
-                    ty: Some(
-                        TypeFunction {
-                            params: [
-                                Unknown(
-                                    TypeUnknown,
-                                ),
-                                Unknown(
-                                    TypeUnknown,
-                                ),
-                                Function(
-                                    TypeFunction {
-                                        params: [
-                                            Unknown(
-                                                TypeUnknown,
-                                            ),
-                                            Unknown(
-                                                TypeUnknown,
-                                            ),
-                                        ],
-                                        generics_params: [],
-                                        ret_ty: Some(
-                                            Unknown(
-                                                TypeUnknown,
-                                            ),
-                                        ),
-                                    },
-                                ),
-                            ],
-                            generics_params: [
-                                GenericParam {
-                                    name: #T,
-                                    bounds: TypeBounds {
-                                        bounds: [
-                                            Expr {
-                                                ty: None,
-                                                kind: Locator(
-                                                    #Add,
-                                                ),
-                                            },
-                                            Expr {
-                                                ty: None,
-                                                kind: Locator(
-                                                    #Display,
-                                                ),
-                                            },
-                                        ],
-                                    },
-                                },
-                            ],
-                            ret_ty: Some(
-                                Unit(
-                                    TypeUnit,
-                                ),
-                            ),
-                        },
-                    ),
                     sig: FunctionSignature {
                         name: Some(
                             #apply,
@@ -769,90 +1903,6 @@ File {
                             ),
                         ),
                     },
-                    body: Expr {
-                        ty: Some(
-                            Unit(
-                                TypeUnit,
-                            ),
-                        ),
-                        kind: Block(
-                            ExprBlock {
-                                stmts: [
-                                    Expr(
-                                        BlockStmtExpr {
-                                            expr: Expr {
-                                                ty: Some(
-                                                    Unit(
-                                                        TypeUnit,
-                                                    ),
-                                                ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Placeholder(
-                                                                        FormatPlaceholder {
-                                                                            arg_ref: Implicit,
-                                                                            format_spec: None,
-                                                                        },
-                                                                    ),
-                                                                ],
-                                                                args: [
-                                                                    Expr {
-                                                                        ty: Some(
-                                                                            Unknown(
-                                                                                TypeUnknown,
-                                                                            ),
-                                                                        ),
-                                                                        kind: Invoke(
-                                                                            ExprInvoke {
-                                                                                target: Function(
-                                                                                    #op,
-                                                                                ),
-                                                                                args: [
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Unknown(
-                                                                                                TypeUnknown,
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Locator(
-                                                                                            #a,
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Unknown(
-                                                                                                TypeUnknown,
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Locator(
-                                                                                            #b,
-                                                                                        ),
-                                                                                    },
-                                                                                ],
-                                                                            },
-                                                                        ),
-                                                                    },
-                                                                ],
-                                                                kwargs: [],
-                                                            },
-                                                        },
-                                                    },
-                                                ),
-                                            },
-                                            semicolon: Some(
-                                                true,
-                                            ),
-                                        },
-                                    ),
-                                ],
-                            },
-                        ),
-                    },
-                    visibility: Private,
                 },
             ),
         },
@@ -861,11 +1911,21 @@ File {
                 Function(
                     TypeFunction {
                         params: [
-                            Unknown(
-                                TypeUnknown,
+                            Expr(
+                                Expr {
+                                    ty: None,
+                                    kind: Locator(
+                                        #T,
+                                    ),
+                                },
                             ),
-                            Unknown(
-                                TypeUnknown,
+                            Expr(
+                                Expr {
+                                    ty: None,
+                                    kind: Locator(
+                                        #T,
+                                    ),
+                                },
                             ),
                         ],
                         generics_params: [
@@ -884,24 +1944,39 @@ File {
                             },
                         ],
                         ret_ty: Some(
-                            Unknown(
-                                TypeUnknown,
+                            Expr(
+                                Expr {
+                                    ty: None,
+                                    kind: Locator(
+                                        #T,
+                                    ),
+                                },
                             ),
                         ),
                     },
                 ),
             ),
-            kind: DefFunction(
-                ItemDefFunction {
+            kind: DeclFunction(
+                ItemDeclFunction {
                     ty_annotation: Some(
                         Function(
                             TypeFunction {
                                 params: [
-                                    Unknown(
-                                        TypeUnknown,
+                                    Expr(
+                                        Expr {
+                                            ty: None,
+                                            kind: Locator(
+                                                #T,
+                                            ),
+                                        },
                                     ),
-                                    Unknown(
-                                        TypeUnknown,
+                                    Expr(
+                                        Expr {
+                                            ty: None,
+                                            kind: Locator(
+                                                #T,
+                                            ),
+                                        },
                                     ),
                                 ],
                                 generics_params: [
@@ -920,47 +1995,19 @@ File {
                                     },
                                 ],
                                 ret_ty: Some(
-                                    Unknown(
-                                        TypeUnknown,
+                                    Expr(
+                                        Expr {
+                                            ty: None,
+                                            kind: Locator(
+                                                #T,
+                                            ),
+                                        },
                                     ),
                                 ),
                             },
                         ),
                     ),
-                    attrs: [],
                     name: #add,
-                    ty: Some(
-                        TypeFunction {
-                            params: [
-                                Unknown(
-                                    TypeUnknown,
-                                ),
-                                Unknown(
-                                    TypeUnknown,
-                                ),
-                            ],
-                            generics_params: [
-                                GenericParam {
-                                    name: #T,
-                                    bounds: TypeBounds {
-                                        bounds: [
-                                            Expr {
-                                                ty: None,
-                                                kind: Locator(
-                                                    #Add,
-                                                ),
-                                            },
-                                        ],
-                                    },
-                                },
-                            ],
-                            ret_ty: Some(
-                                Unknown(
-                                    TypeUnknown,
-                                ),
-                            ),
-                        },
-                    ),
                     sig: FunctionSignature {
                         name: Some(
                             #add,
@@ -1036,39 +2083,6 @@ File {
                             ),
                         ),
                     },
-                    body: Expr {
-                        ty: Some(
-                            Unknown(
-                                TypeUnknown,
-                            ),
-                        ),
-                        kind: BinOp(
-                            ExprBinOp {
-                                kind: Add,
-                                lhs: Expr {
-                                    ty: Some(
-                                        Unknown(
-                                            TypeUnknown,
-                                        ),
-                                    ),
-                                    kind: Locator(
-                                        #a,
-                                    ),
-                                },
-                                rhs: Expr {
-                                    ty: Some(
-                                        Unknown(
-                                            TypeUnknown,
-                                        ),
-                                    ),
-                                    kind: Locator(
-                                        #b,
-                                    ),
-                                },
-                            },
-                        ),
-                    },
-                    visibility: Private,
                 },
             ),
         },
@@ -1077,8 +2091,13 @@ File {
                 Function(
                     TypeFunction {
                         params: [
-                            Primitive(
-                                Bool,
+                            Expr(
+                                Expr {
+                                    ty: None,
+                                    kind: Locator(
+                                        #bool,
+                                    ),
+                                },
                             ),
                             Primitive(
                                 Int(
@@ -1126,14 +2145,19 @@ File {
                     },
                 ),
             ),
-            kind: DefFunction(
-                ItemDefFunction {
+            kind: DeclFunction(
+                ItemDeclFunction {
                     ty_annotation: Some(
                         Function(
                             TypeFunction {
                                 params: [
-                                    Primitive(
-                                        Bool,
+                                    Expr(
+                                        Expr {
+                                            ty: None,
+                                            kind: Locator(
+                                                #bool,
+                                            ),
+                                        },
                                     ),
                                     Primitive(
                                         Int(
@@ -1181,59 +2205,7 @@ File {
                             },
                         ),
                     ),
-                    attrs: [],
                     name: #apply_if,
-                    ty: Some(
-                        TypeFunction {
-                            params: [
-                                Primitive(
-                                    Bool,
-                                ),
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
-                                ),
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
-                                ),
-                                Function(
-                                    TypeFunction {
-                                        params: [
-                                            Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
-                                            ),
-                                            Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
-                                            ),
-                                        ],
-                                        generics_params: [],
-                                        ret_ty: Some(
-                                            Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
-                                            ),
-                                        ),
-                                    },
-                                ),
-                            ],
-                            generics_params: [],
-                            ret_ty: Some(
-                                Primitive(
-                                    Int(
-                                        I64,
-                                    ),
-                                ),
-                            ),
-                        },
-                    ),
                     sig: FunctionSignature {
                         name: Some(
                             #apply_if,
@@ -1369,90 +2341,6 @@ File {
                             ),
                         ),
                     },
-                    body: Expr {
-                        ty: Some(
-                            Primitive(
-                                Int(
-                                    I64,
-                                ),
-                            ),
-                        ),
-                        kind: If(
-                            ExprIf {
-                                cond: Expr {
-                                    ty: Some(
-                                        Primitive(
-                                            Bool,
-                                        ),
-                                    ),
-                                    kind: Locator(
-                                        #cond,
-                                    ),
-                                },
-                                then: Expr {
-                                    ty: Some(
-                                        Primitive(
-                                            Int(
-                                                I64,
-                                            ),
-                                        ),
-                                    ),
-                                    kind: Invoke(
-                                        ExprInvoke {
-                                            target: Function(
-                                                #op,
-                                            ),
-                                            args: [
-                                                Expr {
-                                                    ty: Some(
-                                                        Primitive(
-                                                            Int(
-                                                                I64,
-                                                            ),
-                                                        ),
-                                                    ),
-                                                    kind: Locator(
-                                                        #a,
-                                                    ),
-                                                },
-                                                Expr {
-                                                    ty: Some(
-                                                        Primitive(
-                                                            Int(
-                                                                I64,
-                                                            ),
-                                                        ),
-                                                    ),
-                                                    kind: Locator(
-                                                        #b,
-                                                    ),
-                                                },
-                                            ],
-                                        },
-                                    ),
-                                },
-                                elze: Some(
-                                    Expr {
-                                        ty: Some(
-                                            Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
-                                            ),
-                                        ),
-                                        kind: Value(
-                                            Int(
-                                                ValueInt {
-                                                    value: 0,
-                                                },
-                                            ),
-                                        ),
-                                    },
-                                ),
-                            },
-                        ),
-                    },
-                    visibility: Private,
                 },
             ),
         },
@@ -1472,18 +2360,14 @@ File {
                             Function(
                                 TypeFunction {
                                     params: [
-                                        Primitive(
-                                            Int(
-                                                I64,
-                                            ),
+                                        Unknown(
+                                            TypeUnknown,
                                         ),
                                     ],
                                     generics_params: [],
                                     ret_ty: Some(
-                                        Primitive(
-                                            Int(
-                                                I64,
-                                            ),
+                                        Unknown(
+                                            TypeUnknown,
                                         ),
                                     ),
                                 },
@@ -1509,18 +2393,14 @@ File {
                                     Function(
                                         TypeFunction {
                                             params: [
-                                                Primitive(
-                                                    Int(
-                                                        I64,
-                                                    ),
+                                                Unknown(
+                                                    TypeUnknown,
                                                 ),
                                             ],
                                             generics_params: [],
                                             ret_ty: Some(
-                                                Primitive(
-                                                    Int(
-                                                        I64,
-                                                    ),
+                                                Unknown(
+                                                    TypeUnknown,
                                                 ),
                                             ),
                                         },
@@ -1545,18 +2425,14 @@ File {
                                 Function(
                                     TypeFunction {
                                         params: [
-                                            Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
+                                            Unknown(
+                                                TypeUnknown,
                                             ),
                                         ],
                                         generics_params: [],
                                         ret_ty: Some(
-                                            Primitive(
-                                                Int(
-                                                    I64,
-                                                ),
+                                            Unknown(
+                                                TypeUnknown,
                                             ),
                                         ),
                                     },
@@ -1614,18 +2490,14 @@ File {
                             Function(
                                 TypeFunction {
                                     params: [
-                                        Primitive(
-                                            Int(
-                                                I64,
-                                            ),
+                                        Unknown(
+                                            TypeUnknown,
                                         ),
                                     ],
                                     generics_params: [],
                                     ret_ty: Some(
-                                        Primitive(
-                                            Int(
-                                                I64,
-                                            ),
+                                        Unknown(
+                                            TypeUnknown,
                                         ),
                                     ),
                                 },
@@ -1737,20 +2609,34 @@ File {
                                                         TypeUnit,
                                                     ),
                                                 ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Literal(
-                                                                        "Generic operations:",
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
+                                                                        },
                                                                     ),
-                                                                ],
-                                                                args: [],
-                                                                kwargs: [],
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "Generic operations:\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
                                                             },
-                                                        },
+                                                        ],
                                                     },
                                                 ),
                                             },
@@ -1770,7 +2656,7 @@ File {
                                                 kind: Invoke(
                                                     ExprInvoke {
                                                         target: Function(
-                                                            #apply,
+                                                            #apply__i64_op_add__i64,
                                                         ),
                                                         args: [
                                                             Expr {
@@ -1805,31 +2691,6 @@ File {
                                                                     ),
                                                                 ),
                                                             },
-                                                            Expr {
-                                                                ty: Some(
-                                                                    Function(
-                                                                        TypeFunction {
-                                                                            params: [
-                                                                                Unknown(
-                                                                                    TypeUnknown,
-                                                                                ),
-                                                                                Unknown(
-                                                                                    TypeUnknown,
-                                                                                ),
-                                                                            ],
-                                                                            generics_params: [],
-                                                                            ret_ty: Some(
-                                                                                Unknown(
-                                                                                    TypeUnknown,
-                                                                                ),
-                                                                            ),
-                                                                        },
-                                                                    ),
-                                                                ),
-                                                                kind: Locator(
-                                                                    #add,
-                                                                ),
-                                                            },
                                                         ],
                                                     },
                                                 ),
@@ -1850,7 +2711,7 @@ File {
                                                 kind: Invoke(
                                                     ExprInvoke {
                                                         target: Function(
-                                                            #apply,
+                                                            #apply__f64_op_add__f64,
                                                         ),
                                                         args: [
                                                             Expr {
@@ -1885,29 +2746,48 @@ File {
                                                                     ),
                                                                 ),
                                                             },
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
                                                             Expr {
                                                                 ty: Some(
-                                                                    Function(
-                                                                        TypeFunction {
-                                                                            params: [
-                                                                                Unknown(
-                                                                                    TypeUnknown,
-                                                                                ),
-                                                                                Unknown(
-                                                                                    TypeUnknown,
-                                                                                ),
-                                                                            ],
-                                                                            generics_params: [],
-                                                                            ret_ty: Some(
-                                                                                Unknown(
-                                                                                    TypeUnknown,
-                                                                                ),
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
                                                                             ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
                                                                         },
                                                                     ),
                                                                 ),
-                                                                kind: Locator(
-                                                                    #add,
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "\nConditional:\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
                                                                 ),
                                                             },
                                                         ],
@@ -1927,266 +2807,98 @@ File {
                                                         TypeUnit,
                                                     ),
                                                 ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Literal(
-                                                                        "\nConditional:",
-                                                                    ),
-                                                                ],
-                                                                args: [],
-                                                                kwargs: [],
-                                                            },
-                                                        },
-                                                    },
-                                                ),
-                                            },
-                                            semicolon: Some(
-                                                true,
-                                            ),
-                                        },
-                                    ),
-                                    Expr(
-                                        BlockStmtExpr {
-                                            expr: Expr {
-                                                ty: Some(
-                                                    Unit(
-                                                        TypeUnit,
-                                                    ),
-                                                ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Placeholder(
-                                                                        FormatPlaceholder {
-                                                                            arg_ref: Implicit,
-                                                                            format_spec: None,
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
                                                                         },
                                                                     ),
-                                                                ],
-                                                                args: [
-                                                                    Expr {
-                                                                        ty: Some(
-                                                                            Primitive(
-                                                                                Int(
-                                                                                    I64,
-                                                                                ),
-                                                                            ),
-                                                                        ),
-                                                                        kind: Invoke(
-                                                                            ExprInvoke {
-                                                                                target: Function(
-                                                                                    #apply_if,
-                                                                                ),
-                                                                                args: [
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Bool,
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Bool(
-                                                                                                ValueBool {
-                                                                                                    value: true,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Int(
-                                                                                                    I64,
-                                                                                                ),
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Int(
-                                                                                                ValueInt {
-                                                                                                    value: 5,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Int(
-                                                                                                    I64,
-                                                                                                ),
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Int(
-                                                                                                ValueInt {
-                                                                                                    value: 3,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Function(
-                                                                                                TypeFunction {
-                                                                                                    params: [
-                                                                                                        Unknown(
-                                                                                                            TypeUnknown,
-                                                                                                        ),
-                                                                                                        Unknown(
-                                                                                                            TypeUnknown,
-                                                                                                        ),
-                                                                                                    ],
-                                                                                                    generics_params: [],
-                                                                                                    ret_ty: Some(
-                                                                                                        Unknown(
-                                                                                                            TypeUnknown,
-                                                                                                        ),
-                                                                                                    ),
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Locator(
-                                                                                            #add,
-                                                                                        ),
-                                                                                    },
-                                                                                ],
-                                                                            },
-                                                                        ),
-                                                                    },
-                                                                ],
-                                                                kwargs: [],
-                                                            },
-                                                        },
-                                                    },
-                                                ),
-                                            },
-                                            semicolon: Some(
-                                                true,
-                                            ),
-                                        },
-                                    ),
-                                    Expr(
-                                        BlockStmtExpr {
-                                            expr: Expr {
-                                                ty: Some(
-                                                    Unit(
-                                                        TypeUnit,
-                                                    ),
-                                                ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Placeholder(
-                                                                        FormatPlaceholder {
-                                                                            arg_ref: Implicit,
-                                                                            format_spec: None,
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "%d\n",
+                                                                            owned: true,
                                                                         },
                                                                     ),
-                                                                ],
-                                                                args: [
-                                                                    Expr {
-                                                                        ty: Some(
-                                                                            Primitive(
-                                                                                Int(
-                                                                                    I64,
-                                                                                ),
-                                                                            ),
-                                                                        ),
-                                                                        kind: Invoke(
-                                                                            ExprInvoke {
-                                                                                target: Function(
-                                                                                    #apply_if,
-                                                                                ),
-                                                                                args: [
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Bool,
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Bool(
-                                                                                                ValueBool {
-                                                                                                    value: false,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Int(
-                                                                                                    I64,
-                                                                                                ),
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Int(
-                                                                                                ValueInt {
-                                                                                                    value: 5,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Int(
-                                                                                                    I64,
-                                                                                                ),
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Int(
-                                                                                                ValueInt {
-                                                                                                    value: 3,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Function(
-                                                                                                TypeFunction {
-                                                                                                    params: [
-                                                                                                        Unknown(
-                                                                                                            TypeUnknown,
-                                                                                                        ),
-                                                                                                        Unknown(
-                                                                                                            TypeUnknown,
-                                                                                                        ),
-                                                                                                    ],
-                                                                                                    generics_params: [],
-                                                                                                    ret_ty: Some(
-                                                                                                        Unknown(
-                                                                                                            TypeUnknown,
-                                                                                                        ),
-                                                                                                    ),
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Locator(
-                                                                                            #add,
-                                                                                        ),
-                                                                                    },
-                                                                                ],
-                                                                            },
-                                                                        ),
-                                                                    },
-                                                                ],
-                                                                kwargs: [],
+                                                                ),
                                                             },
-                                                        },
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: Invoke(
+                                                                    ExprInvoke {
+                                                                        target: Function(
+                                                                            #apply_if__op_add__i64,
+                                                                        ),
+                                                                        args: [
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Bool,
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Bool(
+                                                                                        ValueBool {
+                                                                                            value: true,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Int(
+                                                                                        ValueInt {
+                                                                                            value: 5,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Int(
+                                                                                        ValueInt {
+                                                                                            value: 3,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
                                                     },
                                                 ),
                                             },
@@ -2203,20 +2915,142 @@ File {
                                                         TypeUnit,
                                                     ),
                                                 ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Literal(
-                                                                        "\nClosure factory:",
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
+                                                                        },
                                                                     ),
-                                                                ],
-                                                                args: [],
-                                                                kwargs: [],
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "%d\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
                                                             },
-                                                        },
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: Invoke(
+                                                                    ExprInvoke {
+                                                                        target: Function(
+                                                                            #apply_if__op_add__i64,
+                                                                        ),
+                                                                        args: [
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Bool,
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Bool(
+                                                                                        ValueBool {
+                                                                                            value: false,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Int(
+                                                                                        ValueInt {
+                                                                                            value: 5,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Int(
+                                                                                        ValueInt {
+                                                                                            value: 3,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
+                                                    },
+                                                ),
+                                            },
+                                            semicolon: Some(
+                                                true,
+                                            ),
+                                        },
+                                    ),
+                                    Expr(
+                                        BlockStmtExpr {
+                                            expr: Expr {
+                                                ty: Some(
+                                                    Unit(
+                                                        TypeUnit,
+                                                    ),
+                                                ),
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "\nClosure factory:\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                            },
+                                                        ],
                                                     },
                                                 ),
                                             },
@@ -2254,18 +3088,14 @@ File {
                                                         Function(
                                                             TypeFunction {
                                                                 params: [
-                                                                    Primitive(
-                                                                        Int(
-                                                                            I64,
-                                                                        ),
+                                                                    Unknown(
+                                                                        TypeUnknown,
                                                                     ),
                                                                 ],
                                                                 generics_params: [],
                                                                 ret_ty: Some(
-                                                                    Primitive(
-                                                                        Int(
-                                                                            I64,
-                                                                        ),
+                                                                    Unknown(
+                                                                        TypeUnknown,
                                                                     ),
                                                                 ),
                                                             },
@@ -2277,18 +3107,14 @@ File {
                                                         Function(
                                                             TypeFunction {
                                                                 params: [
-                                                                    Primitive(
-                                                                        Int(
-                                                                            I64,
-                                                                        ),
+                                                                    Unknown(
+                                                                        TypeUnknown,
                                                                     ),
                                                                 ],
                                                                 generics_params: [],
                                                                 ret_ty: Some(
-                                                                    Primitive(
-                                                                        Int(
-                                                                            I64,
-                                                                        ),
+                                                                    Unknown(
+                                                                        TypeUnknown,
                                                                     ),
                                                                 ),
                                                             },
@@ -2299,18 +3125,14 @@ File {
                                                             Function(
                                                                 TypeFunction {
                                                                     params: [
-                                                                        Primitive(
-                                                                            Int(
-                                                                                I64,
-                                                                            ),
+                                                                        Unknown(
+                                                                            TypeUnknown,
                                                                         ),
                                                                     ],
                                                                     generics_params: [],
                                                                     ret_ty: Some(
-                                                                        Primitive(
-                                                                            Int(
-                                                                                I64,
-                                                                            ),
+                                                                        Unknown(
+                                                                            TypeUnknown,
                                                                         ),
                                                                     ),
                                                                 },
@@ -2354,83 +3176,90 @@ File {
                                                         TypeUnit,
                                                     ),
                                                 ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Literal(
-                                                                        "add_10(5) = ",
-                                                                    ),
-                                                                    Placeholder(
-                                                                        FormatPlaceholder {
-                                                                            arg_ref: Implicit,
-                                                                            format_spec: None,
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
                                                                         },
                                                                     ),
-                                                                ],
-                                                                args: [
-                                                                    Expr {
-                                                                        ty: Some(
-                                                                            Primitive(
-                                                                                Int(
-                                                                                    I64,
-                                                                                ),
-                                                                            ),
-                                                                        ),
-                                                                        kind: Invoke(
-                                                                            ExprInvoke {
-                                                                                target: Function(
-                                                                                    #__closure0_call,
-                                                                                ),
-                                                                                args: [
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Struct(
-                                                                                                TypeStruct {
-                                                                                                    name: #__Closure0,
-                                                                                                    fields: [
-                                                                                                        StructuralField {
-                                                                                                            name: #n,
-                                                                                                            value: Primitive(
-                                                                                                                Int(
-                                                                                                                    I64,
-                                                                                                                ),
-                                                                                                            ),
-                                                                                                        },
-                                                                                                    ],
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Locator(
-                                                                                            #add_10,
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Int(
-                                                                                                    I64,
-                                                                                                ),
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Int(
-                                                                                                ValueInt {
-                                                                                                    value: 5,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                ],
-                                                                            },
-                                                                        ),
-                                                                    },
-                                                                ],
-                                                                kwargs: [],
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "add_10(5) = %d\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
                                                             },
-                                                        },
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                                kind: Invoke(
+                                                                    ExprInvoke {
+                                                                        target: Function(
+                                                                            #__closure0_call,
+                                                                        ),
+                                                                        args: [
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Struct(
+                                                                                        TypeStruct {
+                                                                                            name: #__Closure0,
+                                                                                            fields: [
+                                                                                                StructuralField {
+                                                                                                    name: #n,
+                                                                                                    value: Primitive(
+                                                                                                        Int(
+                                                                                                            I64,
+                                                                                                        ),
+                                                                                                    ),
+                                                                                                },
+                                                                                            ],
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Locator(
+                                                                                    #add_10,
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Int(
+                                                                                        ValueInt {
+                                                                                            value: 5,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
                                                     },
                                                 ),
                                             },
@@ -2460,18 +3289,14 @@ File {
                                                         Function(
                                                             TypeFunction {
                                                                 params: [
-                                                                    Primitive(
-                                                                        Int(
-                                                                            I64,
-                                                                        ),
+                                                                    Unknown(
+                                                                        TypeUnknown,
                                                                     ),
                                                                 ],
                                                                 generics_params: [],
                                                                 ret_ty: Some(
-                                                                    Primitive(
-                                                                        Int(
-                                                                            I64,
-                                                                        ),
+                                                                    Unknown(
+                                                                        TypeUnknown,
                                                                     ),
                                                                 ),
                                                             },
@@ -2501,74 +3326,79 @@ File {
                                                         TypeUnit,
                                                     ),
                                                 ),
-                                                kind: IntrinsicCall(
-                                                    IntrinsicCall {
-                                                        kind: Println,
-                                                        payload: Format {
-                                                            template: ExprFormatString {
-                                                                parts: [
-                                                                    Literal(
-                                                                        "double(7) = ",
-                                                                    ),
-                                                                    Placeholder(
-                                                                        FormatPlaceholder {
-                                                                            arg_ref: Implicit,
-                                                                            format_spec: None,
+                                                kind: Invoke(
+                                                    ExprInvoke {
+                                                        target: Function(
+                                                            #printf,
+                                                        ),
+                                                        args: [
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Reference(
+                                                                        TypeReference {
+                                                                            ty: Primitive(
+                                                                                String,
+                                                                            ),
+                                                                            mutability: None,
+                                                                            lifetime: None,
                                                                         },
                                                                     ),
-                                                                ],
-                                                                args: [
-                                                                    Expr {
-                                                                        ty: Some(
-                                                                            Primitive(
-                                                                                Int(
-                                                                                    I64,
-                                                                                ),
-                                                                            ),
-                                                                        ),
-                                                                        kind: Invoke(
-                                                                            ExprInvoke {
-                                                                                target: Function(
-                                                                                    #__closure1_call,
-                                                                                ),
-                                                                                args: [
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Struct(
-                                                                                                TypeStruct {
-                                                                                                    name: #__Closure1,
-                                                                                                    fields: [],
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Locator(
-                                                                                            #double,
-                                                                                        ),
-                                                                                    },
-                                                                                    Expr {
-                                                                                        ty: Some(
-                                                                                            Primitive(
-                                                                                                Int(
-                                                                                                    I64,
-                                                                                                ),
-                                                                                            ),
-                                                                                        ),
-                                                                                        kind: Value(
-                                                                                            Int(
-                                                                                                ValueInt {
-                                                                                                    value: 7,
-                                                                                                },
-                                                                                            ),
-                                                                                        ),
-                                                                                    },
-                                                                                ],
-                                                                            },
-                                                                        ),
-                                                                    },
-                                                                ],
-                                                                kwargs: [],
+                                                                ),
+                                                                kind: Value(
+                                                                    String(
+                                                                        ValueString {
+                                                                            value: "double(7) = %d\n",
+                                                                            owned: true,
+                                                                        },
+                                                                    ),
+                                                                ),
                                                             },
-                                                        },
+                                                            Expr {
+                                                                ty: Some(
+                                                                    Unknown(
+                                                                        TypeUnknown,
+                                                                    ),
+                                                                ),
+                                                                kind: Invoke(
+                                                                    ExprInvoke {
+                                                                        target: Function(
+                                                                            #__closure1_call,
+                                                                        ),
+                                                                        args: [
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Struct(
+                                                                                        TypeStruct {
+                                                                                            name: #__Closure1,
+                                                                                            fields: [],
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Locator(
+                                                                                    #double,
+                                                                                ),
+                                                                            },
+                                                                            Expr {
+                                                                                ty: Some(
+                                                                                    Primitive(
+                                                                                        Int(
+                                                                                            I64,
+                                                                                        ),
+                                                                                    ),
+                                                                                ),
+                                                                                kind: Value(
+                                                                                    Int(
+                                                                                        ValueInt {
+                                                                                            value: 7,
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ),
+                                                            },
+                                                        ],
                                                     },
                                                 ),
                                             },

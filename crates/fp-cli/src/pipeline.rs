@@ -7,7 +7,10 @@ use crate::frontend::{
 use crate::languages;
 use crate::languages::detect_source_language;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
+use fp_core::ast::{
+    AstSerializer, Expr, ExprInvokeTarget, ExprKind, ItemKind, Node, NodeKind, RuntimeValue, Ty,
+    Value,
+};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager, DiagnosticReport,
@@ -24,6 +27,7 @@ use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_optimize::typing::TypingDiagnosticLevel;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -422,6 +426,8 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, "ast-specialized-typed", options)?;
         }
 
+        self.restore_closure_types(&mut ast);
+
         let materialize_report = self.stage_materialize_runtime_intrinsics(&mut ast, target);
         self.collect_stage(
             STAGE_RUNTIME_MATERIALIZE,
@@ -649,6 +655,18 @@ impl Pipeline {
                     .with_source_context(STAGE_RUNTIME_MATERIALIZE),
             ]),
         }
+    }
+
+    fn restore_closure_types(&self, ast: &mut Node) {
+        let Some(outcome) = self.last_const_eval.as_ref() else {
+            return;
+        };
+        if outcome.closure_types.is_empty() {
+            return;
+        }
+
+        let mut restorer = ClosureTypeRestorer::new(&outcome.closure_types);
+        restorer.apply_node(ast);
     }
 
     fn stage_specialize(&self, ast: &mut Node) -> DiagnosticReport<()> {
@@ -1049,6 +1067,298 @@ impl Pipeline {
 
     fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
         DiagnosticDisplayOptions::new(options.debug.verbose)
+    }
+}
+
+struct ClosureTypeRestorer<'a> {
+    types: &'a HashMap<String, Ty>,
+    module_path: Vec<String>,
+}
+
+impl<'a> ClosureTypeRestorer<'a> {
+    fn new(types: &'a HashMap<String, Ty>) -> Self {
+        Self {
+            types,
+            module_path: Vec::new(),
+        }
+    }
+
+    fn apply_node(&mut self, node: &mut Node) {
+        match node.kind_mut() {
+            NodeKind::File(file) => {
+                for item in &mut file.items {
+                    self.apply_item(item);
+                }
+            }
+            NodeKind::Item(item) => self.apply_item(item),
+            NodeKind::Expr(expr) => self.apply_expr(expr),
+        }
+    }
+
+    fn apply_item(&mut self, item: &mut fp_core::ast::Item) {
+        match item.kind_mut() {
+            ItemKind::Module(module) => {
+                self.module_path.push(module.name.as_str().to_string());
+                for child in &mut module.items {
+                    self.apply_item(child);
+                }
+                self.module_path.pop();
+            }
+            ItemKind::Impl(impl_block) => {
+                for child in &mut impl_block.items {
+                    self.apply_item(child);
+                }
+            }
+            ItemKind::DefFunction(function) => {
+                self.apply_expr(function.body.as_mut());
+            }
+            ItemKind::DefConst(def) => {
+                if let Some(fn_ty) = self.lookup_type(def.name.as_str()) {
+                    def.ty = Some(fn_ty.clone());
+                    def.ty_annotation = Some(fn_ty.clone());
+                    def.value.set_ty(fn_ty);
+                } else {
+                    self.apply_expr(def.value.as_mut());
+                }
+            }
+            ItemKind::DefStatic(def) => {
+                if let Some(fn_ty) = self.lookup_type(def.name.as_str()) {
+                    def.ty = fn_ty.clone();
+                    def.ty_annotation = Some(fn_ty.clone());
+                    def.value.set_ty(fn_ty);
+                } else {
+                    self.apply_expr(def.value.as_mut());
+                }
+            }
+            ItemKind::Expr(expr) => self.apply_expr(expr),
+            ItemKind::DefStruct(_)
+            | ItemKind::DefStructural(_)
+            | ItemKind::DefEnum(_)
+            | ItemKind::DefType(_)
+            | ItemKind::DeclConst(_)
+            | ItemKind::DeclStatic(_)
+            | ItemKind::DeclFunction(_)
+            | ItemKind::DeclType(_)
+            | ItemKind::Import(_)
+            | ItemKind::DefTrait(_)
+            | ItemKind::Any(_) => {}
+        }
+    }
+
+    fn apply_expr(&mut self, expr: &mut Expr) {
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                for stmt in &mut block.stmts {
+                    self.apply_stmt(stmt);
+                }
+                if let Some(last) = block.last_expr_mut() {
+                    self.apply_expr(last);
+                }
+            }
+            ExprKind::If(expr_if) => {
+                self.apply_expr(expr_if.cond.as_mut());
+                self.apply_expr(expr_if.then.as_mut());
+                if let Some(elze) = expr_if.elze.as_mut() {
+                    self.apply_expr(elze);
+                }
+            }
+            ExprKind::Loop(expr_loop) => self.apply_expr(expr_loop.body.as_mut()),
+            ExprKind::While(expr_while) => {
+                self.apply_expr(expr_while.cond.as_mut());
+                self.apply_expr(expr_while.body.as_mut());
+            }
+            ExprKind::Match(expr_match) => {
+                for case in &mut expr_match.cases {
+                    self.apply_expr(case.cond.as_mut());
+                    self.apply_expr(case.body.as_mut());
+                }
+            }
+            ExprKind::Let(expr_let) => {
+                self.apply_expr(expr_let.expr.as_mut());
+            }
+            ExprKind::Assign(assign) => {
+                self.apply_expr(assign.target.as_mut());
+                self.apply_expr(assign.value.as_mut());
+            }
+            ExprKind::Invoke(invoke) => {
+                match &mut invoke.target {
+                    ExprInvokeTarget::Expr(inner) => self.apply_expr(inner.as_mut()),
+                    ExprInvokeTarget::Method(select) => self.apply_expr(select.obj.as_mut()),
+                    ExprInvokeTarget::Closure(closure) => self.apply_expr(closure.body.as_mut()),
+                    ExprInvokeTarget::Function(_)
+                    | ExprInvokeTarget::Type(_)
+                    | ExprInvokeTarget::BinOp(_) => {}
+                }
+                for arg in &mut invoke.args {
+                    self.apply_expr(arg);
+                }
+
+                if let Some(ret_ty) = self.invoke_return_ty(&invoke.target) {
+                    expr.set_ty(ret_ty);
+                }
+            }
+            ExprKind::Select(select) => self.apply_expr(select.obj.as_mut()),
+            ExprKind::Struct(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.apply_expr(value);
+                    }
+                }
+            }
+            ExprKind::Structural(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.apply_expr(value);
+                    }
+                }
+            }
+            ExprKind::Array(array_expr) => {
+                for value in &mut array_expr.values {
+                    self.apply_expr(value);
+                }
+            }
+            ExprKind::ArrayRepeat(array_repeat) => {
+                self.apply_expr(array_repeat.elem.as_mut());
+                self.apply_expr(array_repeat.len.as_mut());
+            }
+            ExprKind::Tuple(tuple_expr) => {
+                for value in &mut tuple_expr.values {
+                    self.apply_expr(value);
+                }
+            }
+            ExprKind::BinOp(binop) => {
+                self.apply_expr(binop.lhs.as_mut());
+                self.apply_expr(binop.rhs.as_mut());
+            }
+            ExprKind::UnOp(unop) => self.apply_expr(unop.val.as_mut()),
+            ExprKind::Reference(reference) => self.apply_expr(reference.referee.as_mut()),
+            ExprKind::Dereference(deref) => self.apply_expr(deref.referee.as_mut()),
+            ExprKind::Index(index) => {
+                self.apply_expr(index.obj.as_mut());
+                self.apply_expr(index.index.as_mut());
+            }
+            ExprKind::Splat(splat) => self.apply_expr(splat.iter.as_mut()),
+            ExprKind::SplatDict(splat) => self.apply_expr(splat.dict.as_mut()),
+            ExprKind::Try(expr_try) => self.apply_expr(expr_try.expr.as_mut()),
+            ExprKind::Closure(closure) => self.apply_expr(closure.body.as_mut()),
+            ExprKind::Closured(closured) => self.apply_expr(closured.expr.as_mut()),
+            ExprKind::Paren(paren) => self.apply_expr(paren.expr.as_mut()),
+            ExprKind::FormatString(format) => {
+                for arg in &mut format.args {
+                    self.apply_expr(arg);
+                }
+                for kwarg in &mut format.kwargs {
+                    self.apply_expr(&mut kwarg.value);
+                }
+            }
+            ExprKind::Item(item) => self.apply_item(item.as_mut()),
+            ExprKind::Value(value) => match value.as_mut() {
+                Value::Expr(inner) => self.apply_expr(inner.as_mut()),
+                Value::Function(func) => self.apply_expr(func.body.as_mut()),
+                _ => {}
+            },
+            ExprKind::Locator(locator) => {
+                if let Some(fn_ty) = self.lookup_locator(locator) {
+                    expr.set_ty(fn_ty);
+                }
+            }
+            ExprKind::IntrinsicCall(call) => match &mut call.payload {
+                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                    for arg in args {
+                        self.apply_expr(arg);
+                    }
+                }
+                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                    for arg in &mut template.args {
+                        self.apply_expr(arg);
+                    }
+                    for kwarg in &mut template.kwargs {
+                        self.apply_expr(&mut kwarg.value);
+                    }
+                }
+            },
+            ExprKind::Range(range) => {
+                if let Some(start) = range.start.as_mut() {
+                    self.apply_expr(start);
+                }
+                if let Some(end) = range.end.as_mut() {
+                    self.apply_expr(end);
+                }
+                if let Some(step) = range.step.as_mut() {
+                    self.apply_expr(step);
+                }
+            }
+            ExprKind::Any(_) | ExprKind::Id(_) => {}
+        }
+    }
+
+    fn apply_stmt(&mut self, stmt: &mut fp_core::ast::BlockStmt) {
+        match stmt {
+            fp_core::ast::BlockStmt::Expr(expr_stmt) => self.apply_expr(expr_stmt.expr.as_mut()),
+            fp_core::ast::BlockStmt::Let(stmt_let) => {
+                if let Some(init) = stmt_let.init.as_mut() {
+                    self.apply_expr(init);
+                    if let Some(fn_ty) = stmt_let
+                        .pat
+                        .as_ident()
+                        .and_then(|ident| self.lookup_type(ident.as_str()))
+                    {
+                        stmt_let.pat.set_ty(fn_ty.clone());
+                        init.set_ty(fn_ty);
+                    }
+                }
+                if let Some(diverge) = stmt_let.diverge.as_mut() {
+                    self.apply_expr(diverge);
+                }
+            }
+            fp_core::ast::BlockStmt::Item(item) => self.apply_item(item.as_mut()),
+            fp_core::ast::BlockStmt::Noop | fp_core::ast::BlockStmt::Any(_) => {}
+        }
+    }
+
+    fn invoke_return_ty(&self, target: &ExprInvokeTarget) -> Option<Ty> {
+        match target {
+            ExprInvokeTarget::Function(locator) => self
+                .lookup_locator(locator)
+                .and_then(|ty| Self::function_ret_ty_from_ty(&ty)),
+            ExprInvokeTarget::Expr(expr) => {
+                expr.ty().and_then(|ty| Self::function_ret_ty_from_ty(ty))
+            }
+            ExprInvokeTarget::Closure(closure) => closure.sig.ret_ty.clone(),
+            _ => None,
+        }
+    }
+
+    fn lookup_locator(&self, locator: &fp_core::id::Locator) -> Option<Ty> {
+        let name = locator.to_string();
+        self.lookup_type(&name)
+    }
+
+    fn lookup_type(&self, name: &str) -> Option<Ty> {
+        let key = if self.module_path.is_empty() {
+            name.trim_start_matches('#').to_string()
+        } else {
+            format!(
+                "{}::{}",
+                self.module_path.join("::"),
+                name.trim_start_matches('#')
+            )
+        };
+
+        let result = self.types.get(&key).cloned().or_else(|| {
+            self.types
+                .get(&name.trim_start_matches('#').to_string())
+                .cloned()
+        });
+
+        result
+    }
+
+    fn function_ret_ty_from_ty(ty: &Ty) -> Option<Ty> {
+        match ty {
+            Ty::Function(fn_ty) => fn_ty.ret_ty.as_ref().map(|ret| (*ret.clone())),
+            _ => None,
+        }
     }
 }
 
