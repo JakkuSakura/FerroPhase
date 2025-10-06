@@ -26,7 +26,6 @@ pub struct ConstEvaluationOrchestrator {
     diagnostics: Option<Arc<DiagnosticManager>>,
     debug_assertions: bool,
     execute_main: bool,
-    typer: AstTypeInferencer,
 }
 
 impl ConstEvaluationOrchestrator {
@@ -35,7 +34,6 @@ impl ConstEvaluationOrchestrator {
             diagnostics: None,
             debug_assertions: false,
             execute_main: false,
-            typer: AstTypeInferencer::new(),
         }
     }
 
@@ -68,7 +66,7 @@ impl ConstEvaluationOrchestrator {
 
         // Initialize the typer with the full AST context before using it incrementally
         // This ensures the typer knows about all declarations when typing individual expressions
-        let mut typer = std::mem::replace(&mut self.typer, AstTypeInferencer::new());
+        let mut typer = AstTypeInferencer::new().with_context(ctx);
         typer.initialize_from_node(ast);
 
         interpreter.set_typer(typer);
