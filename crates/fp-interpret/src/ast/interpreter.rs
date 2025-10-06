@@ -106,7 +106,7 @@ pub struct AstInterpreter<'ctx> {
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
     closure_types: HashMap<String, Ty>,
-    typer: Option<Box<dyn TypeInferencer>>,
+    typer: Option<AstTypeInferencer>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -139,7 +139,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    pub fn set_typer(&mut self, typer: Box<dyn TypeInferencer>) {
+    pub fn set_typer(&mut self, typer: AstTypeInferencer) {
         self.typer = Some(typer);
     }
 
@@ -2303,7 +2303,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             scope.insert(name.to_string(), ty.clone());
         }
         let qualified = self.qualified_name(name);
-        self.global_types.insert(qualified, ty);
+        self.global_types.insert(qualified, ty.clone());
+
+        // Sync with typer
+        if let Some(typer) = self.typer.as_mut() {
+            typer.bind_variable(name, ty);
+        }
     }
 
     fn lookup_value(&self, name: &str) -> Option<Value> {
@@ -2425,11 +2430,17 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn push_scope(&mut self) {
         self.value_env.push(HashMap::new());
         self.type_env.push(HashMap::new());
+        if let Some(typer) = self.typer.as_mut() {
+            typer.push_scope();
+        }
     }
 
     fn pop_scope(&mut self) {
         self.value_env.pop();
         self.type_env.pop();
+        if let Some(typer) = self.typer.as_mut() {
+            typer.pop_scope();
+        }
     }
 
     fn emit_error(&mut self, message: impl Into<String>) {
