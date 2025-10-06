@@ -7,10 +7,7 @@ use crate::frontend::{
 use crate::languages;
 use crate::languages::detect_source_language;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{
-    AstSerializer, Expr, ExprInvokeTarget, ExprKind, ItemKind, Node, NodeKind, RuntimeValue, Ty,
-    Value,
-};
+use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager, DiagnosticReport,
@@ -41,9 +38,7 @@ const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
 const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
 const STAGE_TYPE_POST_CONST: &str = "ast→typed(post-const)";
-const STAGE_SPECIALIZE: &str = "specialize";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
-const STAGE_TYPE_POST_SPECIALIZE: &str = "ast→typed(post-specialize)";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_TYPE_POST_CLOSURE: &str = "ast→typed(post-closure)";
 const STAGE_CLOSURE_LOWERING: &str = "closure-lowering";
@@ -401,31 +396,6 @@ impl Pipeline {
             options,
         )?;
 
-        let specialize_report = self.stage_specialize(&mut ast);
-        self.collect_stage(
-            STAGE_SPECIALIZE,
-            specialize_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        if options.save_intermediates {
-            self.save_pretty(&ast, base_path, "ast-specialized", options)?;
-        }
-
-        let post_specialize_type_report =
-            self.stage_type_check(&mut ast, STAGE_TYPE_POST_SPECIALIZE);
-        self.collect_stage(
-            STAGE_TYPE_POST_SPECIALIZE,
-            post_specialize_type_report,
-            &diagnostic_manager,
-            options,
-        )?;
-
-        if options.save_intermediates {
-            self.save_pretty(&ast, base_path, "ast-specialized-typed", options)?;
-        }
-
         let materialize_report = self.stage_materialize_runtime_intrinsics(&mut ast, target);
         self.collect_stage(
             STAGE_RUNTIME_MATERIALIZE,
@@ -651,16 +621,6 @@ impl Pipeline {
             Err(err) => DiagnosticReport::failure(vec![
                 Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
                     .with_source_context(STAGE_RUNTIME_MATERIALIZE),
-            ]),
-        }
-    }
-
-    fn stage_specialize(&self, ast: &mut Node) -> DiagnosticReport<()> {
-        match fp_optimize::specialize(ast) {
-            Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
-            Err(err) => DiagnosticReport::failure(vec![
-                Diagnostic::error(format!("Specialization failed: {}", err))
-                    .with_source_context(STAGE_SPECIALIZE),
             ]),
         }
     }
