@@ -18,6 +18,7 @@ mod value;
 pub use attr::*;
 pub use expr::*;
 pub use item::*;
+pub use pretty::*;
 pub use value::*;
 
 /// Shared slot for storing optional type annotations on AST nodes.

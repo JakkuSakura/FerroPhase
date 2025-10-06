@@ -28,3 +28,5 @@ fn main () -> (){
     let double = | x | x * 2 ;
     println ! ("double(7) = {}" , double (7)) ;
 }
+
+// Type: ()
