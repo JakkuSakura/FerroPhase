@@ -29,6 +29,7 @@ impl RustPrinter {
         let ident = format_ident!("_expr_{}", id);
         Ok(quote!(#ident))
     }
+
     pub fn print_expr(&self, node: &Expr) -> Result<TokenStream> {
         match node.kind() {
             ExprKind::Id(id) => self.print_expr_id(*id),
