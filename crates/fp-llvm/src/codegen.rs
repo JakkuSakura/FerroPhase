@@ -576,6 +576,16 @@ impl<'ctx> LirCodegen<'ctx> {
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
                 let result_name = if matches!(llvm_result_ty, Type::FPType(_)) {
+                    lhs_operand = self.coerce_float_operand(
+                        lhs_operand,
+                        &llvm_result_ty,
+                        &format!("frem_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_float_operand(
+                        rhs_operand,
+                        &llvm_result_ty,
+                        &format!("frem_{}_rhs", instr_id),
+                    )?;
                     self.llvm_ctx
                         .build_frem(lhs_operand, rhs_operand, &format!("frem_{}", instr_id))
                         .map_err(fp_core::error::Error::from)?
@@ -2186,7 +2196,10 @@ impl<'ctx> LirCodegen<'ctx> {
         }
 
         match operand {
-            Operand::LocalOperand { name, .. } => Ok(Operand::LocalOperand { name, ty: target_ref }),
+            Operand::LocalOperand { name, .. } => Ok(Operand::LocalOperand {
+                name,
+                ty: target_ref,
+            }),
             // Constants already carry their own type metadata; leave unchanged for now.
             _ => Ok(operand),
         }
