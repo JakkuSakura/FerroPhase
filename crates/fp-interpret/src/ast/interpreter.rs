@@ -5,14 +5,14 @@ use std::sync::Arc;
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, Item, ItemDefFunction, ItemKind,
-    Node, NodeKind, Ty, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
-    ValueTuple,
+    Node, NodeKind, StmtLet, Ty, TypeFunction, TypeInt, TypePrimitive, TypeUnit, Value, ValueField,
+    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::id::Locator;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
 
@@ -53,6 +53,7 @@ pub struct InterpreterOutcome {
     pub stdout: Vec<String>,
     pub has_errors: bool,
     pub mutations_applied: bool,
+    pub closure_types: HashMap<String, Ty>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +64,7 @@ struct ConstClosure {
     captured_values: Vec<HashMap<String, StoredValue>>,
     captured_types: Vec<HashMap<String, Ty>>,
     module_stack: Vec<String>,
+    function_ty: Option<Ty>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,6 +92,8 @@ pub struct AstInterpreter<'ctx> {
     functions: HashMap<String, ItemDefFunction>,
     mutations_applied: bool,
     pending_closure: Option<ConstClosure>,
+    pending_expr_ty: Option<Ty>,
+    closure_types: HashMap<String, Ty>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -112,6 +116,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             functions: HashMap::new(),
             mutations_applied: false,
             pending_closure: None,
+            pending_expr_ty: None,
+            closure_types: HashMap::new(),
         }
     }
 
@@ -151,6 +157,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             stdout: std::mem::take(&mut self.stdout),
             has_errors: self.has_errors,
             mutations_applied: std::mem::take(&mut self.mutations_applied),
+            closure_types: std::mem::take(&mut self.closure_types),
         }
     }
 
@@ -194,6 +201,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.evaluate_ty(inner_ty);
                 }
                 let value = self.eval_expr(def.value.as_mut());
+                if let Some(pending) = self.pending_closure.as_mut() {
+                    let resolved_ty = pending
+                        .function_ty
+                        .clone()
+                        .or_else(|| def.ty.clone())
+                        .or_else(|| def.ty_annotation().cloned());
+
+                    if let Some(fn_ty) = resolved_ty {
+                        pending.function_ty = Some(fn_ty.clone());
+                        def.ty = Some(fn_ty.clone());
+                        def.ty_annotation = Some(fn_ty.clone());
+                        def.value.set_ty(fn_ty.clone());
+                    }
+                }
                 let qualified = self.qualified_name(def.name.as_str());
                 self.insert_value(def.name.as_str(), value.clone());
                 self.evaluated_constants.insert(qualified, value.clone());
@@ -209,6 +230,20 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ItemKind::DefStatic(def) => {
                 let value = self.eval_expr(def.value.as_mut());
+                if let Some(pending) = self.pending_closure.as_mut() {
+                    let resolved_ty = pending
+                        .function_ty
+                        .clone()
+                        .or_else(|| Some(def.ty.clone()))
+                        .or_else(|| def.ty_annotation().cloned());
+
+                    if let Some(fn_ty) = resolved_ty {
+                        pending.function_ty = Some(fn_ty.clone());
+                        def.ty = fn_ty.clone();
+                        def.ty_annotation = Some(fn_ty.clone());
+                        def.value.set_ty(fn_ty.clone());
+                    }
+                }
                 let expr_value = Expr::value(value.clone());
                 self.insert_value(def.name.as_str(), value);
                 *def.value = expr_value;
@@ -249,6 +284,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn eval_expr(&mut self, expr: &mut Expr) -> Value {
+        let expr_ty_snapshot = expr.ty().cloned();
         match expr.kind_mut() {
             ExprKind::Value(value) => match value.as_ref() {
                 Value::Expr(inner) => {
@@ -372,9 +408,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.bind_pattern(&expr_let.pat, value.clone());
                 value
             }
-            ExprKind::Invoke(invoke) => self.eval_invoke(invoke),
+            ExprKind::Invoke(invoke) => {
+                let result = self.eval_invoke(invoke);
+                if let Some(ty) = self.pending_expr_ty.take() {
+                    expr.set_ty(ty);
+                }
+                result
+            }
             ExprKind::Closure(closure) => {
-                let captured = self.capture_closure(closure);
+                let captured = self.capture_closure(closure, expr_ty_snapshot.clone());
                 self.pending_closure = Some(captured);
                 Value::unit()
             }
@@ -401,6 +443,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                 let value = self.eval_expr(select.obj.as_mut());
                 if let Value::List(list) = value {
+                    self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
                     return Value::int(list.values.len() as i64);
                 }
                 self.emit_error("'len' is only supported on compile-time arrays and lists");
@@ -421,12 +464,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(ident) = locator.as_ident() {
                     if let Some(closure) = self.lookup_closure(ident.as_str()) {
                         let args = self.evaluate_args(&mut invoke.args);
+                        let ret_ty = Self::closure_return_ty(&closure);
+                        self.set_pending_expr_ty(ret_ty);
                         return self.call_const_closure(&closure, args);
                     }
                 }
 
                 if let Some(function) = self.find_function(locator) {
                     let args = self.evaluate_args(&mut invoke.args);
+                    let ret_ty = Self::item_function_ret_ty(&function);
+                    self.set_pending_expr_ty(ret_ty);
                     return self.call_function(function, args);
                 }
 
@@ -442,6 +489,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let callee = self.eval_expr(expr.as_mut());
                 if let Some(closure) = self.take_pending_closure() {
                     let args = self.evaluate_args(&mut invoke.args);
+                    let ret_ty = Self::closure_return_ty(&closure);
+                    self.set_pending_expr_ty(ret_ty);
                     return self.call_const_closure(&closure, args);
                 }
                 let args = self.evaluate_args(&mut invoke.args);
@@ -449,6 +498,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprInvokeTarget::Closure(func) => {
                 let args = self.evaluate_args(&mut invoke.args);
+                let ret_ty = Self::value_function_ret_ty(func);
+                self.set_pending_expr_ty(ret_ty);
                 self.call_value_function(func, args)
             }
             ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
@@ -522,7 +573,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         Value::undefined()
     }
 
-    fn capture_closure(&self, closure: &ExprClosure) -> ConstClosure {
+    fn capture_closure(&self, closure: &ExprClosure, ty: Option<Ty>) -> ConstClosure {
         ConstClosure {
             params: closure.params.clone(),
             ret_ty: closure.ret_ty.as_ref().map(|ty| (**ty).clone()),
@@ -530,6 +581,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             captured_values: self.value_env.clone(),
             captured_types: self.type_env.clone(),
             module_stack: self.module_stack.clone(),
+            function_ty: ty,
         }
     }
 
@@ -657,6 +709,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                 BlockStmt::Let(stmt_let) => {
                     if let Some(init) = stmt_let.init.as_mut() {
                         let value = self.eval_expr(init);
+                        if let Some(pending) = self.pending_closure.as_ref() {
+                            if let Some(fn_ty) = pending.function_ty.clone() {
+                                stmt_let.pat.set_ty(fn_ty.clone());
+                                init.set_ty(fn_ty.clone());
+                            }
+                        }
                         self.bind_pattern(&stmt_let.pat, value);
                     } else {
                         self.emit_error(
@@ -862,26 +920,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn evaluate_function_body(&mut self, expr: &mut Expr) {
+        let expr_ty_snapshot = expr.ty().cloned();
+        let mut updated_expr_ty: Option<Ty> = None;
+
         match expr.kind_mut() {
-            ExprKind::Block(block) => {
-                for stmt in block.stmts.iter_mut() {
-                    match stmt {
-                        BlockStmt::Item(item) => self.evaluate_item(item.as_mut()),
-                        BlockStmt::Expr(expr_stmt) => {
-                            self.evaluate_function_body(expr_stmt.expr.as_mut());
-                        }
-                        BlockStmt::Let(stmt_let) => {
-                            if let Some(init) = stmt_let.init.as_mut() {
-                                self.evaluate_function_body(init);
-                            }
-                            if let Some(diverge) = stmt_let.diverge.as_mut() {
-                                self.evaluate_function_body(diverge);
-                            }
-                        }
-                        BlockStmt::Noop | BlockStmt::Any(_) => {}
-                    }
-                }
-            }
+            ExprKind::Block(block) => self.evaluate_function_block(block),
             ExprKind::If(if_expr) => {
                 self.evaluate_function_body(if_expr.then.as_mut());
                 if let Some(else_expr) = if_expr.elze.as_mut() {
@@ -902,16 +945,49 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Let(expr_let) => self.evaluate_function_body(expr_let.expr.as_mut()),
             ExprKind::Invoke(invoke) => {
+                if let ExprInvokeTarget::Function(locator) = &invoke.target {
+                    if let Some(ident) = locator.as_ident() {
+                        if self.lookup_closure(ident.as_str()).is_some() {
+                            let mut cloned_expr = Expr::new(ExprKind::Invoke(invoke.clone()));
+                            if let Some(ref ty) = expr_ty_snapshot {
+                                cloned_expr.set_ty(ty.clone());
+                            }
+                            let saved_mutated = self.mutations_applied;
+                            let saved_stdout_len = self.stdout.len();
+                            let _ = self.eval_expr(&mut cloned_expr);
+                            if let Some(ty) = self.pending_expr_ty.take() {
+                                updated_expr_ty = Some(ty);
+                            }
+                            self.mutations_applied = saved_mutated;
+                            if self.stdout.len() > saved_stdout_len {
+                                self.stdout.truncate(saved_stdout_len);
+                            }
+                        }
+                    }
+                }
+
+                match &mut invoke.target {
+                    ExprInvokeTarget::Expr(target) => self.evaluate_function_body(target.as_mut()),
+                    ExprInvokeTarget::Method(select) => {
+                        self.evaluate_function_body(select.obj.as_mut())
+                    }
+                    ExprInvokeTarget::Closure(closure) => {
+                        self.evaluate_function_body(closure.body.as_mut())
+                    }
+                    ExprInvokeTarget::Function(_)
+                    | ExprInvokeTarget::Type(_)
+                    | ExprInvokeTarget::BinOp(_) => {}
+                }
+
                 for arg in invoke.args.iter_mut() {
                     self.evaluate_function_body(arg);
                 }
             }
-            ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
-            ExprKind::Closured(closured) => self.evaluate_function_body(closured.expr.as_mut()),
-            ExprKind::Closure(closure) => self.evaluate_function_body(closure.body.as_mut()),
-            ExprKind::Try(expr_try) => self.evaluate_function_body(expr_try.expr.as_mut()),
+            ExprKind::IntrinsicCall(call) => {
+                self.evaluate_intrinsic_for_function_analysis(call);
+            }
             ExprKind::Reference(reference) => {
-                self.evaluate_function_body(reference.referee.as_mut())
+                self.evaluate_function_body(reference.referee.as_mut());
             }
             ExprKind::Paren(paren) => self.evaluate_function_body(paren.expr.as_mut()),
             ExprKind::Assign(assign) => {
@@ -919,34 +995,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(assign.value.as_mut());
             }
             ExprKind::Select(select) => self.evaluate_function_body(select.obj.as_mut()),
-            ExprKind::IntrinsicCall(call) => {
-                if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
-                    let value = self.eval_intrinsic(call);
-                    if !matches!(value, Value::Undefined(_)) {
-                        let ty = expr.ty.clone();
-                        *expr = Expr::value(value);
-                        expr.ty = ty;
-                        self.mark_mutated();
-                        return;
-                    }
-                }
-
-                match &mut call.payload {
-                    fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                        for arg in template.args.iter_mut() {
-                            self.evaluate_function_body(arg);
-                        }
-                        for kwarg in template.kwargs.iter_mut() {
-                            self.evaluate_function_body(&mut kwarg.value);
-                        }
-                    }
-                    fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                        for arg in args.iter_mut() {
-                            self.evaluate_function_body(arg);
-                        }
-                    }
-                }
-            }
+            ExprKind::Value(value) => match value.as_mut() {
+                Value::Expr(inner) => self.evaluate_function_body(inner.as_mut()),
+                Value::Function(function) => self.evaluate_function_body(function.body.as_mut()),
+                _ => {}
+            },
+            ExprKind::Closured(closured) => self.evaluate_function_body(closured.expr.as_mut()),
+            ExprKind::Closure(closure) => self.evaluate_function_body(closure.body.as_mut()),
+            ExprKind::Try(expr_try) => self.evaluate_function_body(expr_try.expr.as_mut()),
             ExprKind::FormatString(template) => {
                 for arg in template.args.iter_mut() {
                     self.evaluate_function_body(arg);
@@ -959,10 +1015,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(repeat.elem.as_mut());
                 self.evaluate_function_body(repeat.len.as_mut());
             }
-            ExprKind::Value(_)
-            | ExprKind::Locator(_)
-            | ExprKind::Any(_)
+            ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
+            ExprKind::Any(_)
             | ExprKind::Id(_)
+            | ExprKind::Locator(_)
             | ExprKind::UnOp(_)
             | ExprKind::BinOp(_)
             | ExprKind::Dereference(_)
@@ -974,6 +1030,91 @@ impl<'ctx> AstInterpreter<'ctx> {
             | ExprKind::Structural(_)
             | ExprKind::Splat(_)
             | ExprKind::SplatDict(_) => {}
+        }
+
+        if let Some(ty) = updated_expr_ty {
+            expr.set_ty(ty);
+        }
+    }
+
+    fn evaluate_function_block(&mut self, block: &mut ExprBlock) {
+        self.push_scope();
+        for stmt in block.stmts.iter_mut() {
+            self.evaluate_function_stmt(stmt);
+        }
+        if let Some(last) = block.last_expr_mut() {
+            self.evaluate_function_body(last);
+        }
+        self.pop_scope();
+    }
+
+    fn evaluate_function_stmt(&mut self, stmt: &mut BlockStmt) {
+        match stmt {
+            BlockStmt::Item(item) => self.evaluate_item(item.as_mut()),
+            BlockStmt::Expr(expr_stmt) => self.evaluate_function_body(expr_stmt.expr.as_mut()),
+            BlockStmt::Let(stmt_let) => self.evaluate_function_let_stmt(stmt_let),
+            BlockStmt::Noop | BlockStmt::Any(_) => {}
+        }
+    }
+
+    fn evaluate_function_let_stmt(&mut self, stmt_let: &mut StmtLet) {
+        if let Some(init) = stmt_let.init.as_mut() {
+            if Self::expr_is_potential_closure(init) {
+                let cloned = init.clone();
+                self.evaluate_closure_initializer(&stmt_let.pat, cloned);
+            }
+            self.evaluate_function_body(init);
+        }
+        if let Some(diverge) = stmt_let.diverge.as_mut() {
+            self.evaluate_function_body(diverge);
+        }
+    }
+
+    fn expr_is_potential_closure(expr: &Expr) -> bool {
+        expr.ty()
+            .map(|ty| matches!(ty, Ty::Function(_)))
+            .unwrap_or(false)
+            || matches!(expr.kind(), ExprKind::Closure(_))
+    }
+
+    fn evaluate_closure_initializer(&mut self, pat: &Pattern, init: Expr) {
+        let mut expr_clone = init;
+        let saved_mutated = self.mutations_applied;
+        let saved_pending = self.pending_closure.take();
+        let saved_stdout_len = self.stdout.len();
+        let value = self.eval_expr(&mut expr_clone);
+        self.bind_pattern(pat, value);
+        self.mutations_applied = saved_mutated;
+        if let Some(prev) = saved_pending {
+            self.pending_closure = Some(prev);
+        }
+        if self.stdout.len() > saved_stdout_len {
+            self.stdout.truncate(saved_stdout_len);
+        }
+    }
+
+    fn evaluate_intrinsic_for_function_analysis(&mut self, call: &mut ExprIntrinsicCall) {
+        if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
+            let value = self.eval_intrinsic(call);
+            if !matches!(value, Value::Undefined(_)) {
+                return;
+            }
+        }
+
+        match &mut call.payload {
+            IntrinsicCallPayload::Format { template } => {
+                for arg in template.args.iter_mut() {
+                    self.evaluate_function_body(arg);
+                }
+                for kwarg in template.kwargs.iter_mut() {
+                    self.evaluate_function_body(&mut kwarg.value);
+                }
+            }
+            IntrinsicCallPayload::Args { args } => {
+                for arg in args.iter_mut() {
+                    self.evaluate_function_body(arg);
+                }
+            }
         }
     }
 
@@ -1263,12 +1404,20 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn insert_value(&mut self, name: &str, value: Value) {
-        if let Some(scope) = self.value_env.last_mut() {
-            if let Some(closure) = self.pending_closure.take() {
-                scope.insert(name.to_string(), StoredValue::Closure(closure));
-            } else {
-                scope.insert(name.to_string(), StoredValue::Plain(value));
+        if let Some(closure) = self.pending_closure.take() {
+            if let Some(fn_ty) = closure.function_ty.clone() {
+                let key = self.qualified_name(name);
+                self.closure_types.insert(key, fn_ty.clone());
+                self.insert_type(name, fn_ty);
             }
+            if let Some(scope) = self.value_env.last_mut() {
+                scope.insert(name.to_string(), StoredValue::Closure(closure));
+            }
+            return;
+        }
+
+        if let Some(scope) = self.value_env.last_mut() {
+            scope.insert(name.to_string(), StoredValue::Plain(value));
         }
     }
 
@@ -1310,6 +1459,44 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn take_pending_closure(&mut self) -> Option<ConstClosure> {
         self.pending_closure.take()
+    }
+
+    fn set_pending_expr_ty(&mut self, ty: Option<Ty>) {
+        let ty = ty.unwrap_or_else(|| Ty::Unit(TypeUnit));
+        self.pending_expr_ty = Some(ty);
+    }
+
+    fn closure_return_ty(closure: &ConstClosure) -> Option<Ty> {
+        closure.ret_ty.clone().or_else(|| {
+            closure
+                .function_ty
+                .as_ref()
+                .and_then(Self::function_ret_ty_from_ty)
+        })
+    }
+
+    fn item_function_ret_ty(function: &ItemDefFunction) -> Option<Ty> {
+        function.sig.ret_ty.clone().or_else(|| {
+            function
+                .ty
+                .as_ref()
+                .and_then(|ty| Self::type_function_ret_ty(ty))
+        })
+    }
+
+    fn value_function_ret_ty(function: &ValueFunction) -> Option<Ty> {
+        function.sig.ret_ty.clone()
+    }
+
+    fn function_ret_ty_from_ty(ty: &Ty) -> Option<Ty> {
+        match ty {
+            Ty::Function(fn_ty) => fn_ty.ret_ty.as_ref().map(|ret| (*ret.clone())),
+            _ => None,
+        }
+    }
+
+    fn type_function_ret_ty(ty: &TypeFunction) -> Option<Ty> {
+        ty.ret_ty.as_ref().map(|ret| (*ret.clone()))
     }
 
     fn lookup_type(&self, name: &str) -> Option<Ty> {

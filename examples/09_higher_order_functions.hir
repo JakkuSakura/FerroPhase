@@ -1,4 +1,21 @@
 hir::Program {
+    struct __Closure0 {
+        pub n: i64,
+    }
+
+    fn __closure0_call(__env: __Closure0, x: ()) -> () {
+        // params: [__env: __Closure0, x: ()]
+        (x + __env.n)
+    }
+
+    struct __Closure1 {
+    }
+
+    fn __closure1_call(__env: __Closure1, x: ()) -> () {
+        // params: [__env: __Closure1, x: ()]
+        (x * 2)
+    }
+
     fn add__i64(a: i64, b: i64) -> i64 {
         // params: [a: i64, b: i64]
         (a + b)
@@ -31,23 +48,6 @@ hir::Program {
             add__i64(a, b)
         else
             0
-    }
-
-    struct __Closure0 {
-        pub n: i64,
-    }
-
-    fn __closure0_call(__env: __Closure0, x: i64) -> i64 {
-        // params: [__env: __Closure0, x: i64]
-        (x + __env.n)
-    }
-
-    struct __Closure1 {
-    }
-
-    fn __closure1_call(__env: __Closure1, x: i64) -> i64 {
-        // params: [__env: __Closure1, x: i64]
-        (x * 2)
     }
 
     fn make_adder(n: i64) -> () {

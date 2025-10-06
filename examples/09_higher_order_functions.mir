@@ -1,24 +1,44 @@
 mir::Program {
     items:
-        fn add__i64(arg0: i64, arg1: i64) -> i64 [body: body0]
+        fn __closure0_call(arg0: (i64), arg1: ()) -> () [body: body0]
 
-        fn apply__i64_op_add__i64(arg0: i64, arg1: i64) -> () [body: body1]
+        fn __closure1_call(arg0: (), arg1: ()) -> () [body: body1]
 
-        fn add__f64(arg0: f64, arg1: f64) -> f64 [body: body2]
+        fn add__i64(arg0: i64, arg1: i64) -> i64 [body: body2]
 
-        fn apply__f64_op_add__f64(arg0: f64, arg1: f64) -> () [body: body3]
+        fn apply__i64_op_add__i64(arg0: i64, arg1: i64) -> () [body: body3]
 
-        fn apply_if__op_add__i64(arg0: bool, arg1: i64, arg2: i64) -> i64 [body: body4]
+        fn add__f64(arg0: f64, arg1: f64) -> f64 [body: body4]
 
-        fn __closure0_call(arg0: (i64), arg1: i64) -> i64 [body: body5]
+        fn apply__f64_op_add__f64(arg0: f64, arg1: f64) -> () [body: body5]
 
-        fn __closure1_call(arg0: (), arg1: i64) -> i64 [body: body6]
+        fn apply_if__op_add__i64(arg0: bool, arg1: i64, arg2: i64) -> i64 [body: body6]
 
         fn make_adder(arg0: i64) -> () [body: body7]
 
         fn main() -> () [body: body8]
     bodies:
         body0 { arg_count: 2, locals: 3 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: (i64)
+                _2: ()
+            blocks:
+                bb0:
+                    s0: _0 = Add(copy _2, copy _1[Field(0, Ty { kind: Int(I64) })])
+                    terminator: return
+        body1 { arg_count: 2, locals: 3 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: ()
+                _2: ()
+            blocks:
+                bb0:
+                    s0: _0 = Mul(copy _2, 2)
+                    terminator: return
+        body2 { arg_count: 2, locals: 3 }
             return_local: _0
             locals:
                 _0: i64
@@ -28,7 +48,7 @@ mir::Program {
                 bb0:
                     s0: _0 = Add(copy _1, copy _2)
                     terminator: return
-        body1 { arg_count: 2, locals: 5 }
+        body3 { arg_count: 2, locals: 5 }
             return_local: _0
             locals:
                 _0: ()
@@ -43,7 +63,7 @@ mir::Program {
                     terminator: call global printf("%d\n", copy _3) -> _4 then bb2
                 bb2:
                     terminator: return
-        body2 { arg_count: 2, locals: 3 }
+        body4 { arg_count: 2, locals: 3 }
             return_local: _0
             locals:
                 _0: f64
@@ -53,7 +73,7 @@ mir::Program {
                 bb0:
                     s0: _0 = Add(copy _1, copy _2)
                     terminator: return
-        body3 { arg_count: 2, locals: 5 }
+        body5 { arg_count: 2, locals: 5 }
             return_local: _0
             locals:
                 _0: ()
@@ -68,7 +88,7 @@ mir::Program {
                     terminator: call global printf("%f\n", copy _3) -> _4 then bb2
                 bb2:
                     terminator: return
-        body4 { arg_count: 3, locals: 4 }
+        body6 { arg_count: 3, locals: 4 }
             return_local: _0
             locals:
                 _0: i64
@@ -87,26 +107,6 @@ mir::Program {
                     terminator: <none>
                 bb4:
                     terminator: goto -> bb3
-        body5 { arg_count: 2, locals: 3 }
-            return_local: _0
-            locals:
-                _0: i64
-                _1: (i64)
-                _2: i64
-            blocks:
-                bb0:
-                    s0: _0 = Add(copy _2, copy _1[Field(0, Ty { kind: Int(I64) })])
-                    terminator: return
-        body6 { arg_count: 2, locals: 3 }
-            return_local: _0
-            locals:
-                _0: i64
-                _1: ()
-                _2: i64
-            blocks:
-                bb0:
-                    s0: _0 = Mul(copy _2, 2)
-                    terminator: return
         body7 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
@@ -129,11 +129,11 @@ mir::Program {
                 _7: i64
                 _8: i32
                 _9: i32
-                _10: i64
+                _10: ()
                 _11: ()
                 _12: i32
                 _13: ()
-                _14: i64
+                _14: ()
                 _15: i32
             blocks:
                 bb0:

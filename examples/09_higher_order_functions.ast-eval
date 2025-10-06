@@ -1904,8 +1904,24 @@ File {
                                                     visibility: Private,
                                                     name: #add_10,
                                                     ty: Some(
-                                                        Any(
-                                                            TypeAny,
+                                                        Function(
+                                                            TypeFunction {
+                                                                params: [
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ],
+                                                                generics_params: [],
+                                                                ret_ty: Some(
+                                                                    Primitive(
+                                                                        Int(
+                                                                            I64,
+                                                                        ),
+                                                                    ),
+                                                                ),
+                                                            },
                                                         ),
                                                     ),
                                                     value: Expr {
