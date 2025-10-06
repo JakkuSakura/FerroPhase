@@ -48,8 +48,6 @@ const STAGE_AST_INTERPRET: &str = "ast-interpret";
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
 const EXT_AST_EVAL: &str = "ast-eval";
-const EXT_AST_TYPED_POST_MATERIALIZE: &str = "ast-typed-post-materialize";
-const EXT_AST_TYPED_POST_CLOSURE: &str = "ast-typed-post-closure";
 const EXT_HIR: &str = "hir";
 
 #[derive(Debug)]
@@ -384,6 +382,9 @@ impl Pipeline {
             })?;
         self.last_const_eval = Some(outcome.clone());
 
+        // Remove generic template functions after specialization
+        fp_optimize::remove_generic_templates(&mut ast)?;
+
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
             // Save a debug file with type annotations
@@ -412,10 +413,6 @@ impl Pipeline {
             },
         )?;
 
-        if options.save_intermediates {
-            self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_MATERIALIZE, options)?;
-        }
-
         self.run_stage(
             STAGE_CLOSURE_LOWERING,
             &diagnostic_manager,
@@ -435,10 +432,6 @@ impl Pipeline {
                 pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE, &diagnostic_manager)
             },
         )?;
-
-        if options.save_intermediates {
-            self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_CLOSURE, options)?;
-        }
 
         let output = if matches!(target, PipelineTarget::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
@@ -816,21 +809,34 @@ impl Pipeline {
             return Ok(());
         }
 
-        let mut pretty_opts = PrettyOptions::default();
-        pretty_opts.show_spans = options.debug.verbose;
-        // Enable type printing for typed AST files
-        pretty_opts.show_types = extension == EXT_AST_TYPED || extension == EXT_AST_EVAL;
-        let display = pretty(ast, pretty_opts);
-        let mut rendered = String::new();
-        if let Err(err) = write!(&mut rendered, "{}", display) {
-            debug!(
-                error = %err,
-                extension = extension,
-                "failed to format {} intermediate",
-                extension
-            );
-            return Ok(());
-        }
+        let rendered = if extension == EXT_AST_TYPED || extension == EXT_AST_EVAL {
+            // Use the new language-agnostic AST printer for typed AST files
+            use fp_core::ast::{AstPrinter, AstPrinterConfig};
+            let config = AstPrinterConfig {
+                show_types: true,
+                show_spans: options.debug.verbose,
+                indent_size: 2,
+                max_depth: None,
+            };
+            let mut printer = AstPrinter::new(config);
+            printer.print_node(ast)
+        } else {
+            // Use the old pretty printer for other files
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+            let display = pretty(ast, pretty_opts);
+            let mut rendered = String::new();
+            if let Err(err) = write!(&mut rendered, "{}", display) {
+                debug!(
+                    error = %err,
+                    extension = extension,
+                    "failed to format {} intermediate",
+                    extension
+                );
+                return Ok(());
+            }
+            rendered
+        };
 
         if let Err(err) = fs::write(base_path.with_extension(extension), rendered) {
             debug!(
