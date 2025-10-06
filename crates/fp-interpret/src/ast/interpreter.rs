@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, Item, ItemDefFunction, ItemKind,
+    ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemKind,
     Node, NodeKind, StmtLet, Ty, TypeArray, TypeFunction, TypeInt, TypePrimitive, TypeReference,
     TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value, ValueField, ValueFunction,
     ValueList, ValueStruct, ValueStructural, ValueTuple,
@@ -363,6 +363,14 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn eval_expr(&mut self, expr: &mut Expr) -> Value {
         let expr_ty_snapshot = expr.ty().cloned();
+
+        // Check if we need to specialize a function reference before matching
+        let should_specialize_fn_ref = if let ExprKind::Locator(_) = expr.kind() {
+            expr_ty_snapshot.as_ref().map_or(false, |ty| matches!(ty, Ty::Function(_)))
+        } else {
+            false
+        };
+
         match expr.kind_mut() {
             ExprKind::Value(value) => match value.as_ref() {
                 Value::Expr(inner) => {
@@ -372,6 +380,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                 other => other.clone(),
             },
             ExprKind::Locator(locator) => {
+                // First, try to specialize generic function reference if we have type info
+                if should_specialize_fn_ref {
+                    if let Some(expected_ty) = &expr_ty_snapshot {
+                        tracing::debug!("Attempting to specialize function reference {} with type {:?}", locator, expected_ty);
+                        if let Some(_specialized) = self.specialize_function_reference(locator, expected_ty) {
+                            tracing::debug!("Successfully specialized {} to {}", locator, locator);
+                            // Locator has been updated to point to specialized function
+                            // Return unit for now, the reference will be used by caller
+                            return Value::unit();
+                        } else {
+                            tracing::debug!("Failed to specialize {}", locator);
+                        }
+                    }
+                }
+
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
                         let mut replacement = Expr::value(value.clone());
@@ -553,11 +576,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
 
-                if let Some(function) = self.resolve_function_call(locator, &invoke.args) {
+                if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
+                    // Arguments are already annotated by resolve_function_call
+                    eprintln!("[eval_invoke] Resolved function: {}, evaluating {} args", function.name, invoke.args.len());
                     let args = self.evaluate_args(&mut invoke.args);
                     let ret_ty = Self::item_function_ret_ty(&function);
                     self.set_pending_expr_ty(ret_ty);
                     return self.call_function(function, args);
+                } else {
+                    eprintln!("[eval_invoke] Failed to resolve function: {}", locator);
                 }
 
                 let _ = self.evaluate_args(&mut invoke.args);
@@ -650,7 +677,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn resolve_function_call(
         &mut self,
         locator: &mut Locator,
-        args: &[Expr],
+        args: &mut [Expr],
     ) -> Option<ItemDefFunction> {
         let mut candidate_names = vec![locator.to_string()];
         if let Some(ident) = locator.as_ident() {
@@ -662,6 +689,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for name in &candidate_names {
             if let Some(function) = self.functions.get(name).cloned() {
+                // Annotate arguments with expected parameter types
+                self.annotate_invoke_args_slice(args, &function.sig.params);
                 return Some(function);
             }
         }
@@ -671,12 +700,40 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(function) =
                     self.instantiate_generic_function(name, template, locator, args)
                 {
+                    // Annotate arguments now that we know the specialized function signature
+                    self.annotate_invoke_args_slice(args, &function.sig.params);
                     return Some(function);
                 }
             }
         }
 
-        self.find_function(locator)
+        if let Some(function) = self.find_function(locator) {
+            // Annotate arguments with expected parameter types
+            self.annotate_invoke_args_slice(args, &function.sig.params);
+            Some(function)
+        } else {
+            None
+        }
+    }
+
+    /// Helper to annotate a slice of arguments
+    fn annotate_invoke_args_slice(&mut self, args: &mut [Expr], params: &[FunctionParam]) {
+        for (arg, param) in args.iter_mut().zip(params.iter()) {
+            let should_annotate = match arg.ty() {
+                None => true,
+                Some(Ty::Unknown(_)) => true,
+                Some(Ty::Function(fn_ty)) => {
+                    // Replace function types with Unknown parameters
+                    fn_ty.params.iter().any(|p| matches!(p, Ty::Unknown(_)))
+                        || fn_ty.ret_ty.as_ref().map_or(false, |r| matches!(r.as_ref(), Ty::Unknown(_)))
+                }
+                _ => false,
+            };
+
+            if should_annotate {
+                arg.set_ty(param.ty.clone());
+            }
+        }
     }
 
     fn apply_callable(&mut self, callee: Value, args: Vec<Value>) -> Value {
@@ -787,6 +844,164 @@ impl<'ctx> AstInterpreter<'ctx> {
         Some(specialized)
     }
 
+    /// Specialize a generic function reference based on expected type
+    /// Used when a generic function is referenced (not called) and we have type information
+    fn specialize_function_reference(
+        &mut self,
+        locator: &mut Locator,
+        expected_ty: &Ty,
+    ) -> Option<ItemDefFunction> {
+        // Extract function name
+        let lookup_name = locator.to_string();
+        let candidate_names = if let Some(ident) = locator.as_ident() {
+            vec![lookup_name.clone(), ident.as_str().to_string()]
+        } else {
+            vec![lookup_name.clone()]
+        };
+
+        // Check if this is a generic function
+        let (name, template) = candidate_names
+            .iter()
+            .find_map(|name| {
+                self.generic_functions
+                    .get(name)
+                    .cloned()
+                    .map(|t| (name.clone(), t))
+            })?;
+
+        // Extract parameter types from expected function type
+        let expected_fn_ty = match expected_ty {
+            Ty::Function(fn_ty) => fn_ty,
+            _ => return None,
+        };
+
+        // Build substitution from expected function type
+        let substitution = self.build_generic_substitution_from_type(&template, expected_fn_ty)?;
+
+        let base_name = template.function.name.as_str().to_string();
+        let key = self.build_specialization_key(&template.generics, &substitution)?;
+
+        // Check if already specialized
+        if let Some(existing) = self.lookup_cached_specialization(&[&name, &base_name], &key) {
+            self.update_locator_name(locator, &existing);
+            self.mark_mutated();
+            return self.functions.get(&existing).cloned();
+        }
+
+        // Create new specialization
+        let sanitized_base = Self::sanitize_symbol(&base_name);
+        let counter_entry = self
+            .specialization_counter
+            .entry(base_name.clone())
+            .or_insert(0);
+        let mut new_name;
+        loop {
+            new_name = format!("{}__spec{}", sanitized_base, *counter_entry);
+            *counter_entry += 1;
+            if !self.functions.contains_key(&new_name) {
+                break;
+            }
+        }
+
+        let mut specialized = template.function.clone();
+        specialized.name = Ident::new(new_name.clone());
+        specialized.sig.name = Some(specialized.name.clone());
+        specialized.sig.generics_params.clear();
+
+        // Substitute parameter types
+        for param in &mut specialized.sig.params {
+            let substituted = self.substitute_ty(&param.ty, &substitution);
+            param.ty = substituted.clone();
+            param.ty_annotation = Some(substituted);
+        }
+
+        // Substitute return type
+        if let Some(ret_ty) = specialized.sig.ret_ty.as_mut() {
+            let substituted = self.substitute_ty(ret_ty, &substitution);
+            *ret_ty = substituted;
+        }
+
+        let function_type = TypeFunction {
+            params: specialized
+                .sig
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            generics_params: Vec::new(),
+            ret_ty: specialized
+                .sig
+                .ret_ty
+                .as_ref()
+                .map(|ty| Box::new(ty.clone())),
+        };
+        let function_ty = Ty::Function(function_type.clone());
+        specialized.ty = Some(function_type.clone());
+        specialized.ty_annotation = Some(function_ty.clone());
+
+        let mut local_types: HashMap<String, Ty> = HashMap::new();
+        for param in &specialized.sig.params {
+            let ty = param.ty.clone();
+            local_types.insert(param.name.as_str().to_string(), ty.clone());
+            local_types.insert(format!("#{}", param.name.as_str()), ty);
+        }
+
+        self.rewrite_expr_types(specialized.body.as_mut(), &substitution, &local_types);
+
+        let mut new_item = Item::new(ItemKind::DefFunction(specialized.clone()));
+        new_item.set_ty(function_ty);
+        if let Some(scope_pending) = self.pending_items.last_mut() {
+            scope_pending.push(new_item);
+        } else {
+            self.pending_items.push(vec![new_item]);
+        }
+
+        self.functions.insert(new_name.clone(), specialized.clone());
+        let qualified_new = self.qualified_name(&new_name);
+        self.functions.insert(qualified_new, specialized.clone());
+
+        self.register_specialization(&base_name, &name, key, &new_name);
+        self.update_locator_name(locator, &new_name);
+        self.mark_mutated();
+
+        Some(specialized)
+    }
+
+    /// Build generic substitution from expected function type
+    fn build_generic_substitution_from_type(
+        &self,
+        template: &GenericTemplate,
+        expected_fn_ty: &TypeFunction,
+    ) -> Option<HashMap<String, Ty>> {
+        let generics_set: HashSet<String> = template.generics.iter().cloned().collect();
+        let mut subst = HashMap::new();
+
+        // Match parameter types
+        if template.function.sig.params.len() != expected_fn_ty.params.len() {
+            return None;
+        }
+
+        for (param, expected_ty) in template.function.sig.params.iter().zip(&expected_fn_ty.params) {
+            if !self.match_type(&param.ty, expected_ty, &generics_set, &mut subst) {
+                return None;
+            }
+        }
+
+        // Match return type if specified
+        if let (Some(template_ret), Some(expected_ret)) = (&template.function.sig.ret_ty, &expected_fn_ty.ret_ty) {
+            if !self.match_type(template_ret, expected_ret, &generics_set, &mut subst) {
+                return None;
+            }
+        }
+
+        // Verify all generics are resolved
+        if template.generics.iter().all(|name| subst.contains_key(name)) {
+            Some(subst)
+        } else {
+            None
+        }
+    }
+
     fn build_generic_substitution(
         &self,
         template: &GenericTemplate,
@@ -860,6 +1075,19 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(last) = path.segments.last_mut() {
             *last = Ident::new(new_name.to_string());
             *locator = Locator::path(path);
+        }
+    }
+
+    /// Annotate invoke arguments with expected parameter types
+    /// This ensures generic function references are specialized correctly
+    fn annotate_invoke_args(&mut self, args: &mut Vec<Expr>, params: &[FunctionParam]) {
+        for (arg, param) in args.iter_mut().zip(params.iter()) {
+            // Only annotate if arg doesn't already have a concrete type
+            let should_annotate = arg.ty().map_or(true, |ty| matches!(ty, Ty::Unknown(_)));
+            if should_annotate {
+                eprintln!("[annotate_invoke_args] Annotating arg {:?} with type {:?}", arg.kind(), param.ty);
+                arg.set_ty(param.ty.clone());
+            }
         }
     }
 
@@ -1769,7 +1997,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
-                    let _ = self.resolve_function_call(locator, &invoke.args);
+                    let _ = self.resolve_function_call(locator, &mut invoke.args);
                 }
 
                 match &mut invoke.target {
@@ -1821,10 +2049,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(repeat.elem.as_mut());
                 self.evaluate_function_body(repeat.len.as_mut());
             }
+            ExprKind::Locator(locator) => {
+                // Try to specialize generic function references
+                if let Some(expected_ty) = &expr_ty_snapshot {
+                    if matches!(expected_ty, Ty::Function(_)) {
+                        eprintln!("[evaluate_function_body] Attempting to specialize Locator {} with type {:?}", locator, expected_ty);
+                        if let Some(_specialized) = self.specialize_function_reference(locator, expected_ty) {
+                            eprintln!("[evaluate_function_body] Successfully specialized {} to {}", locator, locator);
+                        } else {
+                            eprintln!("[evaluate_function_body] Failed to specialize {}", locator);
+                        }
+                    }
+                }
+            }
             ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
             ExprKind::Any(_)
             | ExprKind::Id(_)
-            | ExprKind::Locator(_)
             | ExprKind::UnOp(_)
             | ExprKind::BinOp(_)
             | ExprKind::Dereference(_)

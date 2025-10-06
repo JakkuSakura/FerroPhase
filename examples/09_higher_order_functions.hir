@@ -49,15 +49,15 @@ hir::Program {
         {
             printf("Generic operations:
 ");
-            apply__spec0(10, 20, add);
-            apply__spec1(1.5, 2.5, add);
+            apply__spec0(10, 20, add__spec0);
+            apply__spec1(1.5, 2.5, add__spec1);
             printf("
 Conditional:
 ");
             printf("%d
-", apply_if(true, 5, 3, add));
+", apply_if(true, 5, 3, add__spec0));
             printf("%d
-", apply_if(false, 5, 3, add));
+", apply_if(false, 5, 3, add__spec0));
             printf("
 Closure factory:
 ");
@@ -83,6 +83,16 @@ Closure factory:
         }
     }
 
+    fn add__spec0(a: i64
+, b: i64
+) -> i64
+ {
+        // params: [a: i64
+, b: i64
+]
+        (a + b)
+    }
+
     fn apply__spec1(a: f64
 , b: f64
 , op: ()) -> () {
@@ -93,5 +103,15 @@ Closure factory:
             printf("%f
 ", op(a, b));
         }
+    }
+
+    fn add__spec1(a: f64
+, b: f64
+) -> f64
+ {
+        // params: [a: f64
+, b: f64
+]
+        (a + b)
     }
 }
