@@ -106,7 +106,7 @@ pub struct AstInterpreter<'ctx> {
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
     closure_types: HashMap<String, Ty>,
-    typer: Option<AstTypeInferencer>,
+    typer: Option<AstTypeInferencer<'ctx>>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -139,7 +139,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    pub fn set_typer(&mut self, typer: AstTypeInferencer) {
+    pub fn set_typer(&mut self, typer: AstTypeInferencer<'ctx>) {
         self.typer = Some(typer);
     }
 

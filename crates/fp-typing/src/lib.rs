@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::*;
+use fp_core::context::SharedScopedContext;
 use fp_core::error::{Error, Result};
 use fp_core::id::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
@@ -167,7 +168,8 @@ struct FunctionTypeInfo {
     ret: TypeVarId,
 }
 
-pub struct AstTypeInferencer {
+pub struct AstTypeInferencer<'ctx> {
+    ctx: Option<&'ctx SharedScopedContext>,
     type_vars: Vec<TypeVar>,
     env: Vec<HashMap<String, EnvEntry>>,
     generic_scopes: Vec<HashSet<String>>,
@@ -182,9 +184,10 @@ pub struct AstTypeInferencer {
     literal_ints: HashSet<TypeVarId>,
 }
 
-impl AstTypeInferencer {
+impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn new() -> Self {
         Self {
+            ctx: None,
             type_vars: Vec::new(),
             env: vec![HashMap::new()],
             generic_scopes: vec![HashSet::new()],
@@ -198,6 +201,11 @@ impl AstTypeInferencer {
             has_errors: false,
             literal_ints: HashSet::new(),
         }
+    }
+
+    pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
+        self.ctx = Some(ctx);
+        self
     }
 
     pub fn infer(&mut self, node: &mut Node) -> Result<TypingOutcome> {
@@ -2557,7 +2565,7 @@ impl AstTypeInferencer {
     }
 }
 
-impl AstTypeInferencer {
+impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn infer_expression(&mut self, expr: &mut Expr) -> Result<()> {
         let var = self.infer_expr(expr)?;
         let ty = self.resolve_to_ty(var)?;
