@@ -1,27 +1,5 @@
 Import(ItemImport { visibility: Private, tree: Path(ItemImportPath { segments: [Ident(#std), Ident(#fmt), Ident(#Display)] }) })
 Import(ItemImport { visibility: Private, tree: Path(ItemImportPath { segments: [Ident(#std), Ident(#ops), Ident(#Add)] }) })
-fn apply -> Some(Unit(TypeUnit))
-  Parameters:
-    a: T
-
-    b: T
-
-    op: fn (T , T) -> T
-
-  Body:
-    Block : ()
-
-      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Unknown(TypeUnknown)), kind: Invoke(ExprInvoke { target: Function(#op), args: [Expr { ty: Some(Unknown(TypeUnknown)), kind: Locator(#a) }, Expr { ty: Some(Unknown(TypeUnknown)), kind: Locator(#b) }] }) }], kwargs: [] } } }) : ()
-
-fn add -> Some(Expr(Expr { ty: None, kind: Locator(#T) }))
-  Parameters:
-    a: T
-
-    b: T
-
-  Body:
-    BinOp(ExprBinOp { kind: Add, lhs: Expr { ty: Some(Unknown(TypeUnknown)), kind: Locator(#a) }, rhs: Expr { ty: Some(Unknown(TypeUnknown)), kind: Locator(#b) } }) : _
-
 fn apply_if -> Some(Primitive(Int(I64)))
   Parameters:
     cond: bool

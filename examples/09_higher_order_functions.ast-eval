@@ -1,11 +1,5 @@
 use std :: fmt :: Display ;
 use std :: ops :: Add ;
-fn apply < T : Add + Display > (a : T , b : T , op : fn (T , T) -> T) -> (){
-    println ! ("{}" , op (a , b)) ;
-}
-fn add < T : Add > (a : T , b : T) -> T{
-    a + b
-}
 fn apply_if (cond : bool , a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> i64{
     if cond{
         op (a , b)
@@ -34,3 +28,5 @@ fn apply__spec0 (a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> (){
 fn apply__spec1 (a : f64 , b : f64 , op : fn (f64 , f64) -> f64) -> (){
     println ! ("{}" , op (a , b)) ;
 }
+
+// Type: ()
