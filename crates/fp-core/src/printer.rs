@@ -50,6 +50,8 @@ pub struct AstSerializerConfig {
     pub include_comments: bool,
     /// Whether to include source maps
     pub source_maps: bool,
+    /// Whether to print types as comments for typed AST nodes
+    pub print_types: bool,
 }
 
 impl Default for IndentationConfig {
@@ -80,6 +82,7 @@ impl Default for AstSerializerConfig {
             minify: false,
             include_comments: true,
             source_maps: false,
+            print_types: false,
         }
     }
 }
@@ -136,6 +139,7 @@ impl AstSerializerConfig {
             minify: false,
             include_comments: true,
             source_maps: false,
+            print_types: false,
         }
     }
 
@@ -152,6 +156,7 @@ impl AstSerializerConfig {
             minify: false,
             include_comments: true,
             source_maps: false,
+            print_types: false,
         }
     }
 
@@ -168,6 +173,13 @@ impl AstSerializerConfig {
             minify: true,
             include_comments: false,
             source_maps: false,
+            print_types: false,
         }
+    }
+
+    /// Enable type printing in comments
+    pub fn with_types(mut self) -> Self {
+        self.print_types = true;
+        self
     }
 }

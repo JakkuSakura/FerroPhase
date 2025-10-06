@@ -386,6 +386,8 @@ impl Pipeline {
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
+            // Save a debug file with type annotations
+            self.save_typed_debug(&ast, base_path)?;
         }
 
         self.run_stage(
@@ -816,6 +818,8 @@ impl Pipeline {
 
         let mut pretty_opts = PrettyOptions::default();
         pretty_opts.show_spans = options.debug.verbose;
+        // Enable type printing for typed AST files
+        pretty_opts.show_types = extension == EXT_AST_TYPED || extension == EXT_AST_EVAL;
         let display = pretty(ast, pretty_opts);
         let mut rendered = String::new();
         if let Err(err) = write!(&mut rendered, "{}", display) {
@@ -837,6 +841,17 @@ impl Pipeline {
             );
         }
 
+        Ok(())
+    }
+
+    fn save_typed_debug(&self, ast: &Node, base_path: &Path) -> Result<(), CliError> {
+        let inspector_output = fp_rust::ast_inspector::TypedAstInspector::inspect_node(ast);
+        if let Err(err) = fs::write(base_path.with_extension("ast-types"), inspector_output) {
+            debug!(
+                error = %err,
+                "failed to persist .ast-types debug file"
+            );
+        }
         Ok(())
     }
 
