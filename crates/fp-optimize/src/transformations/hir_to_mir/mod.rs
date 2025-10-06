@@ -1412,6 +1412,37 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<(mir::Operand, mir::FunctionSig, Option<String>)> {
         let mut resolved_path = path.clone();
         self.resolve_self_path(&mut resolved_path);
+
+        // Handle local variables (e.g., function parameters) as indirect calls
+        if let Some(hir::Res::Local(hir_id)) = &resolved_path.res {
+            if let Some(local_id) = self.local_map.get(hir_id) {
+                let local_id = *local_id;
+                let ty = self.locals[local_id as usize].ty.clone();
+
+                // Extract function signature from function pointer type
+                if let TyKind::FnPtr(poly_fn_sig) = &ty.kind {
+                    let fn_sig = &poly_fn_sig.binder.value;
+                    let sig = mir::FunctionSig {
+                        inputs: fn_sig.inputs.iter().map(|t| (**t).clone()).collect(),
+                        output: (*fn_sig.output).clone(),
+                    };
+                    let place = mir::Place::from_local(local_id);
+                    let operand = mir::Operand::copy(place);
+                    return Ok((operand, sig, None));
+                }
+
+                self.lowering.emit_error(
+                    callee.span,
+                    format!("local variable is not a function pointer, has type: {:?}", ty),
+                );
+            } else {
+                self.lowering.emit_error(
+                    callee.span,
+                    "local variable not found in local_map",
+                );
+            }
+        }
+
         if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
             if let Some(sig) = self.lowering.function_sigs.get(def_id).cloned() {
                 let name = self
@@ -1486,6 +1517,24 @@ impl<'a> BodyBuilder<'a> {
                 literal: mir::ConstantKind::Fn(info.fn_name.clone(), info.fn_ty.clone()),
             });
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
+        }
+
+        // Search for function by name in def_map (for specialized functions created during const eval)
+        for (def_id, item) in &self.program.def_map {
+            if let hir::ItemKind::Function(func) = &item.kind {
+                if func.sig.name == name {
+                    let sig = self.lowering.lower_function_sig(&func.sig, None);
+                    let ty = self.lowering.function_pointer_ty(&sig);
+                    let operand = mir::Operand::Constant(mir::Constant {
+                        span: callee.span,
+                        user_ty: None,
+                        literal: mir::ConstantKind::Fn(name.clone(), ty),
+                    });
+                    // Cache it for future lookups
+                    self.lowering.function_sigs.insert(*def_id, sig.clone());
+                    return Ok((operand, sig, Some(name)));
+                }
+            }
         }
 
         self.lowering
@@ -1570,6 +1619,19 @@ impl<'a> BodyBuilder<'a> {
                             return Ok(OperandInfo {
                                 operand: mir::Operand::copy(place),
                                 ty,
+                            });
+                        } else if let hir::ItemKind::Function(func) = &const_item.kind {
+                            // Function reference - create a function pointer constant
+                            let sig = self.lowering.lower_function_sig(&func.sig, None);
+                            let fn_ty = self.lowering.function_pointer_ty(&sig);
+                            let fn_name = func.sig.name.clone();
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Fn(fn_name, fn_ty.clone()),
+                                }),
+                                ty: fn_ty,
                             });
                         }
                     } else if let Some(konst) = self.const_items.get(def_id).cloned() {
