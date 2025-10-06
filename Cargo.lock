@@ -923,6 +923,7 @@ dependencies = [
  "fp-core",
  "fp-interpret",
  "fp-rust",
+ "fp-typing",
  "itertools 0.12.1",
  "pretty_assertions",
  "proc-macro2",
@@ -948,6 +949,17 @@ dependencies = [
  "syn 2.0.87",
  "syn-inline-mod",
  "syn-serde",
+ "tracing",
+]
+
+[[package]]
+name = "fp-typing"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "fp-rust",
+ "proc-macro2",
+ "syn 2.0.87",
  "tracing",
 ]
 

@@ -20,6 +20,7 @@ pub mod pat;
 pub mod pretty;
 pub mod printer;
 pub mod span;
+pub mod typing;
 pub mod utils;
 
 // Re-export commonly used items for convenience
