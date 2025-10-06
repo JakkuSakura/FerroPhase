@@ -70,8 +70,8 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 
 ## Diagnostics
 
-- Stages produce `DiagnosticReport<T>` wrappers; evaluation emits contextual
-  diagnostics (`span`, `intrinsic`, mode) via `DiagnosticManager`.
+- Stages push diagnostics directly into the shared `DiagnosticManager`; the CLI
+  emits contextual messages (`span`, `intrinsic`, mode) after each stage.
 - Saving intermediates now writes `.ast`, `.ast-typed`, `.ast-eval`, `.hir`, `.mir`,
   `.lir`, `.ll` artefacts.
 

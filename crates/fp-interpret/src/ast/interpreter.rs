@@ -1,17 +1,18 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::sync::Arc;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, Item, ItemDefFunction, ItemKind,
-    Node, NodeKind, StmtLet, Ty, TypeFunction, TypeInt, TypePrimitive, TypeUnit, Value, ValueField,
-    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    Node, NodeKind, StmtLet, Ty, TypeArray, TypeFunction, TypeInt, TypePrimitive, TypeReference,
+    TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value, ValueField, ValueFunction,
+    ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
-use fp_core::id::Locator;
+use fp_core::id::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
@@ -73,6 +74,12 @@ enum StoredValue {
     Closure(ConstClosure),
 }
 
+#[derive(Debug, Clone)]
+struct GenericTemplate {
+    function: ItemDefFunction,
+    generics: Vec<String>,
+}
+
 pub struct AstInterpreter<'ctx> {
     ctx: &'ctx SharedScopedContext,
     diag_manager: Option<Arc<DiagnosticManager>>,
@@ -90,6 +97,10 @@ pub struct AstInterpreter<'ctx> {
     evaluated_constants: HashMap<String, Value>,
     stdout: Vec<String>,
     functions: HashMap<String, ItemDefFunction>,
+    generic_functions: HashMap<String, GenericTemplate>,
+    specialization_cache: HashMap<String, HashMap<String, String>>,
+    specialization_counter: HashMap<String, usize>,
+    pending_items: Vec<Vec<Item>>,
     mutations_applied: bool,
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
@@ -114,6 +125,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             evaluated_constants: HashMap::new(),
             stdout: Vec::new(),
             functions: HashMap::new(),
+            generic_functions: HashMap::new(),
+            specialization_cache: HashMap::new(),
+            specialization_counter: HashMap::new(),
+            pending_items: Vec::new(),
             mutations_applied: false,
             pending_closure: None,
             pending_expr_ty: None,
@@ -124,8 +139,15 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub fn interpret(&mut self, node: &mut Node) {
         match node.kind_mut() {
             NodeKind::File(file) => {
+                self.pending_items.push(Vec::new());
                 for item in &mut file.items {
                     self.evaluate_item(item);
+                }
+                if let Some(mut pending) = self.pending_items.pop() {
+                    if !pending.is_empty() {
+                        file.items.append(&mut pending);
+                        self.mark_mutated();
+                    }
                 }
             }
             NodeKind::Item(item) => self.evaluate_item(item),
@@ -265,8 +287,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Module(module) => {
                 self.module_stack.push(module.name.as_str().to_string());
                 self.push_scope();
+                self.pending_items.push(Vec::new());
                 for child in &mut module.items {
                     self.evaluate_item(child);
+                }
+                if let Some(mut pending) = self.pending_items.pop() {
+                    if !pending.is_empty() {
+                        module.items.append(&mut pending);
+                        self.mark_mutated();
+                    }
                 }
                 self.pop_scope();
                 self.module_stack.pop();
@@ -279,9 +308,27 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.pop_scope();
             }
             ItemKind::DefFunction(func) => {
-                self.functions
-                    .insert(func.name.as_str().to_string(), func.clone());
-                self.evaluate_function_body(func.body.as_mut());
+                let base_name = func.name.as_str().to_string();
+                let qualified_name = self.qualified_name(func.name.as_str());
+                if func.sig.generics_params.is_empty() {
+                    self.functions.insert(base_name, func.clone());
+                    self.functions.insert(qualified_name, func.clone());
+                    self.evaluate_function_body(func.body.as_mut());
+                } else {
+                    let generics = func
+                        .sig
+                        .generics_params
+                        .iter()
+                        .map(|param| param.name.as_str().to_string())
+                        .collect();
+                    let template = GenericTemplate {
+                        function: func.clone(),
+                        generics,
+                    };
+                    self.generic_functions
+                        .insert(func.name.as_str().to_string(), template.clone());
+                    self.generic_functions.insert(qualified_name, template);
+                }
             }
             ItemKind::Expr(expr) => {
                 self.eval_expr(expr);
@@ -486,7 +533,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
 
-                if let Some(function) = self.find_function(locator) {
+                if let Some(function) = self.resolve_function_call(locator, &invoke.args) {
                     let args = self.evaluate_args(&mut invoke.args);
                     let ret_ty = Self::item_function_ret_ty(&function);
                     self.set_pending_expr_ty(ret_ty);
@@ -580,6 +627,38 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.functions.get(&name).cloned()
     }
 
+    fn resolve_function_call(
+        &mut self,
+        locator: &mut Locator,
+        args: &[Expr],
+    ) -> Option<ItemDefFunction> {
+        let mut candidate_names = vec![locator.to_string()];
+        if let Some(ident) = locator.as_ident() {
+            let simple = ident.as_str().to_string();
+            if !candidate_names.contains(&simple) {
+                candidate_names.push(simple);
+            }
+        }
+
+        for name in &candidate_names {
+            if let Some(function) = self.functions.get(name).cloned() {
+                return Some(function);
+            }
+        }
+
+        for name in &candidate_names {
+            if let Some(template) = self.generic_functions.get(name).cloned() {
+                if let Some(function) =
+                    self.instantiate_generic_function(name, template, locator, args)
+                {
+                    return Some(function);
+                }
+            }
+        }
+
+        self.find_function(locator)
+    }
+
     fn apply_callable(&mut self, callee: Value, args: Vec<Value>) -> Value {
         if matches!(callee, Value::Unit(_)) && args.is_empty() {
             return Value::unit();
@@ -587,6 +666,608 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         self.emit_error("unsupported callable in const evaluation");
         Value::undefined()
+    }
+
+    fn instantiate_generic_function(
+        &mut self,
+        lookup_name: &str,
+        template: GenericTemplate,
+        locator: &mut Locator,
+        args: &[Expr],
+    ) -> Option<ItemDefFunction> {
+        let base_name = template.function.name.as_str().to_string();
+        let substitution = match self.build_generic_substitution(&template, args) {
+            Some(subst) => subst,
+            None => {
+                return None;
+            }
+        };
+        let key = self.build_specialization_key(&template.generics, &substitution)?;
+
+        if let Some(existing) = self.lookup_cached_specialization(&[lookup_name, &base_name], &key)
+        {
+            self.update_locator_name(locator, &existing);
+            self.mark_mutated();
+            return self.functions.get(&existing).cloned();
+        }
+
+        let sanitized_base = Self::sanitize_symbol(&base_name);
+        let counter_entry = self
+            .specialization_counter
+            .entry(base_name.clone())
+            .or_insert(0);
+        let mut new_name;
+        loop {
+            new_name = format!("{}__spec{}", sanitized_base, *counter_entry);
+            *counter_entry += 1;
+            if !self.functions.contains_key(&new_name) {
+                break;
+            }
+        }
+
+        let mut specialized = template.function.clone();
+        specialized.name = Ident::new(new_name.clone());
+        specialized.sig.name = Some(specialized.name.clone());
+        specialized.sig.generics_params.clear();
+
+        for param in &mut specialized.sig.params {
+            let substituted = self.substitute_ty(&param.ty, &substitution);
+            param.ty = substituted.clone();
+            param.ty_annotation = Some(substituted);
+        }
+
+        if let Some(ret_ty) = specialized.sig.ret_ty.as_mut() {
+            let substituted = self.substitute_ty(ret_ty, &substitution);
+            *ret_ty = substituted;
+        }
+
+        let function_type = TypeFunction {
+            params: specialized
+                .sig
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect(),
+            generics_params: Vec::new(),
+            ret_ty: specialized
+                .sig
+                .ret_ty
+                .as_ref()
+                .map(|ty| Box::new(ty.clone())),
+        };
+        let function_ty = Ty::Function(function_type.clone());
+        specialized.ty = Some(function_type.clone());
+        specialized.ty_annotation = Some(function_ty.clone());
+
+        let mut local_types: HashMap<String, Ty> = HashMap::new();
+        for param in &specialized.sig.params {
+            let ty = param.ty.clone();
+            local_types.insert(param.name.as_str().to_string(), ty.clone());
+            local_types.insert(format!("#{}", param.name.as_str()), ty);
+        }
+
+        self.rewrite_expr_types(specialized.body.as_mut(), &substitution, &local_types);
+
+        let mut new_item = Item::new(ItemKind::DefFunction(specialized.clone()));
+        new_item.set_ty(function_ty);
+        if let Some(scope_pending) = self.pending_items.last_mut() {
+            scope_pending.push(new_item);
+        } else {
+            self.pending_items.push(vec![new_item]);
+        }
+
+        self.functions.insert(new_name.clone(), specialized.clone());
+        let qualified_new = self.qualified_name(&new_name);
+        self.functions.insert(qualified_new, specialized.clone());
+
+        self.register_specialization(&base_name, lookup_name, key, &new_name);
+        self.update_locator_name(locator, &new_name);
+        self.mark_mutated();
+
+        Some(specialized)
+    }
+
+    fn build_generic_substitution(
+        &self,
+        template: &GenericTemplate,
+        args: &[Expr],
+    ) -> Option<HashMap<String, Ty>> {
+        let generics_set: HashSet<String> = template.generics.iter().cloned().collect();
+        let mut subst = HashMap::new();
+        for (param, arg) in template.function.sig.params.iter().zip(args.iter()) {
+            let arg_ty = arg.ty()?.clone();
+            if !self.match_type(&param.ty, &arg_ty, &generics_set, &mut subst) {
+                return None;
+            }
+        }
+
+        if template
+            .generics
+            .iter()
+            .all(|name| subst.contains_key(name))
+        {
+            Some(subst)
+        } else {
+            None
+        }
+    }
+
+    fn build_specialization_key(
+        &self,
+        generics: &[String],
+        subst: &HashMap<String, Ty>,
+    ) -> Option<String> {
+        let mut parts = Vec::with_capacity(generics.len());
+        for name in generics {
+            let ty = subst.get(name)?;
+            parts.push(format!("{}={}", name, ty));
+        }
+        Some(parts.join(";"))
+    }
+
+    fn lookup_cached_specialization(&self, names: &[&str], key: &str) -> Option<String> {
+        for name in names {
+            if let Some(cache) = self.specialization_cache.get(*name) {
+                if let Some(symbol) = cache.get(key) {
+                    return Some(symbol.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn register_specialization(
+        &mut self,
+        base_name: &str,
+        lookup_name: &str,
+        key: String,
+        symbol: &str,
+    ) {
+        self.specialization_cache
+            .entry(base_name.to_string())
+            .or_default()
+            .insert(key.clone(), symbol.to_string());
+        if lookup_name != base_name {
+            self.specialization_cache
+                .entry(lookup_name.to_string())
+                .or_default()
+                .insert(key, symbol.to_string());
+        }
+    }
+
+    fn update_locator_name(&self, locator: &mut Locator, new_name: &str) {
+        let mut path = locator.to_path();
+        if let Some(last) = path.segments.last_mut() {
+            *last = Ident::new(new_name.to_string());
+            *locator = Locator::path(path);
+        }
+    }
+
+    fn sanitize_symbol(name: &str) -> String {
+        let mut result = String::with_capacity(name.len());
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                result.push(ch);
+            } else {
+                result.push('_');
+            }
+        }
+        if result.is_empty() {
+            result.push_str("specialized_fn");
+        }
+        if result.chars().next().unwrap().is_ascii_digit() {
+            result.insert(0, '_');
+        }
+        result
+    }
+
+    fn match_type(
+        &self,
+        pattern: &Ty,
+        actual: &Ty,
+        generics: &HashSet<String>,
+        subst: &mut HashMap<String, Ty>,
+    ) -> bool {
+        if let Some(name) = self.generic_name(pattern, generics) {
+            if let Some(existing) = subst.get(&name) {
+                return self.types_compatible(existing, actual);
+            }
+            if self.is_unknown(actual) {
+                return true;
+            }
+            subst.insert(name, actual.clone());
+            return true;
+        }
+
+        match (pattern, actual) {
+            (Ty::Primitive(p), Ty::Primitive(a)) => p == a,
+            (Ty::Unit(_), Ty::Unit(_)) => true,
+            (Ty::Nothing(_), Ty::Nothing(_)) => true,
+            (Ty::Struct(p), Ty::Struct(a)) => self.match_struct_type(p, a),
+            (Ty::Reference(p), Ty::Reference(a)) => self.match_type(&p.ty, &a.ty, generics, subst),
+            (Ty::Vec(p), Ty::Vec(a)) => self.match_type(&p.ty, &a.ty, generics, subst),
+            (Ty::Slice(p), Ty::Slice(a)) => self.match_type(&p.elem, &a.elem, generics, subst),
+            (Ty::Tuple(p), Ty::Tuple(a)) => {
+                if p.types.len() != a.types.len() {
+                    return false;
+                }
+                p.types
+                    .iter()
+                    .zip(a.types.iter())
+                    .all(|(pt, at)| self.match_type(pt, at, generics, subst))
+            }
+            (Ty::Array(p), Ty::Array(a)) => self.match_type(&p.elem, &a.elem, generics, subst),
+            (Ty::Function(p), Ty::Function(a)) => {
+                if p.params.len() != a.params.len() {
+                    return false;
+                }
+                for (pp, ap) in p.params.iter().zip(a.params.iter()) {
+                    if !self.match_type(pp, ap, generics, subst) {
+                        return false;
+                    }
+                }
+                match (&p.ret_ty, &a.ret_ty) {
+                    (Some(ret_p), Some(ret_a)) => {
+                        self.match_type(ret_p.as_ref(), ret_a.as_ref(), generics, subst)
+                    }
+                    (None, Some(ret_a)) => {
+                        self.match_type(&Ty::Unit(TypeUnit), ret_a.as_ref(), generics, subst)
+                    }
+                    (Some(_), None) => true,
+                    (None, None) => true,
+                }
+            }
+            (Ty::Expr(_), Ty::Expr(_)) => pattern == actual,
+            (_, other) => self.is_unknown(other) || pattern == other,
+        }
+    }
+
+    fn match_struct_type(&self, pattern: &TypeStruct, actual: &TypeStruct) -> bool {
+        pattern.name == actual.name
+    }
+
+    fn substitute_ty(&self, ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+        if let Ty::Expr(expr) = ty {
+            if let ExprKind::Locator(locator) = expr.kind() {
+                let name = locator.to_string();
+                if let Some(mapped) = subst.get(&name) {
+                    return mapped.clone();
+                }
+            }
+        }
+
+        match ty {
+            Ty::Primitive(_) | Ty::Unit(_) | Ty::Nothing(_) | Ty::Any(_) | Ty::Unknown(_) => {
+                ty.clone()
+            }
+            Ty::Struct(strct) => Ty::Struct(self.substitute_struct(strct, subst)),
+            Ty::Reference(reference) => Ty::Reference(TypeReference {
+                ty: Box::new(self.substitute_ty(&reference.ty, subst)),
+                mutability: reference.mutability,
+                lifetime: reference.lifetime.clone(),
+            }),
+            Ty::Vec(vec_ty) => Ty::Vec(TypeVec {
+                ty: Box::new(self.substitute_ty(&vec_ty.ty, subst)),
+            }),
+            Ty::Slice(slice) => Ty::Slice(TypeSlice {
+                elem: Box::new(self.substitute_ty(&slice.elem, subst)),
+            }),
+            Ty::Tuple(tuple) => Ty::Tuple(TypeTuple {
+                types: tuple
+                    .types
+                    .iter()
+                    .map(|ty| self.substitute_ty(ty, subst))
+                    .collect(),
+            }),
+            Ty::Array(array) => Ty::Array(TypeArray {
+                elem: Box::new(self.substitute_ty(&array.elem, subst)),
+                len: array.len.clone(),
+            }),
+            Ty::Function(function) => Ty::Function(TypeFunction {
+                params: function
+                    .params
+                    .iter()
+                    .map(|ty| self.substitute_ty(ty, subst))
+                    .collect(),
+                generics_params: Vec::new(),
+                ret_ty: function
+                    .ret_ty
+                    .as_ref()
+                    .map(|ret| Box::new(self.substitute_ty(ret.as_ref(), subst))),
+            }),
+            Ty::Expr(_) => ty.clone(),
+            Ty::Structural(structural) => Ty::Structural(structural.clone()),
+            Ty::Enum(enm) => Ty::Enum(enm.clone()),
+            Ty::ImplTraits(_) | Ty::TypeBounds(_) | Ty::Type(_) | Ty::Value(_) | Ty::AnyBox(_) => {
+                ty.clone()
+            }
+        }
+    }
+
+    fn substitute_struct(&self, ty: &TypeStruct, _subst: &HashMap<String, Ty>) -> TypeStruct {
+        ty.clone()
+    }
+
+    fn generic_name(&self, ty: &Ty, generics: &HashSet<String>) -> Option<String> {
+        if let Ty::Expr(expr) = ty {
+            if let ExprKind::Locator(locator) = expr.kind() {
+                let name = locator.to_string();
+                if generics.contains(&name) {
+                    return Some(name);
+                }
+            }
+        }
+        None
+    }
+
+    fn types_compatible(&self, a: &Ty, b: &Ty) -> bool {
+        a == b || self.is_unknown(b)
+    }
+
+    fn is_unknown(&self, ty: &Ty) -> bool {
+        matches!(ty, Ty::Unknown(_) | Ty::Any(_))
+    }
+
+    fn rewrite_expr_types(
+        &self,
+        expr: &mut Expr,
+        subst: &HashMap<String, Ty>,
+        local_types: &HashMap<String, Ty>,
+    ) {
+        let mut rewritten_ty = expr
+            .ty()
+            .cloned()
+            .map(|ty| self.substitute_ty(&ty, subst));
+
+        let needs_inference = rewritten_ty
+            .as_ref()
+            .map_or(true, |ty| self.is_unknown(ty));
+
+        if needs_inference {
+            match expr.kind() {
+                ExprKind::Locator(locator) => {
+                    if let Some(local) = self.lookup_local_type(locator, local_types) {
+                        rewritten_ty = Some(local);
+                    }
+                }
+                ExprKind::Value(value) => {
+                    if matches!(**value, Value::String(_)) {
+                        rewritten_ty = Some(Ty::Primitive(TypePrimitive::String));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(ty) = rewritten_ty {
+            expr.set_ty(ty);
+        }
+
+        let expr_type_unknown = expr
+            .ty()
+            .map_or(true, |ty| self.is_unknown(ty));
+
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                for stmt in &mut block.stmts {
+                    if let BlockStmt::Expr(expr_stmt) = stmt {
+                        self.rewrite_expr_types(expr_stmt.expr.as_mut(), subst, local_types);
+                    }
+                }
+            }
+            ExprKind::If(expr_if) => {
+                self.rewrite_expr_types(expr_if.cond.as_mut(), subst, local_types);
+                self.rewrite_expr_types(expr_if.then.as_mut(), subst, local_types);
+                if let Some(elze) = expr_if.elze.as_mut() {
+                    self.rewrite_expr_types(elze, subst, local_types);
+                }
+            }
+            ExprKind::Loop(expr_loop) => {
+                self.rewrite_expr_types(expr_loop.body.as_mut(), subst, local_types);
+            }
+            ExprKind::While(expr_while) => {
+                self.rewrite_expr_types(expr_while.cond.as_mut(), subst, local_types);
+                self.rewrite_expr_types(expr_while.body.as_mut(), subst, local_types);
+            }
+            ExprKind::Match(expr_match) => {
+                for case in &mut expr_match.cases {
+                    self.rewrite_expr_types(case.cond.as_mut(), subst, local_types);
+                    self.rewrite_expr_types(case.body.as_mut(), subst, local_types);
+                }
+            }
+            ExprKind::Let(expr_let) => {
+                self.rewrite_expr_types(expr_let.expr.as_mut(), subst, local_types);
+            }
+            ExprKind::Assign(assign) => {
+                self.rewrite_expr_types(assign.target.as_mut(), subst, local_types);
+                self.rewrite_expr_types(assign.value.as_mut(), subst, local_types);
+            }
+            ExprKind::Invoke(invoke) => {
+                match &mut invoke.target {
+                    ExprInvokeTarget::Expr(inner) => {
+                        self.rewrite_expr_types(inner.as_mut(), subst, local_types);
+                    }
+                    ExprInvokeTarget::Closure(func) => {
+                        self.rewrite_expr_types(func.body.as_mut(), subst, local_types);
+                    }
+                    _ => {}
+                }
+                for arg in &mut invoke.args {
+                    self.rewrite_expr_types(arg, subst, local_types);
+                }
+
+                let target_fn_ty = match &invoke.target {
+                    ExprInvokeTarget::Function(locator) => self
+                        .lookup_local_type(locator, local_types)
+                        .and_then(|ty| match ty {
+                            Ty::Function(fn_ty) => Some(fn_ty),
+                            _ => None,
+                        }),
+                    ExprInvokeTarget::Expr(inner) => {
+                        let ty = inner
+                            .ty()
+                            .cloned()
+                            .or_else(|| {
+                                if let ExprKind::Locator(locator) = inner.kind() {
+                                    self.lookup_local_type(locator, local_types)
+                                } else {
+                                    None
+                                }
+                            });
+                        ty.and_then(|ty| match ty {
+                            Ty::Function(fn_ty) => Some(fn_ty),
+                            _ => None,
+                        })
+                    }
+                    ExprInvokeTarget::Closure(func) => Some(TypeFunction {
+                        params: func.sig.params.iter().map(|param| param.ty.clone()).collect(),
+                        generics_params: Vec::new(),
+                        ret_ty: func.sig.ret_ty.as_ref().map(|ret| Box::new(ret.clone())),
+                    }),
+                    _ => None,
+                };
+
+                let mut inferred_ret_ty: Option<Ty> = None;
+                let mut param_types: Option<Vec<Ty>> = None;
+
+                if let Some(function_ty) = target_fn_ty {
+                    if expr_type_unknown {
+                        inferred_ret_ty = Self::type_function_ret_ty(&function_ty)
+                            .or_else(|| Some(Ty::Unit(TypeUnit)));
+                    }
+                    param_types = Some(function_ty.params.clone());
+                }
+
+                if let Some(fn_params) = param_types {
+                    for (idx, arg) in invoke.args.iter_mut().enumerate() {
+                        if let Some(param_ty) = fn_params.get(idx) {
+                            if arg.ty().map_or(true, |ty| self.is_unknown(ty)) {
+                                let substituted = self.substitute_ty(param_ty, subst);
+                                arg.set_ty(substituted);
+                            }
+                        }
+                    }
+                }
+
+                if let Some(ret_ty) = inferred_ret_ty {
+                    expr.set_ty(ret_ty);
+                }
+            }
+            ExprKind::Struct(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.rewrite_expr_types(value, subst, local_types);
+                    }
+                }
+            }
+            ExprKind::Structural(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.rewrite_expr_types(value, subst, local_types);
+                    }
+                }
+            }
+            ExprKind::Select(select) => {
+                self.rewrite_expr_types(select.obj.as_mut(), subst, local_types);
+            }
+            ExprKind::Array(array) => {
+                for value in &mut array.values {
+                    self.rewrite_expr_types(value, subst, local_types);
+                }
+            }
+            ExprKind::ArrayRepeat(array_repeat) => {
+                self.rewrite_expr_types(array_repeat.elem.as_mut(), subst, local_types);
+                self.rewrite_expr_types(array_repeat.len.as_mut(), subst, local_types);
+            }
+            ExprKind::Tuple(tuple) => {
+                for value in &mut tuple.values {
+                    self.rewrite_expr_types(value, subst, local_types);
+                }
+            }
+            ExprKind::BinOp(binop) => {
+                self.rewrite_expr_types(binop.lhs.as_mut(), subst, local_types);
+                self.rewrite_expr_types(binop.rhs.as_mut(), subst, local_types);
+            }
+            ExprKind::UnOp(unop) => {
+                self.rewrite_expr_types(unop.val.as_mut(), subst, local_types);
+            }
+            ExprKind::Reference(reference) => {
+                self.rewrite_expr_types(reference.referee.as_mut(), subst, local_types);
+            }
+            ExprKind::Dereference(deref) => {
+                self.rewrite_expr_types(deref.referee.as_mut(), subst, local_types);
+            }
+            ExprKind::Index(index) => {
+                self.rewrite_expr_types(index.obj.as_mut(), subst, local_types);
+                self.rewrite_expr_types(index.index.as_mut(), subst, local_types);
+            }
+            ExprKind::Splat(splat) => {
+                self.rewrite_expr_types(splat.iter.as_mut(), subst, local_types);
+            }
+            ExprKind::SplatDict(splat) => {
+                self.rewrite_expr_types(splat.dict.as_mut(), subst, local_types);
+            }
+            ExprKind::Try(expr_try) => {
+                self.rewrite_expr_types(expr_try.expr.as_mut(), subst, local_types);
+            }
+            ExprKind::Closure(closure) => {
+                self.rewrite_expr_types(closure.body.as_mut(), subst, local_types);
+            }
+            ExprKind::Closured(closured) => {
+                self.rewrite_expr_types(closured.expr.as_mut(), subst, local_types);
+            }
+            ExprKind::Paren(paren) => {
+                self.rewrite_expr_types(paren.expr.as_mut(), subst, local_types);
+            }
+            ExprKind::FormatString(format) => {
+                for arg in &mut format.args {
+                    self.rewrite_expr_types(arg, subst, local_types);
+                }
+                for kwarg in &mut format.kwargs {
+                    self.rewrite_expr_types(&mut kwarg.value, subst, local_types);
+                }
+            }
+            ExprKind::IntrinsicCall(call) => match &mut call.payload {
+                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                    for arg in args {
+                        self.rewrite_expr_types(arg, subst, local_types);
+                    }
+                }
+                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                    for arg in &mut template.args {
+                        self.rewrite_expr_types(arg, subst, local_types);
+                    }
+                    for kwarg in &mut template.kwargs {
+                        self.rewrite_expr_types(&mut kwarg.value, subst, local_types);
+                    }
+                }
+            },
+            ExprKind::Value(value) => match value.as_mut() {
+                Value::Expr(inner) => {
+                    self.rewrite_expr_types(inner.as_mut(), subst, local_types);
+                }
+                Value::Function(func) => {
+                    self.rewrite_expr_types(func.body.as_mut(), subst, local_types);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn lookup_local_type(
+        &self,
+        locator: &Locator,
+        local_types: &HashMap<String, Ty>,
+    ) -> Option<Ty> {
+        if let Some(ident) = locator.as_ident() {
+            if let Some(ty) = local_types.get(ident.as_str()) {
+                return Some(ty.clone());
+            }
+        }
+
+        let name = locator.to_string();
+        local_types.get(&name).cloned()
     }
 
     fn capture_closure(&self, closure: &ExprClosure, ty: Option<Ty>) -> ConstClosure {
@@ -969,8 +1650,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Let(expr_let) => self.evaluate_function_body(expr_let.expr.as_mut()),
             ExprKind::Invoke(invoke) => {
-                if let ExprInvokeTarget::Function(locator) = &invoke.target {
-                    if let Some(ident) = locator.as_ident() {
+                if let ExprInvokeTarget::Function(locator_ref) = &invoke.target {
+                    if let Some(ident) = locator_ref.as_ident() {
                         if self.lookup_closure(ident.as_str()).is_some() {
                             let mut cloned_expr = Expr::new(ExprKind::Invoke(invoke.clone()));
                             if let Some(ref ty) = expr_ty_snapshot {
@@ -988,6 +1669,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                     }
+                }
+
+                if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
+                    let _ = self.resolve_function_call(locator, &invoke.args);
                 }
 
                 match &mut invoke.target {
