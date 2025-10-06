@@ -38,6 +38,10 @@ fn materialize_item(item: &mut Item, strategy: &dyn RuntimeIntrinsicStrategy) ->
             }
         }
         ItemKind::DefFunction(func) => {
+            // Skip generic template functions - only their specializations should be materialized
+            if !func.sig.generics_params.is_empty() {
+                return Ok(());
+            }
             materialize_expr(func.body.as_mut(), strategy)?;
         }
         ItemKind::DefConst(def) => {
