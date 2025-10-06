@@ -10,7 +10,7 @@ use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
-    Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager, DiagnosticReport,
+    Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
 };
 use fp_core::intrinsics::runtime::RuntimeIntrinsicStrategy;
 use fp_core::pretty::{PrettyOptions, pretty};
@@ -358,20 +358,18 @@ impl Pipeline {
     ) -> Result<PipelineOutput, CliError> {
         let diagnostic_manager = DiagnosticManager::new();
 
-        let normalize_report = self.stage_normalize_intrinsics(&mut ast);
-        self.collect_stage(
+        self.run_stage(
             STAGE_INTRINSIC_NORMALIZE,
-            normalize_report,
             &diagnostic_manager,
             options,
+            |pipeline| pipeline.stage_normalize_intrinsics(&mut ast, &diagnostic_manager),
         )?;
 
-        let pre_const_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_ENRICH);
-        self.collect_stage(
+        self.run_stage(
             STAGE_TYPE_ENRICH,
-            pre_const_type_report,
             &diagnostic_manager,
             options,
+            |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, &diagnostic_manager),
         )?;
 
         if options.save_intermediates {
@@ -379,58 +377,65 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
         }
 
-        let const_report = self.stage_const_eval(&mut ast, options)?;
         let outcome =
-            self.collect_stage(STAGE_CONST_EVAL, const_report, &diagnostic_manager, options)?;
+            self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
+                pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager)
+            })?;
         self.last_const_eval = Some(outcome.clone());
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
         }
 
-        let post_const_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_POST_CONST);
-        self.collect_stage(
+        self.run_stage(
             STAGE_TYPE_POST_CONST,
-            post_const_type_report,
             &diagnostic_manager,
             options,
+            |pipeline| {
+                pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CONST, &diagnostic_manager)
+            },
         )?;
 
-        let materialize_report = self.stage_materialize_runtime_intrinsics(&mut ast, target);
-        self.collect_stage(
+        self.run_stage(
             STAGE_RUNTIME_MATERIALIZE,
-            materialize_report,
             &diagnostic_manager,
             options,
+            |pipeline| {
+                pipeline.stage_materialize_runtime_intrinsics(&mut ast, target, &diagnostic_manager)
+            },
         )?;
 
-        let post_materialize_type_report =
-            self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
-        self.collect_stage(
+        self.run_stage(
             STAGE_TYPE_POST_MATERIALIZE,
-            post_materialize_type_report,
             &diagnostic_manager,
             options,
+            |pipeline| {
+                pipeline.stage_type_check(
+                    &mut ast,
+                    STAGE_TYPE_POST_MATERIALIZE,
+                    &diagnostic_manager,
+                )
+            },
         )?;
 
-        let closure_report = self.stage_closure_lowering(&mut ast);
-        self.collect_stage(
+        self.run_stage(
             STAGE_CLOSURE_LOWERING,
-            closure_report,
             &diagnostic_manager,
             options,
+            |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
         )?;
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, "ast-closure", options)?;
         }
 
-        let post_closure_type_report = self.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE);
-        self.collect_stage(
+        self.run_stage(
             STAGE_TYPE_POST_CLOSURE,
-            post_closure_type_report,
             &diagnostic_manager,
             options,
+            |pipeline| {
+                pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE, &diagnostic_manager)
+            },
         )?;
 
         let output = if matches!(target, PipelineTarget::Rust) {
@@ -439,19 +444,31 @@ impl Pipeline {
             let code = CodeGenerator::generate_rust_code(&ast)?;
             PipelineOutput::Code(code)
         } else {
-            let hir_report = self.stage_hir_generation(&ast, options, input_path, base_path)?;
             let hir_program =
-                self.collect_stage(STAGE_AST_TO_HIR, hir_report, &diagnostic_manager, options)?;
+                self.run_stage(STAGE_AST_TO_HIR, &diagnostic_manager, options, |pipeline| {
+                    pipeline.stage_hir_generation(
+                        &ast,
+                        options,
+                        input_path,
+                        base_path,
+                        &diagnostic_manager,
+                    )
+                })?;
 
             match target {
                 PipelineTarget::Llvm => {
-                    let backend_report =
-                        self.stage_backend_lowering(&hir_program.clone(), options, base_path)?;
-                    let backend = self.collect_stage(
+                    let backend = self.run_stage(
                         STAGE_BACKEND_LOWERING,
-                        backend_report,
                         &diagnostic_manager,
                         options,
+                        |pipeline| {
+                            pipeline.stage_backend_lowering(
+                                &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
                     )?;
 
                     let llvm = self.generate_llvm_artifacts(
@@ -464,13 +481,18 @@ impl Pipeline {
                     PipelineOutput::Code(llvm.ir_text)
                 }
                 PipelineTarget::Binary => {
-                    let backend_report =
-                        self.stage_backend_lowering(&hir_program.clone(), options, base_path)?;
-                    let backend = self.collect_stage(
+                    let backend = self.run_stage(
                         STAGE_BACKEND_LOWERING,
-                        backend_report,
                         &diagnostic_manager,
                         options,
+                        |pipeline| {
+                            pipeline.stage_backend_lowering(
+                                &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
                     )?;
 
                     let llvm = self.generate_llvm_artifacts(
@@ -481,24 +503,35 @@ impl Pipeline {
                         options,
                     )?;
 
-                    let link_report = self.stage_link_binary(&llvm.ir_path, base_path, options);
-                    let binary_path = self.collect_stage(
+                    let binary_path = self.run_stage(
                         STAGE_LINK_BINARY,
-                        link_report,
                         &diagnostic_manager,
                         options,
+                        |pipeline| {
+                            pipeline.stage_link_binary(
+                                &llvm.ir_path,
+                                base_path,
+                                options,
+                                &diagnostic_manager,
+                            )
+                        },
                     )?;
 
                     PipelineOutput::Binary(binary_path)
                 }
                 PipelineTarget::Bytecode => {
-                    let backend_report =
-                        self.stage_backend_lowering(&hir_program, options, base_path)?;
-                    let backend = self.collect_stage(
+                    let backend = self.run_stage(
                         STAGE_BACKEND_LOWERING,
-                        backend_report,
                         &diagnostic_manager,
                         options,
+                        |pipeline| {
+                            pipeline.stage_backend_lowering(
+                                &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
                     )?;
 
                     let repr =
@@ -515,57 +548,66 @@ impl Pipeline {
         Ok(output)
     }
 
-    fn stage_normalize_intrinsics(&self, ast: &mut Node) -> DiagnosticReport<()> {
+    fn stage_normalize_intrinsics(
+        &self,
+        ast: &mut Node,
+        manager: &DiagnosticManager,
+    ) -> Result<(), CliError> {
         match fp_optimize::normalize_intrinsics(ast) {
-            Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
-            Err(err) => DiagnosticReport::failure(vec![
-                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
-                    .with_source_context(STAGE_INTRINSIC_NORMALIZE),
-            ]),
+            Ok(()) => Ok(()),
+            Err(err) => {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                        .with_source_context(STAGE_INTRINSIC_NORMALIZE),
+                );
+                Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE))
+            }
         }
     }
 
-    fn stage_type_check(&self, ast: &mut Node, stage_label: &'static str) -> DiagnosticReport<()> {
-        let mut diagnostics = Vec::new();
-
+    fn stage_type_check(
+        &self,
+        ast: &mut Node,
+        stage_label: &'static str,
+        manager: &DiagnosticManager,
+    ) -> Result<(), CliError> {
         match fp_optimize::typing::annotate(ast) {
             Ok(outcome) => {
                 let mut saw_error = false;
                 for message in outcome.diagnostics {
-                    match message.level {
-                        TypingDiagnosticLevel::Warning => diagnostics.push(
-                            Diagnostic::warning(message.message).with_source_context(stage_label),
-                        ),
+                    let diagnostic = match message.level {
+                        TypingDiagnosticLevel::Warning => {
+                            Diagnostic::warning(message.message).with_source_context(stage_label)
+                        }
                         TypingDiagnosticLevel::Error => {
                             saw_error = true;
-                            diagnostics.push(
-                                Diagnostic::error(message.message).with_source_context(stage_label),
-                            );
+                            Diagnostic::error(message.message).with_source_context(stage_label)
                         }
-                    }
+                    };
+                    manager.add_diagnostic(diagnostic);
                 }
 
                 if saw_error || outcome.has_errors {
-                    return DiagnosticReport::failure(diagnostics);
+                    return Err(Self::stage_failure(stage_label));
                 }
+                Ok(())
             }
             Err(err) => {
-                diagnostics.push(
+                manager.add_diagnostic(
                     Diagnostic::error(format!("AST typing failed: {}", err))
                         .with_source_context(stage_label),
                 );
-                return DiagnosticReport::failure(diagnostics);
+                Err(Self::stage_failure(stage_label))
             }
         }
-
-        DiagnosticReport::success_with_diagnostics((), diagnostics)
     }
 
     fn stage_const_eval(
         &mut self,
         ast: &mut Node,
         options: &PipelineOptions,
-    ) -> Result<DiagnosticReport<ConstEvalOutcome>, CliError> {
+        manager: &DiagnosticManager,
+    ) -> Result<ConstEvalOutcome, CliError> {
         let serializer = self.serializer.clone().ok_or_else(|| {
             CliError::Compilation("No serializer registered for const-eval".to_string())
         })?;
@@ -576,35 +618,38 @@ impl Pipeline {
         orchestrator.set_debug_assertions(!options.release);
         orchestrator.set_execute_main(options.execute_main);
 
-        let mut diagnostics = Vec::new();
-
         let outcome = match orchestrator.evaluate(ast, &shared_context) {
             Ok(outcome) => outcome,
             Err(e) => {
                 let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
                     .with_source_context(STAGE_CONST_EVAL);
-                return Ok(DiagnosticReport::failure(vec![diagnostic]));
+                manager.add_diagnostic(diagnostic);
+                return Err(Self::stage_failure(STAGE_CONST_EVAL));
             }
         };
 
-        diagnostics.extend(outcome.diagnostics.iter().cloned());
+        manager.add_diagnostics(outcome.diagnostics.clone());
         if outcome.has_errors {
-            return Ok(DiagnosticReport::failure(diagnostics));
+            return Err(Self::stage_failure(STAGE_CONST_EVAL));
         }
 
-        Ok(DiagnosticReport::success_with_diagnostics(
-            outcome,
-            diagnostics,
-        ))
+        Ok(outcome)
     }
 
-    fn stage_closure_lowering(&self, ast: &mut Node) -> DiagnosticReport<()> {
+    fn stage_closure_lowering(
+        &self,
+        ast: &mut Node,
+        manager: &DiagnosticManager,
+    ) -> Result<(), CliError> {
         match fp_optimize::lower_closures(ast) {
-            Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
-            Err(err) => DiagnosticReport::failure(vec![
-                Diagnostic::error(format!("Closure lowering failed: {}", err))
-                    .with_source_context(STAGE_CLOSURE_LOWERING),
-            ]),
+            Ok(()) => Ok(()),
+            Err(err) => {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("Closure lowering failed: {}", err))
+                        .with_source_context(STAGE_CLOSURE_LOWERING),
+                );
+                Err(Self::stage_failure(STAGE_CLOSURE_LOWERING))
+            }
         }
     }
 
@@ -612,16 +657,20 @@ impl Pipeline {
         &self,
         ast: &mut Node,
         target: &PipelineTarget,
-    ) -> DiagnosticReport<()> {
+        manager: &DiagnosticManager,
+    ) -> Result<(), CliError> {
         let materializer = IntrinsicsMaterializer::for_target(target);
         let result = materializer.materialize(ast);
 
         match result {
-            Ok(()) => DiagnosticReport::success_with_diagnostics((), Vec::new()),
-            Err(err) => DiagnosticReport::failure(vec![
-                Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
-                    .with_source_context(STAGE_RUNTIME_MATERIALIZE),
-            ]),
+            Ok(()) => Ok(()),
+            Err(err) => {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
+                        .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+                );
+                Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE))
+            }
         }
     }
 
@@ -630,7 +679,8 @@ impl Pipeline {
         llvm_ir_path: &Path,
         base_path: &Path,
         options: &PipelineOptions,
-    ) -> DiagnosticReport<PathBuf> {
+        manager: &DiagnosticManager,
+    ) -> Result<PathBuf, CliError> {
         let binary_path = base_path.with_extension(if cfg!(target_os = "windows") {
             "exe"
         } else {
@@ -639,22 +689,24 @@ impl Pipeline {
 
         if let Some(parent) = binary_path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
-                return DiagnosticReport::failure(vec![
+                manager.add_diagnostic(
                     Diagnostic::error(format!("Failed to create output directory: {}", err))
                         .with_source_context(STAGE_LINK_BINARY),
-                ]);
+                );
+                return Err(Self::stage_failure(STAGE_LINK_BINARY));
             }
         }
 
         let clang_available = Command::new("clang").arg("--version").output();
         if matches!(clang_available, Err(_)) {
-            return DiagnosticReport::failure(vec![
+            manager.add_diagnostic(
                 Diagnostic::error(
                     "`clang` not found in PATH; install LLVM toolchain to produce binaries"
                         .to_string(),
                 )
                 .with_source_context(STAGE_LINK_BINARY),
-            ]);
+            );
+            return Err(Self::stage_failure(STAGE_LINK_BINARY));
         }
 
         let mut cmd = Command::new("clang");
@@ -666,10 +718,11 @@ impl Pipeline {
         let output = match cmd.output() {
             Ok(output) => output,
             Err(err) => {
-                return DiagnosticReport::failure(vec![
+                manager.add_diagnostic(
                     Diagnostic::error(format!("Failed to invoke clang: {}", err))
                         .with_source_context(STAGE_LINK_BINARY),
-                ]);
+                );
+                return Err(Self::stage_failure(STAGE_LINK_BINARY));
             }
         };
 
@@ -683,10 +736,11 @@ impl Pipeline {
             if message.is_empty() {
                 message = "clang failed without diagnostics".to_string();
             }
-            return DiagnosticReport::failure(vec![
+            manager.add_diagnostic(
                 Diagnostic::error(format!("clang failed: {}", message))
                     .with_source_context(STAGE_LINK_BINARY),
-            ]);
+            );
+            return Err(Self::stage_failure(STAGE_LINK_BINARY));
         }
 
         if !options.save_intermediates {
@@ -699,7 +753,7 @@ impl Pipeline {
             }
         }
 
-        DiagnosticReport::success_with_diagnostics(binary_path, Vec::new())
+        Ok(binary_path)
     }
 
     fn stage_backend_lowering(
@@ -707,17 +761,16 @@ impl Pipeline {
         hir_program: &hir::Program,
         options: &PipelineOptions,
         base_path: &Path,
-    ) -> Result<DiagnosticReport<BackendArtifacts>, CliError> {
-        let mut diagnostics = Vec::new();
-
+        manager: &DiagnosticManager,
+    ) -> Result<BackendArtifacts, CliError> {
         let mut mir_lowering = MirLowering::new();
         let mir_program = mir_lowering
             .transform(hir_program.clone())
             .map_err(|err| CliError::Compilation(format!("HIR→MIR lowering failed: {}", err)))?;
-        let (mut mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
-        diagnostics.append(&mut mir_diags);
+        let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
+        manager.add_diagnostics(mir_diags);
         if mir_had_errors {
-            return Ok(DiagnosticReport::failure(diagnostics));
+            return Err(Self::stage_failure(STAGE_BACKEND_LOWERING));
         }
 
         let mut pretty_opts = PrettyOptions::default();
@@ -743,14 +796,11 @@ impl Pipeline {
             }
         }
 
-        Ok(DiagnosticReport::success_with_diagnostics(
-            BackendArtifacts {
-                lir_program,
-                mir_text,
-                lir_text,
-            },
-            diagnostics,
-        ))
+        Ok(BackendArtifacts {
+            lir_program,
+            mir_text,
+            lir_text,
+        })
     }
 
     fn save_pretty(
@@ -826,7 +876,8 @@ impl Pipeline {
         options: &PipelineOptions,
         file_path: Option<&Path>,
         base_path: &Path,
-    ) -> Result<DiagnosticReport<hir::Program>, CliError> {
+        manager: &DiagnosticManager,
+    ) -> Result<hir::Program, CliError> {
         let mut generator = match file_path {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
@@ -837,11 +888,13 @@ impl Pipeline {
         }
 
         if matches!(ast.kind(), NodeKind::Item(_)) {
-            let diag = Diagnostic::error(
-                "Top-level items are not supported; provide a file or expression".to_string(),
-            )
-            .with_source_context(STAGE_AST_TO_HIR);
-            return Ok(DiagnosticReport::failure(vec![diag]));
+            manager.add_diagnostic(
+                Diagnostic::error(
+                    "Top-level items are not supported; provide a file or expression".to_string(),
+                )
+                .with_source_context(STAGE_AST_TO_HIR),
+            );
+            return Err(Self::stage_failure(STAGE_AST_TO_HIR));
         }
 
         let result = match ast.kind() {
@@ -851,43 +904,40 @@ impl Pipeline {
         };
 
         let (errors, warnings) = generator.take_diagnostics();
-        let diagnostic_manager = DiagnosticManager::new();
 
-        diagnostic_manager.add_diagnostics(warnings.clone());
+        let has_transform_error = !errors.is_empty() || result.is_err();
+
+        if !warnings.is_empty() {
+            manager.add_diagnostics(warnings);
+        }
 
         if let Err(e) = &result {
-            diagnostic_manager.add_diagnostic(
+            manager.add_diagnostic(
                 Diagnostic::error(format!("AST→HIR transformation failed: {}", e))
                     .with_source_context(STAGE_AST_TO_HIR),
             );
         }
 
         if !errors.is_empty() {
-            diagnostic_manager.add_diagnostics(errors.clone());
+            manager.add_diagnostics(errors);
         }
 
-        match result {
-            Ok(program) if errors.is_empty() => {
-                if options.save_intermediates {
-                    let mut pretty_opts = PrettyOptions::default();
-                    pretty_opts.show_spans = options.debug.verbose;
-                    let rendered = format!("{}", pretty(&program, pretty_opts));
-                    if let Err(err) = fs::write(base_path.with_extension(EXT_HIR), rendered) {
-                        warn!(error = %err, "failed to persist HIR intermediate");
-                    }
-                }
+        if has_transform_error {
+            return Err(Self::stage_failure(STAGE_AST_TO_HIR));
+        }
 
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(DiagnosticReport::success_with_diagnostics(
-                    program,
-                    diagnostics,
-                ))
-            }
-            _ => {
-                let diagnostics = diagnostic_manager.get_diagnostics();
-                Ok(DiagnosticReport::failure(diagnostics))
+        let program = result.expect("hir generation errors accounted for");
+
+        if options.save_intermediates {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = options.debug.verbose;
+            let rendered = format!("{}", pretty(&program, pretty_opts));
+            if let Err(err) = fs::write(base_path.with_extension(EXT_HIR), rendered) {
+                warn!(error = %err, "failed to persist HIR intermediate");
             }
         }
+
+        Ok(program)
     }
 
     fn run_ast_interpreter(
@@ -992,34 +1042,28 @@ impl Pipeline {
         DiagnosticManager::emit(diagnostics, stage_context, &display_options);
     }
 
-    fn collect_stage<T>(
-        &self,
+    fn run_stage<T, F>(
+        &mut self,
         stage: &'static str,
-        report: DiagnosticReport<T>,
         manager: &DiagnosticManager,
         options: &PipelineOptions,
-    ) -> Result<T, CliError> {
-        let DiagnosticReport { value, diagnostics } = report;
+        action: F,
+    ) -> Result<T, CliError>
+    where
+        F: FnOnce(&mut Self) -> Result<T, CliError>,
+    {
+        let snapshot = manager.snapshot();
+        let result = action(self);
+        let diagnostics = manager.diagnostics_since(snapshot);
         self.emit_diagnostics(&diagnostics, Some(stage), options);
-        manager.add_diagnostics(diagnostics.clone());
+        result
+    }
 
-        let has_errors = diagnostics
-            .iter()
-            .any(|diag| diag.level == DiagnosticLevel::Error);
-
-        if has_errors {
-            return Err(CliError::Compilation(format!(
-                "{} stage failed; see diagnostics for details",
-                stage
-            )));
-        }
-
-        value.ok_or_else(|| {
-            CliError::Compilation(format!(
-                "{} stage failed; see diagnostics for details",
-                stage
-            ))
-        })
+    fn stage_failure(stage: &str) -> CliError {
+        CliError::Compilation(format!(
+            "{} stage failed; see diagnostics for details",
+            stage
+        ))
     }
 
     fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
