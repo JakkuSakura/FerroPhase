@@ -152,48 +152,6 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct DiagnosticReport<T, M = String>
-where
-    M: Clone + Display,
-{
-    pub value: Option<T>,
-    pub diagnostics: Vec<Diagnostic<M>>,
-}
-
-impl<T, M> DiagnosticReport<T, M>
-where
-    M: Clone + Display,
-{
-    pub fn success(value: T) -> Self {
-        Self {
-            value: Some(value),
-            diagnostics: Vec::new(),
-        }
-    }
-
-    pub fn success_with_diagnostics(value: T, diagnostics: Vec<Diagnostic<M>>) -> Self {
-        Self {
-            value: Some(value),
-            diagnostics,
-        }
-    }
-
-    pub fn failure(diagnostics: Vec<Diagnostic<M>>) -> Self {
-        Self {
-            value: None,
-            diagnostics,
-        }
-    }
-
-    pub fn into_result(self) -> Result<(T, Vec<Diagnostic<M>>), Vec<Diagnostic<M>>> {
-        match self.value {
-            Some(value) => Ok((value, self.diagnostics)),
-            None => Err(self.diagnostics),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct DiagnosticManager {
     diagnostics: Arc<Mutex<Vec<Diagnostic>>>,
 }
@@ -225,6 +183,17 @@ impl DiagnosticManager {
         self.diagnostics
             .lock()
             .map(|d| d.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn snapshot(&self) -> usize {
+        self.diagnostics.lock().map(|d| d.len()).unwrap_or(0)
+    }
+
+    pub fn diagnostics_since(&self, index: usize) -> Vec<Diagnostic> {
+        self.diagnostics
+            .lock()
+            .map(|d| d[index.min(d.len())..].to_vec())
             .unwrap_or_default()
     }
 
@@ -363,16 +332,6 @@ fn emit_tracing(level: &DiagnosticLevel, context: Option<&str>, message: &str) {
         DiagnosticLevel::Warning => tracing::warn!("{}", msg),
         DiagnosticLevel::Info => tracing::info!("{}", msg),
     }
-}
-
-#[macro_export]
-macro_rules! diagnostic_error {
-    ($context:expr, $($arg:tt)*) => {
-        $crate::diagnostics::DiagnosticReport::failure(
-            vec![$crate::diagnostics::Diagnostic::error(format!($($arg)*))
-                .with_source_context($context)],
-        )
-    };
 }
 
 #[macro_export]

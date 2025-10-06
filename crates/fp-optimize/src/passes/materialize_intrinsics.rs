@@ -213,7 +213,20 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn RuntimeIntrinsicStrategy) ->
         ExprKind::IntrinsicCall(call) => {
             match &mut call.payload {
                 IntrinsicCallPayload::Format { template } => {
-                    for arg in &mut template.args {
+                    for (idx, arg) in template.args.iter_mut().enumerate() {
+                        match arg.ty() {
+                            Some(ty) => eprintln!(
+                                "[materialize-runtime] arg {} kind {:?} type before rewrite: {:?}",
+                                idx,
+                                arg.kind(),
+                                ty
+                            ),
+                            None => eprintln!(
+                                "[materialize-runtime] arg {} kind {:?} type before rewrite: <none>",
+                                idx,
+                                arg.kind()
+                            ),
+                        }
                         materialize_expr(arg, strategy)?;
                     }
                     for kwarg in template.kwargs.iter_mut() {
