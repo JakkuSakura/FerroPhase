@@ -16,7 +16,7 @@ use fp_core::id::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
-use fp_core::typing::TypeInferencer;
+use fp_typing::AstTypeInferencer;
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
@@ -199,9 +199,12 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn type_infer_expr(&mut self, expr: &mut Expr) {
-        if let Some(typer) = self.typer.as_mut() {
-            if let Err(e) = typer.infer_expression(expr) {
-                self.emit_error(format!("Type inference failed: {}", e));
+        // Only infer if the expression doesn't already have a concrete type
+        if expr.ty().is_none() || matches!(expr.ty(), Some(Ty::Unknown(_))) {
+            if let Some(typer) = self.typer.as_mut() {
+                if let Err(e) = typer.infer_expression(expr) {
+                    self.emit_error(format!("Type inference failed: {}", e));
+                }
             }
         }
     }
@@ -373,7 +376,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
                         let mut replacement = Expr::value(value.clone());
                         replacement.ty = expr.ty.clone();
-                        self.type_infer_expr(&mut replacement);
+                        // Type is already copied from original expr, no need to re-infer
                         *expr = replacement;
                         value
                     } else if let Some(closure) = self.lookup_closure(ident.as_str()) {
@@ -467,7 +470,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if self.should_replace_intrinsic_with_value(kind, &value) {
                     let mut replacement = Expr::value(value.clone());
                     replacement.ty = expr.ty.clone();
-                    self.type_infer_expr(&mut replacement);
+                    // Type is already copied from original expr, no need to re-infer
                     *expr = replacement;
                     self.mark_mutated();
                     return value;
