@@ -8,6 +8,7 @@ use fp_core::intrinsics::runtime::{
     ensure_function_decl, FunctionDecl, ParamSpec, RuntimeIntrinsicStrategy,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use tracing::info;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
 pub struct LlvmRuntimeIntrinsicStrategy;
@@ -57,7 +58,7 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
         ));
     }
 
-    let printf_format = build_printf_format(&payload, &payload.args, newline)?;
+    let printf_format = build_printf_format(&payload, newline)?;
     let mut args = payload.args;
 
     let mut invoke_args = Vec::with_capacity(args.len() + 1);
@@ -79,11 +80,8 @@ fn make_string_literal_expr(literal: String) -> Expr {
     expr
 }
 
-fn build_printf_format(
-    template: &ExprFormatString,
-    args: &[Expr],
-    newline: bool,
-) -> Result<String> {
+fn build_printf_format(template: &ExprFormatString, newline: bool) -> Result<String> {
+    info!("Building printf format for template: {:?}", template);
     let mut result = String::new();
     let mut implicit_index = 0usize;
 
@@ -105,7 +103,7 @@ fn build_printf_format(
                     }
                 };
 
-                let arg = args.get(arg_index).ok_or_else(|| {
+                let arg = template.args.get(arg_index).ok_or_else(|| {
                     fp_core::error::Error::from(format!(
                         "format placeholder references missing argument at index {arg_index}"
                     ))

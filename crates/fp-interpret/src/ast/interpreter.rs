@@ -1014,14 +1014,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         subst: &HashMap<String, Ty>,
         local_types: &HashMap<String, Ty>,
     ) {
-        let mut rewritten_ty = expr
-            .ty()
-            .cloned()
-            .map(|ty| self.substitute_ty(&ty, subst));
+        let mut rewritten_ty = expr.ty().cloned().map(|ty| self.substitute_ty(&ty, subst));
 
-        let needs_inference = rewritten_ty
-            .as_ref()
-            .map_or(true, |ty| self.is_unknown(ty));
+        let needs_inference = rewritten_ty.as_ref().map_or(true, |ty| self.is_unknown(ty));
 
         if needs_inference {
             match expr.kind() {
@@ -1043,9 +1038,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             expr.set_ty(ty);
         }
 
-        let expr_type_unknown = expr
-            .ty()
-            .map_or(true, |ty| self.is_unknown(ty));
+        let expr_type_unknown = expr.ty().map_or(true, |ty| self.is_unknown(ty));
 
         match expr.kind_mut() {
             ExprKind::Block(block) => {
@@ -1104,23 +1097,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                             _ => None,
                         }),
                     ExprInvokeTarget::Expr(inner) => {
-                        let ty = inner
-                            .ty()
-                            .cloned()
-                            .or_else(|| {
-                                if let ExprKind::Locator(locator) = inner.kind() {
-                                    self.lookup_local_type(locator, local_types)
-                                } else {
-                                    None
-                                }
-                            });
+                        let ty = inner.ty().cloned().or_else(|| {
+                            if let ExprKind::Locator(locator) = inner.kind() {
+                                self.lookup_local_type(locator, local_types)
+                            } else {
+                                None
+                            }
+                        });
                         ty.and_then(|ty| match ty {
                             Ty::Function(fn_ty) => Some(fn_ty),
                             _ => None,
                         })
                     }
                     ExprInvokeTarget::Closure(func) => Some(TypeFunction {
-                        params: func.sig.params.iter().map(|param| param.ty.clone()).collect(),
+                        params: func
+                            .sig
+                            .params
+                            .iter()
+                            .map(|param| param.ty.clone())
+                            .collect(),
                         generics_params: Vec::new(),
                         ret_ty: func.sig.ret_ty.as_ref().map(|ret| Box::new(ret.clone())),
                     }),
