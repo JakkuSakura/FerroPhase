@@ -2580,8 +2580,11 @@ impl AstTypeInferencer {
     }
 
     pub fn bind_variable(&mut self, name: &str, ty: Ty) {
+        let type_var = match self.type_from_ast_ty(&ty) {
+            Ok(var) => var,
+            Err(_) => self.fresh_type_var(),
+        };
         if let Some(current_env) = self.env.last_mut() {
-            let type_var = self.type_from_ast_ty(&ty).unwrap_or_else(|_| self.fresh_var());
             current_env.insert(name.to_string(), EnvEntry::Mono(type_var));
         }
     }
