@@ -967,9 +967,35 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
-            _ => {
-                // Fallback to unit type for unsupported types
-                Ok(self.create_unit_type())
+            ast::Ty::Function(fn_ty) => {
+                let inputs = fn_ty
+                    .params
+                    .iter()
+                    .map(|ty| self.transform_type_to_hir(ty).map(Box::new))
+                    .collect::<Result<Vec<_>>>()?;
+
+                let output = if let Some(ret_ty) = &fn_ty.ret_ty {
+                    Box::new(self.transform_type_to_hir(ret_ty)?)
+                } else {
+                    Box::new(self.create_unit_type())
+                };
+
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::FnPtr(hir::FnPtrType { inputs, output }),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
+            unsupported => {
+                self.emit_error(
+                    Span::new(self.current_file, 0, 0),
+                    format!("unsupported type in AST→HIR lowering: {:?}", unsupported),
+                );
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Error,
+                    Span::new(self.current_file, 0, 0),
+                ))
             }
         }
     }
