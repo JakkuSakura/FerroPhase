@@ -1,0 +1,36 @@
+use std :: fmt :: Display ;
+use std :: ops :: Add ;
+fn apply < T : Add + Display > (a : T , b : T , op : fn (T , T) -> T) -> (){
+    println ! ("{}" , op (a , b)) ;
+}
+fn add < T : Add > (a : T , b : T) -> T{
+    a + b
+}
+fn apply_if (cond : bool , a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> i64{
+    if cond{
+        op (a , b)
+    }
+    else 0
+}
+fn make_adder (n : i64) -> impl Fn{
+    | x | x + n
+}
+fn main () -> (){
+    println ! ("Generic operations:") ;
+    apply__spec0 (10 , 20 , add) ;
+    apply__spec1 (1.5 , 2.5 , add) ;
+    println ! ("\nConditional:") ;
+    println ! ("{}" , apply_if (true , 5 , 3 , add)) ;
+    println ! ("{}" , apply_if (false , 5 , 3 , add)) ;
+    println ! ("\nClosure factory:") ;
+    const add_10 : fn (i64) -> i64 = make_adder (10) ;
+    println ! ("add_10(5) = {}" , add_10 (5)) ;
+    let double = | x | x * 2 ;
+    println ! ("double(7) = {}" , double (7)) ;
+}
+fn apply__spec0 (a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> (){
+    println ! ("{}" , op (a , b)) ;
+}
+fn apply__spec1 (a : f64 , b : f64 , op : fn (f64 , f64) -> f64) -> (){
+    println ! ("{}" , op (a , b)) ;
+}
