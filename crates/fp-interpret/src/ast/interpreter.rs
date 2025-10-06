@@ -200,16 +200,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(inner_ty) = def.ty.as_mut() {
                     self.evaluate_ty(inner_ty);
                 }
-                let value = self.eval_expr(def.value.as_mut());
-                if let Some(pending) = self.pending_closure.as_mut() {
-                    let resolved_ty = pending
-                        .function_ty
-                        .clone()
-                        .or_else(|| def.ty.clone())
-                        .or_else(|| def.ty_annotation().cloned());
+                let value = {
+                    let expr_ref = def.value.as_mut();
+                    self.eval_expr(expr_ref)
+                };
+                if self.pending_closure.is_some() {
+                    let mut function_ty = {
+                        let expr_ref = def.value.as_mut();
+                        self.annotate_pending_closure(None, Some(expr_ref));
+                        expr_ref.ty().cloned()
+                    };
+                    if function_ty.is_none() {
+                        function_ty = def.ty.clone().or_else(|| def.ty_annotation().cloned());
+                    }
 
-                    if let Some(fn_ty) = resolved_ty {
-                        pending.function_ty = Some(fn_ty.clone());
+                    if let Some(fn_ty) = function_ty {
                         def.ty = Some(fn_ty.clone());
                         def.ty_annotation = Some(fn_ty.clone());
                         def.value.set_ty(fn_ty.clone());
@@ -229,16 +234,24 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ItemKind::DefStatic(def) => {
-                let value = self.eval_expr(def.value.as_mut());
-                if let Some(pending) = self.pending_closure.as_mut() {
-                    let resolved_ty = pending
-                        .function_ty
-                        .clone()
-                        .or_else(|| Some(def.ty.clone()))
-                        .or_else(|| def.ty_annotation().cloned());
+                let value = {
+                    let expr_ref = def.value.as_mut();
+                    self.eval_expr(expr_ref)
+                };
+                if self.pending_closure.is_some() {
+                    let mut function_ty = {
+                        let expr_ref = def.value.as_mut();
+                        self.annotate_pending_closure(None, Some(expr_ref));
+                        expr_ref.ty().cloned()
+                    };
+                    if function_ty.is_none() {
+                        function_ty = def
+                            .ty_annotation()
+                            .cloned()
+                            .or_else(|| Some(def.ty.clone()));
+                    }
 
-                    if let Some(fn_ty) = resolved_ty {
-                        pending.function_ty = Some(fn_ty.clone());
+                    if let Some(fn_ty) = function_ty {
                         def.ty = fn_ty.clone();
                         def.ty_annotation = Some(fn_ty.clone());
                         def.value.set_ty(fn_ty.clone());
@@ -416,6 +429,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 result
             }
             ExprKind::Closure(closure) => {
+                if let Some(Ty::Function(ref fn_sig)) = expr_ty_snapshot.as_ref() {
+                    Self::annotate_expr_closure(closure, fn_sig);
+                }
                 let captured = self.capture_closure(closure, expr_ty_snapshot.clone());
                 self.pending_closure = Some(captured);
                 Value::unit()
@@ -574,7 +590,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn capture_closure(&self, closure: &ExprClosure, ty: Option<Ty>) -> ConstClosure {
-        ConstClosure {
+        let mut captured = ConstClosure {
             params: closure.params.clone(),
             ret_ty: closure.ret_ty.as_ref().map(|ty| (**ty).clone()),
             body: closure.body.as_ref().clone(),
@@ -582,7 +598,16 @@ impl<'ctx> AstInterpreter<'ctx> {
             captured_types: self.type_env.clone(),
             module_stack: self.module_stack.clone(),
             function_ty: ty,
+        };
+
+        if let Some(fn_sig) = captured.function_ty.as_ref().and_then(|ty| match ty {
+            Ty::Function(fn_sig) => Some(fn_sig.clone()),
+            _ => None,
+        }) {
+            Self::annotate_const_closure(&mut captured, &fn_sig);
         }
+
+        captured
     }
 
     fn call_const_closure(&mut self, closure: &ConstClosure, args: Vec<Value>) -> Value {
@@ -709,11 +734,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 BlockStmt::Let(stmt_let) => {
                     if let Some(init) = stmt_let.init.as_mut() {
                         let value = self.eval_expr(init);
-                        if let Some(pending) = self.pending_closure.as_ref() {
-                            if let Some(fn_ty) = pending.function_ty.clone() {
-                                stmt_let.pat.set_ty(fn_ty.clone());
-                                init.set_ty(fn_ty.clone());
-                            }
+                        let _ = init;
+                        if self.pending_closure.is_some() {
+                            let expr_ref = stmt_let.init.as_mut();
+                            self.annotate_pending_closure(Some(&mut stmt_let.pat), expr_ref);
                         }
                         self.bind_pattern(&stmt_let.pat, value);
                     } else {
@@ -1060,8 +1084,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn evaluate_function_let_stmt(&mut self, stmt_let: &mut StmtLet) {
         if let Some(init) = stmt_let.init.as_mut() {
             if Self::expr_is_potential_closure(init) {
-                let cloned = init.clone();
-                self.evaluate_closure_initializer(&stmt_let.pat, cloned);
+                self.evaluate_closure_initializer(&mut stmt_let.pat, init);
             }
             self.evaluate_function_body(init);
         }
@@ -1077,17 +1100,18 @@ impl<'ctx> AstInterpreter<'ctx> {
             || matches!(expr.kind(), ExprKind::Closure(_))
     }
 
-    fn evaluate_closure_initializer(&mut self, pat: &Pattern, init: Expr) {
-        let mut expr_clone = init;
+    fn evaluate_closure_initializer(&mut self, pat: &mut Pattern, init: &mut Expr) {
+        let mut expr_clone = init.clone();
         let saved_mutated = self.mutations_applied;
         let saved_pending = self.pending_closure.take();
         let saved_stdout_len = self.stdout.len();
         let value = self.eval_expr(&mut expr_clone);
+        if self.pending_closure.is_some() {
+            self.annotate_pending_closure(Some(pat), Some(init));
+        }
         self.bind_pattern(pat, value);
         self.mutations_applied = saved_mutated;
-        if let Some(prev) = saved_pending {
-            self.pending_closure = Some(prev);
-        }
+        self.pending_closure = saved_pending;
         if self.stdout.len() > saved_stdout_len {
             self.stdout.truncate(saved_stdout_len);
         }
@@ -1392,6 +1416,77 @@ impl<'ctx> AstInterpreter<'ctx> {
             UnOpKind::Deref | UnOpKind::Any(_) => Err(interpretation_error(
                 "unsupported unary operator in AST interpretation".to_string(),
             )),
+        }
+    }
+
+    fn annotate_pending_closure(&mut self, pattern: Option<&mut Pattern>, expr: Option<&mut Expr>) {
+        if self.pending_closure.is_none() {
+            return;
+        }
+
+        let candidate_ty = self
+            .pending_closure
+            .as_ref()
+            .and_then(|pending| pending.function_ty.clone())
+            .or_else(|| expr.as_ref().and_then(|expr| expr.ty().cloned()))
+            .or_else(|| pattern.as_ref().and_then(|pat| pat.ty().cloned()));
+
+        let Some(function_ty) = candidate_ty else {
+            return;
+        };
+
+        if matches!(function_ty, Ty::Unknown(_)) {
+            return;
+        }
+
+        if let Some(expr) = expr {
+            expr.set_ty(function_ty.clone());
+            if let Ty::Function(ref fn_sig) = function_ty {
+                if let ExprKind::Closure(closure) = expr.kind_mut() {
+                    Self::annotate_expr_closure(closure, fn_sig);
+                }
+            }
+        }
+
+        if let Some(pattern) = pattern {
+            pattern.set_ty(function_ty.clone());
+        }
+
+        if let Some(pending) = self.pending_closure.as_mut() {
+            pending.function_ty = Some(function_ty.clone());
+            if let Ty::Function(ref fn_sig) = function_ty {
+                Self::annotate_const_closure(pending, fn_sig);
+            }
+        }
+    }
+
+    fn annotate_expr_closure(closure: &mut ExprClosure, fn_sig: &TypeFunction) {
+        for (param, param_ty) in closure.params.iter_mut().zip(fn_sig.params.iter()) {
+            if !matches!(param_ty, Ty::Unknown(_)) {
+                param.set_ty(param_ty.clone());
+            }
+        }
+
+        if let Some(ret_ty) = fn_sig.ret_ty.as_ref() {
+            if !matches!(ret_ty.as_ref(), Ty::Unknown(_)) {
+                closure.body.set_ty(ret_ty.as_ref().clone());
+            }
+        }
+    }
+
+    fn annotate_const_closure(closure: &mut ConstClosure, fn_sig: &TypeFunction) {
+        for (param, param_ty) in closure.params.iter_mut().zip(fn_sig.params.iter()) {
+            if !matches!(param_ty, Ty::Unknown(_)) {
+                param.set_ty(param_ty.clone());
+            }
+        }
+
+        closure.function_ty = Some(Ty::Function(fn_sig.clone()));
+
+        if let Some(ret_ty) = fn_sig.ret_ty.as_ref() {
+            if !matches!(ret_ty.as_ref(), Ty::Unknown(_)) {
+                closure.body.set_ty(ret_ty.as_ref().clone());
+            }
         }
     }
 

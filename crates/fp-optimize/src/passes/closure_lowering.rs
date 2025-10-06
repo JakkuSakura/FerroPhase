@@ -5,12 +5,14 @@ use fp_core::error::{Error as CoreError, Result};
 use fp_core::id::{Ident, Locator};
 use fp_core::pat::{Pattern, PatternKind};
 
+const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
+
 #[derive(Clone)]
 struct ClosureInfo {
     env_struct_ident: Ident,
     env_struct_ty: Ty,
     call_fn_ident: Ident,
-    fn_ty: Ty,
+    call_ret_ty: Option<Ty>,
 }
 
 #[derive(Clone)]
@@ -77,6 +79,36 @@ impl ClosureLowering {
 
     fn transform_function(&mut self, func: &mut ItemDefFunction) -> Result<Option<ClosureInfo>> {
         if let Some(info) = self.transform_closure_expr(func.body.as_mut())? {
+            // Update function return typing to reflect lowered environment struct.
+            let env_ret_ty = info.env_struct_ty.clone();
+
+            if let Some(ty_fn) = func.ty.as_mut() {
+                ty_fn.ret_ty = Some(Box::new(env_ret_ty.clone()));
+            }
+
+            if func.ty.is_none() {
+                func.ty = Some(TypeFunction {
+                    params: func
+                        .sig
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                    generics_params: func.sig.generics_params.clone(),
+                    ret_ty: Some(Box::new(env_ret_ty.clone())),
+                });
+            }
+
+            if func.ty_annotation.is_some() || func.ty.is_some() {
+                func.ty_annotation = func.ty.as_ref().map(|ty_fn| Ty::Function(ty_fn.clone()));
+            }
+
+            if let Some(ret_slot) = func.sig.ret_ty.as_mut() {
+                *ret_slot = env_ret_ty.clone();
+            } else {
+                func.sig.ret_ty = Some(env_ret_ty.clone());
+            }
+
             return Ok(Some(info));
         }
 
@@ -123,12 +155,19 @@ impl ClosureLowering {
         let call_ident = Ident::new(format!("__closure{}_call", self.counter));
         self.counter += 1;
 
+        let mut struct_fields: Vec<StructuralField> = captures
+            .iter()
+            .map(|capture| StructuralField::new(capture.name.clone(), capture.ty.clone()))
+            .collect();
+        if struct_fields.is_empty() {
+            struct_fields.push(StructuralField::new(
+                Ident::new(DUMMY_CAPTURE_NAME),
+                Ty::Primitive(TypePrimitive::Int(TypeInt::I8)),
+            ));
+        }
         let struct_decl = TypeStruct {
             name: struct_ident.clone(),
-            fields: captures
-                .iter()
-                .map(|capture| StructuralField::new(capture.name.clone(), capture.ty.clone()))
-                .collect(),
+            fields: struct_fields,
         };
         let env_struct_ty = Ty::Struct(struct_decl.clone());
 
@@ -157,6 +196,42 @@ impl ClosureLowering {
         }
 
         let mut rewritten_body = (*closure.body).clone();
+        let inferred_ret_ty = fn_ty
+            .ret_ty
+            .as_ref()
+            .and_then(|ty| {
+                if matches!(ty.as_ref(), Ty::Unknown(_)) {
+                    None
+                } else {
+                    Some(ty.as_ref().clone())
+                }
+            })
+            .or_else(|| {
+                closure
+                    .body
+                    .ty()
+                    .cloned()
+                    .or_else(|| rewritten_body.ty().cloned())
+                    .and_then(|ty| {
+                        if matches!(ty, Ty::Unknown(_)) {
+                            None
+                        } else {
+                            Some(ty)
+                        }
+                    })
+            });
+        let fallback_ret_ty = fn_ty.ret_ty.as_ref().and_then(|ty| {
+            if matches!(ty.as_ref(), Ty::Unknown(_)) {
+                None
+            } else {
+                Some(ty.as_ref().clone())
+            }
+        });
+        let call_ret_ty = inferred_ret_ty
+            .clone()
+            .or(fallback_ret_ty)
+            .unwrap_or_else(|| Ty::Unit(TypeUnit));
+
         self.rewrite_captured_usage(
             &mut rewritten_body,
             &captures,
@@ -168,14 +243,11 @@ impl ClosureLowering {
             ItemDefFunction::new_simple(call_ident.clone(), rewritten_body.into());
         fn_item_ast.visibility = Visibility::Private;
         fn_item_ast.sig.params = fn_params;
-        fn_item_ast.sig.ret_ty = fn_ty.ret_ty.as_ref().map(|ty| (*ty.clone()).into());
+        fn_item_ast.sig.ret_ty = Some(call_ret_ty.clone());
         fn_item_ast.ty = Some(TypeFunction {
             params: fn_param_tys.clone(),
             generics_params: Vec::new(),
-            ret_ty: fn_ty
-                .ret_ty
-                .as_ref()
-                .map(|ty| Box::new((*ty.clone()).into())),
+            ret_ty: Some(Box::new(call_ret_ty.clone())),
         });
         fn_item_ast.ty_annotation = fn_item_ast.ty.clone().map(|ty_fn| Ty::Function(ty_fn));
 
@@ -190,6 +262,11 @@ impl ClosureLowering {
             value_expr.set_ty(capture.ty.clone());
             fields.push(ExprField::new(capture.name.clone(), value_expr));
         }
+        if fields.is_empty() {
+            let mut value_expr = Expr::value(Value::int(0));
+            value_expr.set_ty(Ty::Primitive(TypePrimitive::Int(TypeInt::I8)));
+            fields.push(ExprField::new(Ident::new(DUMMY_CAPTURE_NAME), value_expr));
+        }
 
         let struct_name_expr = Expr::ident(struct_ident.clone());
 
@@ -197,7 +274,7 @@ impl ClosureLowering {
             name: struct_name_expr.into(),
             fields,
         }));
-        struct_expr.set_ty(expr_ty.clone());
+        struct_expr.set_ty(env_struct_ty.clone());
 
         *expr = struct_expr;
 
@@ -205,7 +282,7 @@ impl ClosureLowering {
             env_struct_ident: struct_ident,
             env_struct_ty,
             call_fn_ident: call_ident,
-            fn_ty: expr_ty,
+            call_ret_ty: call_ret_ty.clone(),
         };
 
         Ok(Some(info))
@@ -276,6 +353,7 @@ impl ClosureLowering {
                             new_args.extend(invoke.args.iter().cloned());
                             invoke.target = ExprInvokeTarget::Function(call_locator);
                             invoke.args = new_args;
+                            expr.set_ty(info.call_ret_ty.clone());
                         }
                     }
                     ExprInvokeTarget::Function(locator) => {
@@ -294,6 +372,7 @@ impl ClosureLowering {
                                 new_args.extend(invoke.args.iter().cloned());
                                 invoke.target = ExprInvokeTarget::Function(call_locator);
                                 invoke.args = new_args;
+                                expr.set_ty(info.call_ret_ty.clone());
                             }
                         }
                     }
@@ -406,6 +485,8 @@ impl ClosureLowering {
                         for name in names {
                             self.variable_infos.insert(name, info.clone());
                         }
+                        stmt_let.pat.set_ty(info.env_struct_ty.clone());
+                        init.set_ty(info.env_struct_ty.clone());
                     }
                 }
                 if let Some(diverge) = stmt_let.diverge.as_mut() {
@@ -425,8 +506,9 @@ impl ClosureLowering {
                 if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
                     self.variable_infos
                         .insert(def.name.as_str().to_string(), info.clone());
-                    def.ty = Some(info.fn_ty.clone());
-                    def.ty_annotation = Some(info.fn_ty.clone());
+                    def.ty = Some(info.env_struct_ty.clone());
+                    def.ty_annotation = Some(info.env_struct_ty.clone());
+                    def.value.set_ty(info.env_struct_ty.clone());
                 }
             }
             ItemKind::DefStatic(def) => {
@@ -434,8 +516,9 @@ impl ClosureLowering {
                 if let Some(info) = self.closure_info_from_expr(def.value.as_ref()) {
                     self.variable_infos
                         .insert(def.name.as_str().to_string(), info.clone());
-                    def.ty = info.fn_ty.clone();
-                    def.ty_annotation = Some(info.fn_ty.clone());
+                    def.ty = info.env_struct_ty.clone();
+                    def.ty_annotation = Some(info.env_struct_ty.clone());
+                    def.value.set_ty(info.env_struct_ty.clone());
                 }
             }
             ItemKind::DefFunction(func) => self.rewrite_in_expr(func.body.as_mut())?,

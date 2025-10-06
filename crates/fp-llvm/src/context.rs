@@ -1147,6 +1147,56 @@ fn format_instruction(instr: &llvm_ir::Instruction) -> String {
                 format_operand(&sub.operand1)
             )
         }
+        llvm_ir::Instruction::FAdd(fadd) => {
+            let ty = format_type(&get_operand_type(&fadd.operand0));
+            format!(
+                "{} = fadd {} {}, {}",
+                format_value_name(&fadd.dest),
+                ty,
+                format_operand(&fadd.operand0),
+                format_operand(&fadd.operand1)
+            )
+        }
+        llvm_ir::Instruction::FSub(fsub) => {
+            let ty = format_type(&get_operand_type(&fsub.operand0));
+            format!(
+                "{} = fsub {} {}, {}",
+                format_value_name(&fsub.dest),
+                ty,
+                format_operand(&fsub.operand0),
+                format_operand(&fsub.operand1)
+            )
+        }
+        llvm_ir::Instruction::FMul(fmul) => {
+            let ty = format_type(&get_operand_type(&fmul.operand0));
+            format!(
+                "{} = fmul {} {}, {}",
+                format_value_name(&fmul.dest),
+                ty,
+                format_operand(&fmul.operand0),
+                format_operand(&fmul.operand1)
+            )
+        }
+        llvm_ir::Instruction::FDiv(fdiv) => {
+            let ty = format_type(&get_operand_type(&fdiv.operand0));
+            format!(
+                "{} = fdiv {} {}, {}",
+                format_value_name(&fdiv.dest),
+                ty,
+                format_operand(&fdiv.operand0),
+                format_operand(&fdiv.operand1)
+            )
+        }
+        llvm_ir::Instruction::FRem(frem) => {
+            let ty = format_type(&get_operand_type(&frem.operand0));
+            format!(
+                "{} = frem {} {}, {}",
+                format_value_name(&frem.dest),
+                ty,
+                format_operand(&frem.operand0),
+                format_operand(&frem.operand1)
+            )
+        }
         llvm_ir::Instruction::Mul(mul) => {
             format!(
                 "{} = mul {} {}, {}",
