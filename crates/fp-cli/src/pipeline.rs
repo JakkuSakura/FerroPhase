@@ -23,7 +23,7 @@ use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
-use fp_optimize::typing::TypingDiagnosticLevel;
+use fp_typing::TypingDiagnosticLevel;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
@@ -48,7 +48,6 @@ const STAGE_AST_INTERPRET: &str = "ast-interpret";
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
 const EXT_AST_EVAL: &str = "ast-eval";
-const EXT_AST_TYPED_POST_CONST: &str = "ast-typed-post-const";
 const EXT_AST_TYPED_POST_MATERIALIZE: &str = "ast-typed-post-materialize";
 const EXT_AST_TYPED_POST_CLOSURE: &str = "ast-typed-post-closure";
 const EXT_HIR: &str = "hir";
@@ -387,8 +386,6 @@ impl Pipeline {
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
-            // The AST is already typed after const eval (typer is embedded in const evaluator)
-            self.save_pretty(&ast, base_path, EXT_AST_TYPED_POST_CONST, options)?;
         }
 
         self.run_stage(
@@ -574,7 +571,7 @@ impl Pipeline {
         stage_label: &'static str,
         manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
-        match fp_optimize::typing::annotate(ast) {
+        match fp_typing::annotate(ast) {
             Ok(outcome) => {
                 let mut saw_error = false;
                 for message in outcome.diagnostics {

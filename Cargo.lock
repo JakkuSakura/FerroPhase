@@ -813,6 +813,7 @@ dependencies = [
  "fp-llvm",
  "fp-optimize",
  "fp-rust",
+ "fp-typing",
  "globset",
  "indicatif",
  "libc",
