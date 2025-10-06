@@ -159,7 +159,7 @@ async fn interpret_ast_runtime(ast: &BExpr, runtime_name: &str) -> Result<Runtim
 }
 
 fn print_ast(ast: &BExpr) -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+    register_threadlocal_serializer(Arc::new(RustPrinter::new_with_rustfmt()));
 
     let mut pretty_opts = PrettyOptions::default();
     pretty_opts.show_types = false;
