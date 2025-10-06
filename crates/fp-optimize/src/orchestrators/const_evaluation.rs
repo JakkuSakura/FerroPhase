@@ -71,7 +71,7 @@ impl ConstEvaluationOrchestrator {
         let mut typer = std::mem::replace(&mut self.typer, AstTypeInferencer::new());
         typer.initialize_from_node(ast);
 
-        interpreter.set_typer(Box::new(typer));
+        interpreter.set_typer(typer);
 
         interpreter.interpret(ast);
 
