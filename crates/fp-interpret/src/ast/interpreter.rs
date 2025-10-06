@@ -16,6 +16,7 @@ use fp_core::id::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
+use fp_core::typing::TypeInferencer;
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
@@ -105,6 +106,7 @@ pub struct AstInterpreter<'ctx> {
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
     closure_types: HashMap<String, Ty>,
+    typer: Option<Box<dyn TypeInferencer>>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -133,7 +135,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             pending_closure: None,
             pending_expr_ty: None,
             closure_types: HashMap::new(),
+            typer: None,
         }
+    }
+
+    pub fn set_typer(&mut self, typer: Box<dyn TypeInferencer>) {
+        self.typer = Some(typer);
     }
 
     pub fn interpret(&mut self, node: &mut Node) {
@@ -189,6 +196,14 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn mark_mutated(&mut self) {
         self.mutations_applied = true;
+    }
+
+    fn type_infer_expr(&mut self, expr: &mut Expr) {
+        if let Some(typer) = self.typer.as_mut() {
+            if let Err(e) = typer.infer_expression(expr) {
+                self.emit_error(format!("Type inference failed: {}", e));
+            }
+        }
     }
 
     pub fn evaluate_expression(&mut self, expr: &mut Expr) -> Value {
@@ -358,6 +373,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
                         let mut replacement = Expr::value(value.clone());
                         replacement.ty = expr.ty.clone();
+                        self.type_infer_expr(&mut replacement);
                         *expr = replacement;
                         value
                     } else if let Some(closure) = self.lookup_closure(ident.as_str()) {
@@ -451,6 +467,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if self.should_replace_intrinsic_with_value(kind, &value) {
                     let mut replacement = Expr::value(value.clone());
                     replacement.ty = expr.ty.clone();
+                    self.type_infer_expr(&mut replacement);
                     *expr = replacement;
                     self.mark_mutated();
                     return value;
@@ -843,6 +860,65 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn sanitize_locator(locator: &mut Locator) -> String {
+        match locator {
+            Locator::Ident(ident) => {
+                let current = ident.as_str().to_string();
+                if let Some(trimmed) = current.strip_prefix('#') {
+                    let trimmed_owned = trimmed.to_string();
+                    *ident = Ident::new(trimmed_owned.clone());
+                    trimmed_owned
+                } else {
+                    current
+                }
+            }
+            Locator::Path(path) => {
+                if let Some(last) = path.segments.last_mut() {
+                    let current = last.as_str().to_string();
+                    if let Some(trimmed) = current.strip_prefix('#') {
+                        let trimmed_owned = trimmed.to_string();
+                        *last = Ident::new(trimmed_owned.clone());
+                        trimmed_owned
+                    } else {
+                        current
+                    }
+                } else {
+                    String::new()
+                }
+            }
+            Locator::ParameterPath(path) => {
+                if let Some(last) = path.segments.last_mut() {
+                    let current = last.ident.as_str().to_string();
+                    if let Some(trimmed) = current.strip_prefix('#') {
+                        let trimmed_owned = trimmed.to_string();
+                        last.ident = Ident::new(trimmed_owned.clone());
+                        trimmed_owned
+                    } else {
+                        current
+                    }
+                } else {
+                    String::new()
+                }
+            }
+        }
+    }
+
+    fn locator_key(locator: &Locator) -> String {
+        match locator {
+            Locator::Ident(ident) => ident.as_str().trim_start_matches('#').to_string(),
+            Locator::Path(path) => path
+                .segments
+                .last()
+                .map(|ident| ident.as_str().trim_start_matches('#').to_string())
+                .unwrap_or_default(),
+            Locator::ParameterPath(path) => path
+                .segments
+                .last()
+                .map(|segment| segment.ident.as_str().trim_start_matches('#').to_string())
+                .unwrap_or_default(),
+        }
+    }
+
     fn sanitize_symbol(name: &str) -> String {
         let mut result = String::with_capacity(name.len());
         for ch in name.chars() {
@@ -875,7 +951,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             if self.is_unknown(actual) {
                 return true;
             }
-            subst.insert(name, actual.clone());
+            self.record_generic_binding(subst, &name, actual);
             return true;
         }
 
@@ -926,11 +1002,21 @@ impl<'ctx> AstInterpreter<'ctx> {
         pattern.name == actual.name
     }
 
+    fn record_generic_binding(&self, subst: &mut HashMap<String, Ty>, name: &str, ty: &Ty) {
+        subst.insert(name.to_string(), ty.clone());
+        if !name.starts_with('#') {
+            subst.insert(format!("#{}", name), ty.clone());
+        }
+    }
+
     fn substitute_ty(&self, ty: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         if let Ty::Expr(expr) = ty {
             if let ExprKind::Locator(locator) = expr.kind() {
-                let name = locator.to_string();
+                let name = Self::locator_key(locator);
                 if let Some(mapped) = subst.get(&name) {
+                    return mapped.clone();
+                }
+                if let Some(mapped) = subst.get(&format!("#{}", name)) {
                     return mapped.clone();
                 }
             }
@@ -1019,9 +1105,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         let needs_inference = rewritten_ty.as_ref().map_or(true, |ty| self.is_unknown(ty));
 
         if needs_inference {
-            match expr.kind() {
+            match expr.kind_mut() {
                 ExprKind::Locator(locator) => {
-                    if let Some(local) = self.lookup_local_type(locator, local_types) {
+                    if let Some(local) = self.resolve_local_ty(locator, local_types) {
                         rewritten_ty = Some(local);
                     }
                 }
@@ -1089,17 +1175,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.rewrite_expr_types(arg, subst, local_types);
                 }
 
-                let target_fn_ty = match &invoke.target {
+                let target_fn_ty = match &mut invoke.target {
                     ExprInvokeTarget::Function(locator) => self
-                        .lookup_local_type(locator, local_types)
+                        .resolve_local_ty(locator, local_types)
                         .and_then(|ty| match ty {
                             Ty::Function(fn_ty) => Some(fn_ty),
                             _ => None,
                         }),
                     ExprInvokeTarget::Expr(inner) => {
                         let ty = inner.ty().cloned().or_else(|| {
-                            if let ExprKind::Locator(locator) = inner.kind() {
-                                self.lookup_local_type(locator, local_types)
+                            if let ExprKind::Locator(locator) = inner.kind_mut() {
+                                self.resolve_local_ty(locator, local_types)
                             } else {
                                 None
                             }
@@ -1255,14 +1341,27 @@ impl<'ctx> AstInterpreter<'ctx> {
         locator: &Locator,
         local_types: &HashMap<String, Ty>,
     ) -> Option<Ty> {
-        if let Some(ident) = locator.as_ident() {
-            if let Some(ty) = local_types.get(ident.as_str()) {
-                return Some(ty.clone());
-            }
-        }
+        let key = Self::locator_key(locator);
+        local_types
+            .get(&key)
+            .cloned()
+            .or_else(|| local_types.get(&format!("#{}", key)).cloned())
+    }
 
-        let name = locator.to_string();
-        local_types.get(&name).cloned()
+    fn resolve_local_ty(
+        &self,
+        locator: &mut Locator,
+        local_types: &HashMap<String, Ty>,
+    ) -> Option<Ty> {
+        let key = Self::sanitize_locator(locator);
+        if let Some(ty) = local_types.get(&key) {
+            return Some(ty.clone());
+        }
+        if let Some(ty) = local_types.get(&format!("#{}", key)) {
+            return Some(ty.clone());
+        }
+        eprintln!("[resolve_local_ty] miss key {}", key);
+        None
     }
 
     fn capture_closure(&self, closure: &ExprClosure, ty: Option<Ty>) -> ConstClosure {
