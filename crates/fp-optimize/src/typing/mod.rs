@@ -829,6 +829,13 @@ impl AstTypeInferencer {
             }
         };
 
+        if let Some(existing_ty) = existing_ty {
+            if !matches!(existing_ty, Ty::Unknown(_)) {
+                let existing_var = self.type_from_ast_ty(&existing_ty)?;
+                self.unify(var, existing_var)?;
+            }
+        }
+
         let ty = self.resolve_to_ty(var)?;
         expr.set_ty(ty);
         Ok(var)
@@ -1406,6 +1413,8 @@ impl AstTypeInferencer {
     }
 
     fn infer_pattern(&mut self, pattern: &mut Pattern) -> Result<PatternInfo> {
+        let existing_ty = pattern.ty().cloned();
+
         let info = match pattern.kind_mut() {
             PatternKind::Ident(ident) => {
                 let var = self.fresh_type_var();
@@ -1478,6 +1487,14 @@ impl AstTypeInferencer {
                 PatternInfo::new(self.error_type_var())
             }
         };
+
+        if let Some(existing_ty) = existing_ty {
+            if !matches!(existing_ty, Ty::Unknown(_)) {
+                let annot_var = self.type_from_ast_ty(&existing_ty)?;
+                self.unify(info.var, annot_var)?;
+            }
+        }
+
         let ty = self.resolve_to_ty(info.var)?;
         pattern.set_ty(ty);
         Ok(info)
