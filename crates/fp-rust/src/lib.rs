@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use serde::{Deserialize, Serialize};
 
+pub mod ast_inspector;
 pub mod normalization;
 pub mod parser;
 pub mod printer;
