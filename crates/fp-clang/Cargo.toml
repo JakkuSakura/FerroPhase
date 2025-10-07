@@ -1,0 +1,30 @@
+[package]
+name = "fp-clang"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+fp-llvm = { path = "../fp-llvm" }
+llvm-ir = { version = "0.11.3", features = ["llvm-19"] }
+anyhow = "1.0"
+thiserror = "1.0"
+which = "4.0"
+tempfile = "3.0"
+tracing = "0.1"
+eyre = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
+
+[[example]]
+name = "parse_c_file"
+path = "examples/parse_c_file.rs"
+
+[[example]]
+name = "extract_headers"
+path = "examples/extract_headers.rs"

@@ -796,6 +796,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-clang"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eyre",
+ "fp-core",
+ "fp-llvm",
+ "llvm-ir",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.61",
+ "tracing",
+ "tracing-subscriber",
+ "which",
+]
+
+[[package]]
 name = "fp-cli"
 version = "0.1.0"
 dependencies = [

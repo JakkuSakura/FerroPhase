@@ -1,0 +1,17 @@
+fn printf(fmt: String, args: dyn Any) -> ();
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+fn double(x: i64) -> i64 {
+    x * 2
+}
+fn compose(x: i64) -> i64 {
+    double(add(x, 1))
+}
+fn main() -> () {
+    printf("%d\n".to_string(), add(2, 3));
+    printf("%d\n".to_string(), double(5));
+    printf("%d\n".to_string(), compose(10));
+    const RESULT: i64 = 30;
+    printf("const: %d\n".to_string(), RESULT);
+}
