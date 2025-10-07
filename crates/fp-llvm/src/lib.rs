@@ -147,7 +147,7 @@ impl LlvmCompiler {
                     global.name
                 ))
             })?;
-            global_map.insert(global.name.clone(), initializer);
+            global_map.insert(String::from(global.name.clone()), initializer);
         }
         let mut codegen = LirCodegen::new(&mut llvm_ctx, global_map);
 

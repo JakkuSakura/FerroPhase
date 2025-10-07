@@ -9,7 +9,7 @@ pub use ty::parse_type;
 
 use fp_core::ast::*;
 use fp_core::bail;
-use fp_core::id::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
+use fp_core::ast::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
 use itertools::Itertools;
 
 use eyre::{eyre, Context};

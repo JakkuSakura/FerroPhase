@@ -2,15 +2,20 @@ use crate::ast::TypePrimitive;
 use crate::intrinsics::{IntrinsicCall, IntrinsicCallPayload as GenericIntrinsicCallPayload};
 use std::collections::HashMap;
 
+pub mod ident;
 pub mod pretty;
 pub mod ty;
 pub mod typed;
 
+pub use ident::Symbol;
 pub use ty::Ty;
 
 pub type HirId = u32;
 pub type DefId = u32;
 pub type NodeId = u32;
+
+// Remove the old type alias
+// pub type Symbol = String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -388,7 +393,6 @@ pub enum Res {
 }
 
 // Temporary types until we have proper implementations
-pub type Symbol = String;
 pub type Span = crate::span::Span;
 
 // Default implementations

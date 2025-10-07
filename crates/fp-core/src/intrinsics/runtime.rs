@@ -1,9 +1,8 @@
 use crate::ast::{
-    ExprIntrinsicCall, File, FunctionParam, FunctionSignature, Item, ItemDeclFunction, ItemKind,
-    Ty, TypeFunction,
+    ExprIntrinsicCall, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
+    ItemKind, Ty, TypeFunction,
 };
 use crate::error::Result;
-use crate::id::Ident;
 
 /// Strategy interface for backends to supply runtime intrinsic materialisations.
 pub trait RuntimeIntrinsicStrategy {

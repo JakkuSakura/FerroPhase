@@ -1,5 +1,4 @@
-use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ty, TySlot, Value, ValueUnit};
-use crate::id::{Ident, Locator, Path};
+use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ident, Locator, Path, Ty, TySlot, Value, ValueUnit};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
@@ -132,7 +131,7 @@ impl Expr {
         }
     }
     pub fn ident(name: Ident) -> Expr {
-        ExprKind::Locator(Locator::ident(name)).into()
+        ExprKind::Locator(Locator::from_ident(name)).into()
     }
     pub fn path(path: Path) -> Expr {
         ExprKind::Locator(Locator::path(path)).into()

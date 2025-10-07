@@ -1,5 +1,4 @@
-use crate::ast::Visibility;
-use crate::id::Ident;
+use crate::ast::{Ident, Visibility};
 use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
 

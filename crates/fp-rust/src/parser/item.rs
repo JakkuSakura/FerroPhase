@@ -3,7 +3,7 @@ use itertools::Itertools;
 use syn::{Fields, FnArg, ReturnType};
 
 use fp_core::ast::*;
-use fp_core::id::Locator;
+use fp_core::ast::Locator;
 
 use super::RustParser;
 use crate::parser::ty::parse_struct_field;

@@ -1,7 +1,10 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 
+pub mod ident;
 pub mod pretty;
 pub mod ty;
+
+pub use ident::Name;
 pub use ty::Ty;
 pub type LirType = Ty;
 pub type LirId = u32;
@@ -18,7 +21,7 @@ pub struct LirProgram {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirFunction {
-    pub name: String,
+    pub name: Name,
     pub signature: LirFunctionSignature,
     pub basic_blocks: Vec<LirBasicBlock>,
     pub locals: Vec<LirLocal>,
@@ -37,7 +40,7 @@ pub struct LirFunctionSignature {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirBasicBlock {
     pub id: BasicBlockId,
-    pub label: Option<String>,
+    pub label: Option<Name>,
     pub instructions: Vec<LirInstruction>,
     pub terminator: LirTerminator,
     pub predecessors: Vec<BasicBlockId>,
@@ -254,7 +257,7 @@ pub enum LirConstant {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirGlobal {
-    pub name: String,
+    pub name: Name,
     pub ty: LirType,
     pub initializer: Option<LirConstant>,
     pub linkage: Linkage,
@@ -266,7 +269,7 @@ pub struct LirGlobal {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirTypeDefinition {
-    pub name: String,
+    pub name: Name,
     pub ty: LirType,
 }
 
@@ -364,7 +367,7 @@ impl LirProgram {
 
 impl LirFunction {
     pub fn new(
-        name: String,
+        name: Name,
         signature: LirFunctionSignature,
         calling_convention: CallingConvention,
         linkage: Linkage,
@@ -394,7 +397,7 @@ impl LirFunction {
 }
 
 impl LirBasicBlock {
-    pub fn new(id: BasicBlockId, label: Option<String>) -> Self {
+    pub fn new(id: BasicBlockId, label: Option<Name>) -> Self {
         Self {
             id,
             label,

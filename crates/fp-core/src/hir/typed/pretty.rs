@@ -72,9 +72,9 @@ fn write_function(
     ctx: &mut PrettyCtx<'_>,
 ) -> fmt::Result {
     let path = if func.path.is_empty() {
-        func.name.clone()
+        String::from(func.name.clone())
     } else {
-        format!("{}::{}", func.path.join("::"), func.name)
+        format!("{}::{}", func.path.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("::"), func.name)
     };
     let params = func
         .sig
@@ -233,7 +233,7 @@ fn summarize_expr(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         ExprKind::Literal(lit) => summarize_lit(lit),
         ExprKind::Local(id) => format!("local(_{})", id),
         ExprKind::VarRef { id } => format!("var_ref(_{})", id),
-        ExprKind::Path(item_ref) => item_ref.name.clone(),
+        ExprKind::Path(item_ref) => String::from(item_ref.name.clone()),
         ExprKind::Binary(op, lhs, rhs) => format!(
             "{:?}({}, {})",
             op,
@@ -328,7 +328,7 @@ fn summarize_simple(expr: &Expr, _ctx: &PrettyCtx<'_>) -> String {
     match &expr.kind {
         ExprKind::Literal(lit) => summarize_lit(lit),
         ExprKind::Local(id) => format!("_{}", id),
-        ExprKind::Path(item_ref) => item_ref.name.clone(),
+        ExprKind::Path(item_ref) => String::from(item_ref.name.clone()),
         _ => format!("{:?}", expr.kind),
     }
 }
@@ -363,7 +363,7 @@ fn summarize_pat(pat: &Pat) -> String {
             name, mutability, ..
         } => match mutability {
             Mutability::Mut => format!("mut {}", name),
-            Mutability::Not => name.clone(),
+            Mutability::Not => String::from(name.clone()),
         },
         other => format!("{:?}", other),
     }

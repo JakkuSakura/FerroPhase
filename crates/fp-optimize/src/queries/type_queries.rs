@@ -5,7 +5,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::ctx::ty::{FieldInfo, TypeId, TypeInfo, TypeRegistry};
 use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
-use fp_core::id::Ident;
+use fp_core::ast::Ident;
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::sync::Arc;
