@@ -1,4 +1,6 @@
-use crate::ast::{get_threadlocal_serializer, BItem, BValue, Ident, Locator, Path, Ty, TySlot, Value, ValueUnit};
+use crate::ast::{
+    get_threadlocal_serializer, BItem, BValue, Ident, Locator, Path, Ty, TySlot, Value, ValueUnit,
+};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};

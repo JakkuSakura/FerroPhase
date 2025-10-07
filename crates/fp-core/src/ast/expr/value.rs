@@ -1,7 +1,10 @@
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
-use crate::ast::{get_threadlocal_serializer, BExpr, BType, Expr, ExprKind, Ident, Locator, Ty, Value, ValueFunction};
+use crate::ast::{
+    get_threadlocal_serializer, BExpr, BType, Expr, ExprKind, Ident, Locator, Ty, Value,
+    ValueFunction,
+};
 use crate::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::pat::{BPattern, Pattern};

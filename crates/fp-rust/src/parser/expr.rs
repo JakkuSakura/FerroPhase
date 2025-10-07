@@ -1,13 +1,17 @@
 use super::RustParser;
 
 use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
+use fp_core::ast::Ident;
 use fp_core::ast::*;
 use fp_core::error::Result;
-use fp_core::ast::Ident;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use itertools::Itertools;
+use proc_macro2::Span;
 use quote::ToTokens;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static FOR_LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) struct ExprParser<'a> {
     parser: &'a RustParser,
@@ -42,6 +46,7 @@ impl<'a> ExprParser<'a> {
             syn::Expr::Const(c) => self.parse_expr_const(c)?,
             syn::Expr::Paren(p) => self.parse_expr_paren(p)?.into(),
             syn::Expr::Range(r) => self.parse_expr_range(r)?.into(),
+            syn::Expr::ForLoop(f) => self.parse_expr_for(f)?,
             syn::Expr::Field(f) => self.parse_expr_field(f)?.into(),
             syn::Expr::Try(t) => self.parse_expr_try(t)?.into(),
             syn::Expr::While(w) => self.parse_expr_while(w)?.into(),
@@ -59,6 +64,75 @@ impl<'a> ExprParser<'a> {
             }
         };
         Ok(expr)
+    }
+
+    fn parse_expr_for(&self, f: syn::ExprForLoop) -> Result<Expr> {
+        let iter_expr_clone = (*f.expr).clone();
+        let range = match iter_expr_clone {
+            syn::Expr::Range(range) => range,
+            _ => {
+                return Ok(Expr::any(RawExpr {
+                    raw: syn::Expr::ForLoop(f),
+                }));
+            }
+        };
+
+        let end_expr = match range.end {
+            Some(expr) => *expr,
+            None => {
+                return Ok(Expr::any(RawExpr {
+                    raw: syn::Expr::ForLoop(f),
+                }));
+            }
+        };
+
+        let start_expr = range
+            .start
+            .map(|expr| *expr)
+            .unwrap_or_else(|| syn::parse_quote!(0));
+
+        let idx = FOR_LOOP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let iter_ident = syn::Ident::new(&format!("__fp_for_iter_{}", idx), Span::call_site());
+        let end_ident = syn::Ident::new(&format!("__fp_for_end_{}", idx), Span::call_site());
+        let pat = *f.pat;
+        let body = f.body;
+
+        let comparison: syn::Expr = match range.limits {
+            syn::RangeLimits::Closed(_) => syn::parse_quote!(#iter_ident > #end_ident),
+            syn::RangeLimits::HalfOpen(_) => syn::parse_quote!(#iter_ident >= #end_ident),
+        };
+
+        let desugared: syn::Expr = if let Some(label) = f.label {
+            let loop_label = label.name;
+            let break_label = loop_label.clone();
+            syn::parse_quote!({
+                let mut #iter_ident = #start_expr;
+                let #end_ident = #end_expr;
+                #loop_label: loop {
+                    if #comparison {
+                        break #break_label;
+                    }
+                    let #pat = #iter_ident;
+                    #iter_ident += 1;
+                    #body
+                }
+            })
+        } else {
+            syn::parse_quote!({
+                let mut #iter_ident = #start_expr;
+                let #end_ident = #end_expr;
+                loop {
+                    if #comparison {
+                        break;
+                    }
+                    let #pat = #iter_ident;
+                    #iter_ident += 1;
+                    #body
+                }
+            })
+        };
+
+        self.parse_expr(desugared)
     }
 
     fn parse_expr_array(&self, a: syn::ExprArray) -> Result<ExprArray> {
@@ -451,7 +525,11 @@ impl<'a> ExprParser<'a> {
 
     fn parse_expr_macro(&self, m: syn::ExprMacro) -> Result<Expr> {
         if Self::is_println_macro(&m.mac) {
-            return self.parse_println_macro_to_function_call(&m.mac);
+            return self.parse_io_macro_to_function_call(&m.mac, IntrinsicCallKind::Println);
+        }
+
+        if Self::is_print_macro(&m.mac) {
+            return self.parse_io_macro_to_function_call(&m.mac, IntrinsicCallKind::Print);
         }
 
         if Self::is_cfg_macro(&m.mac) {
@@ -477,8 +555,18 @@ impl<'a> ExprParser<'a> {
 
     fn parse_stmt_macro(&self, raw: syn::StmtMacro) -> Result<BlockStmt> {
         if Self::is_println_macro(&raw.mac) {
-            let call_expr = self.parse_println_macro_to_function_call(&raw.mac)?;
+            let call_expr =
+                self.parse_io_macro_to_function_call(&raw.mac, IntrinsicCallKind::Println)?;
             tracing::debug!("parsed println! macro to function call");
+            return Ok(BlockStmt::Expr(
+                BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
+            ));
+        }
+
+        if Self::is_print_macro(&raw.mac) {
+            let call_expr =
+                self.parse_io_macro_to_function_call(&raw.mac, IntrinsicCallKind::Print)?;
+            tracing::debug!("parsed print! macro to function call");
             return Ok(BlockStmt::Expr(
                 BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
             ));
@@ -595,12 +683,16 @@ impl<'a> ExprParser<'a> {
         parser.parse_fp_content(&tokens_str)
     }
 
-    fn parse_println_macro_to_function_call(&self, mac: &syn::Macro) -> Result<Expr> {
+    fn parse_io_macro_to_function_call(
+        &self,
+        mac: &syn::Macro,
+        kind: IntrinsicCallKind,
+    ) -> Result<Expr> {
         let tokens_str = mac.tokens.to_string();
 
         if tokens_str.trim().is_empty() {
             let println_expr = ExprIntrinsicCall::new(
-                IntrinsicCallKind::Println,
+                kind,
                 IntrinsicCallPayload::Format {
                     template: ExprFormatString {
                         parts: vec![FormatTemplatePart::Literal(String::new())],
@@ -635,7 +727,7 @@ impl<'a> ExprParser<'a> {
                             };
 
                             return Ok(ExprIntrinsicCall::new(
-                                IntrinsicCallKind::Println,
+                                kind,
                                 IntrinsicCallPayload::Format { template: format },
                             )
                             .into());
@@ -643,9 +735,15 @@ impl<'a> ExprParser<'a> {
                     }
                 }
 
+                let fn_name = match kind {
+                    IntrinsicCallKind::Println => "println",
+                    IntrinsicCallKind::Print => "print",
+                    _ => "println",
+                };
+
                 Ok(ExprInvoke {
                     target: ExprInvokeTarget::expr(Expr::path(fp_core::ast::Path::from(
-                        Ident::new("println"),
+                        Ident::new(fn_name),
                     ))),
                     args,
                 }
@@ -696,6 +794,10 @@ impl<'a> ExprParser<'a> {
 
     fn is_println_macro(mac: &syn::Macro) -> bool {
         mac.path.segments.len() == 1 && mac.path.segments[0].ident == "println"
+    }
+
+    fn is_print_macro(mac: &syn::Macro) -> bool {
+        mac.path.segments.len() == 1 && mac.path.segments[0].ident == "print"
     }
 
     fn is_cfg_macro(mac: &syn::Macro) -> bool {
