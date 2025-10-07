@@ -16,6 +16,7 @@ fp-typing = { path = "../fp-typing" }
 fp-rust = { path = "../fp-rust" }
 fp-javascript = { path = "../fp-javascript" }
 fp-csharp = { path = "../fp-csharp" }
+fp-python = { path = "../fp-python" }
 fp-llvm = { path = "../fp-llvm" }
 
 # CLI and argument parsing
@@ -71,4 +72,3 @@ predicates = "3.0"
 [features]
 default = []
 benchmarks = ["criterion"]
-
