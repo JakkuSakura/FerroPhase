@@ -16,7 +16,9 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
+use fp_rust::{parser::RustParser, RawExpr};
 use fp_typing::AstTypeInferencer;
+use syn;
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
@@ -268,7 +270,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     !matches!(value, Value::Undefined(_)) && !matches!(value, Value::Unit(_));
 
                 if should_replace {
-                    let expr_value = Expr::value(value);
+                    let mut expr_value = Expr::value(value);
+                    if let Some(ty) = def.ty.clone().or_else(|| def.ty_annotation().cloned()) {
+                        expr_value.set_ty(ty);
+                    }
                     *def.value = expr_value;
                     self.mark_mutated();
                 }
@@ -297,7 +302,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                         def.value.set_ty(fn_ty.clone());
                     }
                 }
-                let expr_value = Expr::value(value.clone());
+                let mut expr_value = Expr::value(value.clone());
+                expr_value.set_ty(def.ty.clone());
                 self.insert_value(def.name.as_str(), value);
                 *def.value = expr_value;
                 self.mark_mutated();
@@ -374,6 +380,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         };
 
         match expr.kind_mut() {
+            ExprKind::IntrinsicCollection(collection) => {
+                let new_expr = collection.clone().into_const_expr();
+                *expr = new_expr;
+                return self.eval_expr(expr);
+            }
             ExprKind::Value(value) => match value.as_ref() {
                 Value::Expr(inner) => {
                     let mut cloned = inner.as_ref().clone();
@@ -538,8 +549,44 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut inner = closured.expr.as_ref().clone();
                 self.eval_expr(&mut inner)
             }
-            _ => {
-                self.emit_error("expression not supported in AST interpretation");
+            ExprKind::Any(any) => {
+                if let Some(raw) = any.downcast_ref::<RawExpr>() {
+                    if let syn::Expr::Cast(cast_expr) = &raw.raw {
+                        let parser = RustParser::new();
+                        let mut operand = match parser.parse_expr((*cast_expr.expr).clone()) {
+                            Ok(expr) => expr,
+                            Err(err) => {
+                                self.emit_error(format!("failed to parse cast operand: {}", err));
+                                return Value::undefined();
+                            }
+                        };
+                        let value = self.eval_expr(&mut operand);
+                        let target_ty = match parser.parse_type((*cast_expr.ty).clone()) {
+                            Ok(ty) => ty,
+                            Err(err) => {
+                                self.emit_error(format!(
+                                    "failed to parse cast target type: {}",
+                                    err
+                                ));
+                                return Value::undefined();
+                            }
+                        };
+                        let result = self.cast_value_to_type(value, &target_ty);
+                        expr.set_ty(target_ty);
+                        return result;
+                    }
+                }
+
+                self.emit_error(
+                    "expression not supported in AST interpretation: unsupported Raw expression",
+                );
+                Value::undefined()
+            }
+            other => {
+                self.emit_error(format!(
+                    "expression not supported in AST interpretation: {:?}",
+                    other
+                ));
                 Value::undefined()
             }
         }
@@ -868,6 +915,41 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         None
+    }
+
+    fn cast_value_to_type(&mut self, value: Value, target_ty: &Ty) -> Value {
+        match target_ty {
+            Ty::Primitive(TypePrimitive::Int(_)) => match value {
+                Value::Int(int_val) => Value::int(int_val.value),
+                Value::Bool(bool_val) => Value::int(if bool_val.value { 1 } else { 0 }),
+                Value::Decimal(decimal_val) => Value::int(decimal_val.value as i64),
+                other => {
+                    self.emit_error(format!(
+                        "cannot cast value {} to integer type {}",
+                        other, target_ty
+                    ));
+                    Value::undefined()
+                }
+            },
+            Ty::Primitive(TypePrimitive::Bool) => match value {
+                Value::Bool(bool_val) => Value::bool(bool_val.value),
+                Value::Int(int_val) => Value::bool(int_val.value != 0),
+                other => {
+                    self.emit_error(format!(
+                        "cannot cast value {} to bool during const evaluation",
+                        other
+                    ));
+                    Value::undefined()
+                }
+            },
+            _ => {
+                self.emit_error(format!(
+                    "unsupported cast target type {} in const evaluation",
+                    target_ty
+                ));
+                Value::undefined()
+            }
+        }
     }
 
     fn locator_segments(locator: &Locator) -> Vec<String> {
@@ -1910,6 +1992,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 | IntrinsicCallKind::HasField
                 | IntrinsicCallKind::HasMethod
                 | IntrinsicCallKind::MethodCount
+                | IntrinsicCallKind::ConstBlock
         )
     }
 
@@ -2162,6 +2245,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         let mut updated_expr_ty: Option<Ty> = None;
 
         match expr.kind_mut() {
+            ExprKind::IntrinsicCollection(collection) => {
+                let new_expr = collection.clone().into_const_expr();
+                *expr = new_expr;
+                self.evaluate_function_body(expr);
+                return;
+            }
             ExprKind::Block(block) => self.evaluate_function_block(block),
             ExprKind::If(if_expr) => {
                 self.evaluate_function_body(if_expr.then.as_mut());

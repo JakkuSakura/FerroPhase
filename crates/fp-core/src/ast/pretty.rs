@@ -101,6 +101,11 @@ impl PrettyPrintable for ast::Expr {
                     Ok(())
                 })
             }
+            ast::ExprKind::IntrinsicCollection(collection) => {
+                ctx.writeln(f, format!("intrinsic_collection{}", suffix))?;
+                let expanded = collection.clone().into_const_expr();
+                ctx.with_indent(|ctx| expanded.fmt_pretty(f, ctx))
+            }
             ast::ExprKind::BinOp(binop) => {
                 ctx.writeln(f, format!("binop {}{}", binop.kind, suffix))?;
                 ctx.with_indent(|ctx| {
@@ -944,6 +949,9 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             render_expr_inline(array.elem.as_ref()),
             render_expr_inline(array.len.as_ref())
         ),
+        ast::ExprKind::IntrinsicCollection(collection) => {
+            render_expr_inline(&collection.clone().into_const_expr())
+        }
         ast::ExprKind::Range(range) => {
             let start = range
                 .start
