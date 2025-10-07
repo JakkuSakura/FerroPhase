@@ -6,10 +6,12 @@ use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
 
 mod closure;
+mod collection;
 mod stmt;
 mod value;
 
 pub use closure::*;
+pub use collection::*;
 pub use stmt::*;
 pub use value::*;
 
@@ -44,6 +46,7 @@ common_enum! {
         Closure(ExprClosure),
         Array(ExprArray),
         ArrayRepeat(ExprArrayRepeat),
+        IntrinsicCollection(ExprIntrinsicCollection),
         IntrinsicCall(ExprIntrinsicCall),
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosured),

@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprInvokeTarget, ExprKind, ExprMatchCase,
-    FormatKwArg, Item, ItemKind, Node, NodeKind, Ty, Value, ValueFunction,
+    self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprIntrinsicCollection, ExprInvokeTarget,
+    ExprKind, ExprMatchCase, FormatKwArg, Item, ItemKind, Node, NodeKind, Ty, Value, ValueFunction,
 };
 use fp_core::ast::{Ident, Locator, Path};
 
@@ -58,6 +58,9 @@ fn normalize_expr(expr: &mut Expr) {
             normalize_invoke_target(&mut invoke.target);
             for arg in &mut invoke.args {
                 normalize_expr(arg);
+            }
+            if let Some(collection) = ExprIntrinsicCollection::from_invoke(invoke) {
+                apply_intrinsic_collection(expr, collection);
             }
         }
         ExprKind::Match(expr_match) => {
@@ -152,8 +155,17 @@ fn normalize_expr(expr: &mut Expr) {
         ExprKind::SplatDict(dict) => normalize_expr(dict.dict.as_mut()),
         ExprKind::Closured(closured) => normalize_bexpr(&mut closured.expr),
         ExprKind::Item(item) => normalize_item(item.as_mut()),
+        ExprKind::IntrinsicCollection(collection) => {
+            let owned = collection.clone();
+            apply_intrinsic_collection(expr, owned);
+        }
         ExprKind::IntrinsicCall(_) | ExprKind::Id(_) | ExprKind::Any(_) => {}
     }
+}
+
+fn apply_intrinsic_collection(expr: &mut Expr, mut collection: ExprIntrinsicCollection) {
+    collection.for_each_expr_mut(|inner| normalize_expr(inner));
+    *expr = collection.into_const_expr();
 }
 
 fn normalize_block(block: &mut ast::ExprBlock) {

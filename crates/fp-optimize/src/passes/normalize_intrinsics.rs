@@ -1,6 +1,7 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, FormatTemplatePart, Item, ItemKind, Node, NodeKind, Value,
+    BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprIntrinsicCollection,
+    ExprInvoke, ExprInvokeTarget, ExprKind, FormatTemplatePart, Item, ItemKind, Node, NodeKind,
+    Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
@@ -100,7 +101,12 @@ fn normalize_expr(expr: &mut Expr) -> Result<()> {
             normalize_expr(assign.target.as_mut())?;
             normalize_expr(assign.value.as_mut())?;
         }
-        ExprKind::Invoke(invoke) => normalize_invoke(invoke)?,
+        ExprKind::Invoke(invoke) => {
+            normalize_invoke(invoke)?;
+            if let Some(collection) = ExprIntrinsicCollection::from_invoke(invoke) {
+                apply_intrinsic_collection(expr, collection)?;
+            }
+        }
         ExprKind::Select(select) => normalize_expr(select.obj.as_mut())?,
         ExprKind::Struct(struct_expr) => {
             for field in &mut struct_expr.fields {
@@ -151,6 +157,10 @@ fn normalize_expr(expr: &mut Expr) -> Result<()> {
         ExprKind::Item(item) => normalize_item(item.as_mut())?,
         ExprKind::Value(value) => normalize_value(value)?,
         ExprKind::IntrinsicCall(call) => normalize_intrinsic_call(call)?,
+        ExprKind::IntrinsicCollection(collection) => {
+            let owned = collection.clone();
+            apply_intrinsic_collection(expr, owned)?;
+        }
         ExprKind::Range(range) => {
             if let Some(start) = range.start.as_mut() {
                 normalize_expr(start)?;
@@ -197,6 +207,32 @@ fn normalize_value(value: &mut Value) -> Result<()> {
         Value::Function(function) => normalize_expr(function.body.as_mut()),
         _ => Ok(()),
     }
+}
+
+fn apply_intrinsic_collection(
+    expr: &mut Expr,
+    mut collection: ExprIntrinsicCollection,
+) -> Result<()> {
+    match &mut collection {
+        ExprIntrinsicCollection::VecElements { elements } => {
+            for element in elements {
+                normalize_expr(element)?;
+            }
+        }
+        ExprIntrinsicCollection::VecRepeat { elem, len } => {
+            normalize_expr(elem.as_mut())?;
+            normalize_expr(len.as_mut())?;
+        }
+        ExprIntrinsicCollection::HashMapEntries { entries } => {
+            for entry in entries {
+                normalize_expr(&mut entry.key)?;
+                normalize_expr(&mut entry.value)?;
+            }
+        }
+    }
+
+    *expr = collection.into_const_expr();
+    Ok(())
 }
 
 fn normalize_intrinsic_call(call: &mut ExprIntrinsicCall) -> Result<()> {
