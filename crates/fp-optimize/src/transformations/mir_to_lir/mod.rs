@@ -253,17 +253,80 @@ impl LirGenerator {
     }
 
     /// Transform a MIR static to LIR global
-    fn transform_static(&mut self, _mir_static: mir::Static) -> Result<lir::LirGlobal> {
+    fn transform_static(&mut self, mir_static: mir::Static) -> Result<lir::LirGlobal> {
+        let name = lir::Name::new(format!("global_{}", self.next_id()));
+        let lir_ty = self.lir_type_from_ty(&mir_static.ty);
+        let initializer = self.convert_static_initializer(&mir_static.init, &mir_static.ty)?;
+        let alignment = Self::alignment_for_lir_type(&lir_ty).max(1);
+
         Ok(lir::LirGlobal {
-            name: lir::Name::new(format!("global_{}", self.next_lir_id)),
-            ty: lir::LirType::I32,
-            initializer: None,
+            name,
+            ty: lir_ty,
+            initializer: Some(initializer),
             linkage: lir::Linkage::Internal,
             visibility: lir::Visibility::Hidden,
-            is_constant: false,
-            alignment: None,
+            is_constant: matches!(mir_static.mutability, mir::Mutability::Not),
+            alignment: Some(alignment),
             section: None,
         })
+    }
+
+    fn convert_static_initializer(&self, init: &mir::Operand, ty: &Ty) -> Result<lir::LirConstant> {
+        match init {
+            mir::Operand::Constant(constant) => self.constant_to_lir_constant(constant, ty),
+            other => {
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    format!(
+                        "unsupported static initializer operand {:?}; lowering to undef",
+                        other
+                    ),
+                );
+                Ok(lir::LirConstant::Undef(self.lir_type_from_ty(ty)))
+            }
+        }
+    }
+
+    fn constant_to_lir_constant(
+        &self,
+        constant: &mir::Constant,
+        ty_hint: &Ty,
+    ) -> Result<lir::LirConstant> {
+        let target_ty = self.lir_type_from_ty(ty_hint);
+        let lir_constant = match &constant.literal {
+            mir::ConstantKind::Bool(value) => lir::LirConstant::Bool(*value),
+            mir::ConstantKind::Int(value) => match &ty_hint.kind {
+                TyKind::Uint(_) => lir::LirConstant::UInt(*value as u64, target_ty.clone()),
+                TyKind::Bool => lir::LirConstant::Bool(*value != 0),
+                _ => lir::LirConstant::Int(*value, target_ty.clone()),
+            },
+            mir::ConstantKind::UInt(value) => lir::LirConstant::UInt(*value, target_ty.clone()),
+            mir::ConstantKind::Float(value) => lir::LirConstant::Float(*value, target_ty.clone()),
+            mir::ConstantKind::Str(value) => lir::LirConstant::String(value.clone()),
+            mir::ConstantKind::Val(_, _) => {
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    "complex constant value in static initializer lowered to undef".to_string(),
+                );
+                lir::LirConstant::Undef(target_ty.clone())
+            }
+            mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => {
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    "function/global constant in static initializer lowered to null".to_string(),
+                );
+                lir::LirConstant::Null(target_ty.clone())
+            }
+            mir::ConstantKind::Ty(_) => {
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    "type-only constant in static initializer lowered to undef".to_string(),
+                );
+                lir::LirConstant::Undef(target_ty.clone())
+            }
+        };
+
+        Ok(self.cast_constant_to_lir_type(lir_constant, &target_ty))
     }
 
     /// Transform a basic block

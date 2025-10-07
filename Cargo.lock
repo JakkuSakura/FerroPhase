@@ -895,11 +895,13 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "fp-core",
+ "fp-rust",
  "fp-typing",
  "itertools 0.12.1",
  "pretty_assertions",
  "serde",
  "serde_json",
+ "syn 2.0.87",
  "tracing",
 ]
 

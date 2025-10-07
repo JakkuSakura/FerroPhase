@@ -734,7 +734,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let existing_ty = expr.ty().cloned();
         let var = match expr.kind_mut() {
-            ExprKind::Value(value) => self.infer_value(value)?,
+            ExprKind::IntrinsicCollection(collection) => {
+                let new_expr = collection.clone().into_const_expr();
+                *expr = new_expr;
+                return self.infer_expr(expr);
+            }
+            ExprKind::Value(value) => {
+                if let Value::List(list) = value.as_ref() {
+                    if matches!(existing_ty.as_ref(), Some(Ty::Array(_))) {
+                        self.infer_value(value.as_ref())?
+                    } else {
+                        self.infer_list_value_as_vec(list)?
+                    }
+                } else {
+                    self.infer_value(value.as_ref())?
+                }
+            }
             ExprKind::Locator(locator) => {
                 if let Some(ty) = existing_ty.as_ref() {
                     self.type_from_ast_ty(ty)?
@@ -1371,6 +1386,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if let Some(result) = self.try_infer_collection_call(invoke)? {
+            return Ok(result);
+        }
+
         if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
             if let Some(ident) = locator.as_ident() {
                 if ident.as_str() == "printf" {
@@ -1403,11 +1422,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let obj_var = self.infer_expr(select.obj.as_mut())?;
                 if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                     if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
-                        if matches!(obj_ty, Ty::Array(_)) {
+                        if Self::is_collection_with_len(&obj_ty) {
                             let result_var = self.fresh_type_var();
                             self.bind(
                                 result_var,
-                                TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                                TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
                             );
                             return Ok(result_var);
                         }
@@ -1423,6 +1442,249 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.unify(*param_var, arg_var)?;
         }
         Ok(func_info.ret)
+    }
+
+    fn try_infer_collection_call(&mut self, invoke: &mut ExprInvoke) -> Result<Option<TypeVarId>> {
+        let locator = match &invoke.target {
+            ExprInvokeTarget::Function(locator) => locator,
+            _ => return Ok(None),
+        };
+
+        if Self::locator_matches_suffix(locator, &["Vec", "new"]) {
+            return self.infer_vec_new(invoke).map(Some);
+        }
+
+        if Self::locator_matches_suffix(locator, &["Vec", "with_capacity"]) {
+            return self.infer_vec_with_capacity(invoke).map(Some);
+        }
+
+        if Self::locator_matches_suffix(locator, &["Vec", "from"]) {
+            return self.infer_vec_from(invoke).map(Some);
+        }
+
+        if Self::locator_matches_suffix(locator, &["HashMap", "new"]) {
+            return self.infer_hashmap_new(invoke).map(Some);
+        }
+
+        if Self::locator_matches_suffix(locator, &["HashMap", "with_capacity"]) {
+            return self.infer_hashmap_with_capacity(invoke).map(Some);
+        }
+
+        if Self::locator_matches_suffix(locator, &["HashMap", "from"]) {
+            return self.infer_hashmap_from(invoke).map(Some);
+        }
+
+        Ok(None)
+    }
+
+    fn infer_vec_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if !invoke.args.is_empty() {
+            for arg in &mut invoke.args {
+                let _ = self.infer_expr(arg);
+            }
+            self.emit_error("Vec::new does not take arguments");
+        }
+
+        let elem_var = self.fresh_type_var();
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_vec_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args {
+                let _ = self.infer_expr(arg);
+            }
+            self.emit_error("Vec::with_capacity expects a single capacity argument");
+        } else {
+            let capacity_var = self.infer_expr(&mut invoke.args[0])?;
+            let expected = self.fresh_type_var();
+            self.bind(
+                expected,
+                TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+            );
+            self.unify(capacity_var, expected)?;
+        }
+
+        let elem_var = self.fresh_type_var();
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_vec_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args {
+                let _ = self.infer_expr(arg);
+            }
+            self.emit_error("Vec::from expects a single iterable argument");
+            let elem_var = self.fresh_type_var();
+            let vec_var = self.fresh_type_var();
+            self.bind(vec_var, TypeTerm::Vec(elem_var));
+            return Ok(vec_var);
+        }
+
+        let elem_var = match invoke.args[0].kind_mut() {
+            ExprKind::Array(array) => self.infer_vec_array_elements(array)?,
+            ExprKind::ArrayRepeat(repeat) => self.infer_vec_array_repeat(repeat)?,
+            _ => {
+                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                let elem_var = self.fresh_type_var();
+                let vec_var = self.fresh_type_var();
+                self.bind(vec_var, TypeTerm::Vec(elem_var));
+                self.unify(arg_var, vec_var)?;
+                elem_var
+            }
+        };
+
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_vec_array_elements(&mut self, array: &mut ExprArray) -> Result<TypeVarId> {
+        let mut iter = array.values.iter_mut();
+        if let Some(first) = iter.next() {
+            let first_var = self.infer_expr(first)?;
+            for expr in iter {
+                let next_var = self.infer_expr(expr)?;
+                self.unify(first_var, next_var)?;
+            }
+            Ok(first_var)
+        } else {
+            Ok(self.fresh_type_var())
+        }
+    }
+
+    fn infer_vec_array_repeat(&mut self, repeat: &mut ExprArrayRepeat) -> Result<TypeVarId> {
+        let elem_var = self.infer_expr(repeat.elem.as_mut())?;
+        let len_var = self.infer_expr(repeat.len.as_mut())?;
+        let expected_len = self.fresh_type_var();
+        self.bind(
+            expected_len,
+            TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+        );
+        self.unify(len_var, expected_len)?;
+        Ok(elem_var)
+    }
+
+    fn infer_list_value_as_vec(&mut self, list: &ValueList) -> Result<TypeVarId> {
+        let elem_var = if let Some(first) = list.values.first() {
+            let first_var = self.infer_value(first)?;
+            for value in list.values.iter().skip(1) {
+                let next_var = self.infer_value(value)?;
+                self.unify(first_var, next_var)?;
+            }
+            first_var
+        } else {
+            let fresh = self.fresh_type_var();
+            self.bind(fresh, TypeTerm::Any);
+            fresh
+        };
+
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_hashmap_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if !invoke.args.is_empty() {
+            for arg in &mut invoke.args {
+                let _ = self.infer_expr(arg);
+            }
+            self.emit_error("HashMap::new does not take arguments");
+        }
+
+        let map_var = self.fresh_type_var();
+        let map_ty = self.make_hashmap_ty();
+        self.bind(map_var, TypeTerm::Custom(map_ty));
+        Ok(map_var)
+    }
+
+    fn infer_hashmap_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args {
+                let _ = self.infer_expr(arg);
+            }
+            self.emit_error("HashMap::with_capacity expects a single capacity argument");
+        } else {
+            let capacity_var = self.infer_expr(&mut invoke.args[0])?;
+            let expected = self.fresh_type_var();
+            self.bind(
+                expected,
+                TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+            );
+            self.unify(capacity_var, expected)?;
+        }
+
+        let map_var = self.fresh_type_var();
+        let map_ty = self.make_hashmap_ty();
+        self.bind(map_var, TypeTerm::Custom(map_ty));
+        Ok(map_var)
+    }
+
+    fn infer_hashmap_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args {
+                let _ = self.infer_expr(arg);
+            }
+            self.emit_error("HashMap::from expects a single iterable argument");
+            let map_var = self.fresh_type_var();
+            let map_ty = self.make_hashmap_ty();
+            self.bind(map_var, TypeTerm::Custom(map_ty));
+            return Ok(map_var);
+        }
+
+        let _ = self.infer_expr(&mut invoke.args[0])?;
+        let map_var = self.fresh_type_var();
+        let map_ty = self.make_hashmap_ty();
+        self.bind(map_var, TypeTerm::Custom(map_ty));
+        Ok(map_var)
+    }
+
+    fn make_hashmap_ty(&self) -> Ty {
+        Ty::Struct(TypeStruct {
+            name: Ident::new("HashMap"),
+            fields: Vec::new(),
+        })
+    }
+
+    fn locator_matches_suffix(locator: &Locator, suffix: &[&str]) -> bool {
+        let segments = Self::locator_segments(locator);
+        if segments.len() < suffix.len() {
+            return false;
+        }
+
+        segments
+            .iter()
+            .rev()
+            .zip(suffix.iter().rev())
+            .all(|(segment, expected)| segment == expected)
+    }
+
+    fn locator_segments(locator: &Locator) -> Vec<String> {
+        match locator {
+            Locator::Ident(ident) => vec![ident.as_str().to_string()],
+            Locator::Path(path) => path
+                .segments
+                .iter()
+                .map(|segment| segment.as_str().to_string())
+                .collect(),
+            Locator::ParameterPath(path) => path
+                .segments
+                .iter()
+                .map(|segment| segment.ident.as_str().to_string())
+                .collect(),
+        }
+    }
+
+    fn is_collection_with_len(ty: &Ty) -> bool {
+        match ty {
+            Ty::Array(_) | Ty::Slice(_) | Ty::Vec(_) => true,
+            Ty::Struct(struct_ty) => struct_ty.name.as_str() == "HashMap",
+            _ => false,
+        }
     }
 
     fn infer_builtin_printf(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {

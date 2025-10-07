@@ -10,6 +10,8 @@ use itertools::Itertools;
 use proc_macro2::Span;
 use quote::ToTokens;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 
 static FOR_LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -558,12 +560,8 @@ impl<'a> ExprParser<'a> {
     }
 
     fn parse_vec_macro(&self, m: &syn::ExprMacro) -> Result<Expr> {
-        if m.mac.tokens.is_empty() {
-            return Ok(ExprArray { values: Vec::new() }.into());
-        }
-
-        let parsed = match syn::parse2::<syn::Expr>(m.mac.tokens.clone()) {
-            Ok(expr) => expr,
+        let args = match syn::parse2::<VecMacroKind>(m.mac.tokens.clone()) {
+            Ok(args) => args,
             Err(err) => {
                 return self.err(
                     format!("failed to parse vec! macro: {}", err),
@@ -572,13 +570,9 @@ impl<'a> ExprParser<'a> {
             }
         };
 
-        match parsed {
-            syn::Expr::Array(array) => Ok(self.parse_expr_array(array)?.into()),
-            syn::Expr::Repeat(repeat) => Ok(self.parse_expr_repeat(repeat)?.into()),
-            other => self.err(
-                format!("unsupported vec! macro form: {}", other.to_token_stream()),
-                Expr::any(RawExprMacro { raw: m.clone() }),
-            ),
+        match args {
+            VecMacroKind::Elements(elements) => self.make_vec_from_elements(elements),
+            VecMacroKind::Repeat { elem, len } => self.make_vec_from_repeat(elem, len),
         }
     }
 
@@ -853,6 +847,64 @@ impl<'a> ExprParser<'a> {
 impl RustParser {
     pub(super) fn expr_parser(&self) -> ExprParser<'_> {
         ExprParser::new(self)
+    }
+}
+
+impl<'a> ExprParser<'a> {
+    fn make_vec_from_elements(
+        &self,
+        elements: Punctuated<syn::Expr, syn::Token![,]>,
+    ) -> Result<Expr> {
+        let parsed_elements = elements
+            .into_iter()
+            .map(|element| self.parse_expr(element))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(
+            ExprKind::IntrinsicCollection(ExprIntrinsicCollection::VecElements {
+                elements: parsed_elements,
+            })
+            .into(),
+        )
+    }
+
+    fn make_vec_from_repeat(&self, elem: syn::Expr, len: syn::Expr) -> Result<Expr> {
+        let elem_expr = self.parse_expr(elem)?;
+        let len_expr = self.parse_expr(len)?;
+        Ok(
+            ExprKind::IntrinsicCollection(ExprIntrinsicCollection::VecRepeat {
+                elem: elem_expr.into(),
+                len: len_expr.into(),
+            })
+            .into(),
+        )
+    }
+}
+
+enum VecMacroKind {
+    Elements(Punctuated<syn::Expr, syn::Token![,]>),
+    Repeat { elem: syn::Expr, len: syn::Expr },
+}
+
+impl Parse for VecMacroKind {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(VecMacroKind::Elements(Punctuated::new()));
+        }
+
+        let fork = input.fork();
+        let _: syn::Expr = fork.parse()?;
+        if fork.peek(syn::Token![;]) {
+            let elem: syn::Expr = input.parse()?;
+            input.parse::<syn::Token![;]>()?;
+            let len: syn::Expr = input.parse()?;
+            if !input.is_empty() {
+                return Err(input.error("unexpected tokens after vec! repeat form"));
+            }
+            return Ok(VecMacroKind::Repeat { elem, len });
+        }
+
+        let elements = Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated(input)?;
+        Ok(VecMacroKind::Elements(elements))
     }
 }
 
