@@ -1,5 +1,4 @@
-use crate::ast::BExpr;
-use crate::id::Path;
+use crate::ast::{BExpr, Path};
 use crate::{common_enum, common_struct};
 
 common_enum! {

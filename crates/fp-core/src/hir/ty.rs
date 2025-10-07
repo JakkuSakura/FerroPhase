@@ -561,7 +561,7 @@ pub enum BoundVariableKind {
 }
 
 // Helper types
-pub type Symbol = String;
+pub use super::Symbol;
 pub type SimplifiedType = String; // Simplified for now
 
 // Implementation helpers

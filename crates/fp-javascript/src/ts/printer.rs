@@ -10,7 +10,7 @@ use swc_ecma_quote::swc_common::sync::Lrc;
 use swc_ecma_quote::swc_common::{SourceMap, DUMMY_SP};
 
 use fp_core::ast::{AstSerializer, EnumTypeVariant, Ty, TypeEnum, TypeStruct};
-use fp_core::id::Ident;
+use fp_core::ast::Ident;
 use fp_core::printer::AstSerializerConfig;
 
 #[derive(Clone)]

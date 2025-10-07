@@ -117,7 +117,7 @@ impl<'ctx> LirCodegen<'ctx> {
         self.defined_functions.clear();
         for function in &functions {
             self.function_signatures
-                .insert(function.name.clone(), function.signature.clone());
+                .insert(String::from(function.name.clone()), function.signature.clone());
         }
         tracing::debug!(
             "Collected function signatures: {:?}",
@@ -211,7 +211,7 @@ impl<'ctx> LirCodegen<'ctx> {
         };
 
         let global_var = GlobalVariable {
-            name: global.name.clone().into(),
+            name: llvm_ir::Name::Name(Box::new(String::from(global.name.clone()))),
             linkage: self.convert_linkage(global.linkage),
             visibility: self.convert_visibility(global.visibility),
             is_constant: global.is_constant,
@@ -271,10 +271,10 @@ impl<'ctx> LirCodegen<'ctx> {
             lir_func.signature.return_type
         );
         let mut return_lir_type = lir_func.signature.return_type.clone();
-        if lir_func.name == "main" && matches!(return_lir_type, lir::LirType::Void) {
+        if lir_func.name.as_str() == "main" && matches!(return_lir_type, lir::LirType::Void) {
             return_lir_type = lir::LirType::I32;
         }
-        let func_name_for_return = lir_func.name.clone();
+        let func_name_for_return = String::from(lir_func.name.clone());
         let return_type = self
             .convert_lir_type_to_llvm(return_lir_type.clone())
             .map_err(|err| {
@@ -354,6 +354,7 @@ impl<'ctx> LirCodegen<'ctx> {
         // Create LLVM BasicBlock and add it to the current function
         let block_name = lir_block
             .label
+            .map(|n| String::from(n))
             .unwrap_or_else(|| format!("bb{}", lir_block.id));
         let basic_block = BasicBlock::new(Name::Name(Box::new(block_name.clone())));
         self.block_map

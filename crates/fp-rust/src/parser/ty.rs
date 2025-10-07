@@ -9,7 +9,7 @@ use fp_core::ast::{
     DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeAny, TypeArray, TypeBounds,
     TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
 };
-use fp_core::id::{Ident, Path};
+use fp_core::ast::{Ident, Path};
 use fp_core::ops::BinOpKind;
 
 use crate::parser;

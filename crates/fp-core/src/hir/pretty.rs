@@ -127,7 +127,7 @@ fn write_enum(
     )?;
     ctx.with_indent(|ctx| {
         for variant in &enm.variants {
-            let mut line = variant.name.clone();
+            let mut line = String::from(variant.name.clone());
             if let Some(expr) = &variant.discriminant {
                 line.push_str(" = ");
                 line.push_str(&format_expr_inline(expr, ctx));
@@ -480,7 +480,7 @@ fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
             if *mutable {
                 format!("mut {}", name)
             } else {
-                name.clone()
+                String::from(name.clone())
             }
         }
         PatKind::Struct(path, fields) => {
@@ -506,7 +506,7 @@ fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
 fn fmt_path(path: &Path, ctx: &PrettyCtx<'_>) -> String {
     let mut segments = Vec::new();
     for segment in &path.segments {
-        let mut text = segment.name.clone();
+        let mut text = String::from(segment.name.clone());
         if let Some(args) = &segment.args {
             let args = args
                 .args
@@ -538,10 +538,10 @@ fn fmt_generics(generics: &Generics, ctx: &PrettyCtx<'_>) -> String {
                     if let Some(default) = default {
                         format!("{} = {}", param.name, fmt_type_expr(default, ctx))
                     } else {
-                        param.name.clone()
+                        String::from(param.name.clone())
                     }
                 } else {
-                    param.name.clone()
+                    String::from(param.name.clone())
                 }
             }
             GenericParamKind::Const { ty } => {

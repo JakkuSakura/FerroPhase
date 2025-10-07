@@ -1,10 +1,9 @@
 use crate::ast::{
-    Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, ItemChunk,
+    Attribute, BExpr, FunctionParam, FunctionParamReceiver, FunctionSignature, Ident, ItemChunk,
     StructuralField, Ty, TySlot, TypeBounds, TypeEnum, TypeFunction, TypeStruct, TypeStructural,
     ValueFunction, Visibility,
 };
 use crate::common_struct;
-use crate::id::Ident;
 
 common_struct! {
     pub struct ItemDefStruct {

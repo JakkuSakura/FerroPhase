@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::{Error, Result};
-use fp_core::id::{Ident, Locator};
+use fp_core::ast::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::{Pattern, PatternKind};

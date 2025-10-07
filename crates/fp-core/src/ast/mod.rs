@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::{common_enum, common_struct};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub use deserialize::*;
 pub use serialize::*;
@@ -10,6 +10,7 @@ pub use serialize::*;
 mod attr;
 mod deserialize;
 mod expr;
+mod ident;
 mod item;
 mod pretty;
 mod serialize;
@@ -17,6 +18,7 @@ mod value;
 
 pub use attr::*;
 pub use expr::*;
+pub use ident::*;
 pub use item::*;
 pub use pretty::*;
 pub use value::*;
@@ -117,13 +119,13 @@ impl From<NodeKind> for Node {
 
 pub trait AstProvider {
     fn get_ast_from_code(&self, cst: &str) -> Result<Node>;
-    fn get_ast_from_file_path(&self, path: &Path) -> Result<Node>;
+    fn get_ast_from_file_path(&self, path: &std::path::Path) -> Result<Node>;
 }
 impl<D: AstDeserializer> AstProvider for D {
     fn get_ast_from_code(&self, cst: &str) -> Result<Node> {
         Ok(self.deserialize_node(cst)?)
     }
-    fn get_ast_from_file_path(&self, path: &Path) -> Result<Node> {
+    fn get_ast_from_file_path(&self, path: &std::path::Path) -> Result<Node> {
         Ok(self.deserialize_file_load(path).map(Node::file)?)
     }
 }
