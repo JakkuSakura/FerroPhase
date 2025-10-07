@@ -88,7 +88,3 @@ fn main() {
 
     println!("\n✓ Loop constructs demonstrated!");
 }
-
-fn print(s: &str) {
-    std::print!("{}", s);
-}

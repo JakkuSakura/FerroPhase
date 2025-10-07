@@ -198,9 +198,7 @@ impl ClangParser {
 
     /// Get clang version information
     pub fn version(&self) -> Result<String> {
-        let output = Command::new(&self.clang_path)
-            .arg("--version")
-            .output()?;
+        let output = Command::new(&self.clang_path).arg("--version").output()?;
 
         if !output.status.success() {
             return Err(ClangError::Other("Failed to get clang version".to_string()));

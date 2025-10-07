@@ -6,10 +6,10 @@ use fp_core::info;
 use fp_core::warn;
 use pretty_assertions::assert_eq;
 
+use fp_core::ast::Locator;
 use fp_core::ast::*;
 use fp_core::ast::{FunctionParam, FunctionSignature, Ty, TypePrimitive};
 use fp_core::ast::{Item, ItemDefFunction, ItemImpl, Visibility};
-use fp_core::ast::Locator;
 use fp_rust::printer::RustPrinter;
 use fp_rust::{shll_parse_expr, shll_parse_item};
 

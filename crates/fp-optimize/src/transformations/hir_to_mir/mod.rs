@@ -350,7 +350,10 @@ impl MirLowering {
                 kind: TyKind::Never,
             },
             hir::TypeExprKind::Infer => {
-                self.emit_error(ty_expr.span, "type inference markers not supported in HIR→MIR");
+                self.emit_error(
+                    ty_expr.span,
+                    "type inference markers not supported in HIR→MIR",
+                );
                 self.error_ty()
             }
             hir::TypeExprKind::Error => self.error_ty(),
@@ -674,7 +677,10 @@ impl MirLowering {
 
     fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
         match &ty.kind {
-            hir::TypeExprKind::Path(path) => path.segments.last().map(|seg| String::from(seg.name.clone())),
+            hir::TypeExprKind::Path(path) => path
+                .segments
+                .last()
+                .map(|seg| String::from(seg.name.clone())),
             hir::TypeExprKind::Ref(inner) | hir::TypeExprKind::Ptr(inner) => {
                 self.struct_name_from_type(inner)
             }
@@ -732,7 +738,8 @@ impl MirLowering {
                         struct_def,
                     };
 
-                    self.method_lookup.insert(String::from(fn_name.clone()), info.clone());
+                    self.method_lookup
+                        .insert(String::from(fn_name.clone()), info.clone());
                     self.method_lookup
                         .insert(format!("{}::{}", struct_name, impl_item.name), info.clone());
                     self.struct_methods
@@ -929,6 +936,7 @@ struct BodyBuilder<'a> {
     current_block: mir::BasicBlockId,
     span: Span,
     method_context: Option<MethodContext>,
+    loop_stack: Vec<LoopContext>,
 }
 
 struct PlaceInfo {
@@ -940,6 +948,20 @@ struct PlaceInfo {
 struct OperandInfo {
     operand: mir::Operand,
     ty: Ty,
+}
+
+#[derive(Clone)]
+struct LoopDestination {
+    place: mir::Place,
+    ty: Ty,
+}
+
+#[derive(Clone)]
+struct LoopContext {
+    break_block: mir::BasicBlockId,
+    continue_block: mir::BasicBlockId,
+    break_destination: Option<LoopDestination>,
+    break_value_allowed: bool,
 }
 
 impl<'a> BodyBuilder<'a> {
@@ -967,6 +989,7 @@ impl<'a> BodyBuilder<'a> {
             current_block: 0,
             span,
             method_context,
+            loop_stack: Vec::new(),
         };
 
         let body_params = builder
@@ -1100,6 +1123,229 @@ impl<'a> BodyBuilder<'a> {
         Ok(())
     }
 
+    fn lower_loop_expr(
+        &mut self,
+        span: Span,
+        block: &hir::Block,
+        destination: Option<LoopDestination>,
+        break_value_allowed: bool,
+    ) -> Result<()> {
+        let header_block = self.new_block();
+        let body_block = self.new_block();
+        let exit_block = self.new_block();
+
+        let goto_header = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Goto {
+                target: header_block,
+            },
+        };
+        self.set_current_terminator(goto_header);
+
+        self.current_block = header_block;
+        let goto_body = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Goto { target: body_block },
+        };
+        self.set_current_terminator(goto_body);
+
+        let context_destination = destination.clone();
+        self.loop_stack.push(LoopContext {
+            break_block: exit_block,
+            continue_block: header_block,
+            break_destination: context_destination,
+            break_value_allowed,
+        });
+
+        self.current_block = body_block;
+        self.lower_block(block)?;
+
+        if self.blocks[self.current_block as usize]
+            .terminator
+            .is_none()
+        {
+            let goto = mir::Terminator {
+                source_info: span,
+                kind: mir::TerminatorKind::Goto {
+                    target: header_block,
+                },
+            };
+            self.set_current_terminator(goto);
+        }
+
+        self.loop_stack.pop();
+        self.current_block = exit_block;
+
+        Ok(())
+    }
+
+    fn lower_while_expr(
+        &mut self,
+        span: Span,
+        cond: &hir::Expr,
+        block: &hir::Block,
+        destination: Option<LoopDestination>,
+    ) -> Result<()> {
+        let cond_block = self.new_block();
+        let body_block = self.new_block();
+        let exit_block = self.new_block();
+
+        let goto_cond = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Goto { target: cond_block },
+        };
+        self.set_current_terminator(goto_cond);
+
+        self.current_block = cond_block;
+        let bool_ty = Ty { kind: TyKind::Bool };
+        let cond_operand = self.lower_operand(cond, Some(&bool_ty))?;
+        let switch = mir::Terminator {
+            source_info: cond.span,
+            kind: mir::TerminatorKind::SwitchInt {
+                discr: cond_operand.operand,
+                switch_ty: bool_ty.clone(),
+                targets: mir::SwitchTargets {
+                    values: vec![1],
+                    targets: vec![body_block],
+                    otherwise: exit_block,
+                },
+            },
+        };
+        self.set_current_terminator(switch);
+
+        let context_destination = destination.clone();
+        self.loop_stack.push(LoopContext {
+            break_block: exit_block,
+            continue_block: cond_block,
+            break_destination: context_destination,
+            break_value_allowed: false,
+        });
+
+        self.current_block = body_block;
+        self.lower_block(block)?;
+        if self.blocks[self.current_block as usize]
+            .terminator
+            .is_none()
+        {
+            let goto = mir::Terminator {
+                source_info: span,
+                kind: mir::TerminatorKind::Goto { target: cond_block },
+            };
+            self.set_current_terminator(goto);
+        }
+
+        self.loop_stack.pop();
+        self.current_block = exit_block;
+
+        if let Some(dest) = destination.as_ref() {
+            let assign_unit = mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    dest.place.clone(),
+                    mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                ),
+            };
+            self.push_statement(assign_unit);
+            if dest.place.projection.is_empty() {
+                self.locals[dest.place.local as usize].ty = Ty {
+                    kind: TyKind::Tuple(Vec::new()),
+                };
+            }
+        }
+
+        Ok(())
+    }
+
+    fn lower_break(&mut self, span: Span, value: Option<&hir::Expr>) -> Result<()> {
+        let context = match self.loop_stack.last() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                self.lowering
+                    .emit_error(span, "`break` used outside of a loop");
+                return Ok(());
+            }
+        };
+
+        if let Some(value_expr) = value {
+            if !context.break_value_allowed {
+                self.lowering.emit_error(
+                    span,
+                    "`break` with a value is only supported inside `loop` expressions",
+                );
+            } else if let Some(dest) = context.break_destination.as_ref() {
+                let expected = match &dest.ty.kind {
+                    TyKind::Tuple(elements) if elements.is_empty() => None,
+                    TyKind::Error(_) => None,
+                    _ => Some(&dest.ty),
+                };
+                let operand = self.lower_operand(value_expr, expected)?;
+                let statement = mir::Statement {
+                    source_info: value_expr.span,
+                    kind: mir::StatementKind::Assign(
+                        dest.place.clone(),
+                        mir::Rvalue::Use(operand.operand),
+                    ),
+                };
+                self.push_statement(statement);
+                if dest.place.projection.is_empty() {
+                    self.locals[dest.place.local as usize].ty = operand.ty.clone();
+                    if let Some(struct_def) = self.struct_def_from_ty(&operand.ty) {
+                        self.local_structs.insert(dest.place.local, struct_def);
+                    }
+                }
+            } else {
+                self.lowering.emit_error(
+                    span,
+                    "`break` with a value requires the surrounding loop to produce a value",
+                );
+            }
+        } else if context.break_value_allowed {
+            if let Some(dest) = context.break_destination.as_ref() {
+                match &dest.ty.kind {
+                    TyKind::Tuple(elements) if elements.is_empty() => {}
+                    TyKind::Never => {}
+                    _ => {
+                        self.lowering.emit_error(
+                            span,
+                            "`break` without a value in a value-producing loop is not supported",
+                        );
+                    }
+                }
+            }
+        }
+
+        let goto = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Goto {
+                target: context.break_block,
+            },
+        };
+        self.set_current_terminator(goto);
+        self.current_block = self.new_block();
+        Ok(())
+    }
+
+    fn lower_continue(&mut self, span: Span) -> Result<()> {
+        let context = match self.loop_stack.last() {
+            Some(ctx) => ctx.clone(),
+            None => {
+                self.lowering
+                    .emit_error(span, "`continue` used outside of a loop");
+                return Ok(());
+            }
+        };
+
+        let goto = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Goto {
+                target: context.continue_block,
+            },
+        };
+        self.set_current_terminator(goto);
+        self.current_block = self.new_block();
+        Ok(())
+    }
+
     fn lower_stmt(&mut self, stmt: &hir::Stmt) -> Result<()> {
         match &stmt.kind {
             hir::StmtKind::Local(local) => self.lower_local(local),
@@ -1194,6 +1440,26 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Call(callee, args) => {
                 self.lower_call(expr, callee, args, None)?;
+            }
+            hir::ExprKind::Loop(block) => {
+                let temp_unit = Ty {
+                    kind: TyKind::Tuple(Vec::new()),
+                };
+                let temp_local = self.allocate_temp(temp_unit.clone(), expr.span);
+                let destination = LoopDestination {
+                    place: mir::Place::from_local(temp_local),
+                    ty: temp_unit,
+                };
+                self.lower_loop_expr(expr.span, block, Some(destination), true)?;
+            }
+            hir::ExprKind::While(cond, block) => {
+                self.lower_while_expr(expr.span, cond, block, None)?;
+            }
+            hir::ExprKind::Break(value) => {
+                self.lower_break(expr.span, value.as_deref())?;
+            }
+            hir::ExprKind::Continue => {
+                self.lower_continue(expr.span)?;
             }
             _ => {
                 // Evaluate then drop result
@@ -1460,13 +1726,14 @@ impl<'a> BodyBuilder<'a> {
 
                 self.lowering.emit_error(
                     callee.span,
-                    format!("local variable is not a function pointer, has type: {:?}", ty),
+                    format!(
+                        "local variable is not a function pointer, has type: {:?}",
+                        ty
+                    ),
                 );
             } else {
-                self.lowering.emit_error(
-                    callee.span,
-                    "local variable not found in local_map",
-                );
+                self.lowering
+                    .emit_error(callee.span, "local variable not found in local_map");
             }
         }
 
@@ -1520,7 +1787,10 @@ impl<'a> BodyBuilder<'a> {
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone()), info.fn_ty.clone()),
+                    literal: mir::ConstantKind::Fn(
+                        mir::Symbol::new(info.fn_name.clone()),
+                        info.fn_ty.clone(),
+                    ),
                 });
                 let qualified_name = format!("{}::{}", struct_name, method_name);
                 return Ok((operand, info.sig.clone(), Some(qualified_name)));
@@ -1541,7 +1811,10 @@ impl<'a> BodyBuilder<'a> {
             let operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone()), info.fn_ty.clone()),
+                literal: mir::ConstantKind::Fn(
+                    mir::Symbol::new(info.fn_name.clone()),
+                    info.fn_ty.clone(),
+                ),
             });
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
         }
@@ -1656,7 +1929,10 @@ impl<'a> BodyBuilder<'a> {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(mir::Symbol::from(fn_name), fn_ty.clone()),
+                                    literal: mir::ConstantKind::Fn(
+                                        mir::Symbol::from(fn_name),
+                                        fn_ty.clone(),
+                                    ),
                                 }),
                                 ty: fn_ty,
                             });
@@ -1997,6 +2273,26 @@ impl<'a> BodyBuilder<'a> {
                     self.locals[place.local as usize].ty = target_ty;
                 }
             }
+            hir::ExprKind::Loop(block) => {
+                let destination = LoopDestination {
+                    place: place.clone(),
+                    ty: expected_ty.clone(),
+                };
+                self.lower_loop_expr(expr.span, block, Some(destination), true)?;
+            }
+            hir::ExprKind::While(cond, block) => {
+                let destination = LoopDestination {
+                    place: place.clone(),
+                    ty: expected_ty.clone(),
+                };
+                self.lower_while_expr(expr.span, cond, block, Some(destination))?;
+            }
+            hir::ExprKind::Break(value) => {
+                self.lower_break(expr.span, value.as_deref())?;
+            }
+            hir::ExprKind::Continue => {
+                self.lower_continue(expr.span)?;
+            }
             hir::ExprKind::Struct(path, fields) => {
                 let local_id = place.local;
                 self.lower_struct_literal(local_id, Some(expected_ty), path, fields, expr.span)?;
@@ -2184,7 +2480,9 @@ impl<'a> BodyBuilder<'a> {
                         .struct_methods
                         .iter()
                         .filter_map(|(_struct_name, methods)| {
-                            methods.get(&String::from(method_key.clone())).map(|info| (info.clone()))
+                            methods
+                                .get(&String::from(method_key.clone()))
+                                .map(|info| (info.clone()))
                         })
                         .collect::<Vec<_>>();
                     if matches.len() == 1 {
@@ -2208,7 +2506,10 @@ impl<'a> BodyBuilder<'a> {
                     let func_operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
                         user_ty: None,
-                        literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone()), info.fn_ty.clone()),
+                        literal: mir::ConstantKind::Fn(
+                            mir::Symbol::new(info.fn_name.clone()),
+                            info.fn_ty.clone(),
+                        ),
                     });
 
                     let continue_block = self.new_block();

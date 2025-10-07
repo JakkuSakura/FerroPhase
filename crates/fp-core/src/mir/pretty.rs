@@ -54,7 +54,15 @@ fn write_function(func: &Function, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_
     let path = if func.path.is_empty() {
         String::from(func.name.clone())
     } else {
-        format!("{}::{}", func.path.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("::"), func.name)
+        format!(
+            "{}::{}",
+            func.path
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("::"),
+            func.name
+        )
     };
     let params = func
         .sig

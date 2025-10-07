@@ -65,10 +65,7 @@ impl ClangCodegen {
         let temp_dir = tempfile::tempdir().map_err(|e| ClangError::IoError(e))?;
         let temp_c_file = temp_dir.path().join("wrapper.c");
 
-        let wrapper_content = format!(
-            "#include \"{}\"\n",
-            header_file.to_str().unwrap_or("")
-        );
+        let wrapper_content = format!("#include \"{}\"\n", header_file.to_str().unwrap_or(""));
         fs::write(&temp_c_file, wrapper_content)?;
 
         // Compile wrapper to LLVM IR with header's directory in include path

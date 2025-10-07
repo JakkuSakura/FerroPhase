@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::*;
+use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::error::{Error, Result};
-use fp_core::ast::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::{Pattern, PatternKind};
@@ -168,6 +168,20 @@ struct FunctionTypeInfo {
     ret: TypeVarId,
 }
 
+struct LoopContext {
+    result_var: TypeVarId,
+    saw_break: bool,
+}
+
+impl LoopContext {
+    fn new(result_var: TypeVarId) -> Self {
+        Self {
+            result_var,
+            saw_break: false,
+        }
+    }
+}
+
 pub struct AstTypeInferencer<'ctx> {
     ctx: Option<&'ctx SharedScopedContext>,
     type_vars: Vec<TypeVar>,
@@ -182,6 +196,7 @@ pub struct AstTypeInferencer<'ctx> {
     diagnostics: Vec<TypingDiagnostic>,
     has_errors: bool,
     literal_ints: HashSet<TypeVarId>,
+    loop_stack: Vec<LoopContext>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -200,6 +215,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             diagnostics: Vec::new(),
             has_errors: false,
             literal_ints: HashSet::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -910,10 +926,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.bind(last, TypeTerm::Unit);
                 }
                 BlockStmt::Any(_) => {
-                    let message =
-                        "custom block statements are not supported by type inference".to_string();
-                    self.emit_error(message);
-                    last = self.error_type_var();
+                    let unit = self.unit_type_var();
+                    last = unit;
                 }
             }
         }
@@ -983,21 +997,60 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn infer_loop(&mut self, expr_loop: &mut ExprLoop) -> Result<TypeVarId> {
-        let body_var = self.infer_expr(expr_loop.body.as_mut())?;
-        let unit_var = self.fresh_type_var();
-        self.bind(unit_var, TypeTerm::Unit);
-        self.unify(body_var, unit_var)?;
-        Ok(unit_var)
+        let loop_result_var = self.fresh_type_var();
+        self.loop_stack.push(LoopContext::new(loop_result_var));
+
+        let body_var = match self.infer_expr(expr_loop.body.as_mut()) {
+            Ok(var) => var,
+            Err(err) => {
+                self.loop_stack.pop();
+                return Err(err);
+            }
+        };
+
+        let unit_var = self.unit_type_var();
+        if let Err(err) = self.unify(body_var, unit_var) {
+            self.loop_stack.pop();
+            return Err(err);
+        }
+
+        let context = self
+            .loop_stack
+            .pop()
+            .expect("loop stack underflow when finishing loop inference");
+
+        if !context.saw_break {
+            self.bind(loop_result_var, TypeTerm::Nothing);
+        }
+
+        Ok(loop_result_var)
     }
 
     fn infer_while(&mut self, expr_while: &mut ExprWhile) -> Result<TypeVarId> {
         let cond_var = self.infer_expr(expr_while.cond.as_mut())?;
         self.ensure_bool(cond_var, "while condition")?;
-        let body_var = self.infer_expr(expr_while.body.as_mut())?;
-        let unit_var = self.fresh_type_var();
-        self.bind(unit_var, TypeTerm::Unit);
-        self.unify(body_var, unit_var)?;
-        Ok(unit_var)
+        let loop_unit_var = self.unit_type_var();
+        self.loop_stack.push(LoopContext::new(loop_unit_var));
+
+        let body_var = match self.infer_expr(expr_while.body.as_mut()) {
+            Ok(var) => var,
+            Err(err) => {
+                self.loop_stack.pop();
+                return Err(err);
+            }
+        };
+
+        if let Err(err) = self.unify(body_var, loop_unit_var) {
+            self.loop_stack.pop();
+            return Err(err);
+        }
+
+        let _context = self
+            .loop_stack
+            .pop()
+            .expect("loop stack underflow when finishing while inference");
+
+        Ok(loop_unit_var)
     }
 
     fn infer_reference(&mut self, reference: &mut ExprReference) -> Result<TypeVarId> {
@@ -1094,11 +1147,43 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.emit_error("const block intrinsic expects a body expression");
                 return Ok(self.error_type_var());
             }
-            IntrinsicCallKind::Break | IntrinsicCallKind::Continue | IntrinsicCallKind::Return => {
-                self.emit_error(format!(
-                    "control-flow intrinsic {:?} must be lowered before typing",
-                    call.kind
-                ));
+            IntrinsicCallKind::Break => {
+                if arg_vars.len() > 1 {
+                    self.emit_error("`break` accepts at most one value");
+                }
+                let value_var = if let Some(&var) = arg_vars.first() {
+                    var
+                } else {
+                    self.unit_type_var()
+                };
+
+                let loop_var = if let Some(context) = self.loop_stack.last_mut() {
+                    context.saw_break = true;
+                    Some(context.result_var)
+                } else {
+                    None
+                };
+
+                if let Some(result_var) = loop_var {
+                    self.unify(result_var, value_var)?;
+                    return Ok(result_var);
+                }
+
+                self.emit_error("`break` used outside of a loop");
+                return Ok(self.error_type_var());
+            }
+            IntrinsicCallKind::Continue => {
+                if !arg_vars.is_empty() {
+                    self.emit_error("`continue` does not accept a value");
+                }
+                if self.loop_stack.is_empty() {
+                    self.emit_error("`continue` used outside of a loop");
+                    return Ok(self.error_type_var());
+                }
+                return Ok(self.nothing_type_var());
+            }
+            IntrinsicCallKind::Return => {
+                self.emit_error("`return` intrinsic must be lowered before typing");
                 return Ok(self.error_type_var());
             }
             _ => {}
@@ -1785,6 +1870,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         id
     }
 
+    fn unit_type_var(&mut self) -> TypeVarId {
+        let var = self.fresh_type_var();
+        self.bind(var, TypeTerm::Unit);
+        var
+    }
+
+    fn nothing_type_var(&mut self) -> TypeVarId {
+        let var = self.fresh_type_var();
+        self.bind(var, TypeTerm::Nothing);
+        var
+    }
+
     fn bind(&mut self, var: TypeVarId, term: TypeTerm) {
         let root = self.find(var);
         self.type_vars[root].kind = TypeVarKind::Bound(term);
@@ -2333,10 +2430,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
             other => {
                 self.emit_error(format!("expected boolean for {}", context));
-                Err(typing_error(format!(
-                    "expected bool, found {:?}",
-                    other
-                )))
+                Err(typing_error(format!("expected bool, found {:?}", other)))
             }
         }
     }
@@ -2353,10 +2447,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Link(next) => self.ensure_integer(next, context),
             other => {
                 self.emit_error(format!("expected integer value for {}", context));
-                Err(typing_error(format!(
-                    "expected integer, found {:?}",
-                    other
-                )))
+                Err(typing_error(format!("expected integer, found {:?}", other)))
             }
         }
     }
