@@ -830,6 +830,7 @@ dependencies = [
  "fp-javascript",
  "fp-llvm",
  "fp-optimize",
+ "fp-python",
  "fp-rust",
  "fp-typing",
  "globset",
@@ -954,6 +955,14 @@ dependencies = [
  "serde_json",
  "syn 2.0.87",
  "tracing",
+]
+
+[[package]]
+name = "fp-python"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "itertools 0.13.0",
 ]
 
 [[package]]

@@ -1,7 +1,6 @@
 //! Integration tests for the transpile command
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
@@ -167,6 +166,60 @@ fn main() {
     assert!(
         output_content.contains("createPoint(0.0, 0.0)"),
         "Should use factory function for struct creation"
+    );
+}
+
+#[tokio::test]
+async fn test_transpile_python_with_structs() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("test.fp");
+    let output_file = temp_dir.path().join("test.py");
+
+    let test_code = r#"
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+fn main() {
+    let origin = Point { x: 0.0, y: 0.0 };
+    println!("Origin: ({}, {})", origin.x, origin.y);
+}
+"#;
+
+    fs::write(&input_file, test_code).unwrap();
+
+    let args = TranspileArgs {
+        input: vec![input_file],
+        target: "python".to_string(),
+        output: Some(output_file.clone()),
+        const_eval: true,
+        preserve_structs: true,
+        type_defs: false,
+        pretty: true,
+        source_maps: false,
+        watch: false,
+    };
+
+    let config = CliConfig::default();
+
+    let result = transpile_command(args, &config).await;
+    assert!(result.is_ok(), "Transpilation should succeed");
+
+    assert!(output_file.exists(), "Output file should be created");
+
+    let output_content = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        output_content.contains("@dataclass"),
+        "Python output should include dataclass decorator"
+    );
+    assert!(
+        output_content.contains("class Point"),
+        "Python output should define the Point class"
+    );
+    assert!(
+        output_content.contains("def main()"),
+        "Python output should contain main function"
     );
 }
 

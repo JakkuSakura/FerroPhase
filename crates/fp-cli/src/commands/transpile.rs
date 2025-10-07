@@ -131,6 +131,7 @@ async fn transpile_file(
         TYPESCRIPT | "ts" => TranspileTarget::TypeScript,
         JAVASCRIPT | "js" => TranspileTarget::JavaScript,
         CSHARP | "cs" | "c#" => TranspileTarget::CSharp,
+        PYTHON | "py" => TranspileTarget::Python,
         RUST | "rs" => TranspileTarget::Rust,
         _ => {
             return Err(CliError::InvalidInput(format!(
@@ -175,6 +176,7 @@ fn determine_transpile_output_path(
             "typescript" | "ts" => "ts",
             "javascript" | "js" => "js",
             "csharp" | "cs" | "c#" => "cs",
+            "python" | "py" => "py",
             "rust" | "rs" => "rs",
             _ => {
                 return Err(CliError::InvalidInput(format!(
