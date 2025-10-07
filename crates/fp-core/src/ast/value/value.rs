@@ -171,6 +171,120 @@ impl Display for ValueList {
 }
 
 common_struct! {
+    pub struct ValueMapEntry {
+        pub key: Value,
+        pub value: Value,
+    }
+}
+impl ValueMapEntry {
+    pub fn new(key: Value, value: Value) -> Self {
+        Self { key, value }
+    }
+}
+
+common_struct! {
+    pub struct ValueMap {
+        pub entries: Vec<ValueMapEntry>,
+    }
+}
+impl ValueMap {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (Value, Value)>) -> Self {
+        let mut map = Self::new();
+        for (key, value) in pairs.into_iter() {
+            map.insert(key, value);
+        }
+        map
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Value, &Value)> {
+        self.entries.iter().map(|entry| (&entry.key, &entry.value))
+    }
+
+    pub fn get(&self, key: &Value) -> Option<&Value> {
+        self.entries
+            .iter()
+            .find(|entry| &entry.key == key)
+            .map(|entry| &entry.value)
+    }
+
+    pub fn insert(&mut self, key: Value, value: Value) {
+        if let Some(existing) = self.entries.iter_mut().find(|entry| entry.key == key) {
+            existing.value = value;
+        } else {
+            self.entries.push(ValueMapEntry::new(key, value));
+        }
+    }
+
+    fn key_to_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(s) => Some(s.value.clone()),
+            Value::Int(i) => Some(i.value.to_string()),
+            Value::Bool(b) => Some(b.value.to_string()),
+            Value::Char(c) => Some(c.value.to_string()),
+            _ => None,
+        }
+    }
+}
+
+impl ToJson for ValueMap {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
+        let mut object = serde_json::Map::new();
+        let mut array_fallback = Vec::new();
+
+        for entry in &self.entries {
+            let value_json = entry.value.to_json()?;
+            if let Some(key) = Self::key_to_string(&entry.key) {
+                object.insert(key, value_json);
+            } else {
+                array_fallback.push(json!([entry.key.to_json()?, value_json]));
+            }
+        }
+
+        if array_fallback.is_empty() {
+            Ok(serde_json::Value::Object(object))
+        } else {
+            if !object.is_empty() {
+                for (key, value) in object.into_iter() {
+                    array_fallback.push(json!([key, value]));
+                }
+            }
+            Ok(serde_json::Value::Array(array_fallback))
+        }
+    }
+}
+
+impl Display for ValueMap {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{")?;
+        let mut first = true;
+        for entry in &self.entries {
+            if !first {
+                write!(f, ", ")?;
+            }
+            first = false;
+            let key_display =
+                Self::key_to_string(&entry.key).unwrap_or_else(|| entry.key.to_string());
+            write!(f, "{}: {}", key_display, entry.value)?;
+        }
+        write!(f, "}}")
+    }
+}
+
+common_struct! {
     pub struct ValueBytes {
         pub value: BytesMut,
     }

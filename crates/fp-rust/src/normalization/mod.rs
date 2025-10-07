@@ -214,6 +214,7 @@ fn normalize_value(value: &mut Value) {
         | Value::Char(_)
         | Value::String(_)
         | Value::List(_)
+        | Value::Map(_)
         | Value::Bytes(_)
         | Value::Pointer(_)
         | Value::Offset(_)
