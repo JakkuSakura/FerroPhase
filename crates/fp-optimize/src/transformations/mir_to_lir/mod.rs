@@ -2163,7 +2163,25 @@ impl LirGenerator {
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
-            _ => lir::LirType::I64,
+            TyKind::FnPtr(poly_fn_sig) => {
+                let fn_sig = &poly_fn_sig.binder.value;
+                lir::LirType::Ptr(Box::new(lir::LirType::Function {
+                    return_type: Box::new(self.lir_type_from_ty(&fn_sig.output)),
+                    param_types: fn_sig
+                        .inputs
+                        .iter()
+                        .map(|ty| self.lir_type_from_ty(ty))
+                        .collect(),
+                    is_variadic: fn_sig.c_variadic,
+                }))
+            }
+            unsupported => {
+                eprintln!(
+                    "[mir→lir] ERROR: unsupported type in MIR→LIR lowering: {:?}",
+                    unsupported
+                );
+                lir::LirType::Error
+            }
         }
     }
 
