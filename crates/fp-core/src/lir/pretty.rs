@@ -751,6 +751,7 @@ fn format_type(ty: &Ty) -> String {
         Label => "label".into(),
         Token => "token".into(),
         Metadata => "metadata".into(),
+        Error => "<error>".into(),
     }
 }
 

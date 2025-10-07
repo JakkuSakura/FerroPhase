@@ -927,6 +927,7 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::Unit(_) => Ok(self.create_unit_type()),
             ast::Ty::Tuple(tuple) => {
                 let elements = tuple
                     .types
@@ -987,10 +988,9 @@ impl HirGenerator {
                 ))
             }
             unsupported => {
-                self.emit_error(
-                    Span::new(self.current_file, 0, 0),
+                self.add_error(Diagnostic::error(
                     format!("unsupported type in AST→HIR lowering: {:?}", unsupported),
-                );
+                ));
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,
