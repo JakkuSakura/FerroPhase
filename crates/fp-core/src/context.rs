@@ -1,4 +1,6 @@
-use crate::ast::{Expr, ExprClosured, ExprKind, Ident, Path, RuntimeValue, Ty, Value, ValueFunction, Visibility};
+use crate::ast::{
+    Expr, ExprClosured, ExprKind, Ident, Path, RuntimeValue, Ty, Value, ValueFunction, Visibility,
+};
 use dashmap::DashMap;
 use itertools::Itertools;
 use std::ops::Deref;

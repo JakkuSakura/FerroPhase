@@ -1,7 +1,6 @@
 /// Remove generic template functions from the AST after specialization.
 /// Generic functions should have been fully specialized during const evaluation,
 /// so the templates are no longer needed.
-
 use fp_core::ast::{Item, ItemKind, Node, NodeKind};
 use fp_core::error::Result;
 

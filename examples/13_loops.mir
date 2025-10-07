@@ -1,0 +1,1022 @@
+mir::Program {
+    items:
+        fn factorial(arg0: i64) -> i64 [body: body0]
+
+        fn sum_range(arg0: i64, arg1: i64) -> i64 [body: body1]
+
+        fn find_first_divisor(arg0: i64) -> i64 [body: body2]
+
+        fn sum_even_numbers(arg0: i64) -> i64 [body: body3]
+
+        fn main() -> () [body: body4]
+    bodies:
+        body0 { arg_count: 1, locals: 5 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: bool
+            blocks:
+                bb0:
+                    s0: _2 = 1
+                    s1: _3 = 1
+                    terminator: goto -> bb1
+                bb1:
+                    s0: _4 = Le(copy _3, copy _1)
+                    terminator: switch copy _4 [1 -> bb2] otherwise -> bb3
+                bb2:
+                    s0: _2 = Mul(copy _2, copy _3)
+                    s1: _3 = Add(copy _3, 1)
+                    terminator: goto -> bb1
+                bb3:
+                    s0: _0 = copy _2
+                    terminator: return
+        body1 { arg_count: 2, locals: 16 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: ()
+                _5: i64
+                _6: i64
+                _7: ()
+                _8: ()
+                _9: bool
+                _10: i64
+                _11: ()
+                _12: ()
+                _13: bool
+                _14: i64
+                _15: ()
+            blocks:
+                bb0:
+                    s0: _3 = 0
+                    s1: _5 = copy _1
+                    s2: _6 = copy _2
+                    terminator: goto -> bb1
+                bb1:
+                    terminator: goto -> bb2
+                bb2:
+                    s0: _9 = Ge(copy _5, copy _6)
+                    terminator: switch copy _9 [1 -> bb4] otherwise -> bb5
+                bb3:
+                    terminator: goto -> bb8
+                bb4:
+                    terminator: goto -> bb3
+                bb5:
+                    s0: _8 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _10 = copy _5
+                    s1: _5 = Add(copy _5, 1)
+                    s2: _3 = Add(copy _3, copy _10)
+                    s3: _11 = aggregate(tuple; [])
+                    s4: _3 = Add(copy _3, copy _10)
+                    s5: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb1
+                bb7:
+                    s0: _8 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb8:
+                    terminator: goto -> bb9
+                bb9:
+                    s0: _13 = Ge(copy _5, copy _6)
+                    terminator: switch copy _13 [1 -> bb11] otherwise -> bb12
+                bb10:
+                    s0: _0 = copy _3
+                    terminator: <none>
+                bb11:
+                    terminator: goto -> bb10
+                bb12:
+                    s0: _12 = aggregate(tuple; [])
+                    terminator: goto -> bb13
+                bb13:
+                    s0: _14 = copy _5
+                    s1: _5 = Add(copy _5, 1)
+                    s2: _3 = Add(copy _3, copy _14)
+                    s3: _15 = aggregate(tuple; [])
+                    s4: _3 = Add(copy _3, copy _14)
+                    s5: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb8
+                bb14:
+                    s0: _12 = aggregate(tuple; [])
+                    terminator: goto -> bb13
+        body2 { arg_count: 1, locals: 16 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: ()
+                _5: bool
+                _6: i64
+                _7: ()
+                _8: bool
+                _9: i64
+                _10: ()
+                _11: bool
+                _12: i64
+                _13: ()
+                _14: bool
+                _15: i64
+            blocks:
+                bb0:
+                    s0: _2 = 2
+                    terminator: goto -> bb1
+                bb1:
+                    terminator: goto -> bb2
+                bb2:
+                    s0: _6 = Mul(copy _2, copy _2)
+                    s1: _5 = Gt(copy _6, copy _1)
+                    terminator: switch copy _5 [1 -> bb4] otherwise -> bb5
+                bb3:
+                    terminator: goto -> bb12
+                bb4:
+                    s0: _3 = copy _1
+                    terminator: goto -> bb3
+                bb5:
+                    s0: _4 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _9 = Rem(copy _1, copy _2)
+                    s1: _8 = Eq(copy _9, 0)
+                    terminator: switch copy _8 [1 -> bb8] otherwise -> bb9
+                bb7:
+                    s0: _4 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb8:
+                    s0: _3 = copy _2
+                    terminator: goto -> bb3
+                bb9:
+                    s0: _7 = aggregate(tuple; [])
+                    terminator: goto -> bb10
+                bb10:
+                    s0: _2 = Add(copy _2, 1)
+                    terminator: goto -> bb1
+                bb11:
+                    s0: _7 = aggregate(tuple; [])
+                    terminator: goto -> bb10
+                bb12:
+                    terminator: goto -> bb13
+                bb13:
+                    s0: _12 = Mul(copy _2, copy _2)
+                    s1: _11 = Gt(copy _12, copy _1)
+                    terminator: switch copy _11 [1 -> bb15] otherwise -> bb16
+                bb14:
+                    terminator: <none>
+                bb15:
+                    s0: _0 = copy _1
+                    terminator: goto -> bb14
+                bb16:
+                    s0: _10 = aggregate(tuple; [])
+                    terminator: goto -> bb17
+                bb17:
+                    s0: _15 = Rem(copy _1, copy _2)
+                    s1: _14 = Eq(copy _15, 0)
+                    terminator: switch copy _14 [1 -> bb19] otherwise -> bb20
+                bb18:
+                    s0: _10 = aggregate(tuple; [])
+                    terminator: goto -> bb17
+                bb19:
+                    s0: _0 = copy _2
+                    terminator: goto -> bb14
+                bb20:
+                    s0: _13 = aggregate(tuple; [])
+                    terminator: goto -> bb21
+                bb21:
+                    s0: _2 = Add(copy _2, 1)
+                    terminator: goto -> bb12
+                bb22:
+                    s0: _13 = aggregate(tuple; [])
+                    terminator: goto -> bb21
+        body3 { arg_count: 1, locals: 8 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: bool
+                _5: ()
+                _6: bool
+                _7: i64
+            blocks:
+                bb0:
+                    s0: _2 = 0
+                    s1: _3 = 0
+                    terminator: goto -> bb1
+                bb1:
+                    s0: _4 = Lt(copy _3, copy _1)
+                    terminator: switch copy _4 [1 -> bb2] otherwise -> bb3
+                bb2:
+                    s0: _3 = Add(copy _3, 1)
+                    s1: _7 = Rem(copy _3, 2)
+                    s2: _6 = Ne(copy _7, 0)
+                    terminator: switch copy _6 [1 -> bb4] otherwise -> bb5
+                bb3:
+                    s0: _0 = copy _2
+                    terminator: <none>
+                bb4:
+                    terminator: goto -> bb1
+                bb5:
+                    s0: _5 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _2 = Add(copy _2, copy _3)
+                    terminator: goto -> bb1
+                bb7:
+                    s0: _5 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+        body4 { arg_count: 0, locals: 163 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i32
+                _2: i32
+                _3: i64
+                _4: i32
+                _5: i64
+                _6: i32
+                _7: i32
+                _8: i64
+                _9: i32
+                _10: i64
+                _11: i32
+                _12: i32
+                _13: i64
+                _14: i32
+                _15: i64
+                _16: i32
+                _17: i32
+                _18: i64
+                _19: i32
+                _20: i32
+                _21: i64
+                _22: ()
+                _23: i64
+                _24: i64
+                _25: ()
+                _26: ()
+                _27: bool
+                _28: i64
+                _29: ()
+                _30: i64
+                _31: i64
+                _32: ()
+                _33: ()
+                _34: bool
+                _35: i64
+                _36: ()
+                _37: ()
+                _38: bool
+                _39: i32
+                _40: bool
+                _41: i32
+                _42: ()
+                _43: bool
+                _44: i32
+                _45: bool
+                _46: i32
+                _47: ()
+                _48: bool
+                _49: i64
+                _50: ()
+                _51: ()
+                _52: bool
+                _53: i32
+                _54: bool
+                _55: i32
+                _56: ()
+                _57: bool
+                _58: i32
+                _59: bool
+                _60: i32
+                _61: i64
+                _62: i64
+                _63: ()
+                _64: ()
+                _65: bool
+                _66: i64
+                _67: ()
+                _68: ()
+                _69: bool
+                _70: i32
+                _71: bool
+                _72: i32
+                _73: ()
+                _74: bool
+                _75: i32
+                _76: bool
+                _77: i32
+                _78: ()
+                _79: bool
+                _80: i64
+                _81: ()
+                _82: ()
+                _83: bool
+                _84: i32
+                _85: bool
+                _86: i32
+                _87: ()
+                _88: bool
+                _89: i32
+                _90: bool
+                _91: i32
+                _92: ()
+                _93: bool
+                _94: i64
+                _95: ()
+                _96: i64
+                _97: i64
+                _98: ()
+                _99: ()
+                _100: bool
+                _101: i64
+                _102: ()
+                _103: ()
+                _104: bool
+                _105: i32
+                _106: bool
+                _107: i32
+                _108: ()
+                _109: bool
+                _110: i32
+                _111: bool
+                _112: i32
+                _113: ()
+                _114: bool
+                _115: i64
+                _116: ()
+                _117: ()
+                _118: bool
+                _119: i32
+                _120: bool
+                _121: i32
+                _122: ()
+                _123: bool
+                _124: i32
+                _125: bool
+                _126: i32
+                _127: i64
+                _128: i64
+                _129: ()
+                _130: ()
+                _131: bool
+                _132: i64
+                _133: ()
+                _134: ()
+                _135: bool
+                _136: i32
+                _137: bool
+                _138: i32
+                _139: ()
+                _140: bool
+                _141: i32
+                _142: bool
+                _143: i32
+                _144: ()
+                _145: bool
+                _146: i64
+                _147: ()
+                _148: ()
+                _149: bool
+                _150: i32
+                _151: bool
+                _152: i32
+                _153: ()
+                _154: bool
+                _155: i32
+                _156: bool
+                _157: i32
+                _158: i32
+                _159: i32
+                _160: i64
+                _161: i32
+                _162: i32
+            blocks:
+                bb0:
+                    terminator: call global printf("=== Loop Constructs ===\n\n") -> _1 then bb1
+                bb1:
+                    terminator: call global printf("1. While loop - factorial:\n") -> _2 then bb2
+                bb2:
+                    terminator: call fn factorial(5) -> _3 then bb3
+                bb3:
+                    terminator: call global printf("  5! = %d\n", copy _3) -> _4 then bb4
+                bb4:
+                    terminator: call fn factorial(7) -> _5 then bb5
+                bb5:
+                    terminator: call global printf("  7! = %d\n", copy _5) -> _6 then bb6
+                bb6:
+                    terminator: call global printf("\n2. For loop - sum range:\n") -> _7 then bb7
+                bb7:
+                    terminator: call fn sum_range(1, 10) -> _8 then bb8
+                bb8:
+                    terminator: call global printf("  sum(1..10) = %d\n", copy _8) -> _9 then bb9
+                bb9:
+                    terminator: call fn sum_range(5, 15) -> _10 then bb10
+                bb10:
+                    terminator: call global printf("  sum(5..15) = %d\n", copy _10) -> _11 then bb11
+                bb11:
+                    terminator: call global printf("\n3. Loop with break expression:\n") -> _12 then bb12
+                bb12:
+                    terminator: call fn find_first_divisor(24) -> _13 then bb13
+                bb13:
+                    terminator: call global printf("  First divisor of 24: %d\n", copy _13) -> _14 then bb14
+                bb14:
+                    terminator: call fn find_first_divisor(17) -> _15 then bb15
+                bb15:
+                    terminator: call global printf("  First divisor of 17: %d\n", copy _15) -> _16 then bb16
+                bb16:
+                    terminator: call global printf("\n4. Loop with continue:\n") -> _17 then bb17
+                bb17:
+                    terminator: call fn sum_even_numbers(10) -> _18 then bb18
+                bb18:
+                    terminator: call global printf("  Sum of even numbers < 10: %d\n", copy _18) -> _19 then bb19
+                bb19:
+                    terminator: call global printf("\n5. Nested loops:\n") -> _20 then bb20
+                bb20:
+                    s0: _21 = 0
+                    s1: _23 = 1
+                    s2: _24 = 4
+                    terminator: goto -> bb21
+                bb21:
+                    terminator: goto -> bb22
+                bb22:
+                    s0: _27 = Ge(copy _23, copy _24)
+                    terminator: switch copy _27 [1 -> bb24] otherwise -> bb25
+                bb23:
+                    terminator: goto -> bb120
+                bb24:
+                    terminator: goto -> bb23
+                bb25:
+                    s0: _26 = aggregate(tuple; [])
+                    terminator: goto -> bb26
+                bb26:
+                    s0: _28 = copy _23
+                    s1: _23 = Add(copy _23, 1)
+                    s2: _30 = 1
+                    s3: _31 = 4
+                    terminator: goto -> bb28
+                bb27:
+                    s0: _26 = aggregate(tuple; [])
+                    terminator: goto -> bb26
+                bb28:
+                    terminator: goto -> bb29
+                bb29:
+                    s0: _34 = Ge(copy _30, copy _31)
+                    terminator: switch copy _34 [1 -> bb31] otherwise -> bb32
+                bb30:
+                    terminator: goto -> bb51
+                bb31:
+                    terminator: goto -> bb30
+                bb32:
+                    s0: _33 = aggregate(tuple; [])
+                    terminator: goto -> bb33
+                bb33:
+                    s0: _35 = copy _30
+                    s1: _30 = Add(copy _30, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _38 = Eq(copy _28, copy _35)
+                    terminator: switch copy _38 [1 -> bb35] otherwise -> bb36
+                bb34:
+                    s0: _33 = aggregate(tuple; [])
+                    terminator: goto -> bb33
+                bb35:
+                    terminator: call global printf("[%d] ", copy _28) -> _39 then bb38
+                bb36:
+                    s0: _37 = aggregate(tuple; [])
+                    terminator: goto -> bb37
+                bb37:
+                    s0: _40 = Eq(copy _28, copy _35)
+                    terminator: switch copy _40 [1 -> bb39] otherwise -> bb40
+                bb38:
+                    s0: _37 = aggregate(tuple; [])
+                    terminator: goto -> bb37
+                bb39:
+                    terminator: call global printf("[%d] ", copy _28) -> _41 then bb42
+                bb40:
+                    s0: _36 = aggregate(tuple; [])
+                    terminator: goto -> bb41
+                bb41:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _43 = Eq(copy _28, copy _35)
+                    terminator: switch copy _43 [1 -> bb43] otherwise -> bb44
+                bb42:
+                    s0: _36 = aggregate(tuple; [])
+                    terminator: goto -> bb41
+                bb43:
+                    terminator: call global printf("[%d] ", copy _28) -> _44 then bb46
+                bb44:
+                    s0: _42 = aggregate(tuple; [])
+                    terminator: goto -> bb45
+                bb45:
+                    s0: _45 = Eq(copy _28, copy _35)
+                    terminator: switch copy _45 [1 -> bb47] otherwise -> bb48
+                bb46:
+                    s0: _42 = aggregate(tuple; [])
+                    terminator: goto -> bb45
+                bb47:
+                    terminator: call global printf("[%d] ", copy _28) -> _46 then bb50
+                bb48:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb49
+                bb49:
+                    terminator: goto -> bb28
+                bb50:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb49
+                bb51:
+                    terminator: goto -> bb52
+                bb52:
+                    s0: _48 = Ge(copy _30, copy _31)
+                    terminator: switch copy _48 [1 -> bb54] otherwise -> bb55
+                bb53:
+                    s0: _61 = 1
+                    s1: _62 = 4
+                    terminator: goto -> bb74
+                bb54:
+                    terminator: goto -> bb53
+                bb55:
+                    s0: _47 = aggregate(tuple; [])
+                    terminator: goto -> bb56
+                bb56:
+                    s0: _49 = copy _30
+                    s1: _30 = Add(copy _30, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _52 = Eq(copy _28, copy _49)
+                    terminator: switch copy _52 [1 -> bb58] otherwise -> bb59
+                bb57:
+                    s0: _47 = aggregate(tuple; [])
+                    terminator: goto -> bb56
+                bb58:
+                    terminator: call global printf("[%d] ", copy _28) -> _53 then bb61
+                bb59:
+                    s0: _51 = aggregate(tuple; [])
+                    terminator: goto -> bb60
+                bb60:
+                    s0: _54 = Eq(copy _28, copy _49)
+                    terminator: switch copy _54 [1 -> bb62] otherwise -> bb63
+                bb61:
+                    s0: _51 = aggregate(tuple; [])
+                    terminator: goto -> bb60
+                bb62:
+                    terminator: call global printf("[%d] ", copy _28) -> _55 then bb65
+                bb63:
+                    s0: _50 = aggregate(tuple; [])
+                    terminator: goto -> bb64
+                bb64:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _57 = Eq(copy _28, copy _49)
+                    terminator: switch copy _57 [1 -> bb66] otherwise -> bb67
+                bb65:
+                    s0: _50 = aggregate(tuple; [])
+                    terminator: goto -> bb64
+                bb66:
+                    terminator: call global printf("[%d] ", copy _28) -> _58 then bb69
+                bb67:
+                    s0: _56 = aggregate(tuple; [])
+                    terminator: goto -> bb68
+                bb68:
+                    s0: _59 = Eq(copy _28, copy _49)
+                    terminator: switch copy _59 [1 -> bb70] otherwise -> bb71
+                bb69:
+                    s0: _56 = aggregate(tuple; [])
+                    terminator: goto -> bb68
+                bb70:
+                    terminator: call global printf("[%d] ", copy _28) -> _60 then bb73
+                bb71:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb72
+                bb72:
+                    terminator: goto -> bb51
+                bb73:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb72
+                bb74:
+                    terminator: goto -> bb75
+                bb75:
+                    s0: _65 = Ge(copy _61, copy _62)
+                    terminator: switch copy _65 [1 -> bb77] otherwise -> bb78
+                bb76:
+                    terminator: goto -> bb97
+                bb77:
+                    terminator: goto -> bb76
+                bb78:
+                    s0: _64 = aggregate(tuple; [])
+                    terminator: goto -> bb79
+                bb79:
+                    s0: _66 = copy _61
+                    s1: _61 = Add(copy _61, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _69 = Eq(copy _28, copy _66)
+                    terminator: switch copy _69 [1 -> bb81] otherwise -> bb82
+                bb80:
+                    s0: _64 = aggregate(tuple; [])
+                    terminator: goto -> bb79
+                bb81:
+                    terminator: call global printf("[%d] ", copy _28) -> _70 then bb84
+                bb82:
+                    s0: _68 = aggregate(tuple; [])
+                    terminator: goto -> bb83
+                bb83:
+                    s0: _71 = Eq(copy _28, copy _66)
+                    terminator: switch copy _71 [1 -> bb85] otherwise -> bb86
+                bb84:
+                    s0: _68 = aggregate(tuple; [])
+                    terminator: goto -> bb83
+                bb85:
+                    terminator: call global printf("[%d] ", copy _28) -> _72 then bb88
+                bb86:
+                    s0: _67 = aggregate(tuple; [])
+                    terminator: goto -> bb87
+                bb87:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _74 = Eq(copy _28, copy _66)
+                    terminator: switch copy _74 [1 -> bb89] otherwise -> bb90
+                bb88:
+                    s0: _67 = aggregate(tuple; [])
+                    terminator: goto -> bb87
+                bb89:
+                    terminator: call global printf("[%d] ", copy _28) -> _75 then bb92
+                bb90:
+                    s0: _73 = aggregate(tuple; [])
+                    terminator: goto -> bb91
+                bb91:
+                    s0: _76 = Eq(copy _28, copy _66)
+                    terminator: switch copy _76 [1 -> bb93] otherwise -> bb94
+                bb92:
+                    s0: _73 = aggregate(tuple; [])
+                    terminator: goto -> bb91
+                bb93:
+                    terminator: call global printf("[%d] ", copy _28) -> _77 then bb96
+                bb94:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb95
+                bb95:
+                    terminator: goto -> bb74
+                bb96:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb95
+                bb97:
+                    terminator: goto -> bb98
+                bb98:
+                    s0: _79 = Ge(copy _61, copy _62)
+                    terminator: switch copy _79 [1 -> bb100] otherwise -> bb101
+                bb99:
+                    terminator: goto -> bb21
+                bb100:
+                    terminator: goto -> bb99
+                bb101:
+                    s0: _78 = aggregate(tuple; [])
+                    terminator: goto -> bb102
+                bb102:
+                    s0: _80 = copy _61
+                    s1: _61 = Add(copy _61, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _83 = Eq(copy _28, copy _80)
+                    terminator: switch copy _83 [1 -> bb104] otherwise -> bb105
+                bb103:
+                    s0: _78 = aggregate(tuple; [])
+                    terminator: goto -> bb102
+                bb104:
+                    terminator: call global printf("[%d] ", copy _28) -> _84 then bb107
+                bb105:
+                    s0: _82 = aggregate(tuple; [])
+                    terminator: goto -> bb106
+                bb106:
+                    s0: _85 = Eq(copy _28, copy _80)
+                    terminator: switch copy _85 [1 -> bb108] otherwise -> bb109
+                bb107:
+                    s0: _82 = aggregate(tuple; [])
+                    terminator: goto -> bb106
+                bb108:
+                    terminator: call global printf("[%d] ", copy _28) -> _86 then bb111
+                bb109:
+                    s0: _81 = aggregate(tuple; [])
+                    terminator: goto -> bb110
+                bb110:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _88 = Eq(copy _28, copy _80)
+                    terminator: switch copy _88 [1 -> bb112] otherwise -> bb113
+                bb111:
+                    s0: _81 = aggregate(tuple; [])
+                    terminator: goto -> bb110
+                bb112:
+                    terminator: call global printf("[%d] ", copy _28) -> _89 then bb115
+                bb113:
+                    s0: _87 = aggregate(tuple; [])
+                    terminator: goto -> bb114
+                bb114:
+                    s0: _90 = Eq(copy _28, copy _80)
+                    terminator: switch copy _90 [1 -> bb116] otherwise -> bb117
+                bb115:
+                    s0: _87 = aggregate(tuple; [])
+                    terminator: goto -> bb114
+                bb116:
+                    terminator: call global printf("[%d] ", copy _28) -> _91 then bb119
+                bb117:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb118
+                bb118:
+                    terminator: goto -> bb97
+                bb119:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb118
+                bb120:
+                    terminator: goto -> bb121
+                bb121:
+                    s0: _93 = Ge(copy _23, copy _24)
+                    terminator: switch copy _93 [1 -> bb123] otherwise -> bb124
+                bb122:
+                    terminator: call global printf("\n  Iterations: %d\n", copy _21) -> _158 then bb219
+                bb123:
+                    terminator: goto -> bb122
+                bb124:
+                    s0: _92 = aggregate(tuple; [])
+                    terminator: goto -> bb125
+                bb125:
+                    s0: _94 = copy _23
+                    s1: _23 = Add(copy _23, 1)
+                    s2: _96 = 1
+                    s3: _97 = 4
+                    terminator: goto -> bb127
+                bb126:
+                    s0: _92 = aggregate(tuple; [])
+                    terminator: goto -> bb125
+                bb127:
+                    terminator: goto -> bb128
+                bb128:
+                    s0: _100 = Ge(copy _96, copy _97)
+                    terminator: switch copy _100 [1 -> bb130] otherwise -> bb131
+                bb129:
+                    terminator: goto -> bb150
+                bb130:
+                    terminator: goto -> bb129
+                bb131:
+                    s0: _99 = aggregate(tuple; [])
+                    terminator: goto -> bb132
+                bb132:
+                    s0: _101 = copy _96
+                    s1: _96 = Add(copy _96, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _104 = Eq(copy _94, copy _101)
+                    terminator: switch copy _104 [1 -> bb134] otherwise -> bb135
+                bb133:
+                    s0: _99 = aggregate(tuple; [])
+                    terminator: goto -> bb132
+                bb134:
+                    terminator: call global printf("[%d] ", copy _94) -> _105 then bb137
+                bb135:
+                    s0: _103 = aggregate(tuple; [])
+                    terminator: goto -> bb136
+                bb136:
+                    s0: _106 = Eq(copy _94, copy _101)
+                    terminator: switch copy _106 [1 -> bb138] otherwise -> bb139
+                bb137:
+                    s0: _103 = aggregate(tuple; [])
+                    terminator: goto -> bb136
+                bb138:
+                    terminator: call global printf("[%d] ", copy _94) -> _107 then bb141
+                bb139:
+                    s0: _102 = aggregate(tuple; [])
+                    terminator: goto -> bb140
+                bb140:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _109 = Eq(copy _94, copy _101)
+                    terminator: switch copy _109 [1 -> bb142] otherwise -> bb143
+                bb141:
+                    s0: _102 = aggregate(tuple; [])
+                    terminator: goto -> bb140
+                bb142:
+                    terminator: call global printf("[%d] ", copy _94) -> _110 then bb145
+                bb143:
+                    s0: _108 = aggregate(tuple; [])
+                    terminator: goto -> bb144
+                bb144:
+                    s0: _111 = Eq(copy _94, copy _101)
+                    terminator: switch copy _111 [1 -> bb146] otherwise -> bb147
+                bb145:
+                    s0: _108 = aggregate(tuple; [])
+                    terminator: goto -> bb144
+                bb146:
+                    terminator: call global printf("[%d] ", copy _94) -> _112 then bb149
+                bb147:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb148
+                bb148:
+                    terminator: goto -> bb127
+                bb149:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb148
+                bb150:
+                    terminator: goto -> bb151
+                bb151:
+                    s0: _114 = Ge(copy _96, copy _97)
+                    terminator: switch copy _114 [1 -> bb153] otherwise -> bb154
+                bb152:
+                    s0: _127 = 1
+                    s1: _128 = 4
+                    terminator: goto -> bb173
+                bb153:
+                    terminator: goto -> bb152
+                bb154:
+                    s0: _113 = aggregate(tuple; [])
+                    terminator: goto -> bb155
+                bb155:
+                    s0: _115 = copy _96
+                    s1: _96 = Add(copy _96, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _118 = Eq(copy _94, copy _115)
+                    terminator: switch copy _118 [1 -> bb157] otherwise -> bb158
+                bb156:
+                    s0: _113 = aggregate(tuple; [])
+                    terminator: goto -> bb155
+                bb157:
+                    terminator: call global printf("[%d] ", copy _94) -> _119 then bb160
+                bb158:
+                    s0: _117 = aggregate(tuple; [])
+                    terminator: goto -> bb159
+                bb159:
+                    s0: _120 = Eq(copy _94, copy _115)
+                    terminator: switch copy _120 [1 -> bb161] otherwise -> bb162
+                bb160:
+                    s0: _117 = aggregate(tuple; [])
+                    terminator: goto -> bb159
+                bb161:
+                    terminator: call global printf("[%d] ", copy _94) -> _121 then bb164
+                bb162:
+                    s0: _116 = aggregate(tuple; [])
+                    terminator: goto -> bb163
+                bb163:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _123 = Eq(copy _94, copy _115)
+                    terminator: switch copy _123 [1 -> bb165] otherwise -> bb166
+                bb164:
+                    s0: _116 = aggregate(tuple; [])
+                    terminator: goto -> bb163
+                bb165:
+                    terminator: call global printf("[%d] ", copy _94) -> _124 then bb168
+                bb166:
+                    s0: _122 = aggregate(tuple; [])
+                    terminator: goto -> bb167
+                bb167:
+                    s0: _125 = Eq(copy _94, copy _115)
+                    terminator: switch copy _125 [1 -> bb169] otherwise -> bb170
+                bb168:
+                    s0: _122 = aggregate(tuple; [])
+                    terminator: goto -> bb167
+                bb169:
+                    terminator: call global printf("[%d] ", copy _94) -> _126 then bb172
+                bb170:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb171
+                bb171:
+                    terminator: goto -> bb150
+                bb172:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb171
+                bb173:
+                    terminator: goto -> bb174
+                bb174:
+                    s0: _131 = Ge(copy _127, copy _128)
+                    terminator: switch copy _131 [1 -> bb176] otherwise -> bb177
+                bb175:
+                    terminator: goto -> bb196
+                bb176:
+                    terminator: goto -> bb175
+                bb177:
+                    s0: _130 = aggregate(tuple; [])
+                    terminator: goto -> bb178
+                bb178:
+                    s0: _132 = copy _127
+                    s1: _127 = Add(copy _127, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _135 = Eq(copy _94, copy _132)
+                    terminator: switch copy _135 [1 -> bb180] otherwise -> bb181
+                bb179:
+                    s0: _130 = aggregate(tuple; [])
+                    terminator: goto -> bb178
+                bb180:
+                    terminator: call global printf("[%d] ", copy _94) -> _136 then bb183
+                bb181:
+                    s0: _134 = aggregate(tuple; [])
+                    terminator: goto -> bb182
+                bb182:
+                    s0: _137 = Eq(copy _94, copy _132)
+                    terminator: switch copy _137 [1 -> bb184] otherwise -> bb185
+                bb183:
+                    s0: _134 = aggregate(tuple; [])
+                    terminator: goto -> bb182
+                bb184:
+                    terminator: call global printf("[%d] ", copy _94) -> _138 then bb187
+                bb185:
+                    s0: _133 = aggregate(tuple; [])
+                    terminator: goto -> bb186
+                bb186:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _140 = Eq(copy _94, copy _132)
+                    terminator: switch copy _140 [1 -> bb188] otherwise -> bb189
+                bb187:
+                    s0: _133 = aggregate(tuple; [])
+                    terminator: goto -> bb186
+                bb188:
+                    terminator: call global printf("[%d] ", copy _94) -> _141 then bb191
+                bb189:
+                    s0: _139 = aggregate(tuple; [])
+                    terminator: goto -> bb190
+                bb190:
+                    s0: _142 = Eq(copy _94, copy _132)
+                    terminator: switch copy _142 [1 -> bb192] otherwise -> bb193
+                bb191:
+                    s0: _139 = aggregate(tuple; [])
+                    terminator: goto -> bb190
+                bb192:
+                    terminator: call global printf("[%d] ", copy _94) -> _143 then bb195
+                bb193:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb194
+                bb194:
+                    terminator: goto -> bb173
+                bb195:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb194
+                bb196:
+                    terminator: goto -> bb197
+                bb197:
+                    s0: _145 = Ge(copy _127, copy _128)
+                    terminator: switch copy _145 [1 -> bb199] otherwise -> bb200
+                bb198:
+                    terminator: goto -> bb120
+                bb199:
+                    terminator: goto -> bb198
+                bb200:
+                    s0: _144 = aggregate(tuple; [])
+                    terminator: goto -> bb201
+                bb201:
+                    s0: _146 = copy _127
+                    s1: _127 = Add(copy _127, 1)
+                    s2: _21 = Add(copy _21, 1)
+                    s3: _149 = Eq(copy _94, copy _146)
+                    terminator: switch copy _149 [1 -> bb203] otherwise -> bb204
+                bb202:
+                    s0: _144 = aggregate(tuple; [])
+                    terminator: goto -> bb201
+                bb203:
+                    terminator: call global printf("[%d] ", copy _94) -> _150 then bb206
+                bb204:
+                    s0: _148 = aggregate(tuple; [])
+                    terminator: goto -> bb205
+                bb205:
+                    s0: _151 = Eq(copy _94, copy _146)
+                    terminator: switch copy _151 [1 -> bb207] otherwise -> bb208
+                bb206:
+                    s0: _148 = aggregate(tuple; [])
+                    terminator: goto -> bb205
+                bb207:
+                    terminator: call global printf("[%d] ", copy _94) -> _152 then bb210
+                bb208:
+                    s0: _147 = aggregate(tuple; [])
+                    terminator: goto -> bb209
+                bb209:
+                    s0: _21 = Add(copy _21, 1)
+                    s1: _154 = Eq(copy _94, copy _146)
+                    terminator: switch copy _154 [1 -> bb211] otherwise -> bb212
+                bb210:
+                    s0: _147 = aggregate(tuple; [])
+                    terminator: goto -> bb209
+                bb211:
+                    terminator: call global printf("[%d] ", copy _94) -> _155 then bb214
+                bb212:
+                    s0: _153 = aggregate(tuple; [])
+                    terminator: goto -> bb213
+                bb213:
+                    s0: _156 = Eq(copy _94, copy _146)
+                    terminator: switch copy _156 [1 -> bb215] otherwise -> bb216
+                bb214:
+                    s0: _153 = aggregate(tuple; [])
+                    terminator: goto -> bb213
+                bb215:
+                    terminator: call global printf("[%d] ", copy _94) -> _157 then bb218
+                bb216:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb217
+                bb217:
+                    terminator: goto -> bb196
+                bb218:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb217
+                bb219:
+                    terminator: call global printf("\n6. Compile-time iteration (simulated):\n") -> _159 then bb220
+                bb220:
+                    s0: _160 = 120
+                    terminator: call global printf("  const 5! = %d\n", copy _160) -> _161 then bb221
+                bb221:
+                    terminator: call global printf("\n✓ Loop constructs demonstrated!\n") -> _162 then bb222
+                bb222:
+                    terminator: return
+}

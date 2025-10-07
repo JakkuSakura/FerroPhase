@@ -7,7 +7,9 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::ast::{get_threadlocal_serializer, BExpr, Ident, Ty, TySlot, TypeBounds, TypeStruct, Value};
+use crate::ast::{
+    get_threadlocal_serializer, BExpr, Ident, Ty, TySlot, TypeBounds, TypeStruct, Value,
+};
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
 

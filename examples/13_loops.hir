@@ -1,0 +1,445 @@
+hir::Program {
+    fn factorial(n: i64) -> i64 {
+        // params: [n: i64]
+        {
+            let mut result = 1;
+            let mut i = 1;
+            while ((i <= n))
+                {
+                    result = (result * i);
+                    i = (i + 1);
+                }
+            result
+            result
+        }
+    }
+
+    fn sum_range(start: i64, end: i64) -> i64 {
+        // params: [start: i64, end: i64]
+        {
+            let mut sum = 0;
+            {
+                let mut __fp_for_iter_0 = start;
+                let __fp_for_end_0 = end;
+                loop
+                    {
+                        if ((__fp_for_iter_0 >= __fp_for_end_0))
+                            {
+                                break;
+                            }
+                        let i = __fp_for_iter_0;
+                        __fp_for_iter_0 = (__fp_for_iter_0 + 1);
+                        {
+                            sum = (sum + i);
+                        }
+                        {
+                            sum = (sum + i);
+                        }
+                    }
+                loop
+                    {
+                        if ((__fp_for_iter_0 >= __fp_for_end_0))
+                            {
+                                break;
+                            }
+                        let i = __fp_for_iter_0;
+                        __fp_for_iter_0 = (__fp_for_iter_0 + 1);
+                        {
+                            sum = (sum + i);
+                        }
+                        {
+                            sum = (sum + i);
+                        }
+                    }
+            }
+            sum
+            sum
+        }
+    }
+
+    fn find_first_divisor(n: i64) -> i64 {
+        // params: [n: i64]
+        {
+            let mut i = 2;
+            loop
+                {
+                    if (((i * i) > n))
+                        {
+                            break n;
+                        }
+                    if (((n % i) == 0))
+                        {
+                            break i;
+                        }
+                    i = (i + 1);
+                }
+            loop
+                {
+                    if (((i * i) > n))
+                        {
+                            break n;
+                        }
+                    if (((n % i) == 0))
+                        {
+                            break i;
+                        }
+                    i = (i + 1);
+                }
+        }
+    }
+
+    fn sum_even_numbers(limit: i64) -> i64 {
+        // params: [limit: i64]
+        {
+            let mut sum = 0;
+            let mut i = 0;
+            while ((i < limit))
+                {
+                    i = (i + 1);
+                    if (((i % 2) != 0))
+                        {
+                            continue;
+                        }
+                    sum = (sum + i);
+                }
+            sum
+            sum
+        }
+    }
+
+    fn main() -> () {
+        {
+            printf("=== Loop Constructs ===
+
+");
+            printf("1. While loop - factorial:
+");
+            printf("  5! = %d
+", factorial(5));
+            printf("  7! = %d
+", factorial(7));
+            printf("
+2. For loop - sum range:
+");
+            printf("  sum(1..10) = %d
+", sum_range(1, 10));
+            printf("  sum(5..15) = %d
+", sum_range(5, 15));
+            printf("
+3. Loop with break expression:
+");
+            printf("  First divisor of 24: %d
+", find_first_divisor(24));
+            printf("  First divisor of 17: %d
+", find_first_divisor(17));
+            printf("
+4. Loop with continue:
+");
+            printf("  Sum of even numbers < 10: %d
+", sum_even_numbers(10));
+            printf("
+5. Nested loops:
+");
+            let mut count = 0;
+            {
+                let mut __fp_for_iter_1 = 1;
+                let __fp_for_end_1 = 4;
+                loop
+                    {
+                        if ((__fp_for_iter_1 >= __fp_for_end_1))
+                            {
+                                break;
+                            }
+                        let i = __fp_for_iter_1;
+                        __fp_for_iter_1 = (__fp_for_iter_1 + 1);
+                        {
+                            let mut __fp_for_iter_2 = 1;
+                            let __fp_for_end_2 = 4;
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                        }
+                        {
+                            let mut __fp_for_iter_2 = 1;
+                            let __fp_for_end_2 = 4;
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                        }
+                    }
+                loop
+                    {
+                        if ((__fp_for_iter_1 >= __fp_for_end_1))
+                            {
+                                break;
+                            }
+                        let i = __fp_for_iter_1;
+                        __fp_for_iter_1 = (__fp_for_iter_1 + 1);
+                        {
+                            let mut __fp_for_iter_2 = 1;
+                            let __fp_for_end_2 = 4;
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                        }
+                        {
+                            let mut __fp_for_iter_2 = 1;
+                            let __fp_for_end_2 = 4;
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                            loop
+                                {
+                                    if ((__fp_for_iter_2 >= __fp_for_end_2))
+                                        {
+                                            break;
+                                        }
+                                    let j = __fp_for_iter_2;
+                                    __fp_for_iter_2 = (__fp_for_iter_2 + 1);
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                    {
+                                        count = (count + 1);
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                        if ((i == j))
+                                            {
+                                                printf("[%d] ", i);
+                                            }
+                                    }
+                                }
+                        }
+                    }
+            }
+            printf("
+  Iterations: %d
+", count);
+            printf("
+6. Compile-time iteration (simulated):
+");
+            const FACTORIAL_CONST: i64 =
+                120;
+            printf("  const 5! = %d
+", FACTORIAL_CONST);
+            printf("
+✓ Loop constructs demonstrated!
+");
+        }
+    }
+}

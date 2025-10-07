@@ -24,7 +24,6 @@ use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
 use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_typing::TypingDiagnosticLevel;
-use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -387,8 +386,6 @@ impl Pipeline {
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
-            // Save a debug file with type annotations
-            self.save_typed_debug(&ast, base_path)?;
         }
 
         self.run_stage(
@@ -809,34 +806,14 @@ impl Pipeline {
             return Ok(());
         }
 
-        let rendered = if extension == EXT_AST_TYPED || extension == EXT_AST_EVAL {
-            // Use the new language-agnostic AST printer for typed AST files
-            use fp_core::ast::{AstPrinter, AstPrinterConfig};
-            let config = AstPrinterConfig {
-                show_types: true,
-                show_spans: options.debug.verbose,
-                indent_size: 2,
-                max_depth: None,
-            };
-            let mut printer = AstPrinter::new(config);
-            printer.print_node(ast)
-        } else {
-            // Use the old pretty printer for other files
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-            let display = pretty(ast, pretty_opts);
-            let mut rendered = String::new();
-            if let Err(err) = write!(&mut rendered, "{}", display) {
-                debug!(
-                    error = %err,
-                    extension = extension,
-                    "failed to format {} intermediate",
-                    extension
-                );
-                return Ok(());
-            }
-            rendered
+        use fp_core::pretty::{PrettyOptions, pretty};
+
+        let pretty_options = PrettyOptions {
+            show_types: extension != EXT_AST,
+            show_spans: options.debug.verbose,
+            indent_size: 2,
         };
+        let rendered = format!("{}", pretty(ast, pretty_options));
 
         if let Err(err) = fs::write(base_path.with_extension(extension), rendered) {
             debug!(
@@ -847,17 +824,6 @@ impl Pipeline {
             );
         }
 
-        Ok(())
-    }
-
-    fn save_typed_debug(&self, ast: &Node, base_path: &Path) -> Result<(), CliError> {
-        let inspector_output = fp_rust::ast_inspector::TypedAstInspector::inspect_node(ast);
-        if let Err(err) = fs::write(base_path.with_extension("ast-types"), inspector_output) {
-            debug!(
-                error = %err,
-                "failed to persist .ast-types debug file"
-            );
-        }
         Ok(())
     }
 

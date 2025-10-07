@@ -5,8 +5,8 @@ use quote::*;
 
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro};
 use fp_core::ast::*;
-use fp_core::bail;
 use fp_core::ast::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
+use fp_core::bail;
 use fp_core::pat::{Pattern, PatternIdent, PatternKind};
 use fp_core::printer::AstSerializerConfig;
 use fp_core::utils::anybox::AnyBox;

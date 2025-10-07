@@ -61,7 +61,16 @@ fn write_function(
         String::new()
     };
 
-    let header = format!("{}{}fn {}{}({}){}{}",vis, const_flag, func.sig.name, generics, params.join(", "), ret, span_suffix);
+    let header = format!(
+        "{}{}fn {}{}({}){}{}",
+        vis,
+        const_flag,
+        func.sig.name,
+        generics,
+        params.join(", "),
+        ret,
+        span_suffix
+    );
 
     if let Some(body) = &func.body {
         ctx.writeln(f, format!("{} {{", header))?;
@@ -663,7 +672,8 @@ fn fmt_type_primitive(prim: &crate::ast::TypePrimitive) -> String {
             TypeInt::I8 => "i8",
             TypeInt::U8 => "u8",
             TypeInt::BigInt => "BigInt",
-        }.to_string(),
+        }
+        .to_string(),
         TypePrimitive::Decimal(dec_ty) => match dec_ty {
             DecimalType::F64 => "f64",
             DecimalType::F32 => "f32",
@@ -671,7 +681,8 @@ fn fmt_type_primitive(prim: &crate::ast::TypePrimitive) -> String {
             DecimalType::Decimal { precision, scale } => {
                 return format!("Decimal({}, {})", precision, scale);
             }
-        }.to_string(),
+        }
+        .to_string(),
         TypePrimitive::Bool => "bool".to_string(),
         TypePrimitive::Char => "char".to_string(),
         TypePrimitive::String => "&str".to_string(),
