@@ -1,0 +1,22 @@
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+fn double(x: i64) -> i64 {
+    x * 2
+}
+fn compose(x: i64) -> i64 {
+    double(add(x, 1))
+}
+fn main() -> () {
+    println!("{}", add(2, 3));
+    println!("{}", double(5));
+    println!("{}", compose(10));
+    const RESULT: i64 = {
+        let x = 5;
+        let y = x + 10;
+        y * 2
+    };
+    println!("const: {}", RESULT);
+}
+
+// Type: ()
