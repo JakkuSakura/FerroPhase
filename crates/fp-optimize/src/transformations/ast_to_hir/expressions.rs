@@ -371,6 +371,9 @@ impl HirGenerator {
                 }
                 Ok(hir::ExprKind::Array(elements))
             }
+            Value::Map(_) => Err(crate::error::optimization_error(
+                "HashMap values are only supported during compile-time evaluation",
+            )),
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
             _ => Err(crate::error::optimization_error(format!(
                 "Unimplemented AST value type for HIR transformation: {:?}",

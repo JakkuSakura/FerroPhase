@@ -24,6 +24,7 @@ common_enum! {
         Char(ValueChar),
         String(ValueString),
         List(ValueList),
+        Map(ValueMap),
         Bytes(ValueBytes),
         Pointer(ValuePointer),
         Offset(ValueOffset),
@@ -76,6 +77,10 @@ impl Value {
     }
     pub const NULL: Value = Value::Null(ValueNull);
 
+    pub fn map(pairs: impl IntoIterator<Item = (Value, Value)>) -> Value {
+        Value::Map(ValueMap::from_pairs(pairs))
+    }
+
     pub fn expr(e: impl Into<Expr>) -> Self {
         let expr: Expr = e.into();
         let (ty, kind) = expr.into_parts();
@@ -108,6 +113,7 @@ impl ToJson for Value {
             Value::Char(c) => c.to_json(),
             Value::String(s) => s.to_json(),
             Value::List(l) => l.to_json(),
+            Value::Map(m) => m.to_json(),
             Value::Unit(u) => u.to_json(),
             Value::Null(n) => n.to_json(),
             Value::Undefined(u) => u.to_json(),

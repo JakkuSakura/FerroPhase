@@ -149,6 +149,16 @@ fn print_result(result: &Value) -> Result<()> {
                 println!("  [{}]: {:?}", i, item);
             }
         }
+        Value::Map(map) => {
+            println!(
+                "{} {} entries)",
+                style("Result:").green().bold(),
+                style(&format!("{{map with {}", map.len())).cyan()
+            );
+            for (idx, entry) in map.entries.iter().enumerate() {
+                println!("  [{}]: {} => {:?}", idx, entry.key, entry.value);
+            }
+        }
         Value::Struct(s) => {
             println!(
                 "{} {}",

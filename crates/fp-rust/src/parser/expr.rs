@@ -546,11 +546,40 @@ impl<'a> ExprParser<'a> {
             return self.parse_fp_macro(&m.mac);
         }
 
+        if Self::is_vec_macro(&m.mac) {
+            return self.parse_vec_macro(&m);
+        }
+
         if let Some(intrinsic_kind) = get_metaprogramming_intrinsic(&m.mac) {
             return self.parse_metaprogramming_intrinsic(&m.mac, intrinsic_kind);
         }
 
         Ok(Expr::any(RawExprMacro { raw: m }))
+    }
+
+    fn parse_vec_macro(&self, m: &syn::ExprMacro) -> Result<Expr> {
+        if m.mac.tokens.is_empty() {
+            return Ok(ExprArray { values: Vec::new() }.into());
+        }
+
+        let parsed = match syn::parse2::<syn::Expr>(m.mac.tokens.clone()) {
+            Ok(expr) => expr,
+            Err(err) => {
+                return self.err(
+                    format!("failed to parse vec! macro: {}", err),
+                    Expr::any(RawExprMacro { raw: m.clone() }),
+                );
+            }
+        };
+
+        match parsed {
+            syn::Expr::Array(array) => Ok(self.parse_expr_array(array)?.into()),
+            syn::Expr::Repeat(repeat) => Ok(self.parse_expr_repeat(repeat)?.into()),
+            other => self.err(
+                format!("unsupported vec! macro form: {}", other.to_token_stream()),
+                Expr::any(RawExprMacro { raw: m.clone() }),
+            ),
+        }
     }
 
     fn parse_stmt_macro(&self, raw: syn::StmtMacro) -> Result<BlockStmt> {
@@ -810,6 +839,14 @@ impl<'a> ExprParser<'a> {
 
     fn is_input_macro(mac: &syn::Macro) -> bool {
         mac.path.segments.len() == 1 && mac.path.segments[0].ident == "input"
+    }
+
+    fn is_vec_macro(mac: &syn::Macro) -> bool {
+        mac.path
+            .segments
+            .last()
+            .map(|segment| segment.ident == "vec")
+            .unwrap_or(false)
     }
 }
 
