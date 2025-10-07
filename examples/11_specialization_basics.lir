@@ -1,0 +1,88 @@
+lir::Program {
+    functions:
+        fn add(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
+            locals:
+                %0: i64
+                %1: i64 // arg
+                %2: i64 // arg
+            bb0 // label: bb0:
+                i0: %r0 = alloca i32 1 align 8 : ptr i64
+                i1: %r1 = add %local1, %local2 : i64
+                i2: store %r1, %r0 align 8
+                i3: %r3 = load %r0 align 8 : i64
+                terminator: ret %r3
+        }
+
+        fn double(arg0: i64) -> i64 [cc: c, linkage: internal] {
+            locals:
+                %0: i64
+                %1: i64 // arg
+            bb0 // label: bb0:
+                i4: %r4 = alloca i32 1 align 8 : ptr i64
+                i5: %r5 = mul %local1, i64 2 : i64
+                i6: store %r5, %r4 align 8
+                i7: %r7 = load %r4 align 8 : i64
+                terminator: ret %r7
+        }
+
+        fn compose(arg0: i64) -> i64 [cc: c, linkage: internal] {
+            locals:
+                %0: i64
+                %1: i64 // arg
+                %2: i64
+            bb0 // label: bb0 // succs: [bb1]:
+                i8: %r8 = alloca i32 1 align 8 : ptr i64
+                i9: %r9 = call c @add(%local1, i64 1) : i64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i10: %r10 = call c @double(%r9) : i64
+                i11: store %r10, %r8 align 8 : i64
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1]:
+                i12: %r12 = load %r8 align 8 : i64
+                terminator: ret %r12
+        }
+
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i64
+                %2: i32
+                %3: i64
+                %4: i32
+                %5: i64
+                %6: i32
+                %7: i64
+                %8: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i13: %r13 = call c @add(i64 2, i64 3) : i64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i14: %r14 = call c @printf(c"%d
+", %r13) : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i15: %r15 = call c @double(i64 5) : i64
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i16: %r16 = call c @printf(c"%d
+", %r15) : i32
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i17: %r17 = call c @compose(i64 10) : i64
+                terminator: br bb5
+            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
+                i18: %r18 = call c @printf(c"%d
+", %r17) : i32
+                terminator: br bb6
+            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
+                i19: %r19 = alloca i32 1 align 8 : ptr i64
+                i20: store i64 30, %r19 align 8
+                i21: %r21 = load %r19 align 8 : i64
+                i22: %r22 = call c @printf(c"const: %d
+", %r21) : i32
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb6]:
+                terminator: ret void
+        }
+}

@@ -224,8 +224,23 @@ impl RustParser {
                     Fields::Named(_) => {
                         self.error("Does not support named enum fields", Ty::any())?
                     }
-                    Fields::Unnamed(_) => {
-                        self.error("Does not support tuple enum fields", Ty::any())?
+                    Fields::Unnamed(fields) => {
+                        // Parse tuple variant fields
+                        let field_types: Vec<Ty> = fields
+                            .unnamed
+                            .into_iter()
+                            .map(|field| self.parse_type_internal(field.ty))
+                            .try_collect()?;
+
+                        if field_types.is_empty() {
+                            Ty::any()
+                        } else if field_types.len() == 1 {
+                            // Single field tuple variant - just use the type directly
+                            field_types.into_iter().next().unwrap()
+                        } else {
+                            // Multiple fields - create a tuple type
+                            Ty::Tuple(TypeTuple { types: field_types }.into())
+                        }
                     }
                     Fields::Unit => Ty::any(),
                 };
