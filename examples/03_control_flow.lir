@@ -12,7 +12,7 @@ lir::Program {
                 %7: ptr i8
                 %8: i32
                 %9: i64
-                %10: void
+                %10: ptr i8
                 %11: ptr i8
                 %12: i1
                 %13: i1
@@ -65,16 +65,19 @@ lir::Program {
                 i31: %r31 = load %r27 align 1 : i1
                 terminator: cond_br %r31, bb7, bb8
             bb6 // label: bb6 // preds: [bb4, bb9] // succs: [bb10]:
-                i32: %r32 = load %r0 align 8 : ptr i8
-                i33: %r33 = load %r19 align 8 : i64
-                i34: %r34 = call c @printf(c"Value %d is %s
-", %r33, %r32) : i32
+                i32: %r32 = alloca i32 1 align 8 : ptr ptr i8
+                i33: %r33 = load %r0 align 8 : ptr i8
+                i34: store %r33, %r32 align 8
+                i35: %r35 = load %r19 align 8 : i64
+                i36: %r36 = load %r32 align 8 : ptr i8
+                i37: %r37 = call c @printf(c"Value %d is %s
+", %r35, %r36) : i32
                 terminator: br bb10
             bb7 // label: bb7 // preds: [bb5] // succs: [bb9]:
-                i35: store c"medium", %r0 align 8
+                i38: store c"medium", %r0 align 8
                 terminator: br bb9
             bb8 // label: bb8 // preds: [bb5] // succs: [bb9]:
-                i36: store c"low", %r0 align 8
+                i39: store c"low", %r0 align 8
                 terminator: br bb9
             bb10 // label: bb10 // preds: [bb6]:
                 terminator: ret void

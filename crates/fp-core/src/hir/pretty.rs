@@ -61,16 +61,7 @@ fn write_function(
         String::new()
     };
 
-    let header = format!(
-        "{}{}fn {}{}({}){}{}",
-        vis,
-        const_flag,
-        func.sig.name,
-        generics,
-        params.join(", "),
-        ret,
-        span_suffix
-    );
+    let header = format!("{}{}fn {}{}({}){}{}",vis, const_flag, func.sig.name, generics, params.join(", "), ret, span_suffix);
 
     if let Some(body) = &func.body {
         ctx.writeln(f, format!("{} {{", header))?;
@@ -585,7 +576,7 @@ fn format_param(param: &super::Param, ctx: &PrettyCtx<'_>) -> String {
 
 fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
     match &ty.kind {
-        TypeExprKind::Primitive(prim) => prim.to_string(),
+        TypeExprKind::Primitive(prim) => fmt_type_primitive(prim),
         TypeExprKind::Path(path) => fmt_path(path, ctx),
         TypeExprKind::Tuple(elems) => {
             let elems = elems
@@ -604,8 +595,19 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
         }
         TypeExprKind::Ptr(inner) => format!("*{}", fmt_type_expr(inner, ctx)),
         TypeExprKind::Ref(inner) => format!("&{}", fmt_type_expr(inner, ctx)),
+        TypeExprKind::FnPtr(fn_ptr) => {
+            let inputs = fn_ptr
+                .inputs
+                .iter()
+                .map(|ty| fmt_type_expr(ty, ctx))
+                .collect::<Vec<_>>();
+            let inputs_str = inputs.join(", ");
+            let output_str = fmt_type_expr(&fn_ptr.output, ctx);
+            format!("fn({}) -> {}", inputs_str, output_str)
+        }
         TypeExprKind::Never => "!".into(),
         TypeExprKind::Infer => "_".into(),
+        TypeExprKind::Error => "<error>".into(),
     }
 }
 
@@ -644,5 +646,35 @@ fn fmt_un_op(op: &UnOp) -> &'static str {
         UnOp::Not => "!",
         UnOp::Neg => "-",
         UnOp::Deref => "*",
+    }
+}
+
+fn fmt_type_primitive(prim: &crate::ast::TypePrimitive) -> String {
+    use crate::ast::{DecimalType, TypeInt, TypePrimitive};
+
+    match prim {
+        TypePrimitive::Int(int_ty) => match int_ty {
+            TypeInt::I64 => "i64",
+            TypeInt::U64 => "u64",
+            TypeInt::I32 => "i32",
+            TypeInt::U32 => "u32",
+            TypeInt::I16 => "i16",
+            TypeInt::U16 => "u16",
+            TypeInt::I8 => "i8",
+            TypeInt::U8 => "u8",
+            TypeInt::BigInt => "BigInt",
+        }.to_string(),
+        TypePrimitive::Decimal(dec_ty) => match dec_ty {
+            DecimalType::F64 => "f64",
+            DecimalType::F32 => "f32",
+            DecimalType::BigDecimal => "BigDecimal",
+            DecimalType::Decimal { precision, scale } => {
+                return format!("Decimal({}, {})", precision, scale);
+            }
+        }.to_string(),
+        TypePrimitive::Bool => "bool".to_string(),
+        TypePrimitive::Char => "char".to_string(),
+        TypePrimitive::String => "&str".to_string(),
+        TypePrimitive::List => "List".to_string(),
     }
 }

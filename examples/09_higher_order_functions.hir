@@ -1,47 +1,32 @@
 hir::Program {
     struct __Closure0 {
-        pub n: i64
-,
+        pub n: i64,
     }
 
-    fn __closure0_call(__env: __Closure0, x: i64
-) -> i64
- {
-        // params: [__env: __Closure0, x: i64
-]
+    fn __closure0_call(__env: __Closure0, x: i64) -> i64 {
+        // params: [__env: __Closure0, x: i64]
         (x + __env.n)
     }
 
     struct __Closure1 {
-        pub __fp_no_capture: i8
-,
+        pub __fp_no_capture: i8,
     }
 
-    fn __closure1_call(__env: __Closure1, x: i64
-) -> i64
- {
-        // params: [__env: __Closure1, x: i64
-]
+    fn __closure1_call(__env: __Closure1, x: i64) -> i64 {
+        // params: [__env: __Closure1, x: i64]
         (x * 2)
     }
 
-    fn apply_if(cond: bool, a: i64
-, b: i64
-, op: ()) -> i64
- {
-        // params: [cond: bool, a: i64
-, b: i64
-, op: ()]
+    fn apply_if(cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
+        // params: [cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64]
         if (cond)
             op(a, b)
         else
             0
     }
 
-    fn make_adder(n: i64
-) -> __Closure0 {
-        // params: [n: i64
-]
+    fn make_adder(n: i64) -> __Closure0 {
+        // params: [n: i64]
         __Closure0 { n: n }
     }
 
@@ -71,47 +56,29 @@ Closure factory:
         }
     }
 
-    fn apply__spec0(a: i64
-, b: i64
-, op: ()) -> () {
-        // params: [a: i64
-, b: i64
-, op: ()]
+    fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () {
+        // params: [a: i64, b: i64, op: fn(i64, i64) -> i64]
         {
             printf("%d
 ", op(a, b));
         }
     }
 
-    fn add__spec0(a: i64
-, b: i64
-) -> i64
- {
-        // params: [a: i64
-, b: i64
-]
+    fn add__spec0(a: i64, b: i64) -> i64 {
+        // params: [a: i64, b: i64]
         (a + b)
     }
 
-    fn apply__spec1(a: f64
-, b: f64
-, op: ()) -> () {
-        // params: [a: f64
-, b: f64
-, op: ()]
+    fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () {
+        // params: [a: f64, b: f64, op: fn(f64, f64) -> f64]
         {
             printf("%f
 ", op(a, b));
         }
     }
 
-    fn add__spec1(a: f64
-, b: f64
-) -> f64
- {
-        // params: [a: f64
-, b: f64
-]
+    fn add__spec1(a: f64, b: f64) -> f64 {
+        // params: [a: f64, b: f64]
         (a + b)
     }
 }

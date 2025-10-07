@@ -25,4 +25,5 @@ pub enum Ty {
     Label,
     Token,
     Metadata,
+    Error,
 }
