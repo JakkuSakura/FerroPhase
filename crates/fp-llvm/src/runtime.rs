@@ -81,7 +81,7 @@ fn make_string_literal_expr(literal: String) -> Expr {
 }
 
 fn build_printf_format(template: &ExprFormatString, newline: bool) -> Result<String> {
-    info!("Building printf format for template: {:?}", template);
+    // info!("Building printf format for template: {:?}", template);
     let mut result = String::new();
     let mut implicit_index = 0usize;
 
