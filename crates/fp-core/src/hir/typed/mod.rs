@@ -464,7 +464,7 @@ pub enum VariantData {
 // Forward declarations and type aliases
 pub type Scope = u32;
 pub type LintLevel = u32;
-pub type Symbol = String;
+pub use super::Symbol;
 pub type Span = crate::span::Span;
 pub type DefId = ty::DefId;
 pub type HirId = u32;

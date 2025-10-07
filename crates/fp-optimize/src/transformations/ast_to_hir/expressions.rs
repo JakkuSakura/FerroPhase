@@ -102,7 +102,7 @@ impl HirGenerator {
         };
 
         let sig = hir::FunctionSig {
-            name: "main".to_string(),
+            name: hir::Symbol::new("main"),
             inputs: Vec::new(),
             output: hir::TypeExpr::new(
                 self.next_id(),
@@ -154,7 +154,7 @@ impl HirGenerator {
             };
 
             let sig = hir::FunctionSig {
-                name: self.qualify_name(&func.name.name),
+                name: hir::Symbol::new(self.qualify_name(&func.name.name)),
                 inputs: params.clone(),
                 output: output.clone(),
                 generics,
@@ -187,7 +187,7 @@ impl HirGenerator {
                 let pat = hir::Pat {
                     hir_id: self.next_id(),
                     kind: hir::PatKind::Binding {
-                        name: param.name.name.clone(),
+                        name: param.name.clone().into(),
                         mutable: false,
                     },
                 };
@@ -211,7 +211,7 @@ impl HirGenerator {
             let hir_id = self.next_id();
             hir_params.push(hir::GenericParam {
                 hir_id,
-                name: param.name.name.clone(),
+                name: param.name.clone().into(),
                 kind: hir::GenericParamKind::Type { default: None },
             });
             self.register_type_generic(&param.name.name, hir_id);
@@ -249,7 +249,7 @@ impl HirGenerator {
             pat: hir::Pat {
                 hir_id: self.next_id(),
                 kind: hir::PatKind::Binding {
-                    name: "self".to_string(),
+                    name: hir::Symbol::new("self"),
                     mutable: false,
                 },
             },
@@ -292,7 +292,7 @@ impl HirGenerator {
                         let assoc_const = self.transform_const_def(const_item)?;
                         items.push(hir::ImplItem {
                             hir_id: self.next_id(),
-                            name: const_item.name.name.clone(),
+                            name: const_item.name.clone().into(),
                             kind: hir::ImplItemKind::AssocConst(assoc_const),
                         });
                     }
@@ -352,7 +352,7 @@ impl HirGenerator {
 
                     fields.push(hir::StructExprField {
                         hir_id: self.next_id(),
-                        name: field.name.name.clone(),
+                        name: field.name.clone().into(),
                         expr: field_expr,
                     });
                 }
@@ -430,7 +430,7 @@ impl HirGenerator {
                 }
                 Ok(hir::ExprKind::MethodCall(
                     Box::new(receiver),
-                    select.field.name.clone(),
+                    select.field.clone().into(),
                     args,
                 ))
             }
@@ -467,7 +467,7 @@ impl HirGenerator {
         select: &ast::ExprSelect,
     ) -> Result<hir::ExprKind> {
         let expr = Box::new(self.transform_expr_to_hir(&select.obj)?);
-        let field = select.field.name.clone();
+        let field = select.field.clone().into();
 
         Ok(hir::ExprKind::FieldAccess(expr, field))
     }
@@ -493,7 +493,7 @@ impl HirGenerator {
                         hir_id: self.next_id(),
                         kind: hir::ExprKind::Path(hir::Path {
                             segments: vec![hir::PathSegment {
-                                name: field.name.name.clone(),
+                                name: field.name.clone().into(),
                                 args: None,
                             }],
                             res,
@@ -504,7 +504,7 @@ impl HirGenerator {
 
                 Ok(hir::StructExprField {
                     hir_id: self.next_id(),
-                    name: field.name.name.clone(),
+                    name: field.name.clone().into(),
                     expr,
                 })
             })
@@ -945,7 +945,7 @@ impl HirGenerator {
         args: Option<hir::GenericArgs>,
     ) -> hir::PathSegment {
         hir::PathSegment {
-            name: name.to_string(),
+            name: hir::Symbol::new(name),
             args,
         }
     }
@@ -969,7 +969,7 @@ impl HirGenerator {
                     hir::Pat {
                         hir_id: self.next_id(),
                         kind: hir::PatKind::Binding {
-                            name: ident.ident.name.clone(),
+                            name: ident.ident.clone().into(),
                             mutable,
                         },
                     },
@@ -995,7 +995,7 @@ impl HirGenerator {
                 hir::Pat {
                     hir_id: self.next_id(),
                     kind: hir::PatKind::Binding {
-                        name: "_".to_string(),
+                        name: hir::Symbol::new("_"),
                         mutable: false,
                     },
                 },

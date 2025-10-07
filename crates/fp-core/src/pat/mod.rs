@@ -1,5 +1,4 @@
-use crate::ast::{Expr, Ty, TySlot};
-use crate::id::{Ident, Locator};
+use crate::ast::{Expr, Ident, Locator, Ty, TySlot};
 use crate::{common_enum, common_struct};
 pub type BPattern = Box<Pattern>;
 common_enum! {

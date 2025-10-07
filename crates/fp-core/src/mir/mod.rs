@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
-pub mod ty;
-pub use ty::Ty;
+pub mod ident;
 pub mod pretty;
+pub mod ty;
+
+pub use ident::{Path, Symbol};
+pub use ty::Ty;
 
 pub type MirId = u32;
 pub type LocalId = u32;
@@ -380,7 +383,6 @@ pub struct BlockTailInfo {
 
 // Forward declarations and type aliases
 pub type Span = crate::span::Span;
-pub type Symbol = String;
 pub type DefId = ty::DefId;
 pub type FieldIdx = usize;
 pub type VariantIdx = usize;

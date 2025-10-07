@@ -127,7 +127,7 @@ impl LirGenerator {
             .insert(function_name.clone(), signature.clone());
 
         let mut lir_func = lir::LirFunction {
-            name: function_name,
+            name: lir::Name::new(function_name),
             signature,
             basic_blocks: Vec::new(),
             locals: Vec::new(),
@@ -160,7 +160,7 @@ impl LirGenerator {
             if lir_func.basic_blocks.is_empty() {
                 lir_func.basic_blocks.push(lir::LirBasicBlock {
                     id: 0,
-                    label: Some("entry".to_string()),
+                    label: Some(lir::Name::new("entry")),
                     instructions: Vec::new(),
                     terminator: lir::LirTerminator::Return(None),
                     predecessors: Vec::new(),
@@ -171,7 +171,7 @@ impl LirGenerator {
             // Fallback: create a minimal function with a return
             lir_func.basic_blocks.push(lir::LirBasicBlock {
                 id: 0,
-                label: Some("entry".to_string()),
+                label: Some(lir::Name::new("entry")),
                 instructions: Vec::new(),
                 terminator: lir::LirTerminator::Return(None),
                 predecessors: Vec::new(),
@@ -181,7 +181,7 @@ impl LirGenerator {
 
         self.populate_block_edges(&mut lir_func.basic_blocks);
         self.function_signatures
-            .insert(lir_func.name.clone(), lir_func.signature.clone());
+            .insert(String::from(lir_func.name.clone()), lir_func.signature.clone());
 
         self.current_function = Some(lir_func.clone());
         Ok(lir_func)
@@ -189,9 +189,9 @@ impl LirGenerator {
 
     fn mangle_function_name(&mut self, mir_func: &mir::Function) -> String {
         let base = if !mir_func.path.is_empty() {
-            mir_func.path.join("::")
-        } else if !mir_func.name.is_empty() {
-            mir_func.name.clone()
+            mir_func.path.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("::")
+        } else if !mir_func.name.as_str().is_empty() {
+            String::from(mir_func.name.clone())
         } else {
             "anonymous_fn".to_string()
         };
@@ -212,9 +212,9 @@ impl LirGenerator {
 
         self.function_symbol_map
             .insert(base.clone(), final_name.clone());
-        if !mir_func.name.is_empty() {
+        if !mir_func.name.as_str().is_empty() {
             self.function_symbol_map
-                .entry(mir_func.name.clone())
+                .entry(String::from(mir_func.name.clone()))
                 .or_insert(final_name.clone());
         }
 
@@ -248,7 +248,7 @@ impl LirGenerator {
     /// Transform a MIR static to LIR global
     fn transform_static(&mut self, _mir_static: mir::Static) -> Result<lir::LirGlobal> {
         Ok(lir::LirGlobal {
-            name: format!("global_{}", self.next_lir_id),
+            name: lir::Name::new(format!("global_{}", self.next_lir_id)),
             ty: lir::LirType::I32,
             initializer: None,
             linkage: lir::Linkage::Internal,
@@ -267,7 +267,7 @@ impl LirGenerator {
     ) -> Result<lir::LirBasicBlock> {
         let mut lir_block = lir::LirBasicBlock {
             id: bb_id,
-            label: Some(format!("bb{}", bb_id)),
+            label: Some(lir::Name::new(format!("bb{}", bb_id))),
             instructions: Vec::new(),
             terminator: lir::LirTerminator::Return(None),
             predecessors: Vec::new(),
@@ -629,17 +629,17 @@ impl LirGenerator {
                 mir::ConstantKind::Fn(name, _ty) => {
                     let function_name = self
                         .function_symbol_map
-                        .get(name)
+                        .get(&String::from(name.clone()))
                         .cloned()
-                        .unwrap_or_else(|| name.clone());
+                        .unwrap_or_else(|| String::from(name.clone()));
                     Ok(lir::LirValue::Function(function_name))
                 }
                 mir::ConstantKind::Global(name, ty) => {
                     let mapped_name = self
                         .function_symbol_map
-                        .get(name)
+                        .get(&String::from(name.clone()))
                         .cloned()
-                        .unwrap_or_else(|| name.clone());
+                        .unwrap_or_else(|| String::from(name.clone()));
                     if self.function_signatures.contains_key(&mapped_name) {
                         return Ok(lir::LirValue::Function(mapped_name));
                     }
@@ -2159,6 +2159,10 @@ impl LirGenerator {
                 Box::new(self.lir_type_from_ty(element_ty)),
                 self.array_length_from_const(len),
             ),
+            TyKind::Slice(element_ty) => {
+                // Slices are fat pointers (pointer + length), but for now we represent them as simple pointers
+                lir::LirType::Ptr(Box::new(self.lir_type_from_ty(element_ty)))
+            }
             TyKind::Ref(_, inner, _) => lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner))),
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
@@ -2176,9 +2180,9 @@ impl LirGenerator {
                 }))
             }
             unsupported => {
-                eprintln!(
-                    "[mir→lir] ERROR: unsupported type in MIR→LIR lowering: {:?}",
-                    unsupported
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    format!("unsupported type in MIR→LIR lowering: {:?}", unsupported)
                 );
                 lir::LirType::Error
             }
