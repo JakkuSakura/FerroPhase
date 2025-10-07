@@ -48,7 +48,10 @@ int main() {
     println!("\n=== LLVM Module Information ===");
     println!("Module name: {}", module.name);
     println!("Source filename: {}", module.source_file_name);
-    println!("Target triple: {}", module.target_triple.as_deref().unwrap_or("unknown"));
+    println!(
+        "Target triple: {}",
+        module.target_triple.as_deref().unwrap_or("unknown")
+    );
     println!("Data layout: {:?}", module.data_layout);
 
     println!("\n=== Functions ===");

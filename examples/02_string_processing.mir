@@ -21,23 +21,23 @@ mir::Program {
                 _13: i32
             blocks:
                 bb0:
-                    s0: _1 = const Constant { span: Span { file: 3427061649708221502, lo: 3, hi: 4 }, user_ty: None, literal: Str("FerroPhase") }
-                    s1: _2 = const Constant { span: Span { file: 3427061649708221502, lo: 7, hi: 8 }, user_ty: None, literal: UInt(10) }
-                    terminator: call const Constant { span: Span { file: 3427061649708221502, lo: 11, hi: 12 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 3427061649708221502, lo: 12, hi: 13 }, user_ty: None, literal: Str("name='%s' len=%d\n") }, copy _1, copy _2) -> _3 then bb1
+                    s0: _1 = "FerroPhase"
+                    s1: _2 = 10u
+                    terminator: call global printf("name='%s' len=%d\n", copy _1, copy _2) -> _3 then bb1
                 bb1:
-                    s0: _4 = const Constant { span: Span { file: 3427061649708221502, lo: 5, hi: 6 }, user_ty: None, literal: Str("0.1.0") }
-                    s1: _5 = const Constant { span: Span { file: 3427061649708221502, lo: 9, hi: 10 }, user_ty: None, literal: UInt(5) }
-                    terminator: call const Constant { span: Span { file: 3427061649708221502, lo: 16, hi: 17 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 3427061649708221502, lo: 17, hi: 18 }, user_ty: None, literal: Str("version='%s' len=%d\n") }, copy _4, copy _5) -> _6 then bb2
+                    s0: _4 = "0.1.0"
+                    s1: _5 = 5u
+                    terminator: call global printf("version='%s' len=%d\n", copy _4, copy _5) -> _6 then bb2
                 bb2:
-                    s0: _7 = const Constant { span: Span { file: 3427061649708221502, lo: 21, hi: 22 }, user_ty: None, literal: Bool(false) }
-                    s1: _8 = const Constant { span: Span { file: 3427061649708221502, lo: 23, hi: 24 }, user_ty: None, literal: Bool(true) }
-                    terminator: call const Constant { span: Span { file: 3427061649708221502, lo: 25, hi: 26 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 3427061649708221502, lo: 26, hi: 27 }, user_ty: None, literal: Str("empty=%d, long=%d\n") }, copy _7, copy _8) -> _9 then bb3
+                    s0: _7 = false
+                    s1: _8 = true
+                    terminator: call global printf("empty=%d, long=%d\n", copy _7, copy _8) -> _9 then bb3
                 bb3:
-                    s0: _10 = const Constant { span: Span { file: 3427061649708221502, lo: 30, hi: 31 }, user_ty: None, literal: Str("FerroPhase v0.1.0") }
-                    terminator: call const Constant { span: Span { file: 3427061649708221502, lo: 32, hi: 33 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 3427061649708221502, lo: 33, hi: 34 }, user_ty: None, literal: Str("banner='%s'\n") }, copy _10) -> _11 then bb4
+                    s0: _10 = "FerroPhase v0.1.0"
+                    terminator: call global printf("banner='%s'\n", copy _10) -> _11 then bb4
                 bb4:
-                    s0: _12 = const Constant { span: Span { file: 3427061649708221502, lo: 36, hi: 37 }, user_ty: None, literal: UInt(256) }
-                    terminator: call const Constant { span: Span { file: 3427061649708221502, lo: 38, hi: 39 }, user_ty: None, literal: Global("printf", Ty { kind: FnPtr(PolyFnSig { binder: Binder { value: FnSig { inputs: [], output: Ty { kind: Int(I32) }, c_variadic: false, unsafety: Normal, abi: C { unwind: false } }, bound_vars: [] } }) }) }(const Constant { span: Span { file: 3427061649708221502, lo: 39, hi: 40 }, user_ty: None, literal: Str("buffer_size=%d\n") }, copy _12) -> _13 then bb5
+                    s0: _12 = 256u
+                    terminator: call global printf("buffer_size=%d\n", copy _12) -> _13 then bb5
                 bb5:
                     terminator: return
 }

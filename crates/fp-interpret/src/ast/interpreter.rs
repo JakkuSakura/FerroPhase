@@ -4,15 +4,15 @@ use std::sync::Arc;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemKind,
-    Node, NodeKind, StmtLet, Ty, TypeArray, TypeFunction, TypeInt, TypePrimitive, TypeReference,
-    TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value, ValueField, ValueFunction,
-    ValueList, ValueStruct, ValueStructural, ValueTuple,
+    ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
+    ItemDefFunction, ItemKind, Node, NodeKind, StmtLet, Ty, TypeArray, TypeFunction, TypeInt,
+    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value,
+    ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
+use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
-use fp_core::ast::{Ident, Locator};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
@@ -366,7 +366,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         // Check if we need to specialize a function reference before matching
         let should_specialize_fn_ref = if let ExprKind::Locator(_) = expr.kind() {
-            expr_ty_snapshot.as_ref().map_or(false, |ty| matches!(ty, Ty::Function(_)))
+            expr_ty_snapshot
+                .as_ref()
+                .map_or(false, |ty| matches!(ty, Ty::Function(_)))
         } else {
             false
         };
@@ -383,8 +385,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                 // First, try to specialize generic function reference if we have type info
                 if should_specialize_fn_ref {
                     if let Some(expected_ty) = &expr_ty_snapshot {
-                        tracing::debug!("Attempting to specialize function reference {} with type {:?}", locator, expected_ty);
-                        if let Some(_specialized) = self.specialize_function_reference(locator, expected_ty) {
+                        tracing::debug!(
+                            "Attempting to specialize function reference {} with type {:?}",
+                            locator,
+                            expected_ty
+                        );
+                        if let Some(_specialized) =
+                            self.specialize_function_reference(locator, expected_ty)
+                        {
                             tracing::debug!("Successfully specialized {} to {}", locator, locator);
                             // Locator has been updated to point to specialized function
                             // Return unit for now, the reference will be used by caller
@@ -578,7 +586,11 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                 if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
                     // Arguments are already annotated by resolve_function_call
-                    eprintln!("[eval_invoke] Resolved function: {}, evaluating {} args", function.name, invoke.args.len());
+                    eprintln!(
+                        "[eval_invoke] Resolved function: {}, evaluating {} args",
+                        function.name,
+                        invoke.args.len()
+                    );
                     let args = self.evaluate_args(&mut invoke.args);
                     let ret_ty = Self::item_function_ret_ty(&function);
                     self.set_pending_expr_ty(ret_ty);
@@ -725,7 +737,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Some(Ty::Function(fn_ty)) => {
                     // Replace function types with Unknown parameters
                     fn_ty.params.iter().any(|p| matches!(p, Ty::Unknown(_)))
-                        || fn_ty.ret_ty.as_ref().map_or(false, |r| matches!(r.as_ref(), Ty::Unknown(_)))
+                        || fn_ty
+                            .ret_ty
+                            .as_ref()
+                            .map_or(false, |r| matches!(r.as_ref(), Ty::Unknown(_)))
                 }
                 _ => false,
             };
@@ -860,14 +875,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         };
 
         // Check if this is a generic function
-        let (name, template) = candidate_names
-            .iter()
-            .find_map(|name| {
-                self.generic_functions
-                    .get(name)
-                    .cloned()
-                    .map(|t| (name.clone(), t))
-            })?;
+        let (name, template) = candidate_names.iter().find_map(|name| {
+            self.generic_functions
+                .get(name)
+                .cloned()
+                .map(|t| (name.clone(), t))
+        })?;
 
         // Extract parameter types from expected function type
         let expected_fn_ty = match expected_ty {
@@ -981,21 +994,33 @@ impl<'ctx> AstInterpreter<'ctx> {
             return None;
         }
 
-        for (param, expected_ty) in template.function.sig.params.iter().zip(&expected_fn_ty.params) {
+        for (param, expected_ty) in template
+            .function
+            .sig
+            .params
+            .iter()
+            .zip(&expected_fn_ty.params)
+        {
             if !self.match_type(&param.ty, expected_ty, &generics_set, &mut subst) {
                 return None;
             }
         }
 
         // Match return type if specified
-        if let (Some(template_ret), Some(expected_ret)) = (&template.function.sig.ret_ty, &expected_fn_ty.ret_ty) {
+        if let (Some(template_ret), Some(expected_ret)) =
+            (&template.function.sig.ret_ty, &expected_fn_ty.ret_ty)
+        {
             if !self.match_type(template_ret, expected_ret, &generics_set, &mut subst) {
                 return None;
             }
         }
 
         // Verify all generics are resolved
-        if template.generics.iter().all(|name| subst.contains_key(name)) {
+        if template
+            .generics
+            .iter()
+            .all(|name| subst.contains_key(name))
+        {
             Some(subst)
         } else {
             None
@@ -1085,7 +1110,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             // Only annotate if arg doesn't already have a concrete type
             let should_annotate = arg.ty().map_or(true, |ty| matches!(ty, Ty::Unknown(_)));
             if should_annotate {
-                eprintln!("[annotate_invoke_args] Annotating arg {:?} with type {:?}", arg.kind(), param.ty);
+                eprintln!(
+                    "[annotate_invoke_args] Annotating arg {:?} with type {:?}",
+                    arg.kind(),
+                    param.ty
+                );
                 arg.set_ty(param.ty.clone());
             }
         }
@@ -1891,6 +1920,27 @@ impl<'ctx> AstInterpreter<'ctx> {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => Value::unit(),
             IntrinsicCallKind::DebugAssertions => Value::bool(self.debug_assertions),
+            IntrinsicCallKind::Break => {
+                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
+                {
+                    if args.len() > 1 {
+                        self.emit_error("`break` accepts at most one value in const evaluation");
+                    }
+                    if let Some(expr) = args.first_mut() {
+                        return self.eval_expr(expr);
+                    }
+                }
+                Value::unit()
+            }
+            IntrinsicCallKind::Continue => {
+                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
+                {
+                    if !args.is_empty() {
+                        self.emit_error("`continue` does not accept a value in const evaluation");
+                    }
+                }
+                Value::unit()
+            }
             IntrinsicCallKind::ConstBlock => {
                 if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
                 {

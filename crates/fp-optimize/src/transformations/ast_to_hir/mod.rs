@@ -1,5 +1,5 @@
-use fp_core::error::Result;
 use fp_core::ast::Locator;
+use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
 use fp_core::span::{FileId, Span};
@@ -988,9 +988,10 @@ impl HirGenerator {
                 ))
             }
             unsupported => {
-                self.add_error(Diagnostic::error(
-                    format!("unsupported type in AST→HIR lowering: {:?}", unsupported),
-                ));
+                self.add_error(Diagnostic::error(format!(
+                    "unsupported type in AST→HIR lowering: {:?}",
+                    unsupported
+                )));
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,

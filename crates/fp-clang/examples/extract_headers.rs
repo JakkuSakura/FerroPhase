@@ -54,7 +54,10 @@ Point create_point(int x, int y) {
 
     let signatures = codegen.extract_declarations(&c_file, &options)?;
 
-    println!("=== Extracted {} Function Declarations ===\n", signatures.len());
+    println!(
+        "=== Extracted {} Function Declarations ===\n",
+        signatures.len()
+    );
 
     for sig in &signatures {
         println!("{};", sig.to_declaration());

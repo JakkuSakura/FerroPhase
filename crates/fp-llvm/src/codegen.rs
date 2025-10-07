@@ -116,8 +116,10 @@ impl<'ctx> LirCodegen<'ctx> {
         self.function_signatures.clear();
         self.defined_functions.clear();
         for function in &functions {
-            self.function_signatures
-                .insert(String::from(function.name.clone()), function.signature.clone());
+            self.function_signatures.insert(
+                String::from(function.name.clone()),
+                function.signature.clone(),
+            );
         }
         tracing::debug!(
             "Collected function signatures: {:?}",
@@ -1257,7 +1259,8 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.argument_operands.insert(local.id, operand);
 
                 // Also add to value_map so lir_value_type can find it
-                self.value_map.insert(local.id, (param.name, local.ty.clone()));
+                self.value_map
+                    .insert(local.id, (param.name, local.ty.clone()));
             }
         }
 
@@ -1300,7 +1303,12 @@ impl<'ctx> LirCodegen<'ctx> {
                     other => other,
                 };
 
-                if let lir::Ty::Function { return_type, param_types, is_variadic } = inner_ty {
+                if let lir::Ty::Function {
+                    return_type,
+                    param_types,
+                    is_variadic,
+                } = inner_ty
+                {
                     Some(lir::LirFunctionSignature {
                         params: param_types.clone(),
                         return_type: (**return_type).clone(),
@@ -1632,7 +1640,9 @@ impl<'ctx> LirCodegen<'ctx> {
             }
             lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),
             lir::LirValue::Register(reg_id) => self.value_map.get(reg_id).map(|(_, ty)| ty.clone()),
-            lir::LirValue::Local(local_id) => self.value_map.get(local_id).map(|(_, ty)| ty.clone()),
+            lir::LirValue::Local(local_id) => {
+                self.value_map.get(local_id).map(|(_, ty)| ty.clone())
+            }
             lir::LirValue::Global(_, ty) => Some(ty.clone()),
             lir::LirValue::Function(_) => Some(lir::LirType::Ptr(Box::new(lir::LirType::Void))),
             _ => None,
@@ -1986,7 +1996,11 @@ impl<'ctx> LirCodegen<'ctx> {
                 };
 
                 // Use pointer type for function references (opaque pointers in modern LLVM)
-                let ptr_ty = self.llvm_ctx.module.types.get_for_type(&Type::PointerType { addr_space: 0 });
+                let ptr_ty = self
+                    .llvm_ctx
+                    .module
+                    .types
+                    .get_for_type(&Type::PointerType { addr_space: 0 });
                 Ok(Operand::ConstantOperand(ConstantRef::new(
                     Constant::GlobalReference {
                         name: Name::Name(Box::new(llvm_name)),

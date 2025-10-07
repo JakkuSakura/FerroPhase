@@ -2,8 +2,8 @@ use fp_core::error::Result;
 use itertools::Itertools;
 use syn::{Fields, FnArg, ReturnType};
 
-use fp_core::ast::*;
 use fp_core::ast::Locator;
+use fp_core::ast::*;
 
 use super::RustParser;
 use crate::parser::ty::parse_struct_field;

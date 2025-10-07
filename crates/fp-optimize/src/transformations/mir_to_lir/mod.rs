@@ -180,8 +180,10 @@ impl LirGenerator {
         }
 
         self.populate_block_edges(&mut lir_func.basic_blocks);
-        self.function_signatures
-            .insert(String::from(lir_func.name.clone()), lir_func.signature.clone());
+        self.function_signatures.insert(
+            String::from(lir_func.name.clone()),
+            lir_func.signature.clone(),
+        );
 
         self.current_function = Some(lir_func.clone());
         Ok(lir_func)
@@ -189,7 +191,12 @@ impl LirGenerator {
 
     fn mangle_function_name(&mut self, mir_func: &mir::Function) -> String {
         let base = if !mir_func.path.is_empty() {
-            mir_func.path.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("::")
+            mir_func
+                .path
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("::")
         } else if !mir_func.name.as_str().is_empty() {
             String::from(mir_func.name.clone())
         } else {
@@ -2182,7 +2189,7 @@ impl LirGenerator {
             unsupported => {
                 fp_core::diagnostics::report_warning_with_context(
                     "mir→lir",
-                    format!("unsupported type in MIR→LIR lowering: {:?}", unsupported)
+                    format!("unsupported type in MIR→LIR lowering: {:?}", unsupported),
                 );
                 lir::LirType::Error
             }
