@@ -2,7 +2,6 @@ use std::fmt::Formatter;
 use std::hash::Hash;
 
 use crate::ast::{TySlot, *};
-use crate::id::{Ident, Locator};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 

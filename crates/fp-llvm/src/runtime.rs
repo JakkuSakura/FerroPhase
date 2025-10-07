@@ -3,7 +3,7 @@ use fp_core::ast::{
     FormatArgRef, FormatTemplatePart, Ty, TySlot, TypeInt, TypePrimitive, TypeUnit, Value,
 };
 use fp_core::error::Result;
-use fp_core::id::{Ident, Locator};
+use fp_core::ast::{Ident, Locator};
 use fp_core::intrinsics::runtime::{
     ensure_function_decl, FunctionDecl, ParamSpec, RuntimeIntrinsicStrategy,
 };

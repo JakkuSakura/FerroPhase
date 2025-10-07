@@ -168,7 +168,7 @@ impl MirLowering {
         let mir_body = self.lower_body(program, item, function, &sig, None)?;
 
         let mir_function = mir::Function {
-            name: function.sig.name.clone(),
+            name: mir::Symbol::from(function.sig.name.clone()),
             path: Vec::new(),
             def_id: Some(item.def_id),
             sig,
@@ -499,7 +499,7 @@ impl MirLowering {
         let display = path
             .segments
             .iter()
-            .map(|seg| seg.name.clone())
+            .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
         self.emit_error(
@@ -531,11 +531,11 @@ impl MirLowering {
             };
 
             fields.push(StructFieldInfo {
-                name: field.name.clone(),
+                name: String::from(field.name.clone()),
                 ty: field_ty,
                 struct_def,
             });
-            field_index.insert(field.name.clone(), idx);
+            field_index.insert(String::from(field.name.clone()), idx);
         }
 
         let struct_ty = Ty {
@@ -550,7 +550,7 @@ impl MirLowering {
         self.struct_defs.insert(
             def_id,
             RegisteredStruct {
-                name: strukt.name.clone(),
+                name: String::from(strukt.name.clone()),
                 fields,
                 field_index,
                 ty: struct_ty,
@@ -674,7 +674,7 @@ impl MirLowering {
 
     fn struct_name_from_type(&self, ty: &hir::TypeExpr) -> Option<String> {
         match &ty.kind {
-            hir::TypeExprKind::Path(path) => path.segments.last().map(|seg| seg.name.clone()),
+            hir::TypeExprKind::Path(path) => path.segments.last().map(|seg| String::from(seg.name.clone())),
             hir::TypeExprKind::Ref(inner) | hir::TypeExprKind::Ptr(inner) => {
                 self.struct_name_from_type(inner)
             }
@@ -727,18 +727,18 @@ impl MirLowering {
                     let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
                     let info = MethodLoweringInfo {
                         sig: sig.clone(),
-                        fn_name: fn_name.clone(),
+                        fn_name: String::from(fn_name.clone()),
                         fn_ty: fn_ty.clone(),
                         struct_def,
                     };
 
-                    self.method_lookup.insert(fn_name, info.clone());
+                    self.method_lookup.insert(String::from(fn_name.clone()), info.clone());
                     self.method_lookup
                         .insert(format!("{}::{}", struct_name, impl_item.name), info.clone());
                     self.struct_methods
                         .entry(struct_name.clone())
                         .or_default()
-                        .insert(impl_item.name.clone(), info);
+                        .insert(String::from(impl_item.name.clone()), info);
                 }
                 hir::ImplItemKind::AssocConst(_const_item) => {
                     // TODO: lower associated constants when needed
@@ -770,7 +770,7 @@ impl MirLowering {
                 .lower()?;
 
         let mir_function = mir::Function {
-            name: function.sig.name.clone(),
+            name: mir::Symbol::from(function.sig.name.clone()),
             path: Vec::new(),
             def_id: None,
             sig: sig.clone(),
@@ -1294,7 +1294,7 @@ impl<'a> BodyBuilder<'a> {
         let mut operands = Vec::with_capacity(struct_fields.len());
         let mut field_map: HashMap<String, &hir::StructExprField> = HashMap::new();
         for field in fields {
-            field_map.insert(field.name.clone(), field);
+            field_map.insert(String::from(field.name.clone()), field);
         }
 
         for field_info in struct_fields.iter() {
@@ -1480,21 +1480,21 @@ impl<'a> BodyBuilder<'a> {
                         hir::ItemKind::Function(func) => Some(func.sig.name.clone()),
                         _ => None,
                     })
-                    .unwrap_or_else(|| format!("fn#{}", def_id));
+                    .unwrap_or_else(|| hir::Symbol::new(format!("fn#{}", def_id)));
                 let ty = self.lowering.function_pointer_ty(&sig);
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(name.clone(), ty),
+                    literal: mir::ConstantKind::Fn(mir::Symbol::from(name.clone()), ty),
                 });
-                return Ok((operand, sig, Some(name)));
+                return Ok((operand, sig, Some(String::from(name))));
             }
         }
 
         let name = resolved_path
             .segments
             .iter()
-            .map(|seg| seg.name.clone())
+            .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
 
@@ -1514,13 +1514,13 @@ impl<'a> BodyBuilder<'a> {
             if let Some(info) = self
                 .lowering
                 .struct_methods
-                .get(&struct_name)
-                .and_then(|methods| methods.get(&method_name))
+                .get(&String::from(struct_name.clone()))
+                .and_then(|methods| methods.get(&String::from(method_name.clone())))
             {
                 let operand = mir::Operand::Constant(mir::Constant {
                     span: callee.span,
                     user_ty: None,
-                    literal: mir::ConstantKind::Fn(info.fn_name.clone(), info.fn_ty.clone()),
+                    literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone()), info.fn_ty.clone()),
                 });
                 let qualified_name = format!("{}::{}", struct_name, method_name);
                 return Ok((operand, info.sig.clone(), Some(qualified_name)));
@@ -1532,7 +1532,7 @@ impl<'a> BodyBuilder<'a> {
             let operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
                 user_ty: None,
-                literal: mir::ConstantKind::Global(name.clone(), ty),
+                literal: mir::ConstantKind::Global(mir::Symbol::new(name.clone()), ty),
             });
             return Ok((operand, sig, Some(name)));
         }
@@ -1541,7 +1541,7 @@ impl<'a> BodyBuilder<'a> {
             let operand = mir::Operand::Constant(mir::Constant {
                 span: callee.span,
                 user_ty: None,
-                literal: mir::ConstantKind::Fn(info.fn_name.clone(), info.fn_ty.clone()),
+                literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone()), info.fn_ty.clone()),
             });
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
         }
@@ -1549,13 +1549,13 @@ impl<'a> BodyBuilder<'a> {
         // Search for function by name in def_map (for specialized functions created during const eval)
         for (def_id, item) in &self.program.def_map {
             if let hir::ItemKind::Function(func) = &item.kind {
-                if func.sig.name == name {
+                if func.sig.name.as_str() == name {
                     let sig = self.lowering.lower_function_sig(&func.sig, None);
                     let ty = self.lowering.function_pointer_ty(&sig);
                     let operand = mir::Operand::Constant(mir::Constant {
                         span: callee.span,
                         user_ty: None,
-                        literal: mir::ConstantKind::Fn(name.clone(), ty),
+                        literal: mir::ConstantKind::Fn(mir::Symbol::new(name.clone()), ty),
                     });
                     // Cache it for future lookups
                     self.lowering.function_sigs.insert(*def_id, sig.clone());
@@ -1656,7 +1656,7 @@ impl<'a> BodyBuilder<'a> {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
                                     user_ty: None,
-                                    literal: mir::ConstantKind::Fn(fn_name, fn_ty.clone()),
+                                    literal: mir::ConstantKind::Fn(mir::Symbol::from(fn_name), fn_ty.clone()),
                                 }),
                                 ty: fn_ty,
                             });
@@ -1679,7 +1679,7 @@ impl<'a> BodyBuilder<'a> {
                 let name = resolved_path
                     .segments
                     .iter()
-                    .map(|seg| seg.name.clone())
+                    .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
                 self.lowering
@@ -2170,7 +2170,7 @@ impl<'a> BodyBuilder<'a> {
                                 .lowering
                                 .struct_methods
                                 .get(&struct_entry.name)
-                                .and_then(|methods| methods.get(&method_key))
+                                .and_then(|methods| methods.get(&String::from(method_key.clone())))
                             {
                                 resolved_info = Some((info.clone(), Some(place_info)));
                             }
@@ -2184,7 +2184,7 @@ impl<'a> BodyBuilder<'a> {
                         .struct_methods
                         .iter()
                         .filter_map(|(_struct_name, methods)| {
-                            methods.get(&method_key).map(|info| (info.clone()))
+                            methods.get(&String::from(method_key.clone())).map(|info| (info.clone()))
                         })
                         .collect::<Vec<_>>();
                     if matches.len() == 1 {
@@ -2208,7 +2208,7 @@ impl<'a> BodyBuilder<'a> {
                     let func_operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
                         user_ty: None,
-                        literal: mir::ConstantKind::Fn(info.fn_name.clone(), info.fn_ty.clone()),
+                        literal: mir::ConstantKind::Fn(mir::Symbol::new(info.fn_name.clone()), info.fn_ty.clone()),
                     });
 
                     let continue_block = self.new_block();
@@ -2239,7 +2239,7 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
 
-                if method_name == "len" && args.is_empty() {
+                if method_name.as_str() == "len" && args.is_empty() {
                     if let hir::ExprKind::Path(path) = &receiver.kind {
                         if let Some(hir::Res::Def(def_id)) = &path.res {
                             if let Some(const_info) = self.lowering.const_values.get(def_id) {

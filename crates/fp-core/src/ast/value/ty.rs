@@ -1,5 +1,4 @@
 use crate::ast::*;
-use crate::id::Ident;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
@@ -67,7 +66,7 @@ impl Ty {
             _ => Ty::Value(TypeValue::new(v).into()),
         }
     }
-    pub fn path(path: crate::id::Path) -> Ty {
+    pub fn path(path: Path) -> Ty {
         Ty::expr(Expr::path(path))
     }
     pub fn ident(ident: Ident) -> Ty {
@@ -92,7 +91,7 @@ impl Ty {
             bounds: TypeBounds::new(Expr::ident(name)),
         })
     }
-    pub fn locator(locator: crate::id::Locator) -> Self {
+    pub fn locator(locator: Locator) -> Self {
         Self::expr(Expr::locator(locator))
     }
     pub fn type_bound(expr: Expr) -> Self {

@@ -1,5 +1,5 @@
 use fp_core::error::Result;
-use fp_core::id::Locator;
+use fp_core::ast::Locator;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
 use fp_core::span::{FileId, Span};
@@ -762,7 +762,7 @@ impl HirGenerator {
             }
             ItemKind::DefStruct(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
-                let name = self.qualify_name(&struct_def.name.name);
+                let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
                 let fields = struct_def
                     .value
                     .fields
@@ -770,7 +770,7 @@ impl HirGenerator {
                     .map(|field| {
                         Ok(hir::StructField {
                             hir_id: self.next_id(),
-                            name: field.name.name.clone(),
+                            name: hir::Symbol::new(field.name.name.clone()),
                             ty: self.transform_type_to_hir(&field.value)?,
                             vis: hir::Visibility::Public,
                         })
@@ -793,7 +793,7 @@ impl HirGenerator {
             }
             ItemKind::DefEnum(enum_def) => {
                 self.register_type_def(&enum_def.name.name, def_id, &enum_def.visibility);
-                let qualified_enum_name = self.qualify_name(&enum_def.name.name);
+                let qualified_enum_name = hir::Symbol::new(self.qualify_name(&enum_def.name.name));
                 let generics = hir::Generics {
                     params: Vec::new(),
                     where_clause: None,
@@ -839,7 +839,7 @@ impl HirGenerator {
                         Ok(hir::EnumVariant {
                             hir_id: self.next_id(),
                             def_id: variant_def_id,
-                            name: variant.name.name.clone(),
+                            name: hir::Symbol::new(variant.name.name.clone()),
                             discriminant,
                         })
                     })
@@ -898,7 +898,7 @@ impl HirGenerator {
         };
 
         Ok(hir::Const {
-            name: self.qualify_name(&const_def.name.name),
+            name: hir::Symbol::new(self.qualify_name(&const_def.name.name)),
             ty,
             body,
         })
@@ -1015,7 +1015,7 @@ impl HirGenerator {
             self.next_id(),
             hir::TypeExprKind::Path(hir::Path {
                 segments: vec![hir::PathSegment {
-                    name: type_name.to_string(),
+                    name: hir::Symbol::new(type_name),
                     args: None,
                 }],
                 res: None,

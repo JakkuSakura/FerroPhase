@@ -1,3 +1,4 @@
+fn printf(fmt: String, args: dyn Any) -> ();
 fn main() -> () {
     const FIELD_COUNT: u64 = 3;
     const TYPE_NAME: &str = "Point3D";
@@ -14,10 +15,10 @@ fn main() -> () {
             FIELD_COUNT
         }
     }
-    println!(
-        "{} has {} fields",
+    printf(
+        "%s has %d fields\n".to_string(),
         Point3D::type_name(),
-        Point3D::field_count()
+        Point3D::field_count(),
     );
     const VARIANT_A: u8 = 1;
     const VARIANT_B: u8 = 2;
@@ -26,5 +27,5 @@ fn main() -> () {
         B = VARIANT_B as isize,
     }
     let tag = Tag::A;
-    println!("tag discriminant: {}", tag as u8);
+    printf("tag discriminant: %d\n".to_string(), tag as u8);
 }

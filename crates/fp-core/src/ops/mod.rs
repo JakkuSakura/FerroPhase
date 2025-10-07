@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display, Formatter};
 mod runtime_format;
 
+use crate::ast::Ident;
 use crate::common_enum;
-use crate::id::Ident;
 pub use runtime_format::{format_runtime_string, format_value_with_spec};
 
 common_enum! {

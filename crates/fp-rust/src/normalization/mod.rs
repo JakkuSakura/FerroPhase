@@ -2,7 +2,7 @@ use fp_core::ast::{
     self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprInvokeTarget, ExprKind, ExprMatchCase,
     FormatKwArg, Item, ItemKind, Node, NodeKind, Ty, Value, ValueFunction,
 };
-use fp_core::id::{Ident, Locator, Path};
+use fp_core::ast::{Ident, Locator, Path};
 
 const CANONICAL_STD_REWRITES: &[(&str, &[&str])] = &[
     ("println", &["std", "io", "println"]),

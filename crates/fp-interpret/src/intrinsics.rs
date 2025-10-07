@@ -6,7 +6,7 @@
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
-use fp_core::id::Ident;
+use fp_core::ast::Ident;
 use fp_core::ops::BinOpKind;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
