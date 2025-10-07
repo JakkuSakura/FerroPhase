@@ -204,6 +204,7 @@ fn format_result(result: &Value) -> String {
         Value::Decimal(f) => f.value.to_string(),
         Value::String(s) => format!("\"{}\"", s.value),
         Value::List(list) => format!("[list with {} elements]", list.values.len()),
+        Value::Map(map) => format!("{{map with {} entries}}", map.len()),
         Value::Struct(s) => format!("struct {}", s.ty.name),
         _ => format!("{:?}", result),
     }

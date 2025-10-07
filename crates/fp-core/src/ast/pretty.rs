@@ -838,6 +838,7 @@ fn summarize_value(value: &ast::Value) -> String {
         ast::Value::Char(ch) => format!("'{}'", ch.value),
         ast::Value::String(string) => format!("\"{}\"", string.value),
         ast::Value::List(list) => format!("[{} values]", list.values.len()),
+        ast::Value::Map(map) => format!("{{{} entries}}", map.entries.len()),
         ast::Value::Bytes(bytes) => format!("bytes(len={})", bytes.value.len()),
         ast::Value::Pointer(ptr) => format!("ptr({})", ptr.value),
         ast::Value::Offset(offset) => format!("offset({})", offset.value),

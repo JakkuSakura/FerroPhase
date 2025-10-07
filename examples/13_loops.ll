@@ -26,27 +26,27 @@ bb0:
   %alloca_0 = alloca i64, align 8
   %alloca_1 = alloca i64, align 8
   %alloca_2 = alloca i64, align 8
-  store i64 1, ptr %alloca_2
   store i64 1, ptr %alloca_0
+  store i64 1, ptr %alloca_2
   br label %bb1
 bb1:
   %alloca_5 = alloca i1, align 1
-  %load_6 = load i64, ptr %alloca_0
+  %load_6 = load i64, ptr %alloca_2
   %icmp_7 = icmp sle i64 %load_6, %arg0
   store i1 %icmp_7, ptr %alloca_5
   %load_9 = load i1, ptr %alloca_5
   br i1 %load_9, label %bb2, label %bb3
 bb2:
-  %load_10 = load i64, ptr %alloca_2
-  %load_11 = load i64, ptr %alloca_0
+  %load_10 = load i64, ptr %alloca_0
+  %load_11 = load i64, ptr %alloca_2
   %mul_12 = mul i64 %load_10, %load_11
-  store i64 %mul_12, ptr %alloca_2
-  %load_14 = load i64, ptr %alloca_0
+  store i64 %mul_12, ptr %alloca_0
+  %load_14 = load i64, ptr %alloca_2
   %add_15 = add i64 %load_14, 1
-  store i64 %add_15, ptr %alloca_0
+  store i64 %add_15, ptr %alloca_2
   br label %bb1
 bb3:
-  %load_17 = load i64, ptr %alloca_2
+  %load_17 = load i64, ptr %alloca_0
   store i64 %load_17, ptr %alloca_1
   %load_19 = load i64, ptr %alloca_1
   ret i64 %load_19
@@ -57,8 +57,8 @@ bb0:
   %alloca_20 = alloca i64, align 8
   %alloca_21 = alloca i64, align 8
   %alloca_22 = alloca i64, align 8
-  store i64 0, ptr %alloca_21
-  store i64 %arg0, ptr %alloca_22
+  store i64 0, ptr %alloca_22
+  store i64 %arg0, ptr %alloca_20
   %alloca_25 = alloca i64, align 8
   store i64 %arg1, ptr %alloca_25
   br label %bb1
@@ -66,7 +66,7 @@ bb1:
   br label %bb2
 bb2:
   %alloca_27 = alloca i1, align 1
-  %load_28 = load i64, ptr %alloca_22
+  %load_28 = load i64, ptr %alloca_20
   %load_29 = load i64, ptr %alloca_25
   %icmp_30 = icmp sge i64 %load_28, %load_29
   store i1 %icmp_30, ptr %alloca_27
@@ -80,26 +80,26 @@ bb3:
   br label %bb8
 bb6:
   %alloca_33 = alloca i64, align 8
-  %load_34 = load i64, ptr %alloca_22
+  %load_34 = load i64, ptr %alloca_20
   store i64 %load_34, ptr %alloca_33
-  %load_36 = load i64, ptr %alloca_22
+  %load_36 = load i64, ptr %alloca_20
   %add_37 = add i64 %load_36, 1
-  store i64 %add_37, ptr %alloca_22
-  %load_39 = load i64, ptr %alloca_21
+  store i64 %add_37, ptr %alloca_20
+  %load_39 = load i64, ptr %alloca_22
   %load_40 = load i64, ptr %alloca_33
   %add_41 = add i64 %load_39, %load_40
-  store i64 %add_41, ptr %alloca_21
-  %load_43 = load i64, ptr %alloca_21
+  store i64 %add_41, ptr %alloca_22
+  %load_43 = load i64, ptr %alloca_22
   %load_44 = load i64, ptr %alloca_33
   %add_45 = add i64 %load_43, %load_44
-  store i64 %add_45, ptr %alloca_21
-  store {  } {  }, ptr %alloca_20
+  store i64 %add_45, ptr %alloca_22
+  store {  } {  }, ptr %alloca_21
   br label %bb1
 bb8:
   br label %bb9
 bb9:
   %alloca_48 = alloca i1, align 1
-  %load_49 = load i64, ptr %alloca_22
+  %load_49 = load i64, ptr %alloca_20
   %load_50 = load i64, ptr %alloca_25
   %icmp_51 = icmp sge i64 %load_49, %load_50
   store i1 %icmp_51, ptr %alloca_48
@@ -110,26 +110,26 @@ bb11:
 bb12:
   br label %bb13
 bb10:
-  %load_54 = load i64, ptr %alloca_21
-  store i64 %load_54, ptr %alloca_20
-  %load_56 = load i64, ptr %alloca_20
+  %load_54 = load i64, ptr %alloca_22
+  store i64 %load_54, ptr %alloca_21
+  %load_56 = load i64, ptr %alloca_21
   ret i64 %load_56
 bb13:
   %alloca_57 = alloca i64, align 8
-  %load_58 = load i64, ptr %alloca_22
+  %load_58 = load i64, ptr %alloca_20
   store i64 %load_58, ptr %alloca_57
-  %load_60 = load i64, ptr %alloca_22
+  %load_60 = load i64, ptr %alloca_20
   %add_61 = add i64 %load_60, 1
-  store i64 %add_61, ptr %alloca_22
-  %load_63 = load i64, ptr %alloca_21
+  store i64 %add_61, ptr %alloca_20
+  %load_63 = load i64, ptr %alloca_22
   %load_64 = load i64, ptr %alloca_57
   %add_65 = add i64 %load_63, %load_64
-  store i64 %add_65, ptr %alloca_21
-  %load_67 = load i64, ptr %alloca_21
+  store i64 %add_65, ptr %alloca_22
+  %load_67 = load i64, ptr %alloca_22
   %load_68 = load i64, ptr %alloca_57
   %add_69 = add i64 %load_67, %load_68
-  store i64 %add_69, ptr %alloca_21
-  store {  } {  }, ptr %alloca_20
+  store i64 %add_69, ptr %alloca_22
+  store {  } {  }, ptr %alloca_21
   br label %bb8
 bb7:
   br label %bb6
@@ -246,22 +246,22 @@ bb0:
   %alloca_127 = alloca i64, align 8
   %alloca_128 = alloca i64, align 8
   %alloca_129 = alloca i64, align 8
-  store i64 0, ptr %alloca_128
   store i64 0, ptr %alloca_127
+  store i64 0, ptr %alloca_129
   br label %bb1
 bb1:
   %alloca_132 = alloca i1, align 1
-  %load_133 = load i64, ptr %alloca_127
+  %load_133 = load i64, ptr %alloca_129
   %icmp_134 = icmp slt i64 %load_133, %arg0
   store i1 %icmp_134, ptr %alloca_132
   %load_136 = load i1, ptr %alloca_132
   br i1 %load_136, label %bb2, label %bb3
 bb2:
-  %load_137 = load i64, ptr %alloca_127
+  %load_137 = load i64, ptr %alloca_129
   %add_138 = add i64 %load_137, 1
-  store i64 %add_138, ptr %alloca_127
+  store i64 %add_138, ptr %alloca_129
   %alloca_140 = alloca i64, align 8
-  %load_141 = load i64, ptr %alloca_127
+  %load_141 = load i64, ptr %alloca_129
   %srem_142 = srem i64 %load_141, 2
   store i64 %srem_142, ptr %alloca_140
   %alloca_144 = alloca i1, align 1
@@ -271,19 +271,19 @@ bb2:
   %load_148 = load i1, ptr %alloca_144
   br i1 %load_148, label %bb4, label %bb5
 bb3:
-  %load_149 = load i64, ptr %alloca_128
-  store i64 %load_149, ptr %alloca_129
-  %load_151 = load i64, ptr %alloca_129
+  %load_149 = load i64, ptr %alloca_127
+  store i64 %load_149, ptr %alloca_128
+  %load_151 = load i64, ptr %alloca_128
   ret i64 %load_151
 bb4:
   br label %bb1
 bb5:
   br label %bb6
 bb6:
-  %load_152 = load i64, ptr %alloca_128
-  %load_153 = load i64, ptr %alloca_127
+  %load_152 = load i64, ptr %alloca_127
+  %load_153 = load i64, ptr %alloca_129
   %add_154 = add i64 %load_152, %load_153
-  store i64 %add_154, ptr %alloca_128
+  store i64 %add_154, ptr %alloca_127
   br label %bb1
 bb7:
   br label %bb6
@@ -357,7 +357,7 @@ bb19:
   %call_181 = call i32 (ptr, ...) @printf(ptr @.str.12)
   br label %bb20
 bb20:
-  store i64 0, ptr %alloca_161
+  store i64 0, ptr %alloca_160
   store i64 1, ptr %alloca_157
   %alloca_184 = alloca i64, align 8
   store i64 4, ptr %alloca_184
@@ -385,7 +385,7 @@ bb26:
   %load_195 = load i64, ptr %alloca_157
   %add_196 = add i64 %load_195, 1
   store i64 %add_196, ptr %alloca_157
-  store i64 1, ptr %alloca_159
+  store i64 1, ptr %alloca_158
   %alloca_199 = alloca i64, align 8
   store i64 4, ptr %alloca_199
   br label %bb28
@@ -403,7 +403,7 @@ bb121:
   br i1 %load_206, label %bb123, label %bb124
 bb29:
   %alloca_207 = alloca i1, align 1
-  %load_208 = load i64, ptr %alloca_159
+  %load_208 = load i64, ptr %alloca_158
   %load_209 = load i64, ptr %alloca_199
   %icmp_210 = icmp sge i64 %load_208, %load_209
   store i1 %icmp_210, ptr %alloca_207
@@ -418,7 +418,7 @@ bb31:
 bb32:
   br label %bb33
 bb122:
-  %load_213 = load i64, ptr %alloca_161
+  %load_213 = load i64, ptr %alloca_160
   %call_214 = call i32 (ptr, ...) @printf(ptr @.str.13, i64 %load_213)
   br label %bb219
 bb125:
@@ -428,7 +428,7 @@ bb125:
   %load_218 = load i64, ptr %alloca_157
   %add_219 = add i64 %load_218, 1
   store i64 %add_219, ptr %alloca_157
-  store i64 1, ptr %alloca_160
+  store i64 1, ptr %alloca_161
   %alloca_222 = alloca i64, align 8
   store i64 4, ptr %alloca_222
   br label %bb127
@@ -436,14 +436,14 @@ bb30:
   br label %bb51
 bb33:
   %alloca_224 = alloca i64, align 8
-  %load_225 = load i64, ptr %alloca_159
+  %load_225 = load i64, ptr %alloca_158
   store i64 %load_225, ptr %alloca_224
-  %load_227 = load i64, ptr %alloca_159
+  %load_227 = load i64, ptr %alloca_158
   %add_228 = add i64 %load_227, 1
-  store i64 %add_228, ptr %alloca_159
-  %load_230 = load i64, ptr %alloca_161
+  store i64 %add_228, ptr %alloca_158
+  %load_230 = load i64, ptr %alloca_160
   %add_231 = add i64 %load_230, 1
-  store i64 %add_231, ptr %alloca_161
+  store i64 %add_231, ptr %alloca_160
   %alloca_233 = alloca i1, align 1
   %load_234 = load i64, ptr %alloca_192
   %load_235 = load i64, ptr %alloca_224
@@ -472,7 +472,7 @@ bb220:
   br label %bb221
 bb128:
   %alloca_246 = alloca i1, align 1
-  %load_247 = load i64, ptr %alloca_160
+  %load_247 = load i64, ptr %alloca_161
   %load_248 = load i64, ptr %alloca_222
   %icmp_249 = icmp sge i64 %load_247, %load_248
   store i1 %icmp_249, ptr %alloca_246
@@ -480,7 +480,7 @@ bb128:
   br i1 %load_251, label %bb130, label %bb131
 bb52:
   %alloca_252 = alloca i1, align 1
-  %load_253 = load i64, ptr %alloca_159
+  %load_253 = load i64, ptr %alloca_158
   %load_254 = load i64, ptr %alloca_199
   %icmp_255 = icmp sge i64 %load_253, %load_254
   store i1 %icmp_255, ptr %alloca_252
@@ -519,14 +519,14 @@ bb129:
   br label %bb150
 bb132:
   %alloca_267 = alloca i64, align 8
-  %load_268 = load i64, ptr %alloca_160
+  %load_268 = load i64, ptr %alloca_161
   store i64 %load_268, ptr %alloca_267
-  %load_270 = load i64, ptr %alloca_160
+  %load_270 = load i64, ptr %alloca_161
   %add_271 = add i64 %load_270, 1
-  store i64 %add_271, ptr %alloca_160
-  %load_273 = load i64, ptr %alloca_161
+  store i64 %add_271, ptr %alloca_161
+  %load_273 = load i64, ptr %alloca_160
   %add_274 = add i64 %load_273, 1
-  store i64 %add_274, ptr %alloca_161
+  store i64 %add_274, ptr %alloca_160
   %alloca_276 = alloca i1, align 1
   %load_277 = load i64, ptr %alloca_215
   %load_278 = load i64, ptr %alloca_267
@@ -535,20 +535,20 @@ bb132:
   %load_281 = load i1, ptr %alloca_276
   br i1 %load_281, label %bb134, label %bb135
 bb53:
-  store i64 1, ptr %alloca_156
+  store i64 1, ptr %alloca_159
   %alloca_283 = alloca i64, align 8
   store i64 4, ptr %alloca_283
   br label %bb74
 bb56:
   %alloca_285 = alloca i64, align 8
-  %load_286 = load i64, ptr %alloca_159
+  %load_286 = load i64, ptr %alloca_158
   store i64 %load_286, ptr %alloca_285
-  %load_288 = load i64, ptr %alloca_159
+  %load_288 = load i64, ptr %alloca_158
   %add_289 = add i64 %load_288, 1
-  store i64 %add_289, ptr %alloca_159
-  %load_291 = load i64, ptr %alloca_161
+  store i64 %add_289, ptr %alloca_158
+  %load_291 = load i64, ptr %alloca_160
   %add_292 = add i64 %load_291, 1
-  store i64 %add_292, ptr %alloca_161
+  store i64 %add_292, ptr %alloca_160
   %alloca_294 = alloca i1, align 1
   %load_295 = load i64, ptr %alloca_192
   %load_296 = load i64, ptr %alloca_285
@@ -559,9 +559,9 @@ bb56:
 bb42:
   br label %bb41
 bb41:
-  %load_300 = load i64, ptr %alloca_161
+  %load_300 = load i64, ptr %alloca_160
   %add_301 = add i64 %load_300, 1
-  store i64 %add_301, ptr %alloca_161
+  store i64 %add_301, ptr %alloca_160
   %alloca_303 = alloca i1, align 1
   %load_304 = load i64, ptr %alloca_192
   %load_305 = load i64, ptr %alloca_224
@@ -593,7 +593,7 @@ bb44:
   br label %bb45
 bb151:
   %alloca_315 = alloca i1, align 1
-  %load_316 = load i64, ptr %alloca_160
+  %load_316 = load i64, ptr %alloca_161
   %load_317 = load i64, ptr %alloca_222
   %icmp_318 = icmp sge i64 %load_316, %load_317
   store i1 %icmp_318, ptr %alloca_315
@@ -611,7 +611,7 @@ bb136:
   br i1 %load_326, label %bb138, label %bb139
 bb75:
   %alloca_327 = alloca i1, align 1
-  %load_328 = load i64, ptr %alloca_156
+  %load_328 = load i64, ptr %alloca_159
   %load_329 = load i64, ptr %alloca_283
   %icmp_330 = icmp sge i64 %load_328, %load_329
   store i1 %icmp_330, ptr %alloca_327
@@ -664,20 +664,20 @@ bb47:
 bb48:
   br label %bb49
 bb152:
-  store i64 1, ptr %alloca_158
+  store i64 1, ptr %alloca_156
   %alloca_352 = alloca i64, align 8
   store i64 4, ptr %alloca_352
   br label %bb173
 bb155:
   %alloca_354 = alloca i64, align 8
-  %load_355 = load i64, ptr %alloca_160
+  %load_355 = load i64, ptr %alloca_161
   store i64 %load_355, ptr %alloca_354
-  %load_357 = load i64, ptr %alloca_160
+  %load_357 = load i64, ptr %alloca_161
   %add_358 = add i64 %load_357, 1
-  store i64 %add_358, ptr %alloca_160
-  %load_360 = load i64, ptr %alloca_161
+  store i64 %add_358, ptr %alloca_161
+  %load_360 = load i64, ptr %alloca_160
   %add_361 = add i64 %load_360, 1
-  store i64 %add_361, ptr %alloca_161
+  store i64 %add_361, ptr %alloca_160
   %alloca_363 = alloca i1, align 1
   %load_364 = load i64, ptr %alloca_215
   %load_365 = load i64, ptr %alloca_354
@@ -688,9 +688,9 @@ bb155:
 bb141:
   br label %bb140
 bb140:
-  %load_369 = load i64, ptr %alloca_161
+  %load_369 = load i64, ptr %alloca_160
   %add_370 = add i64 %load_369, 1
-  store i64 %add_370, ptr %alloca_161
+  store i64 %add_370, ptr %alloca_160
   %alloca_372 = alloca i1, align 1
   %load_373 = load i64, ptr %alloca_215
   %load_374 = load i64, ptr %alloca_267
@@ -702,14 +702,14 @@ bb76:
   br label %bb97
 bb79:
   %alloca_378 = alloca i64, align 8
-  %load_379 = load i64, ptr %alloca_156
+  %load_379 = load i64, ptr %alloca_159
   store i64 %load_379, ptr %alloca_378
-  %load_381 = load i64, ptr %alloca_156
+  %load_381 = load i64, ptr %alloca_159
   %add_382 = add i64 %load_381, 1
-  store i64 %add_382, ptr %alloca_156
-  %load_384 = load i64, ptr %alloca_161
+  store i64 %add_382, ptr %alloca_159
+  %load_384 = load i64, ptr %alloca_160
   %add_385 = add i64 %load_384, 1
-  store i64 %add_385, ptr %alloca_161
+  store i64 %add_385, ptr %alloca_160
   %alloca_387 = alloca i1, align 1
   %load_388 = load i64, ptr %alloca_192
   %load_389 = load i64, ptr %alloca_378
@@ -720,9 +720,9 @@ bb79:
 bb65:
   br label %bb64
 bb64:
-  %load_393 = load i64, ptr %alloca_161
+  %load_393 = load i64, ptr %alloca_160
   %add_394 = add i64 %load_393, 1
-  store i64 %add_394, ptr %alloca_161
+  store i64 %add_394, ptr %alloca_160
   %alloca_396 = alloca i1, align 1
   %load_397 = load i64, ptr %alloca_192
   %load_398 = load i64, ptr %alloca_285
@@ -764,7 +764,7 @@ bb67:
   br label %bb68
 bb174:
   %alloca_410 = alloca i1, align 1
-  %load_411 = load i64, ptr %alloca_158
+  %load_411 = load i64, ptr %alloca_156
   %load_412 = load i64, ptr %alloca_352
   %icmp_413 = icmp sge i64 %load_411, %load_412
   store i1 %icmp_413, ptr %alloca_410
@@ -792,7 +792,7 @@ bb144:
   br i1 %load_427, label %bb146, label %bb147
 bb98:
   %alloca_428 = alloca i1, align 1
-  %load_429 = load i64, ptr %alloca_156
+  %load_429 = load i64, ptr %alloca_159
   %load_430 = load i64, ptr %alloca_283
   %icmp_431 = icmp sge i64 %load_429, %load_430
   store i1 %icmp_431, ptr %alloca_428
@@ -854,14 +854,14 @@ bb175:
   br label %bb196
 bb178:
   %alloca_454 = alloca i64, align 8
-  %load_455 = load i64, ptr %alloca_158
+  %load_455 = load i64, ptr %alloca_156
   store i64 %load_455, ptr %alloca_454
-  %load_457 = load i64, ptr %alloca_158
+  %load_457 = load i64, ptr %alloca_156
   %add_458 = add i64 %load_457, 1
-  store i64 %add_458, ptr %alloca_158
-  %load_460 = load i64, ptr %alloca_161
+  store i64 %add_458, ptr %alloca_156
+  %load_460 = load i64, ptr %alloca_160
   %add_461 = add i64 %load_460, 1
-  store i64 %add_461, ptr %alloca_161
+  store i64 %add_461, ptr %alloca_160
   %alloca_463 = alloca i1, align 1
   %load_464 = load i64, ptr %alloca_215
   %load_465 = load i64, ptr %alloca_454
@@ -872,9 +872,9 @@ bb178:
 bb164:
   br label %bb163
 bb163:
-  %load_469 = load i64, ptr %alloca_161
+  %load_469 = load i64, ptr %alloca_160
   %add_470 = add i64 %load_469, 1
-  store i64 %add_470, ptr %alloca_161
+  store i64 %add_470, ptr %alloca_160
   %alloca_472 = alloca i1, align 1
   %load_473 = load i64, ptr %alloca_215
   %load_474 = load i64, ptr %alloca_354
@@ -890,14 +890,14 @@ bb99:
   br label %bb21
 bb102:
   %alloca_478 = alloca i64, align 8
-  %load_479 = load i64, ptr %alloca_156
+  %load_479 = load i64, ptr %alloca_159
   store i64 %load_479, ptr %alloca_478
-  %load_481 = load i64, ptr %alloca_156
+  %load_481 = load i64, ptr %alloca_159
   %add_482 = add i64 %load_481, 1
-  store i64 %add_482, ptr %alloca_156
-  %load_484 = load i64, ptr %alloca_161
+  store i64 %add_482, ptr %alloca_159
+  %load_484 = load i64, ptr %alloca_160
   %add_485 = add i64 %load_484, 1
-  store i64 %add_485, ptr %alloca_161
+  store i64 %add_485, ptr %alloca_160
   %alloca_487 = alloca i1, align 1
   %load_488 = load i64, ptr %alloca_192
   %load_489 = load i64, ptr %alloca_478
@@ -908,9 +908,9 @@ bb102:
 bb88:
   br label %bb87
 bb87:
-  %load_493 = load i64, ptr %alloca_161
+  %load_493 = load i64, ptr %alloca_160
   %add_494 = add i64 %load_493, 1
-  store i64 %add_494, ptr %alloca_161
+  store i64 %add_494, ptr %alloca_160
   %alloca_496 = alloca i1, align 1
   %load_497 = load i64, ptr %alloca_192
   %load_498 = load i64, ptr %alloca_378
@@ -950,7 +950,7 @@ bb90:
   br label %bb91
 bb197:
   %alloca_510 = alloca i1, align 1
-  %load_511 = load i64, ptr %alloca_158
+  %load_511 = load i64, ptr %alloca_156
   %load_512 = load i64, ptr %alloca_352
   %icmp_513 = icmp sge i64 %load_511, %load_512
   store i1 %icmp_513, ptr %alloca_510
@@ -1028,14 +1028,14 @@ bb198:
   br label %bb120
 bb201:
   %alloca_548 = alloca i64, align 8
-  %load_549 = load i64, ptr %alloca_158
+  %load_549 = load i64, ptr %alloca_156
   store i64 %load_549, ptr %alloca_548
-  %load_551 = load i64, ptr %alloca_158
+  %load_551 = load i64, ptr %alloca_156
   %add_552 = add i64 %load_551, 1
-  store i64 %add_552, ptr %alloca_158
-  %load_554 = load i64, ptr %alloca_161
+  store i64 %add_552, ptr %alloca_156
+  %load_554 = load i64, ptr %alloca_160
   %add_555 = add i64 %load_554, 1
-  store i64 %add_555, ptr %alloca_161
+  store i64 %add_555, ptr %alloca_160
   %alloca_557 = alloca i1, align 1
   %load_558 = load i64, ptr %alloca_215
   %load_559 = load i64, ptr %alloca_548
@@ -1046,9 +1046,9 @@ bb201:
 bb187:
   br label %bb186
 bb186:
-  %load_563 = load i64, ptr %alloca_161
+  %load_563 = load i64, ptr %alloca_160
   %add_564 = add i64 %load_563, 1
-  store i64 %add_564, ptr %alloca_161
+  store i64 %add_564, ptr %alloca_160
   %alloca_566 = alloca i1, align 1
   %load_567 = load i64, ptr %alloca_215
   %load_568 = load i64, ptr %alloca_454
@@ -1063,9 +1063,9 @@ bb171:
 bb111:
   br label %bb110
 bb110:
-  %load_572 = load i64, ptr %alloca_161
+  %load_572 = load i64, ptr %alloca_160
   %add_573 = add i64 %load_572, 1
-  store i64 %add_573, ptr %alloca_161
+  store i64 %add_573, ptr %alloca_160
   %alloca_575 = alloca i1, align 1
   %load_576 = load i64, ptr %alloca_192
   %load_577 = load i64, ptr %alloca_478
@@ -1146,9 +1146,9 @@ bb117:
 bb210:
   br label %bb209
 bb209:
-  %load_611 = load i64, ptr %alloca_161
+  %load_611 = load i64, ptr %alloca_160
   %add_612 = add i64 %load_611, 1
-  store i64 %add_612, ptr %alloca_161
+  store i64 %add_612, ptr %alloca_160
   %alloca_614 = alloca i1, align 1
   %load_615 = load i64, ptr %alloca_215
   %load_616 = load i64, ptr %alloca_548
