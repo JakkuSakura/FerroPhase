@@ -1,9 +1,0 @@
-fn main -> Some(Unit(TypeUnit))
-  Parameters:
-  Body:
-    Block : ()
-
-      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None }), Literal(" has "), Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None }), Literal(" fields")], args: [Expr { ty: Some(Reference(TypeReference { ty: Primitive(String), mutability: None, lifetime: None })), kind: Invoke(ExprInvoke { target: Function(Path(Path { segments: [Ident { name: "Point3D" }, Ident { name: "type_name" }] })), args: [] }) }, Expr { ty: Some(Primitive(Int(U64))), kind: Invoke(ExprInvoke { target: Function(Path(Path { segments: [Ident { name: "Point3D" }, Ident { name: "field_count" }] })), args: [] }) }], kwargs: [] } } }) : ()
-
-      IntrinsicCall(IntrinsicCall { kind: Println, payload: Format { template: ExprFormatString { parts: [Literal("tag discriminant: "), Placeholder(FormatPlaceholder { arg_ref: Implicit, format_spec: None })], args: [Expr { ty: Some(Primitive(Int(U8))), kind: Any(RawExpr { raw: Expr::Cast { attrs: [], expr: Expr::Path { attrs: [], qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: tag, span: bytes(896..899) }, arguments: PathArguments::None }] } }, as_token: As, ty: Type::Path { qself: None, path: Path { leading_colon: None, segments: [PathSegment { ident: Ident { sym: u8, span: bytes(903..905) }, arguments: PathArguments::None }] } } } }) }], kwargs: [] } } }) : ()
-
