@@ -6,11 +6,11 @@ use syn::LitStr;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprBinOp, ExprBlock, ExprClosure,
-    ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit,
-    ExprReference, ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct,
-    ExprStructural, ExprTuple, ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item,
-    StmtLet,
+    ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex, ExprIntrinsicCall,
+    ExprIntrinsicCollection, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMatch,
+    ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprSplat,
+    ExprSplatDict, ExprStruct, ExprStructural, ExprTuple, ExprUnOp, ExprWhile, FormatArgRef,
+    FormatTemplatePart, Item, StmtLet,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -58,6 +58,7 @@ impl RustPrinter {
             ExprKind::Closure(n) => self.print_expr_closure(n),
             ExprKind::Array(n) => self.print_expr_array(n),
             ExprKind::ArrayRepeat(n) => self.print_expr_array_repeat(n),
+            ExprKind::IntrinsicCollection(n) => self.print_intrinsic_collection(n),
             ExprKind::IntrinsicCall(n) => self.print_intrinsic_call(n),
             ExprKind::Structural(n) => self.print_structural_expr(n),
             ExprKind::Dereference(n) => self.print_expr_dereference(n),
@@ -66,6 +67,13 @@ impl RustPrinter {
             ExprKind::SplatDict(n) => self.print_expr_splat_dict(n),
             ExprKind::Item(item) => self.print_expr_item(item),
         }
+    }
+
+    fn print_intrinsic_collection(
+        &self,
+        collection: &ExprIntrinsicCollection,
+    ) -> fp_core::Result<TokenStream> {
+        self.print_expr(&collection.clone().into_const_expr())
     }
 
     fn print_bin_op(&self, binop: &ExprBinOp) -> Result<TokenStream> {

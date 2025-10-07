@@ -7,6 +7,16 @@ use fp_core::pat::{Pattern, PatternKind};
 
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
+fn expand_intrinsic_collection(expr: &mut Expr) -> bool {
+    if let ExprKind::IntrinsicCollection(collection) = expr.kind() {
+        let new_expr = collection.clone().into_const_expr();
+        *expr = new_expr;
+        true
+    } else {
+        false
+    }
+}
+
 #[derive(Clone)]
 struct ClosureInfo {
     env_struct_ident: Ident,
@@ -307,6 +317,10 @@ impl ClosureLowering {
     }
 
     fn rewrite_in_expr(&mut self, expr: &mut Expr) -> Result<()> {
+        if expand_intrinsic_collection(expr) {
+            return self.rewrite_in_expr(expr);
+        }
+
         if let Some(info) = self.transform_closure_expr(expr)? {
             self.struct_infos
                 .insert(info.env_struct_ident.as_str().to_string(), info);
@@ -470,6 +484,9 @@ impl ClosureLowering {
                 }
             },
             ExprKind::Paren(paren) => self.rewrite_in_expr(paren.expr.as_mut())?,
+            ExprKind::IntrinsicCollection(_) => {
+                unreachable!("intrinsic collections should have been expanded")
+            }
             ExprKind::Locator(_) | ExprKind::Closured(_) => {}
             ExprKind::Closure(_) | ExprKind::Any(_) | ExprKind::Id(_) => {}
         }
@@ -587,6 +604,10 @@ impl CaptureCollector {
     fn visit(&mut self, expr: &Expr) {
         match expr.kind() {
             ExprKind::Closure(_) | ExprKind::Closured(_) => {}
+            ExprKind::IntrinsicCollection(collection) => {
+                let expanded = collection.clone().into_const_expr();
+                self.visit(&expanded);
+            }
             ExprKind::Block(block) => {
                 self.scope.push(HashSet::new());
                 for stmt in &block.stmts {
@@ -800,6 +821,11 @@ impl CaptureReplacer {
     }
 
     fn visit(&mut self, expr: &mut Expr) {
+        if expand_intrinsic_collection(expr) {
+            self.visit(expr);
+            return;
+        }
+
         match expr.kind_mut() {
             ExprKind::Block(block) => {
                 for stmt in &mut block.stmts {
@@ -922,6 +948,9 @@ impl CaptureReplacer {
                 }
             },
             ExprKind::Paren(paren) => self.visit(paren.expr.as_mut()),
+            ExprKind::IntrinsicCollection(_) => {
+                unreachable!("intrinsic collections should have been expanded")
+            }
             ExprKind::Locator(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     if let Some(field_ty) = self.captures.get(ident.as_str()) {

@@ -223,9 +223,9 @@ impl<'ctx> LirCodegen<'ctx> {
             thread_local_mode: ThreadLocalMode::NotThreadLocal,
             unnamed_addr: None,
             initializer,
-            section: None,
+            section: global.section.clone(),
             comdat: None,
-            alignment: 0,
+            alignment: global.alignment.unwrap_or(0),
             debugloc: None,
         };
 

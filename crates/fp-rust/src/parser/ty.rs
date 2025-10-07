@@ -8,6 +8,7 @@ use syn::{parse_quote, FieldsNamed, Token};
 use fp_core::ast::{
     DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeAny, TypeArray, TypeBounds,
     TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
+    TypeVec,
 };
 use fp_core::ast::{Ident, Path};
 use fp_core::ops::BinOpKind;
@@ -37,27 +38,31 @@ impl RustParser {
             )
             .into(),
             syn::Type::Path(p) => {
-                let s = p.path.to_token_stream().to_string();
-                fn int(ty: TypeInt) -> Ty {
-                    Ty::Primitive(TypePrimitive::Int(ty))
-                }
-                fn float(ty: DecimalType) -> Ty {
-                    Ty::Primitive(TypePrimitive::Decimal(ty))
-                }
+                if let Some(vec_ty) = self.parse_vec_type(&p)? {
+                    vec_ty
+                } else {
+                    let s = p.path.to_token_stream().to_string();
+                    fn int(ty: TypeInt) -> Ty {
+                        Ty::Primitive(TypePrimitive::Int(ty))
+                    }
+                    fn float(ty: DecimalType) -> Ty {
+                        Ty::Primitive(TypePrimitive::Decimal(ty))
+                    }
 
-                match s.as_str() {
-                    "i64" => int(TypeInt::I64),
-                    "i32" => int(TypeInt::I32),
-                    "i16" => int(TypeInt::I16),
-                    "i8" => int(TypeInt::I8),
-                    "u64" => int(TypeInt::U64),
-                    "u32" => int(TypeInt::U32),
-                    "u16" => int(TypeInt::U16),
-                    "u8" => int(TypeInt::U8),
-                    "usize" => int(TypeInt::U64),
-                    "f64" => float(DecimalType::F64),
-                    "f32" => float(DecimalType::F32),
-                    _ => Ty::locator(self.parse_locator(p.path)?),
+                    match s.as_str() {
+                        "i64" => int(TypeInt::I64),
+                        "i32" => int(TypeInt::I32),
+                        "i16" => int(TypeInt::I16),
+                        "i8" => int(TypeInt::I8),
+                        "u64" => int(TypeInt::U64),
+                        "u32" => int(TypeInt::U32),
+                        "u16" => int(TypeInt::U16),
+                        "u8" => int(TypeInt::U8),
+                        "usize" => int(TypeInt::U64),
+                        "f64" => float(DecimalType::F64),
+                        "f32" => float(DecimalType::F32),
+                        _ => Ty::locator(self.parse_locator(p.path)?),
+                    }
                 }
             }
             syn::Type::ImplTrait(im) => Ty::ImplTraits(parse_impl_trait_with(self, im)?),
@@ -74,6 +79,34 @@ impl RustParser {
             }
         };
         Ok(ty)
+    }
+
+    fn parse_vec_type(&self, type_path: &syn::TypePath) -> Result<Option<Ty>> {
+        if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
+            let segment = &type_path.path.segments[0];
+            if segment.ident == "Vec" {
+                let elem_ty = match &segment.arguments {
+                    syn::PathArguments::AngleBracketed(args) => args
+                        .args
+                        .first()
+                        .and_then(|arg| match arg {
+                            syn::GenericArgument::Type(ty) => Some(ty.clone()),
+                            _ => None,
+                        })
+                        .map(|ty| self.parse_type_internal(ty))
+                        .transpose()?
+                        .unwrap_or_else(|| Ty::Any(TypeAny)),
+                    syn::PathArguments::None => Ty::Any(TypeAny),
+                    _ => Ty::Any(TypeAny),
+                };
+
+                return Ok(Some(Ty::Vec(TypeVec {
+                    ty: Box::new(elem_ty),
+                })));
+            }
+        }
+
+        Ok(None)
     }
 
     fn parse_type_slice_internal(&self, s: syn::TypeSlice) -> Result<Ty> {
