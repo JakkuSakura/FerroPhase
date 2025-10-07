@@ -2053,12 +2053,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 // Try to specialize generic function references
                 if let Some(expected_ty) = &expr_ty_snapshot {
                     if matches!(expected_ty, Ty::Function(_)) {
-                        eprintln!("[evaluate_function_body] Attempting to specialize Locator {} with type {:?}", locator, expected_ty);
-                        if let Some(_specialized) = self.specialize_function_reference(locator, expected_ty) {
-                            eprintln!("[evaluate_function_body] Successfully specialized {} to {}", locator, locator);
-                        } else {
-                            eprintln!("[evaluate_function_body] Failed to specialize {}", locator);
-                        }
+                        self.specialize_function_reference(locator, expected_ty);
                     }
                 }
             }

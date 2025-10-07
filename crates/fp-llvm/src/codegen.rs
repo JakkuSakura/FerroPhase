@@ -299,8 +299,6 @@ impl<'ctx> LirCodegen<'ctx> {
 
         self.current_function = Some(function_name.clone());
         self.current_return_type = Some(return_lir_type);
-        self.argument_operands.clear();
-        self.populate_argument_operands(&function_name, &lir_func.locals)?;
 
         let function_linkage = self.convert_linkage(lir_func.linkage);
         if let Some(function_record) = self
@@ -317,6 +315,10 @@ impl<'ctx> LirCodegen<'ctx> {
         self.value_map.clear();
         self.block_map.clear();
         self.constant_results.clear();
+        self.argument_operands.clear();
+
+        // Populate argument operands after clearing maps
+        self.populate_argument_operands(&function_name, &lir_func.locals)?;
 
         for (i, basic_block) in lir_func.basic_blocks.into_iter().enumerate() {
             debug!(
@@ -1248,10 +1250,13 @@ impl<'ctx> LirCodegen<'ctx> {
                 })?;
 
                 let operand = Operand::LocalOperand {
-                    name: param.name,
-                    ty: param.ty,
+                    name: param.name.clone(),
+                    ty: param.ty.clone(),
                 };
                 self.argument_operands.insert(local.id, operand);
+
+                // Also add to value_map so lir_value_type can find it
+                self.value_map.insert(local.id, (param.name, local.ty.clone()));
             }
         }
 
@@ -1270,6 +1275,11 @@ impl<'ctx> LirCodegen<'ctx> {
         let (function_name, callee_operand) = match &function {
             lir::LirValue::Function(name) => (name.clone(), None),
             lir::LirValue::Global(name, _) => (name.clone(), None),
+            lir::LirValue::Local(local_id) | lir::LirValue::Register(local_id) => {
+                // Indirect call through function pointer
+                let operand = self.convert_lir_value_to_operand(function.clone())?;
+                (format!("indirect_call_{}", local_id), Some(operand))
+            }
             other => {
                 return Err(report_error_with_context(
                     LOG_AREA,
@@ -1280,7 +1290,30 @@ impl<'ctx> LirCodegen<'ctx> {
 
         let llvm_symbol = self.llvm_symbol_for(&function_name);
 
-        let signature = self.function_signatures.get(&function_name).cloned();
+        let signature = if callee_operand.is_some() {
+            // For indirect calls, try to extract signature from function pointer type
+            if let Some(fn_ptr_ty) = self.lir_value_type(&function) {
+                // Function pointers in LIR are represented as Ptr(Function(...))
+                let inner_ty = match &fn_ptr_ty {
+                    lir::Ty::Ptr(inner) => inner.as_ref(),
+                    other => other,
+                };
+
+                if let lir::Ty::Function { return_type, param_types, is_variadic } = inner_ty {
+                    Some(lir::LirFunctionSignature {
+                        params: param_types.clone(),
+                        return_type: (**return_type).clone(),
+                        is_variadic: *is_variadic,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            self.function_signatures.get(&function_name).cloned()
+        };
 
         let return_lir_type = if let Some(sig) = &signature {
             sig.return_type.clone()
@@ -1322,7 +1355,8 @@ impl<'ctx> LirCodegen<'ctx> {
         let current_symbol = self.current_function.clone();
         let is_current_function = current_symbol.as_deref() == Some(&llvm_symbol);
 
-        let needs_stub = !is_defined
+        let needs_stub = callee_operand.is_none()
+            && !is_defined
             && !is_current_function
             && !self
                 .llvm_ctx
@@ -1597,6 +1631,7 @@ impl<'ctx> LirCodegen<'ctx> {
             }
             lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),
             lir::LirValue::Register(reg_id) => self.value_map.get(reg_id).map(|(_, ty)| ty.clone()),
+            lir::LirValue::Local(local_id) => self.value_map.get(local_id).map(|(_, ty)| ty.clone()),
             lir::LirValue::Global(_, ty) => Some(ty.clone()),
             lir::LirValue::Function(_) => Some(lir::LirType::Ptr(Box::new(lir::LirType::Void))),
             _ => None,
@@ -1949,10 +1984,12 @@ impl<'ctx> LirCodegen<'ctx> {
                     ));
                 };
 
+                // Use pointer type for function references (opaque pointers in modern LLVM)
+                let ptr_ty = self.llvm_ctx.module.types.get_for_type(&Type::PointerType { addr_space: 0 });
                 Ok(Operand::ConstantOperand(ConstantRef::new(
                     Constant::GlobalReference {
                         name: Name::Name(Box::new(llvm_name)),
-                        ty: fn_ty,
+                        ty: ptr_ty,
                     },
                 )))
             }
@@ -2374,7 +2411,16 @@ impl<'ctx> LirCodegen<'ctx> {
                     is_var_arg: is_variadic,
                 })
             }
-            _ => unimplemented!(),
+            lir::LirType::Error => {
+                // Error placeholder type - use i64 as a safe default
+                Ok(self.llvm_ctx.i64_type())
+            }
+            other => {
+                return Err(report_error_with_context(
+                    LOG_AREA,
+                    format!("unsupported LIR type in LLVM lowering: {:?}", other),
+                ))
+            }
         }
     }
 
