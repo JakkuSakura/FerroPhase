@@ -2,6 +2,8 @@ use fp_core::ast::{BlockStmt, Expr, ExprKind, Item, Node, NodeKind};
 use fp_core::error::Result;
 use std::collections::HashMap;
 
+use fp_python::PythonGenerator;
+
 /// Simplified transpilation that consolidates all the duplicated language-specific code
 pub struct Transpiler {
     target: TranspileTarget,
@@ -23,6 +25,7 @@ impl Transpiler {
             TranspileTarget::TypeScript => &TypeScriptTemplate,
             TranspileTarget::JavaScript => &JavaScriptTemplate,
             TranspileTarget::CSharp => &CSharpTemplate,
+            TranspileTarget::Python => &PythonTemplate,
             TranspileTarget::Rust => &RustTemplate,
         }
     }
@@ -74,6 +77,14 @@ impl Transpiler {
             context.enums.push(enum_def.value.clone());
         }
 
+        if let Some(const_def) = item.as_const() {
+            if let ExprKind::Value(value) = const_def.value.as_ref().kind() {
+                context
+                    .constants
+                    .insert(const_def.name.name.clone(), *value.clone());
+            }
+        }
+
         if let Some(expr) = item.as_expr() {
             self.visit_expr(expr, context);
         }
@@ -85,6 +96,7 @@ pub enum TranspileTarget {
     TypeScript,
     JavaScript,
     CSharp,
+    Python,
     Rust,
 }
 
@@ -191,6 +203,28 @@ impl CodeTemplate for JavaScriptTemplate {
     }
     fn default_value(&self, _type_name: &str) -> &str {
         "null"
+    }
+}
+
+struct PythonTemplate;
+impl CodeTemplate for PythonTemplate {
+    fn render(&self, context: &TranspileContext) -> String {
+        match PythonGenerator::new().render_module(
+            &context.structs,
+            &context.enums,
+            &context.constants,
+        ) {
+            Ok(code) => code,
+            Err(err) => format!("# Failed to generate Python code: {}\n", err),
+        }
+    }
+
+    fn type_name<'a>(&self, _rust_type: &'a str) -> &'a str {
+        "object"
+    }
+
+    fn default_value(&self, _type_name: &str) -> &str {
+        "None"
     }
 }
 
