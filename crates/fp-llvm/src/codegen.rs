@@ -1169,7 +1169,7 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirType::Void
         };
 
-        let return_type_ref = self.to_type_ref(return_lir_type.clone())?;
+        let mut return_type_ref = self.to_type_ref(return_lir_type.clone())?;
 
         let param_lir_types = if let Some(sig) = signature.clone() {
             sig.params
@@ -1197,9 +1197,12 @@ impl<'ctx> LirCodegen<'ctx> {
 
         let llvm_calling_convention = self.convert_calling_convention(&calling_convention);
 
+        let mut is_variadic = signature.as_ref().map(|s| s.is_variadic).unwrap_or(false);
+
         let is_defined = self.defined_functions.contains(&llvm_symbol);
         let current_symbol = self.current_function.clone();
         let is_current_function = current_symbol.as_deref() == Some(&llvm_symbol);
+        let is_runtime_intrinsic = CRuntimeIntrinsics::is_runtime_intrinsic(&function_name);
 
         let needs_stub = callee_operand.is_none()
             && !is_defined
@@ -1209,7 +1212,8 @@ impl<'ctx> LirCodegen<'ctx> {
                 .module
                 .functions
                 .iter()
-                .any(|f| f.name == llvm_symbol);
+                .any(|f| f.name == llvm_symbol)
+            && !is_runtime_intrinsic;
 
         if needs_stub {
             tracing::debug!("Declaring stub for {}", llvm_symbol);
@@ -1222,10 +1226,36 @@ impl<'ctx> LirCodegen<'ctx> {
             );
         }
 
+        if is_runtime_intrinsic {
+            if let Some(runtime_decl) = CRuntimeIntrinsics::get_intrinsic_decl(
+                &function_name,
+                &self.llvm_ctx.module.types,
+            ) {
+                let already_present = self
+                    .llvm_ctx
+                    .module
+                    .functions
+                    .iter()
+                    .any(|f| f.name == runtime_decl.name);
+
+                if !already_present {
+                    self.llvm_ctx.module.functions.push(runtime_decl.clone());
+                }
+
+                return_type_ref = runtime_decl.return_type.clone();
+                param_type_refs = runtime_decl
+                    .parameters
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect();
+                is_variadic = runtime_decl.is_var_arg;
+            }
+        }
+
         let fn_ty = self.llvm_ctx.module.types.func_type(
             return_type_ref.clone(),
             param_type_refs.clone(),
-            signature.as_ref().map(|s| s.is_variadic).unwrap_or(false),
+            is_variadic,
         );
 
         let callee = either::Either::Right(match callee_operand {
@@ -1789,13 +1819,14 @@ impl<'ctx> LirCodegen<'ctx> {
                     &name,
                     &self.llvm_ctx.module.types,
                 ) {
-                    if !self
+                    let already_present = self
                         .llvm_ctx
                         .module
                         .functions
                         .iter()
-                        .any(|f| f.name == runtime_decl.name)
-                    {
+                        .any(|f| f.name == runtime_decl.name);
+
+                    if !already_present {
                         self.llvm_ctx.module.functions.push(runtime_decl.clone());
                     }
 
