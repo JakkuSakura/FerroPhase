@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 llvm-ir = { version = "0.11.3", features = ["llvm-19"] }
 fp-core = { path = "../fp-core" }
+fp-clang = { path = "../fp-clang" }
 anyhow = "1.0"
 thiserror = "1.0"
 which = "4.0"
