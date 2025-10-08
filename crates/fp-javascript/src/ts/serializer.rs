@@ -6,9 +6,8 @@ use eyre::eyre;
 use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall,
     ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Ident, Item, Locator, Node, NodeKind, Ty, TypeEnum, TypePrimitive,
-    TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
-    ValueTuple,
+    FunctionParam, Ident, Item, Locator, Node, NodeKind, Ty, TypeEnum, TypePrimitive, TypeStruct,
+    TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
