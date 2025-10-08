@@ -1,9 +1,10 @@
 use std::hash::Hash;
 
-use crate::ast::{BExpr, BItem, Expr, ExprKind, Ident, Item, Ty};
+use crate::ast::{
+    BExpr, BItem, Expr, ExprKind, Ident, Item, Pattern, PatternIdent, PatternKind, PatternType, Ty,
+};
 use crate::common_enum;
 use crate::common_struct;
-use crate::pat::{Pattern, PatternIdent, PatternKind, PatternType};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 
 common_enum! {

@@ -7,8 +7,8 @@
 use std::fmt::{self, Formatter, Write};
 
 use crate::ast;
+use crate::ast::{Pattern, PatternKind, PatternStructField};
 use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-use crate::pat::{Pattern, PatternKind, PatternStructField};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 
 impl PrettyPrintable for ast::Expr {
