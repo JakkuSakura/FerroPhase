@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator};
+use fp_core::ast::{Pattern, PatternKind};
 use fp_core::context::SharedScopedContext;
 use fp_core::error::{Error, Result};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::pat::{Pattern, PatternKind};
 use fp_rust::{
     parser::{parse_type as parse_raw_type, RustParser},
     RawExpr,

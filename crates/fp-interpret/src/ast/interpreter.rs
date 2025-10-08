@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
+use fp_core::ast::Pattern;
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
@@ -17,7 +18,6 @@ use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
-use fp_core::pat::Pattern;
 use fp_typing::AstTypeInferencer;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
