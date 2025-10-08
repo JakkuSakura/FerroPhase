@@ -2,16 +2,13 @@ use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::runtime::RuntimeIntrinsicStrategy;
 use fp_core::intrinsics::IntrinsicCallPayload;
+use fp_core::intrinsics::IntrinsicMaterializer;
 
-pub struct NoopIntrinsicStrategy;
-impl RuntimeIntrinsicStrategy for NoopIntrinsicStrategy {}
+pub struct NoopIntrinsicMaterializer;
+impl IntrinsicMaterializer for NoopIntrinsicMaterializer {}
 
-pub fn materialize_intrinsics(
-    ast: &mut Node,
-    strategy: &dyn RuntimeIntrinsicStrategy,
-) -> Result<()> {
+pub fn materialize_intrinsics(ast: &mut Node, strategy: &dyn IntrinsicMaterializer) -> Result<()> {
     match ast.kind_mut() {
         NodeKind::File(file) => {
             strategy.prepare_file(file);
@@ -25,7 +22,7 @@ pub fn materialize_intrinsics(
     }
 }
 
-fn materialize_item(item: &mut Item, strategy: &dyn RuntimeIntrinsicStrategy) -> Result<()> {
+fn materialize_item(item: &mut Item, strategy: &dyn IntrinsicMaterializer) -> Result<()> {
     match item.kind_mut() {
         ItemKind::Module(module) => {
             for child in &mut module.items {
@@ -65,7 +62,7 @@ fn materialize_item(item: &mut Item, strategy: &dyn RuntimeIntrinsicStrategy) ->
     Ok(())
 }
 
-fn materialize_block(block: &mut ExprBlock, strategy: &dyn RuntimeIntrinsicStrategy) -> Result<()> {
+fn materialize_block(block: &mut ExprBlock, strategy: &dyn IntrinsicMaterializer) -> Result<()> {
     for stmt in &mut block.stmts {
         match stmt {
             BlockStmt::Expr(expr_stmt) => {
@@ -89,7 +86,7 @@ fn materialize_block(block: &mut ExprBlock, strategy: &dyn RuntimeIntrinsicStrat
     Ok(())
 }
 
-fn materialize_expr(expr: &mut Expr, strategy: &dyn RuntimeIntrinsicStrategy) -> Result<()> {
+fn materialize_expr(expr: &mut Expr, strategy: &dyn IntrinsicMaterializer) -> Result<()> {
     let expr_ty = expr.ty.clone();
     let mut replacement: Option<Expr> = None;
 
@@ -256,7 +253,7 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn RuntimeIntrinsicStrategy) ->
 
 fn materialize_invoke_target(
     target: &mut ExprInvokeTarget,
-    strategy: &dyn RuntimeIntrinsicStrategy,
+    strategy: &dyn IntrinsicMaterializer,
 ) -> Result<()> {
     match target {
         ExprInvokeTarget::Method(select) => materialize_expr(select.obj.as_mut(), strategy)?,
