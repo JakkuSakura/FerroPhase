@@ -5,12 +5,12 @@ use quote::{format_ident, quote};
 use syn::LitStr;
 
 use fp_core::ast::{
-    BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprBinOp, ExprBlock, ExprClosure,
-    ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex, ExprIntrinsicCall,
-    ExprIntrinsicCollection, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMatch,
-    ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect, ExprSelectType, ExprSplat,
-    ExprSplatDict, ExprStruct, ExprStructural, ExprTuple, ExprUnOp, ExprWhile, FormatArgRef,
-    FormatTemplatePart, Item, StmtLet,
+    BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprBinOp, ExprBlock, ExprCast,
+    ExprClosure, ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex,
+    ExprIntrinsicCall, ExprIntrinsicCollection, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
+    ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
+    ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple, ExprUnOp,
+    ExprWhile, FormatArgRef, FormatTemplatePart, Item, StmtLet,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -66,6 +66,7 @@ impl RustPrinter {
             ExprKind::Splat(n) => self.print_expr_splat(n),
             ExprKind::SplatDict(n) => self.print_expr_splat_dict(n),
             ExprKind::Item(item) => self.print_expr_item(item),
+            ExprKind::Cast(n) => self.print_expr_cast(n),
         }
     }
 
@@ -74,6 +75,12 @@ impl RustPrinter {
         collection: &ExprIntrinsicCollection,
     ) -> fp_core::Result<TokenStream> {
         self.print_expr(&collection.clone().into_const_expr())
+    }
+
+    fn print_expr_cast(&self, cast: &ExprCast) -> Result<TokenStream> {
+        let expr = self.print_expr(&cast.expr)?;
+        let ty = self.print_type(&cast.ty)?;
+        Ok(quote!(#expr as #ty))
     }
 
     fn print_bin_op(&self, binop: &ExprBinOp) -> Result<TokenStream> {

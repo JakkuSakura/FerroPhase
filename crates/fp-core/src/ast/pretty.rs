@@ -245,6 +245,13 @@ impl PrettyPrintable for ast::Expr {
                     ctx.with_indent(|ctx| array.len.fmt_pretty(f, ctx))
                 })
             }
+            ast::ExprKind::Cast(cast) => {
+                ctx.writeln(
+                    f,
+                    format!("cast{} -> {}", suffix, render_ty_brief(&cast.ty)),
+                )?;
+                ctx.with_indent(|ctx| cast.expr.fmt_pretty(f, ctx))
+            }
             ast::ExprKind::IntrinsicCall(call) => {
                 ctx.writeln(
                     f,
@@ -948,6 +955,11 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             "[{}; {}]",
             render_expr_inline(array.elem.as_ref()),
             render_expr_inline(array.len.as_ref())
+        ),
+        ast::ExprKind::Cast(cast) => format!(
+            "({}) as {}",
+            render_expr_inline(cast.expr.as_ref()),
+            render_ty_brief(&cast.ty)
         ),
         ast::ExprKind::IntrinsicCollection(collection) => {
             render_expr_inline(&collection.clone().into_const_expr())

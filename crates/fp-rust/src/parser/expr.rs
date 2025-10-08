@@ -57,6 +57,7 @@ impl<'a> ExprParser<'a> {
             syn::Expr::Array(a) => self.parse_expr_array(a)?.into(),
             syn::Expr::Repeat(r) => self.parse_expr_repeat(r)?.into(),
             syn::Expr::Assign(a) => self.parse_expr_assign(a)?.into(),
+            syn::Expr::Cast(c) => self.parse_expr_cast(c)?.into(),
             syn::Expr::Break(b) => self.parse_expr_break(b)?,
             syn::Expr::Continue(_) => self.parse_expr_continue()?,
             syn::Expr::Return(r) => self.parse_expr_return(r)?,
@@ -486,6 +487,13 @@ impl<'a> ExprParser<'a> {
         Ok(ExprAssign {
             target: self.parse_expr(*a.left)?.into(),
             value: self.parse_expr(*a.right)?.into(),
+        })
+    }
+
+    fn parse_expr_cast(&self, c: syn::ExprCast) -> Result<ExprCast> {
+        Ok(ExprCast {
+            expr: self.parse_expr(*c.expr)?.into(),
+            ty: self.parser.parse_type(*c.ty)?,
         })
     }
 

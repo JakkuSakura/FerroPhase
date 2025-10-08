@@ -1,6 +1,12 @@
 //! Simplified transpilation command using the new unified transpiler
 
-use crate::{CliError, Result, cli::CliConfig, languages::*, pipeline::Pipeline, transpiler::*};
+use crate::{
+    CliError, Result,
+    cli::CliConfig,
+    languages::*,
+    pipeline::{Pipeline, TranspilePreparationOptions},
+    transpiler::*,
+};
 use console::style;
 use std::path::{Path, PathBuf};
 use tracing::info;
@@ -124,7 +130,14 @@ async fn transpile_file(
     // Parse source
     let mut pipeline = Pipeline::new();
     let source = std::fs::read_to_string(input).map_err(|e| CliError::Io(e))?;
-    let ast = pipeline.parse_source_public(&source)?;
+    let mut ast = pipeline.parse_source_public(&source)?;
+
+    let prep_options = TranspilePreparationOptions {
+        run_const_eval: args.const_eval,
+        save_intermediates: false,
+        base_path: None,
+    };
+    pipeline.prepare_for_transpile(&mut ast, &prep_options)?;
 
     // Use simplified transpiler
     let target = match args.target.as_str() {

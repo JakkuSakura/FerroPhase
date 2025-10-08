@@ -104,6 +104,13 @@ pub struct Pipeline {
     last_const_eval: Option<ConstEvalOutcome>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TranspilePreparationOptions {
+    pub run_const_eval: bool,
+    pub save_intermediates: bool,
+    pub base_path: Option<PathBuf>,
+}
+
 impl Pipeline {
     pub fn new() -> Self {
         let mut registry = FrontendRegistry::new();
@@ -333,6 +340,61 @@ impl Pipeline {
         self.frontend_snapshot = snapshot;
 
         Ok(ast)
+    }
+
+    pub fn prepare_for_transpile(
+        &mut self,
+        ast: &mut Node,
+        options: &TranspilePreparationOptions,
+    ) -> Result<(), CliError> {
+        let mut pipeline_options = PipelineOptions::default();
+        pipeline_options.save_intermediates = options.save_intermediates;
+        pipeline_options.base_path = options.base_path.clone();
+
+        let diagnostic_manager = DiagnosticManager::new();
+
+        self.run_stage(
+            STAGE_INTRINSIC_NORMALIZE,
+            &diagnostic_manager,
+            &pipeline_options,
+            |pipeline| pipeline.stage_normalize_intrinsics(ast, &diagnostic_manager),
+        )?;
+
+        self.run_stage(
+            STAGE_TYPE_ENRICH,
+            &diagnostic_manager,
+            &pipeline_options,
+            |pipeline| pipeline.stage_type_check(ast, STAGE_TYPE_ENRICH, &diagnostic_manager),
+        )?;
+
+        if options.run_const_eval {
+            let outcome = self.run_stage(
+                STAGE_CONST_EVAL,
+                &diagnostic_manager,
+                &pipeline_options,
+                |pipeline| pipeline.stage_const_eval(ast, &pipeline_options, &diagnostic_manager),
+            )?;
+            self.last_const_eval = Some(outcome.clone());
+            fp_optimize::remove_generic_templates(ast)?;
+
+            if options.save_intermediates {
+                if let Some(base_path) = pipeline_options.base_path.as_ref() {
+                    self.save_pretty(ast, base_path, EXT_AST_EVAL, &pipeline_options)?;
+                }
+            }
+        }
+
+        let diagnostics = diagnostic_manager.get_diagnostics();
+        self.emit_diagnostics(&diagnostics, None, &pipeline_options);
+
+        if diagnostics
+            .iter()
+            .any(|diag| diag.level == DiagnosticLevel::Error)
+        {
+            return Err(Self::stage_failure("transpile preparation"));
+        }
+
+        Ok(())
     }
 
     async fn execute_interpret_target(

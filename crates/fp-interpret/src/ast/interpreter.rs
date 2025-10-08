@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::sync::Arc;
 
+use crate::error::interpretation_error;
+use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
@@ -16,12 +18,7 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::pat::Pattern;
-use fp_rust::{parser::RustParser, RawExpr};
 use fp_typing::AstTypeInferencer;
-use syn;
-
-use crate::error::interpretation_error;
-use crate::intrinsics::IntrinsicsRegistry;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
@@ -549,34 +546,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut inner = closured.expr.as_ref().clone();
                 self.eval_expr(&mut inner)
             }
-            ExprKind::Any(any) => {
-                if let Some(raw) = any.downcast_ref::<RawExpr>() {
-                    if let syn::Expr::Cast(cast_expr) = &raw.raw {
-                        let parser = RustParser::new();
-                        let mut operand = match parser.parse_expr((*cast_expr.expr).clone()) {
-                            Ok(expr) => expr,
-                            Err(err) => {
-                                self.emit_error(format!("failed to parse cast operand: {}", err));
-                                return Value::undefined();
-                            }
-                        };
-                        let value = self.eval_expr(&mut operand);
-                        let target_ty = match parser.parse_type((*cast_expr.ty).clone()) {
-                            Ok(ty) => ty,
-                            Err(err) => {
-                                self.emit_error(format!(
-                                    "failed to parse cast target type: {}",
-                                    err
-                                ));
-                                return Value::undefined();
-                            }
-                        };
-                        let result = self.cast_value_to_type(value, &target_ty);
-                        expr.set_ty(target_ty);
-                        return result;
-                    }
-                }
-
+            ExprKind::Cast(cast) => {
+                let target_ty = cast.ty.clone();
+                let value = self.eval_expr(cast.expr.as_mut());
+                let result = self.cast_value_to_type(value, &target_ty);
+                expr.set_ty(target_ty);
+                result
+            }
+            ExprKind::Any(_any) => {
                 self.emit_error(
                     "expression not supported in AST interpretation: unsupported Raw expression",
                 );
@@ -610,6 +587,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                     other => {
                         self.emit_error(format!(
                             "'len' is only supported on compile-time arrays, lists, and maps, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
+            if select.field.name.as_str() == "to_string" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::String));
+                return match value {
+                    Value::String(_) => value,
+                    Value::Int(int_val) => Value::string(int_val.value.to_string()),
+                    Value::Decimal(dec_val) => Value::string(dec_val.value.to_string()),
+                    Value::Bool(bool_val) => Value::string(bool_val.value.to_string()),
+                    Value::Char(char_val) => Value::string(char_val.value.to_string()),
+                    other => {
+                        self.emit_error(format!(
+                            "'to_string' is only supported on primitive compile-time values, found {:?}",
                             other
                         ));
                         Value::undefined()
@@ -2346,6 +2342,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(repeat.elem.as_mut());
                 self.evaluate_function_body(repeat.len.as_mut());
             }
+            ExprKind::Cast(cast) => self.evaluate_function_body(cast.expr.as_mut()),
             ExprKind::Locator(locator) => {
                 // Try to specialize generic function references
                 if let Some(expected_ty) = &expr_ty_snapshot {

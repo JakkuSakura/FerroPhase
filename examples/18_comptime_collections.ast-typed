@@ -9,18 +9,22 @@ ast::File {
               init:
                 intrinsic const_block : Vec<i64>
                   args:
-                    invoke : Vec<i64>
-                      target: Vec::from
+                    intrinsic const_block : Vec<i64>
                       args:
-                        array (6 values) : _
-                          value 2 : i64
-                          value 3 : i64
-                          value 5 : i64
-                          value 7 : i64
-                          value 11 : i64
-                          value 13 : i64
+                        invoke : Vec<i64>
+                          target: Vec::from
+                          args:
+                            array (6 values) : _
+                              value 2 : i64
+                              value 3 : i64
+                              value 5 : i64
+                              value 7 : i64
+                              value 11 : i64
+                              value 13 : i64
             expr_stmt (value)
-              expr.any : i64
+              cast : i64 -> i64
+                invoke : i64
+                  target: primes.len
     priv const ZERO_BUFFER_CAPACITY: i64 : i64
       intrinsic const_block : i64
         args:
@@ -29,16 +33,20 @@ ast::File {
               init:
                 intrinsic const_block : Vec<i64>
                   args:
-                    invoke : Vec<i64>
-                      target: Vec::from
+                    intrinsic const_block : Vec<i64>
                       args:
-                        array_repeat : _
-                          elem:
-                            value 0 : i64
-                          len:
-                            value 16 : i64
+                        invoke : Vec<i64>
+                          target: Vec::from
+                          args:
+                            array_repeat : _
+                              elem:
+                                value 0 : i64
+                              len:
+                                value 16 : i64
             expr_stmt (value)
-              expr.any : i64
+              cast : i64 -> i64
+                invoke : i64
+                  target: zeros.len
     priv const HTTP_STATUS_COUNT: i64 : i64
       intrinsic const_block : i64
         args:
@@ -47,24 +55,28 @@ ast::File {
               init:
                 intrinsic const_block : HashMap
                   args:
-                    invoke : HashMap
-                      target: HashMap::from
+                    intrinsic const_block : HashMap
                       args:
-                        array (4 values) : Vec<(&string, i64)>
-                          tuple (2 values) : (&string, i64)
-                            value "ok" : &string
-                            value 200 : i64
-                          tuple (2 values) : (&string, i64)
-                            value "created" : &string
-                            value 201 : i64
-                          tuple (2 values) : (&string, i64)
-                            value "accepted" : &string
-                            value 202 : i64
-                          tuple (2 values) : (&string, i64)
-                            value "not_found" : &string
-                            value 404 : i64
+                        invoke : HashMap
+                          target: HashMap::from
+                          args:
+                            array (4 values) : Vec<(&string, i64)>
+                              tuple (2 values) : (&string, i64)
+                                value "ok" : &string
+                                value 200 : i64
+                              tuple (2 values) : (&string, i64)
+                                value "created" : &string
+                                value 201 : i64
+                              tuple (2 values) : (&string, i64)
+                                value "accepted" : &string
+                                value 202 : i64
+                              tuple (2 values) : (&string, i64)
+                                value "not_found" : &string
+                                value 404 : i64
             expr_stmt (value)
-              expr.any : i64
+              cast : i64 -> i64
+                invoke : i64
+                  target: statuses.len
     priv fn main() -> () : fn() -> () : fn() -> ()
       block (6 stmts) : ()
         expr_stmt ;

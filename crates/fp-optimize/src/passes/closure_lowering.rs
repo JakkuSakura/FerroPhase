@@ -431,6 +431,7 @@ impl ClosureLowering {
             }
             ExprKind::Reference(reference) => self.rewrite_in_expr(reference.referee.as_mut())?,
             ExprKind::Dereference(deref) => self.rewrite_in_expr(deref.referee.as_mut())?,
+            ExprKind::Cast(cast) => self.rewrite_in_expr(cast.expr.as_mut())?,
             ExprKind::Index(index) => {
                 self.rewrite_in_expr(index.obj.as_mut())?;
                 self.rewrite_in_expr(index.index.as_mut())?;
@@ -677,6 +678,7 @@ impl CaptureCollector {
             }
             ExprKind::Reference(reference) => self.visit(reference.referee.as_ref()),
             ExprKind::Dereference(deref) => self.visit(deref.referee.as_ref()),
+            ExprKind::Cast(cast) => self.visit(cast.expr.as_ref()),
             ExprKind::Index(index) => {
                 self.visit(index.obj.as_ref());
                 self.visit(index.index.as_ref());
@@ -885,6 +887,7 @@ impl CaptureReplacer {
             }
             ExprKind::Reference(reference) => self.visit(reference.referee.as_mut()),
             ExprKind::Dereference(deref) => self.visit(deref.referee.as_mut()),
+            ExprKind::Cast(cast) => self.visit(cast.expr.as_mut()),
             ExprKind::Index(index) => {
                 self.visit(index.obj.as_mut());
                 self.visit(index.index.as_mut());

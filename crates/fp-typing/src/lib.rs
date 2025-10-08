@@ -767,6 +767,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.unify(target, value)?;
                 value
             }
+            ExprKind::Cast(cast) => {
+                let _ = self.infer_expr(cast.expr.as_mut())?;
+                self.type_from_ast_ty(&cast.ty)?
+            }
             ExprKind::Let(expr_let) => {
                 let value = self.infer_expr(expr_let.expr.as_mut())?;
                 let pattern_info = self.infer_pattern(expr_let.pat.as_mut())?;
@@ -1420,6 +1424,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ExprInvokeTarget::Type(ty) => self.type_from_ast_ty(ty)?,
             ExprInvokeTarget::Method(select) => {
                 let obj_var = self.infer_expr(select.obj.as_mut())?;
+
+                if let Some(result) =
+                    self.try_infer_primitive_method(obj_var, &select.field, invoke.args.len())?
+                {
+                    return Ok(result);
+                }
+
                 if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                     if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
                         if Self::is_collection_with_len(&obj_ty) {
@@ -2813,6 +2824,37 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             field, struct_name
         ));
         Ok(self.error_type_var())
+    }
+
+    fn try_infer_primitive_method(
+        &mut self,
+        obj_var: TypeVarId,
+        field: &Ident,
+        arg_len: usize,
+    ) -> Result<Option<TypeVarId>> {
+        if field.name.as_str() != "to_string" || arg_len != 0 {
+            return Ok(None);
+        }
+
+        let obj_ty = match self.resolve_to_ty(obj_var) {
+            Ok(ty) => Self::peel_reference(ty),
+            Err(_) => return Ok(None),
+        };
+
+        let result_var = self.fresh_type_var();
+        self.bind(
+            result_var,
+            TypeTerm::Primitive(TypePrimitive::String),
+        );
+
+        match obj_ty {
+            Ty::Primitive(TypePrimitive::String)
+            | Ty::Primitive(TypePrimitive::Bool)
+            | Ty::Primitive(TypePrimitive::Char)
+            | Ty::Primitive(TypePrimitive::Int(_))
+            | Ty::Primitive(TypePrimitive::Decimal(_)) => Ok(Some(result_var)),
+            _ => Ok(None),
+        }
     }
 
     fn lookup_struct_field(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {

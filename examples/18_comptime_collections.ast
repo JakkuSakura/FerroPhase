@@ -9,18 +9,22 @@ ast::File {
               init:
                 intrinsic const_block
                   args:
-                    invoke
-                      target: Vec::from
+                    intrinsic const_block
                       args:
-                        array (6 values)
-                          value 2
-                          value 3
-                          value 5
-                          value 7
-                          value 11
-                          value 13
+                        invoke
+                          target: Vec::from
+                          args:
+                            array (6 values)
+                              value 2
+                              value 3
+                              value 5
+                              value 7
+                              value 11
+                              value 13
             expr_stmt (value)
-              expr.any
+              cast -> i64
+                invoke
+                  target: primes.len
     priv const ZERO_BUFFER_CAPACITY: i64
       intrinsic const_block
         args:
@@ -29,16 +33,20 @@ ast::File {
               init:
                 intrinsic const_block
                   args:
-                    invoke
-                      target: Vec::from
+                    intrinsic const_block
                       args:
-                        array_repeat
-                          elem:
-                            value 0
-                          len:
-                            value 16
+                        invoke
+                          target: Vec::from
+                          args:
+                            array_repeat
+                              elem:
+                                value 0
+                              len:
+                                value 16
             expr_stmt (value)
-              expr.any
+              cast -> i64
+                invoke
+                  target: zeros.len
     priv const HTTP_STATUS_COUNT: i64
       intrinsic const_block
         args:
@@ -47,24 +55,28 @@ ast::File {
               init:
                 intrinsic const_block
                   args:
-                    invoke
-                      target: HashMap::from
+                    intrinsic const_block
                       args:
-                        array (4 values)
-                          tuple (2 values)
-                            value "ok"
-                            value 200
-                          tuple (2 values)
-                            value "created"
-                            value 201
-                          tuple (2 values)
-                            value "accepted"
-                            value 202
-                          tuple (2 values)
-                            value "not_found"
-                            value 404
+                        invoke
+                          target: HashMap::from
+                          args:
+                            array (4 values)
+                              tuple (2 values)
+                                value "ok"
+                                value 200
+                              tuple (2 values)
+                                value "created"
+                                value 201
+                              tuple (2 values)
+                                value "accepted"
+                                value 202
+                              tuple (2 values)
+                                value "not_found"
+                                value 404
             expr_stmt (value)
-              expr.any
+              cast -> i64
+                invoke
+                  target: statuses.len
     priv fn main() -> () : fn() -> ()
       block (6 stmts)
         expr_stmt ;
