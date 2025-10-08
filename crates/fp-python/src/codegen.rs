@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use fp_core::ast::{
-    Ty, TypeEnum, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap,
-    ValueMapEntry, ValueStruct, ValueTuple,
+    AstSerializer, Expr, ExprKind, Node, NodeKind, Ty, TypeEnum, TypePrimitive, TypeStruct,
+    TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::Result;
 use itertools::Itertools;
@@ -279,5 +279,69 @@ mod tests {
         assert!(code.contains("@dataclass"));
         assert!(code.contains("class Point"));
         assert!(code.contains("def main"));
+    }
+}
+
+#[derive(Default)]
+struct PythonContext {
+    structs: Vec<TypeStruct>,
+    enums: Vec<TypeEnum>,
+    constants: HashMap<String, Value>,
+}
+
+pub struct PythonSerializer;
+
+impl AstSerializer for PythonSerializer {
+    fn serialize_node(&self, node: &Node) -> fp_core::error::Result<String> {
+        let mut context = PythonContext::default();
+        collect_from_node(node, &mut context);
+        let generator = PythonGenerator::new();
+        generator.render_module(&context.structs, &context.enums, &context.constants)
+    }
+}
+
+fn collect_from_node(node: &Node, context: &mut PythonContext) {
+    match node.kind() {
+        NodeKind::File(file) => {
+            for item in &file.items {
+                collect_from_item(item, context);
+            }
+        }
+        NodeKind::Item(item) => collect_from_item(item, context),
+        NodeKind::Expr(expr) => collect_from_expr(expr, context),
+    }
+}
+
+fn collect_from_expr(expr: &Expr, context: &mut PythonContext) {
+    if let ExprKind::Block(block) = expr.kind() {
+        for stmt in &block.stmts {
+            match stmt {
+                fp_core::ast::BlockStmt::Item(item) => collect_from_item(item.as_ref(), context),
+                fp_core::ast::BlockStmt::Expr(inner) => {
+                    collect_from_expr(inner.expr.as_ref(), context)
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn collect_from_item(item: &fp_core::ast::Item, context: &mut PythonContext) {
+    if let Some(struct_def) = item.as_struct() {
+        context.structs.push(struct_def.value.clone());
+    } else if let Some(enum_def) = item.as_enum() {
+        context.enums.push(enum_def.value.clone());
+    }
+
+    if let Some(const_def) = item.as_const() {
+        if let ExprKind::Value(value) = const_def.value.as_ref().kind() {
+            context
+                .constants
+                .insert(const_def.name.name.clone(), *value.clone());
+        }
+    }
+
+    if let Some(expr) = item.as_expr() {
+        collect_from_expr(expr, context);
     }
 }

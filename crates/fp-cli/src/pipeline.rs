@@ -170,10 +170,29 @@ impl Pipeline {
             ast,
             serializer,
             snapshot,
+            diagnostics,
             ..
         } = frontend
             .parse(source, None)
             .map_err(|err| CliError::Compilation(err.to_string()))?;
+
+        let collected_diagnostics = diagnostics.get_diagnostics();
+        if !collected_diagnostics.is_empty() {
+            DiagnosticManager::emit(
+                &collected_diagnostics,
+                Some(STAGE_FRONTEND),
+                &DiagnosticDisplayOptions::default(),
+            );
+        }
+
+        if collected_diagnostics
+            .iter()
+            .any(|diag| diag.level == DiagnosticLevel::Error)
+        {
+            return Err(CliError::Compilation(
+                "frontend stage failed; see diagnostics for details".to_string(),
+            ));
+        }
 
         register_threadlocal_serializer(serializer.clone());
         self.serializer = Some(serializer.clone());

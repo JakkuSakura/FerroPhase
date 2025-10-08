@@ -914,6 +914,7 @@ dependencies = [
  "eyre",
  "fp-core",
  "itertools 0.13.0",
+ "serde_json",
  "swc_ecma_ast",
  "swc_ecma_codegen",
  "swc_ecma_parser",
