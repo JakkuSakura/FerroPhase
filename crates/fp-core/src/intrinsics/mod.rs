@@ -5,17 +5,10 @@
 //! this module is to host the shared vocabulary so every consumer speaks the same
 //! language before we introduce the backend-specific resolver.
 
-mod catalog;
 pub mod runtime;
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
-pub use catalog::{
-    all_specs as intrinsic_specs, lookup_backend_behaviour, lookup_call as lookup_runtime_call,
-    lookup_spec as lookup_intrinsic_spec, IntrinsicBackendBehaviour, IntrinsicBackendSpec,
-    IntrinsicSpec, ResolvedCallSpec,
-};
 pub use runtime::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,6 +114,31 @@ pub enum IntrinsicReturnKind {
     SameAsArgument(usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedCallSpec {
+    pub callee: &'static str,
+    pub abi: CallAbi,
+    pub variadic: bool,
+    pub append_newline_to_first_string: bool,
+    pub arg_strategy: CallArgStrategy,
+    pub args: &'static [IntrinsicArg],
+    pub return_kind: IntrinsicReturnKind,
+}
+
+impl ResolvedCallSpec {
+    pub fn as_resolved_call(&self) -> ResolvedCall {
+        ResolvedCall {
+            callee: self.callee,
+            abi: self.abi,
+            variadic: self.variadic,
+            append_newline_to_first_string: self.append_newline_to_first_string,
+            arg_strategy: self.arg_strategy,
+            args: self.args.to_vec(),
+            return_kind: self.return_kind,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedCall {
     pub callee: &'static str,
@@ -140,6 +158,26 @@ pub enum ResolvedIntrinsic {
 }
 
 pub type ResolverKey = (IntrinsicKind, BackendFlavor);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntrinsicBackendBehaviour {
+    Call(&'static ResolvedCallSpec),
+    Unsupported(&'static str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntrinsicBackendSpec {
+    pub backend: BackendFlavor,
+    pub behaviour: IntrinsicBackendBehaviour,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntrinsicSpec {
+    pub kind: IntrinsicKind,
+    pub canonical_symbol: &'static str,
+    pub aliases: &'static [&'static str],
+    pub backends: &'static [IntrinsicBackendSpec],
+}
 
 #[derive(Default)]
 pub struct IntrinsicResolver {
@@ -169,35 +207,6 @@ impl IntrinsicResolver {
     pub fn resolve(&self, key: &ResolverKey) -> Option<&ResolvedIntrinsic> {
         self.entries.get(key)
     }
-}
-
-pub static DEFAULT_RESOLVER: LazyLock<IntrinsicResolver> = LazyLock::new(|| {
-    let mut resolver = IntrinsicResolver::new();
-
-    for spec in catalog::all_specs() {
-        for backend in spec.backends {
-            let value = match backend.behaviour {
-                catalog::IntrinsicBackendBehaviour::Call(call) => {
-                    ResolvedIntrinsic::Call(call.as_resolved_call())
-                }
-                catalog::IntrinsicBackendBehaviour::Unsupported(message) => {
-                    ResolvedIntrinsic::Unsupported(message.to_string())
-                }
-            };
-
-            resolver.register((spec.kind, backend.backend), value);
-        }
-    }
-
-    resolver
-});
-
-pub fn default_resolver() -> &'static IntrinsicResolver {
-    &DEFAULT_RESOLVER
-}
-
-pub fn identify_symbol(symbol: &str) -> Option<IntrinsicKind> {
-    catalog::lookup_spec(symbol).map(|spec| spec.kind)
 }
 
 /// Result of materializing a print intrinsic
