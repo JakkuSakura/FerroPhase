@@ -50,7 +50,7 @@ impl LanguageFrontend for RustFrontend {
 
             let last = Node::file(file);
             let mut ast = last.clone();
-            normalize_last_to_ast(&mut ast);
+            normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
             let snapshot = FrontendSnapshot {
                 language: self.language().to_string(),
                 description: format!("Rust LAST for {}", path.display()),
@@ -79,7 +79,7 @@ impl LanguageFrontend for RustFrontend {
 
         let last = Node::expr(expr.as_ref().clone());
         let mut ast = last.clone();
-        normalize_last_to_ast(&mut ast);
+        normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
 
         Ok(FrontendResult {
             last,
