@@ -4,8 +4,8 @@
 //! FerroPhase intrinsics map to at runtime.
 
 use fp_core::intrinsics::{
-    self as core_intrinsics, BackendFlavor, CallAbi, CallArgStrategy, IntrinsicArg,
-    IntrinsicReturnKind, ResolvedCallSpec,
+    CallAbi, CallArgStrategy, IntrinsicArg, IntrinsicReturnKind, ResolvedCallSpec,
+    ResolvedIntrinsic,
 };
 use llvm_ir::function::{CallingConvention, Function, Parameter};
 use llvm_ir::module::{DLLStorageClass, Linkage, Visibility};
@@ -531,11 +531,11 @@ static FALLBACK_CALLS: LazyLock<HashMap<&'static str, ResolvedCallSpec>> = LazyL
 });
 
 pub fn runtime_call_spec(symbol: &str) -> Option<ResolvedCallSpec> {
-    if let Some(spec) = core_intrinsics::lookup_runtime_call(symbol, BackendFlavor::Llvm) {
-        return Some(*spec);
-    }
-
     FALLBACK_CALLS.get(symbol).copied()
+}
+
+pub fn resolve_intrinsic(symbol: &str) -> Option<ResolvedIntrinsic> {
+    runtime_call_spec(symbol).map(|spec| ResolvedIntrinsic::Call(spec.as_resolved_call()))
 }
 
 /// C runtime intrinsic declaration manager
