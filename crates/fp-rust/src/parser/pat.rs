@@ -1,10 +1,10 @@
 use super::RustParser;
 use crate::parser::parse_ident;
-use fp_core::error::Result;
-use fp_core::pat::{
+use fp_core::ast::{
     Pattern, PatternIdent, PatternKind, PatternTuple, PatternTupleStruct, PatternType,
     PatternWildcard,
 };
+use fp_core::error::Result;
 use itertools::Itertools;
 use quote::ToTokens;
 

@@ -1,6 +1,6 @@
 use super::*;
 use ast::ItemKind;
-use fp_core::pat::PatternKind;
+use fp_core::ast::PatternKind;
 use fp_rust::parser::{parse_type as parse_raw_type, RustParser};
 use fp_rust::RawExpr;
 

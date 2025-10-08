@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator};
+use fp_core::ast::{Pattern, PatternKind};
 use fp_core::error::{Error as CoreError, Result};
-use fp_core::pat::{Pattern, PatternKind};
 
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
