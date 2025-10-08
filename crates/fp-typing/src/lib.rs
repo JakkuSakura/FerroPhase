@@ -2842,10 +2842,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
 
         let result_var = self.fresh_type_var();
-        self.bind(
-            result_var,
-            TypeTerm::Primitive(TypePrimitive::String),
-        );
+        self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
 
         match obj_ty {
             Ty::Primitive(TypePrimitive::String)
