@@ -17,7 +17,7 @@ pub mod transpiler; // New unified transpiler
 pub mod utils;
 
 // Re-export core types for convenience, avoiding conflicts
-pub use fp_core::{Error as CoreError, Result as CoreResult, ast, context, id, ops, span};
+pub use fp_core::{Error as CoreError, Result as CoreResult, ast, context, ops, span};
 pub use fp_optimize::*;
 pub use fp_rust::parser;
 
