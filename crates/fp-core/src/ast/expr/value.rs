@@ -391,6 +391,12 @@ impl ExprField {
     }
 }
 common_struct! {
+    pub struct ExprCast {
+        pub expr: BExpr,
+        pub ty: Ty,
+    }
+}
+common_struct! {
     pub struct ExprBinOp {
         pub kind: BinOpKind,
         pub lhs: BExpr,

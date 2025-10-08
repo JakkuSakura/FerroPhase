@@ -101,6 +101,9 @@ fn normalize_expr(expr: &mut Expr) -> Result<()> {
             normalize_expr(assign.target.as_mut())?;
             normalize_expr(assign.value.as_mut())?;
         }
+        ExprKind::Cast(cast) => {
+            normalize_expr(cast.expr.as_mut())?;
+        }
         ExprKind::Invoke(invoke) => {
             normalize_invoke(invoke)?;
             if let Some(collection) = ExprIntrinsicCollection::from_invoke(invoke) {
