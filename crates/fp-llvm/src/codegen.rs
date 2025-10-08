@@ -1,9 +1,6 @@
 use crate::context::LlvmContext;
-use crate::intrinsics::{self as llvm_intrinsics, CRuntimeIntrinsics};
+use crate::intrinsics::CRuntimeIntrinsics;
 use fp_core::diagnostics::report_error_with_context;
-use fp_core::intrinsics::{
-    BackendFlavor, CallAbi, CallArgStrategy, ResolvedCall, ResolvedIntrinsic,
-};
 use fp_core::{
     error::{Error, Result},
     lir,
@@ -37,7 +34,6 @@ pub struct LirCodegen<'ctx> {
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
     symbol_names: HashMap<String, String>,
     defined_functions: std::collections::HashSet<String>,
-    backend_flavor: BackendFlavor,
     argument_operands: HashMap<u32, Operand>,
 }
 
@@ -78,7 +74,6 @@ impl<'ctx> LirCodegen<'ctx> {
             function_signatures: HashMap::new(),
             symbol_names: HashMap::new(),
             defined_functions: std::collections::HashSet::new(),
-            backend_flavor: BackendFlavor::Llvm,
             argument_operands: HashMap::new(),
         }
     }
@@ -1049,31 +1044,6 @@ impl<'ctx> LirCodegen<'ctx> {
             debug!("[fp-llvm] lowering call to <expr>");
         }
 
-        if let Some(logical_name) = function_name.as_ref() {
-            if let Some(resolved) = self.resolve_intrinsic(logical_name) {
-                if let ResolvedIntrinsic::Call(call) = resolved {
-                    return self.lower_intrinsic_call(
-                        instr_id,
-                        ty_hint,
-                        call.clone(),
-                        args,
-                        tail_call,
-                    );
-                }
-            }
-
-            if let Some(spec) = llvm_intrinsics::runtime_call_spec(logical_name) {
-                let resolved_call = spec.as_resolved_call();
-                return self.lower_intrinsic_call(
-                    instr_id,
-                    ty_hint,
-                    resolved_call,
-                    args,
-                    tail_call,
-                );
-            }
-        }
-
         self.lower_user_call(
             instr_id,
             ty_hint,
@@ -1082,138 +1052,6 @@ impl<'ctx> LirCodegen<'ctx> {
             calling_convention,
             tail_call,
         )
-    }
-
-    fn lower_runtime_call(
-        &mut self,
-        instr_id: u32,
-        ty_hint: Option<lir::LirType>,
-        runtime_name: String,
-        mut append_newline: bool,
-        args: Vec<lir::LirValue>,
-        calling_convention: lir::CallingConvention,
-        tail_call: bool,
-    ) -> Result<instruction::Call> {
-        let runtime_decl =
-            CRuntimeIntrinsics::get_intrinsic_decl(&runtime_name, &self.llvm_ctx.module.types)
-                .ok_or_else(|| {
-                    report_error_with_context(
-                        LOG_AREA,
-                        format!("Unknown runtime function '{}'", runtime_name),
-                    )
-                })?;
-
-        let return_type = runtime_decl.return_type.clone();
-        let param_type_refs: Vec<TypeRef> = runtime_decl
-            .parameters
-            .iter()
-            .map(|p| p.ty.clone())
-            .collect();
-        let is_var_arg = runtime_decl.is_var_arg;
-
-        if !self
-            .llvm_ctx
-            .module
-            .functions
-            .iter()
-            .any(|f| f.name == runtime_name)
-        {
-            self.llvm_ctx.module.functions.push(runtime_decl);
-        }
-
-        let fn_ty = self.llvm_ctx.module.types.func_type(
-            return_type.clone(),
-            param_type_refs.clone(),
-            is_var_arg,
-        );
-
-        let mut call_args: Vec<(Operand, Vec<function::ParameterAttribute>)> = Vec::new();
-        for (index, arg) in args.into_iter().enumerate() {
-            let operand = match arg {
-                lir::LirValue::Constant(lir::LirConstant::String(mut s)) => {
-                    if append_newline && index == 0 && !s.ends_with('\n') {
-                        s.push('\n');
-                    }
-                    append_newline = false; // ensure only first string gets newline
-                    let const_ref =
-                        self.convert_lir_constant_to_llvm_mut(lir::LirConstant::String(s))?;
-                    self.llvm_ctx.operand_from_constant(const_ref)
-                }
-                other => self.convert_lir_value_to_operand(other)?,
-            };
-            call_args.push((operand, Vec::new()));
-        }
-
-        let dest = if let Some(ref hint) = ty_hint {
-            let name = Name::Name(Box::new(format!("call_{}", instr_id)));
-            self.record_result(instr_id, Some(hint.clone()), name.clone());
-            Some(name)
-        } else {
-            None
-        };
-
-        let callee = either::Either::Right(Operand::ConstantOperand(ConstantRef::new(
-            Constant::GlobalReference {
-                name: Name::Name(Box::new(runtime_name.clone())),
-                ty: fn_ty.clone(),
-            },
-        )));
-
-        let llvm_calling_convention = self.convert_calling_convention(&calling_convention);
-
-        Ok(instruction::Call {
-            function: callee,
-            function_ty: fn_ty,
-            arguments: call_args,
-            return_attributes: Vec::new(),
-            dest,
-            function_attributes: Vec::new(),
-            is_tail_call: tail_call,
-            calling_convention: llvm_calling_convention,
-            debugloc: None,
-        })
-    }
-
-    fn lower_intrinsic_call(
-        &mut self,
-        instr_id: u32,
-        ty_hint: Option<lir::LirType>,
-        resolved: ResolvedCall,
-        args: Vec<lir::LirValue>,
-        tail_call: bool,
-    ) -> Result<instruction::Call> {
-        match resolved.arg_strategy {
-            CallArgStrategy::Passthrough => {}
-        }
-
-        let calling_convention =
-            self.calling_convention_for(resolved.abi, lir::CallingConvention::C);
-        self.lower_runtime_call(
-            instr_id,
-            ty_hint,
-            resolved.callee.to_string(),
-            resolved.append_newline_to_first_string,
-            args,
-            calling_convention,
-            tail_call,
-        )
-    }
-
-    fn resolve_intrinsic(&self, logical_name: &str) -> Option<ResolvedIntrinsic> {
-        if self.backend_flavor != BackendFlavor::Llvm {
-            return None;
-        }
-        llvm_intrinsics::resolve_intrinsic(logical_name)
-    }
-
-    fn calling_convention_for(
-        &self,
-        abi: CallAbi,
-        _fallback: lir::CallingConvention,
-    ) -> lir::CallingConvention {
-        match abi {
-            CallAbi::Default | CallAbi::CVariadic => lir::CallingConvention::C,
-        }
     }
 
     fn populate_argument_operands(
@@ -1925,15 +1763,6 @@ impl<'ctx> LirCodegen<'ctx> {
                     return self.convert_lir_value_to_operand(lir::LirValue::Function(name));
                 }
 
-                if let Some(spec) = llvm_intrinsics::runtime_call_spec(&name) {
-                    let runtime_name = spec.callee;
-                    if CRuntimeIntrinsics::is_runtime_intrinsic(runtime_name) {
-                        return self.convert_lir_value_to_operand(lir::LirValue::Function(
-                            runtime_name.to_string(),
-                        ));
-                    }
-                }
-
                 if let Some(lir_constant) = self.global_const_map.get(&name) {
                     let llvm_constant = self.convert_lir_constant_to_llvm(lir_constant.clone())?;
                     tracing::debug!("LLVM: Found global '{}' in const map, using value", name);
@@ -1946,14 +1775,9 @@ impl<'ctx> LirCodegen<'ctx> {
                 ))
             }
             lir::LirValue::Function(name) => {
-                let canonical_name = if let Some(spec) = llvm_intrinsics::runtime_call_spec(&name) {
-                    spec.callee.to_string()
-                } else {
-                    name.clone()
-                };
-                let llvm_name = self.llvm_symbol_for(&canonical_name);
+                let llvm_name = self.llvm_symbol_for(&name);
 
-                let fn_ty = if let Some(signature) = self.function_signatures.get(&canonical_name) {
+                let fn_ty = if let Some(signature) = self.function_signatures.get(&name) {
                     self.function_type_from_signature(signature.clone())?
                 } else if let Some(existing) = self.llvm_ctx.get_function(&llvm_name) {
                     self.llvm_ctx.module.types.func_type(
@@ -1962,7 +1786,7 @@ impl<'ctx> LirCodegen<'ctx> {
                         existing.is_var_arg,
                     )
                 } else if let Some(runtime_decl) = CRuntimeIntrinsics::get_intrinsic_decl(
-                    &canonical_name,
+                    &name,
                     &self.llvm_ctx.module.types,
                 ) {
                     if !self
@@ -1994,16 +1818,10 @@ impl<'ctx> LirCodegen<'ctx> {
                     ));
                 };
 
-                // Use pointer type for function references (opaque pointers in modern LLVM)
-                let ptr_ty = self
-                    .llvm_ctx
-                    .module
-                    .types
-                    .get_for_type(&Type::PointerType { addr_space: 0 });
                 Ok(Operand::ConstantOperand(ConstantRef::new(
                     Constant::GlobalReference {
                         name: Name::Name(Box::new(llvm_name)),
-                        ty: ptr_ty,
+                        ty: fn_ty,
                     },
                 )))
             }

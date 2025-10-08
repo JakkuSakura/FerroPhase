@@ -1,6 +1,7 @@
 use crate::ast::{AstSerializer, Last, Node};
 use crate::diagnostics::DiagnosticManager;
 use crate::error::Result;
+use crate::intrinsics::IntrinsicNormalizer;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -21,6 +22,7 @@ pub struct FrontendResult {
     pub last: Last,
     pub ast: Node,
     pub serializer: Arc<dyn AstSerializer>,
+    pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     pub snapshot: Option<FrontendSnapshot>,
     pub diagnostics: Arc<DiagnosticManager>,
 }

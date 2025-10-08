@@ -4,12 +4,23 @@ use fp_core::ast::{
     Value,
 };
 use fp_core::error::Result;
+use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
 /// downstream passes can assume consistent structures.
 pub fn normalize_intrinsics(node: &mut Node) -> Result<()> {
     normalize_node(node)
+}
+
+/// Default normalizer that applies the shared intrinsic-normalization pass.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DefaultIntrinsicNormalizer;
+
+impl IntrinsicNormalizer for DefaultIntrinsicNormalizer {
+    fn normalize(&self, node: &mut Node) -> Result<()> {
+        normalize_intrinsics(node)
+    }
 }
 
 fn normalize_node(node: &mut Node) -> Result<()> {
