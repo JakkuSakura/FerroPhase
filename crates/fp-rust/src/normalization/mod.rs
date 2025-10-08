@@ -119,6 +119,10 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
         }
         ExprKind::Reference(reference) => normalize_bexpr(&mut reference.referee, diagnostics),
         ExprKind::Dereference(deref) => normalize_bexpr(&mut deref.referee, diagnostics),
+        ExprKind::Cast(cast) => {
+            normalize_expr(cast.expr.as_mut(), diagnostics);
+            normalize_type(&mut cast.ty);
+        }
         ExprKind::Struct(struct_expr) => {
             normalize_bexpr(&mut struct_expr.name, diagnostics);
             for ExprField { value, .. } in &mut struct_expr.fields {

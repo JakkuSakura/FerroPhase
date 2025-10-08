@@ -38,6 +38,7 @@ common_enum! {
         Index(ExprIndex),
         Struct(ExprStruct),
         Structural(ExprStructural),
+        Cast(ExprCast),
         Reference(ExprReference),
         Dereference(ExprDereference),
         Tuple(ExprTuple),
