@@ -962,6 +962,7 @@ dependencies = [
 name = "fp-python"
 version = "0.1.0"
 dependencies = [
+ "eyre",
  "fp-core",
  "itertools 0.13.0",
 ]
