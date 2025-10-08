@@ -12,16 +12,16 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
 };
-use fp_core::intrinsics::runtime::RuntimeIntrinsicStrategy;
+use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::{hir, lir};
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome};
 use fp_llvm::{
-    LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicStrategy,
+    LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicMaterializer,
 };
 use fp_optimize::ConstEvaluationOrchestrator;
 use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
-use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicStrategy;
+use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicMaterializer;
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_typing::TypingDiagnosticLevel;
 use std::fs;
@@ -75,17 +75,17 @@ struct LlvmArtifacts {
 }
 
 struct IntrinsicsMaterializer {
-    strategy: Box<dyn RuntimeIntrinsicStrategy>,
+    strategy: Box<dyn IntrinsicMaterializer>,
 }
 
 impl IntrinsicsMaterializer {
     fn for_target(target: &PipelineTarget) -> Self {
         match target {
             PipelineTarget::Llvm | PipelineTarget::Binary => Self {
-                strategy: Box::new(LlvmRuntimeIntrinsicStrategy),
+                strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
             },
             _ => Self {
-                strategy: Box::new(NoopIntrinsicStrategy),
+                strategy: Box::new(NoopIntrinsicMaterializer),
             },
         }
     }
@@ -99,6 +99,7 @@ pub struct Pipeline {
     frontends: Arc<FrontendRegistry>,
     default_runtime: String,
     serializer: Option<Arc<dyn AstSerializer>>,
+    intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
@@ -121,6 +122,7 @@ impl Pipeline {
             frontends: Arc::new(registry),
             default_runtime: "literal".to_string(),
             serializer: None,
+            intrinsic_normalizer: None,
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
@@ -138,6 +140,7 @@ impl Pipeline {
             frontends: registry,
             default_runtime: "literal".to_string(),
             serializer: None,
+            intrinsic_normalizer: None,
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
@@ -176,6 +179,7 @@ impl Pipeline {
         let FrontendResult {
             ast,
             serializer,
+            intrinsic_normalizer,
             snapshot,
             diagnostics,
             ..
@@ -203,6 +207,7 @@ impl Pipeline {
 
         register_threadlocal_serializer(serializer.clone());
         self.serializer = Some(serializer.clone());
+        self.intrinsic_normalizer = intrinsic_normalizer;
         self.frontend_snapshot = snapshot;
         self.source_language = Some(frontend.language().to_string());
 
@@ -281,6 +286,7 @@ impl Pipeline {
 
     fn reset_state(&mut self) {
         self.serializer = None;
+        self.intrinsic_normalizer = None;
         self.source_language = None;
         self.frontend_snapshot = None;
         self.last_const_eval = None;
@@ -318,6 +324,7 @@ impl Pipeline {
             last: _last,
             ast,
             serializer,
+            intrinsic_normalizer,
             snapshot,
             diagnostics,
         } = frontend.parse(source, input_path)?;
@@ -337,6 +344,7 @@ impl Pipeline {
 
         register_threadlocal_serializer(serializer.clone());
         self.serializer = Some(serializer.clone());
+        self.intrinsic_normalizer = intrinsic_normalizer;
         self.frontend_snapshot = snapshot;
 
         Ok(ast)
@@ -626,6 +634,17 @@ impl Pipeline {
         ast: &mut Node,
         manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
+        if let Some(normalizer) = self.intrinsic_normalizer.as_ref() {
+            if let Err(err) = normalizer.normalize(ast) {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                        .with_source_context(STAGE_INTRINSIC_NORMALIZE),
+                );
+                return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
+            }
+            return Ok(());
+        }
+
         match fp_optimize::normalize_intrinsics(ast) {
             Ok(()) => Ok(()),
             Err(err) => {

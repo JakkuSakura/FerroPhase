@@ -4,24 +4,20 @@ use fp_core::ast::{
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
-use fp_core::intrinsics::runtime::{
-    ensure_function_decl, FunctionDecl, ParamSpec, RuntimeIntrinsicStrategy,
-};
+use fp_core::intrinsics::{ensure_function_decl, IntrinsicMaterializer, ParamSpec};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use tracing::info;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
-pub struct LlvmRuntimeIntrinsicStrategy;
+pub struct LlvmRuntimeIntrinsicMaterializer;
 
-impl RuntimeIntrinsicStrategy for LlvmRuntimeIntrinsicStrategy {
+impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
     fn prepare_file(&self, file: &mut fp_core::ast::File) {
         ensure_function_decl(
             file,
-            FunctionDecl::new(
-                "printf",
-                vec![ParamSpec::string("fmt"), ParamSpec::any_tuple("args")],
-                Ty::Unit(TypeUnit),
-            ),
+            "printf",
+            vec![ParamSpec::string("fmt"), ParamSpec::any_tuple("args")],
+            Ty::Unit(TypeUnit),
         );
     }
 
