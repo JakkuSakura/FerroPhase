@@ -791,6 +791,10 @@ impl LlvmContext {
         }
 
         // External function declarations
+        for declaration in &self.module.func_declarations {
+            ir.push_str(&format_function_declaration_proto(declaration));
+        }
+
         for function in &self.module.functions {
             if function.linkage == llvm_ir::module::Linkage::External {
                 ir.push_str(&format_function_declaration(function));
@@ -1579,23 +1583,42 @@ fn format_global_variable(global: &llvm_ir::module::GlobalVariable) -> String {
 }
 
 fn format_function_declaration(function: &llvm_ir::Function) -> String {
-    let return_type_str = format_type(&function.return_type);
-    let mut params = Vec::new();
-    for param in &function.parameters {
-        params.push(format_type(&param.ty));
-    }
-    let params_str = params.join(", ");
+    format_function_decl_signature(
+        &function.name,
+        &function.return_type,
+        &function.parameters,
+        function.is_var_arg,
+    )
+}
 
-    if function.is_var_arg {
-        format!(
-            "declare {} @{}({}, ...)\n",
-            return_type_str, function.name, params_str
-        )
+fn format_function_declaration_proto(
+    declaration: &llvm_ir::function::FunctionDeclaration,
+) -> String {
+    format_function_decl_signature(
+        &declaration.name,
+        &declaration.return_type,
+        &declaration.parameters,
+        declaration.is_var_arg,
+    )
+}
+
+fn format_function_decl_signature(
+    name: &str,
+    return_type: &llvm_ir::types::TypeRef,
+    params: &[llvm_ir::function::Parameter],
+    is_var_arg: bool,
+) -> String {
+    let return_type_str = format_type(return_type);
+    let params_str = params
+        .iter()
+        .map(|param| format_type(&param.ty))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if is_var_arg {
+        format!("declare {} @{}({}, ...)\n", return_type_str, name, params_str)
     } else {
-        format!(
-            "declare {} @{}({})\n",
-            return_type_str, function.name, params_str
-        )
+        format!("declare {} @{}({})\n", return_type_str, name, params_str)
     }
 }
 

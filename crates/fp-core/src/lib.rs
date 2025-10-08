@@ -11,7 +11,6 @@ pub mod diagnostics;
 pub mod error;
 pub mod frontend;
 pub mod hir;
-pub mod id;
 pub mod intrinsics;
 pub mod lir;
 pub mod mir;
