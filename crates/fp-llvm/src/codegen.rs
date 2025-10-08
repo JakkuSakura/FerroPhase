@@ -2,8 +2,7 @@ use crate::context::LlvmContext;
 use crate::intrinsics::{self as llvm_intrinsics, CRuntimeIntrinsics};
 use fp_core::diagnostics::report_error_with_context;
 use fp_core::intrinsics::{
-    self as core_intrinsics, BackendFlavor, CallAbi, CallArgStrategy, ResolvedCall,
-    ResolvedIntrinsic,
+    BackendFlavor, CallAbi, CallArgStrategy, ResolvedCall, ResolvedIntrinsic,
 };
 use fp_core::{
     error::{Error, Result},
@@ -1201,10 +1200,10 @@ impl<'ctx> LirCodegen<'ctx> {
     }
 
     fn resolve_intrinsic(&self, logical_name: &str) -> Option<ResolvedIntrinsic> {
-        let kind = core_intrinsics::identify_symbol(logical_name)?;
-        core_intrinsics::default_resolver()
-            .resolve(&(kind, self.backend_flavor))
-            .cloned()
+        if self.backend_flavor != BackendFlavor::Llvm {
+            return None;
+        }
+        llvm_intrinsics::resolve_intrinsic(logical_name)
     }
 
     fn calling_convention_for(
