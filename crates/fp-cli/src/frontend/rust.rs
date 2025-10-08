@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use fp_core::Result as CoreResult;
 use fp_core::ast::Node;
+use fp_core::intrinsics::IntrinsicNormalizer;
+use fp_optimize::DefaultIntrinsicNormalizer;
 use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
@@ -41,6 +43,8 @@ impl LanguageFrontend for RustFrontend {
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
+        let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
+            Arc::new(DefaultIntrinsicNormalizer::default());
         if let Some(path) = path {
             let mut parser = self.parser.lock().unwrap();
             parser.clear_diagnostics();
@@ -61,6 +65,7 @@ impl LanguageFrontend for RustFrontend {
                 last,
                 ast,
                 serializer,
+                intrinsic_normalizer: Some(intrinsic_normalizer.clone()),
                 snapshot: Some(snapshot),
                 diagnostics,
             });
@@ -85,6 +90,7 @@ impl LanguageFrontend for RustFrontend {
             last,
             ast,
             serializer,
+            intrinsic_normalizer: Some(intrinsic_normalizer),
             snapshot: None,
             diagnostics,
         })

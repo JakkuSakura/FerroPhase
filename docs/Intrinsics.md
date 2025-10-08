@@ -29,7 +29,7 @@ work in the new world.
 ## Resolver Model
 
 The shared data model lives in `crates/fp-core/src/intrinsics`. Going forward we
-intend to split the monolithic catalogue (`catalog.rs`) into two registries:
+intend to split the catalogue into two registries:
 
 1. **Normalisation tables** authored by the language frontends (e.g. `fp-rust`)
    that describe how surface constructs lower into canonical `std::…` symbols.
@@ -38,10 +38,9 @@ intend to split the monolithic catalogue (`catalog.rs`) into two registries:
 
 `fp_core` will continue to host the canonical structs (`IntrinsicSpec`,
 `ResolvedCall`, `ResolvedIntrinsic`, etc.) so both registries can share them
-without duplicating definitions.
-
-Today the unified resolver already maps `(intrinsic symbol, backend flavour)`
-pairs to a `ResolvedIntrinsic` value:
+without duplicating definitions. Today each backend wires its own lookup tables
+(for example `crates/fp-llvm/src/intrinsics.rs`) that return one of the shared
+`ResolvedIntrinsic` variants:
 
 ```rust
 pub enum ResolvedIntrinsic {
