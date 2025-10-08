@@ -141,11 +141,20 @@ async fn transpile_file(
         }
     };
 
-    let transpiler = Transpiler::new(target);
-    let code = transpiler.transpile(&ast)?;
+    let transpiler = Transpiler::new(target, args.type_defs);
+    let result = transpiler.transpile(&ast)?;
 
     // Write output
-    std::fs::write(output, code).map_err(|e| CliError::Io(e))?;
+    std::fs::write(output, result.code).map_err(|e| CliError::Io(e))?;
+    if let Some(defs) = result.type_defs {
+        let mut defs_path = output.to_path_buf();
+        if let Some(stem) = defs_path.file_stem().and_then(|s| s.to_str()) {
+            defs_path.set_file_name(format!("{}.d.ts", stem));
+        } else {
+            defs_path.set_extension("d.ts");
+        }
+        std::fs::write(defs_path, defs).map_err(|e| CliError::Io(e))?;
+    }
     info!("Generated: {}", output.display());
 
     Ok(())
