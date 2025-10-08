@@ -1,7 +1,7 @@
 use fp_core::ast::Locator;
+use fp_core::ast::Pattern;
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_core::pat::Pattern;
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::ItemKind, hir};
 use std::collections::HashMap;

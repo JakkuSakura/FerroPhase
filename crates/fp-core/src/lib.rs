@@ -15,7 +15,6 @@ pub mod intrinsics;
 pub mod lir;
 pub mod mir;
 pub mod ops;
-pub mod pat;
 pub mod pretty;
 pub mod printer;
 pub mod span;

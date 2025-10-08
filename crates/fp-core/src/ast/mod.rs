@@ -12,6 +12,7 @@ mod deserialize;
 mod expr;
 mod ident;
 mod item;
+mod pat;
 mod pretty;
 mod serialize;
 mod value;
@@ -20,6 +21,7 @@ pub use attr::*;
 pub use expr::*;
 pub use ident::*;
 pub use item::*;
+pub use pat::*;
 pub use pretty::*;
 pub use value::*;
 
