@@ -34,7 +34,11 @@ pub fn function_item(name: &str, body_id: Option<BodyId>) -> Item {
         c_variadic: false,
     };
 
+    let symbol = thir::Symbol::new(name);
     let function = Function {
+        name: symbol.clone(),
+        path: vec![symbol],
+        def_id: None,
         sig,
         body_id,
         is_const: false,

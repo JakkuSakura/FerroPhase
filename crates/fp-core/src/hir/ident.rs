@@ -77,3 +77,15 @@ impl std::ops::Deref for Symbol {
         self.as_str()
     }
 }
+
+impl PartialEq<&str> for Symbol {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Symbol> for &str {
+    fn eq(&self, other: &Symbol) -> bool {
+        *self == other.as_str()
+    }
+}
