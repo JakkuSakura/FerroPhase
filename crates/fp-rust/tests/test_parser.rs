@@ -126,6 +126,11 @@ fn test_parse_if() -> Result<()> {
              ; {}
         }
     };
+    let nested_then_block = ExprBlock::new_stmts(vec![
+        BlockStmt::Noop,
+        BlockStmt::Expr(BlockStmtExpr::new(Expr::block(ExprBlock::new())).with_semicolon(false)),
+    ]);
+
     assert_eq!(
         code,
         Expr::from(ExprIf {
@@ -134,11 +139,7 @@ fn test_parse_if() -> Result<()> {
             elze: Some(
                 Expr::from(ExprIf {
                     cond: Expr::value(Value::bool(false)).into(),
-                    then: Expr::block(ExprBlock::new_stmts_expr(
-                        vec![BlockStmt::Noop,],
-                        Expr::block(ExprBlock::new())
-                    ))
-                    .into(),
+                    then: Expr::block(nested_then_block).into(),
                     elze: None,
                 })
                 .into()

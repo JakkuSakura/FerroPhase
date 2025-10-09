@@ -1,13 +1,12 @@
-//! Run command implementation - executes FerroPhase files directly using AST interpretation
+//! Run command implementation - executes FerroPhase files directly through the unified pipeline
 
+use crate::config::{PipelineOptions, PipelineTarget};
+use crate::pipeline::{Pipeline, PipelineInput, PipelineOutput};
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
-use fp_core::ast::{BExpr, RuntimeValue, Value, register_threadlocal_serializer};
+use fp_core::ast::{RuntimeValue, Value};
 use fp_core::pretty::{PrettyOptions, pretty};
-use fp_rust::parser::RustParser;
-use fp_rust::printer::RustPrinter;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tracing::info;
 
 /// Arguments for the run command
@@ -18,148 +17,98 @@ pub struct RunArgs {
     pub runtime: Option<String>, // Runtime to use (literal, rust)
 }
 
-/// Execute the run command - simplified pipeline that only uses AST + interpretation
-pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
+/// Execute the run command by funnelling source code through the same pipeline that `compile`
+/// uses, stopping at the interpretation stage.
+pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
     info!("Running file '{}'", args.file.display());
 
-    // Read the source file
-    let source = std::fs::read_to_string(&args.file).map_err(|e| {
-        CliError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to read file {}: {}", args.file.display(), e),
-        ))
-    })?;
+    let runtime = args.runtime.as_deref().unwrap_or("literal").to_string();
+    validate_runtime(&runtime)?;
 
-    // Parse source to AST (no HIR or later stages)
-    let ast = parse_source_to_ast(&source)?;
+    let source = read_source(&args.file)?;
 
     if args.print_ast {
-        print_ast(&ast)?;
+        print_ast_representation(&source, &runtime)?;
     }
 
-    // Execute directly using AST interpretation (bypass HIR/MIR/LIR)
-    let runtime = args.runtime.unwrap_or_else(|| "literal".to_string());
-    match runtime.as_str() {
-        "literal" => {
-            let result = interpret_ast_literal(&ast).await?;
-            // For run command, we don't print the result value unless it's needed for output
-            if let Value::Unit(_) = result {
-                // Don't print unit results
-            } else {
-                println!(
-                    "{} {}",
-                    style("Result:").green().bold(),
-                    format_result(&result)
-                );
-            }
-        }
-        "rust" => {
-            let result = interpret_ast_runtime(&ast, &runtime).await?;
-            // Runtime values handle their own output through println! etc.
-            if args.print_passes {
-                print_runtime_result(&result)?;
-            }
-        }
-        _ => {
-            return Err(CliError::InvalidInput(format!(
-                "Unknown runtime: {}",
-                runtime
-            )));
-        }
-    }
+    let options = build_pipeline_options(&runtime, &args, config);
+
+    let output = execute_pipeline(&runtime, &options, PipelineInput::Expression(source)).await?;
+
+    handle_pipeline_output(output, &args)?;
 
     Ok(())
 }
 
-/// Parse source code to AST without using HIR or later compilation stages
-fn parse_source_to_ast(source: &str) -> Result<BExpr> {
-    let parser = RustParser::new();
-
-    // Strip shebang line if present
-    let cleaned_source = if source.starts_with("#!") {
-        source.lines().skip(1).collect::<Vec<_>>().join("\n")
-    } else {
-        source.to_string()
-    };
-
-    // Try parsing as file first
-    if let Ok(ast) = try_parse_as_file(&parser, &cleaned_source) {
-        return Ok(ast);
+fn validate_runtime(runtime: &str) -> Result<()> {
+    match runtime {
+        "literal" | "rust" => Ok(()),
+        other => Err(CliError::InvalidInput(format!(
+            "Unknown runtime: {}",
+            other
+        ))),
     }
-
-    // Try parsing as block expression
-    if let Ok(ast) = try_parse_block_expression(&parser, &cleaned_source) {
-        return Ok(ast);
-    }
-
-    // Try parsing as simple expression
-    try_parse_simple_expression(&parser, &cleaned_source)
 }
 
-fn try_parse_as_file(parser: &RustParser, source: &str) -> Result<BExpr> {
-    // Parse as a syn::File first
-    let syn_file: syn::File = syn::parse_str(source)
-        .map_err(|e| CliError::Compilation(format!("Failed to parse as file: {}", e)))?;
+fn read_source(path: &PathBuf) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|e| {
+        CliError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to read file {}: {}", path.display(), e),
+        ))
+    })
+}
 
-    // Parse the file using RustParser
-    let ast_file = parser
-        .parse_file_content(PathBuf::from("input.fp"), syn_file)
-        .map_err(|e| CliError::Compilation(format!("Failed to parse file: {}", e)))?;
+fn build_pipeline_options(runtime: &str, args: &RunArgs, config: &CliConfig) -> PipelineOptions {
+    let mut options = PipelineOptions::default();
+    options.target = PipelineTarget::Interpret;
+    options.runtime.runtime_type = runtime.to_string();
+    options.debug.print_ast = args.print_ast;
+    options.debug.print_passes = args.print_passes;
+    options.debug.verbose = config.compilation.debug;
+    options.optimization_level = config.compilation.default_opt_level;
+    options.save_intermediates = false;
+    options.release = !config.compilation.debug;
+    options
+}
 
-    // Find main function
-    for item in ast_file.items {
-        if let Some(func) = item.as_function() {
-            if func.name.name == "main" {
-                return Ok(func.body.clone());
+async fn execute_pipeline(
+    runtime: &str,
+    options: &PipelineOptions,
+    input: PipelineInput,
+) -> Result<PipelineOutput> {
+    let mut pipeline = Pipeline::with_runtime(runtime);
+    pipeline.execute_with_options(input, options.clone()).await
+}
+
+fn handle_pipeline_output(output: PipelineOutput, args: &RunArgs) -> Result<()> {
+    match output {
+        PipelineOutput::Value(value) => {
+            if !matches!(value, Value::Unit(_)) {
+                println!(
+                    "{} {}",
+                    style("Result:").green().bold(),
+                    format_result(&value)
+                );
+            }
+            Ok(())
+        }
+        PipelineOutput::RuntimeValue(value) => {
+            if args.print_passes {
+                print_runtime_result(&value)
+            } else {
+                Ok(())
             }
         }
+        PipelineOutput::Code(_) | PipelineOutput::Binary(_) => Err(CliError::Compilation(
+            "Run pipeline produced an unexpected artifact".to_string(),
+        )),
     }
-
-    // No main function found, treat as expression block
-    Err(CliError::Compilation("No main function found".to_string()))
 }
 
-fn try_parse_block_expression(parser: &RustParser, source: &str) -> Result<BExpr> {
-    let wrapped_source = format!("{{\n{}\n}}", source);
-    let syn_expr: syn::Expr = syn::parse_str(&wrapped_source)
-        .map_err(|e| CliError::Compilation(format!("Failed to parse as block: {}", e)))?;
-
-    let ast_expr = parser
-        .parse_expr(syn_expr)
-        .map_err(|e| CliError::Compilation(format!("Failed to convert to AST: {}", e)))?;
-
-    Ok(Box::new(ast_expr))
-}
-
-fn try_parse_simple_expression(parser: &RustParser, source: &str) -> Result<BExpr> {
-    let syn_expr: syn::Expr = syn::parse_str(source)
-        .map_err(|e| CliError::Compilation(format!("Failed to parse as expression: {}", e)))?;
-
-    let ast_expr = parser
-        .parse_expr(syn_expr)
-        .map_err(|e| CliError::Compilation(format!("Failed to convert to AST: {}", e)))?;
-
-    Ok(Box::new(ast_expr))
-}
-
-/// Interpret AST using literal semantics (basic const evaluation)
-async fn interpret_ast_literal(ast: &BExpr) -> Result<Value> {
-    let _ = ast;
-    Err(CliError::Compilation(
-        "Typed interpreter path is not implemented yet".to_string(),
-    ))
-}
-
-/// Interpret AST using runtime semantics (ownership tracking)
-async fn interpret_ast_runtime(ast: &BExpr, runtime_name: &str) -> Result<RuntimeValue> {
-    let _ = (ast, runtime_name);
-    Err(CliError::Compilation(
-        "Runtime typed interpreter is not implemented yet".to_string(),
-    ))
-}
-
-fn print_ast(ast: &BExpr) -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new_with_rustfmt()));
+fn print_ast_representation(source: &str, runtime: &str) -> Result<()> {
+    let mut pipeline = Pipeline::with_runtime(runtime);
+    let ast = pipeline.parse_source_public(source)?;
 
     let mut pretty_opts = PrettyOptions::default();
     pretty_opts.show_types = false;
@@ -168,8 +117,9 @@ fn print_ast(ast: &BExpr) -> Result<()> {
     println!(
         "{} {}",
         style("AST:").blue().bold(),
-        pretty(ast.as_ref(), pretty_opts)
+        pretty(&ast, pretty_opts)
     );
+
     Ok(())
 }
 
@@ -220,7 +170,6 @@ mod tests {
     async fn test_run_simple_expression_file() {
         let config = CliConfig::default();
 
-        // Create a temporary file with simple expression
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "1 + 2 * 3").unwrap();
 
@@ -239,7 +188,6 @@ mod tests {
     async fn test_run_main_function_file() {
         let config = CliConfig::default();
 
-        // Create a temporary file with main function
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "fn main() {{ println!(\"Hello, world!\"); }}").unwrap();
 
