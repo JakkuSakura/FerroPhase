@@ -134,12 +134,18 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn IntrinsicMaterializer) -> Re
                     materialize_expr(value, strategy)?;
                 }
             }
+            if let Some(new_expr) = strategy.materialize_struct(struct_expr, &expr_ty)? {
+                replacement = Some(new_expr);
+            }
         }
         ExprKind::Structural(struct_expr) => {
             for field in &mut struct_expr.fields {
                 if let Some(value) = field.value.as_mut() {
                     materialize_expr(value, strategy)?;
                 }
+            }
+            if let Some(new_expr) = strategy.materialize_structural(struct_expr, &expr_ty)? {
+                replacement = Some(new_expr);
             }
         }
         ExprKind::Array(array_expr) => {
@@ -237,8 +243,31 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn IntrinsicMaterializer) -> Re
                 }
             }
 
-            if let Some(expr) = strategy.rewrite_intrinsic(call, &expr_ty)? {
+            if let Some(expr) = strategy.materialize_call(call, &expr_ty)? {
                 replacement = Some(expr);
+            }
+        }
+        ExprKind::IntrinsicCollection(collection) => {
+            match collection {
+                fp_core::ast::ExprIntrinsicCollection::VecElements { elements } => {
+                    for element in elements {
+                        materialize_expr(element, strategy)?;
+                    }
+                }
+                fp_core::ast::ExprIntrinsicCollection::VecRepeat { elem, len } => {
+                    materialize_expr(elem.as_mut(), strategy)?;
+                    materialize_expr(len.as_mut(), strategy)?;
+                }
+                fp_core::ast::ExprIntrinsicCollection::HashMapEntries { entries } => {
+                    for entry in entries {
+                        materialize_expr(&mut entry.key, strategy)?;
+                        materialize_expr(&mut entry.value, strategy)?;
+                    }
+                }
+            }
+
+            if let Some(new_expr) = strategy.materialize_collection(collection, &expr_ty)? {
+                replacement = Some(new_expr);
             }
         }
         _ => {}

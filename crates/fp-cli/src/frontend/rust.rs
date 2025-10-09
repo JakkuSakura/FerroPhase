@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use fp_core::Result as CoreResult;
 use fp_core::ast::Node;
 use fp_core::intrinsics::IntrinsicNormalizer;
-use fp_optimize::DefaultIntrinsicNormalizer;
+use fp_optimize::passes::DefaultIntrinsicNormalizer;
 use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
