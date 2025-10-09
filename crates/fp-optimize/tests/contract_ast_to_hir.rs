@@ -1,5 +1,11 @@
 use fp_core::error::Result as OptimizeResult;
-use fp_core::hir::{self, ItemKind};
+use fp_core::hir::{
+    self,
+    FormatTemplatePart,
+    ItemKind,
+    StmtKind,
+};
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_optimize::transformations::{HirGenerator, IrTransform};
 use fp_rust::parser::RustParser;
 use std::path::PathBuf;
@@ -185,6 +191,157 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     } else {
         panic!("callers::call should remain a function item");
     }
+
+    Ok(())
+}
+
+fn transform_source(source: &str) -> OptimizeResult<hir::Program> {
+    let parser = RustParser::new();
+    let syn_file = syn::parse_file(source).expect("valid Rust source");
+    let ast_file = parser
+        .parse_file_content(PathBuf::from("<memory>"), syn_file)
+        .expect("AST parsing succeeds");
+
+    let mut generator = HirGenerator::new();
+    generator.transform(&ast_file)
+}
+
+fn find_function<'a>(program: &'a hir::Program, name: &str) -> &'a hir::Function {
+    program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            ItemKind::Function(func) if func.sig.name == name => Some(func),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("function {} should exist", name))
+}
+
+#[test]
+fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
+    let program = transform_source(
+        r#"
+        fn main() {
+            println!("value={} and count={} ", 42, 7);
+        }
+    "#,
+    )?;
+
+    let main_fn = find_function(&program, "main");
+    let body = main_fn.body.as_ref().expect("main has body");
+    let block = match &body.value.kind {
+        hir::ExprKind::Block(block) => block,
+        other => panic!("expected function body block, found {:?}", other),
+    };
+    assert_eq!(block.stmts.len(), 1, "println expands to one statement");
+
+    let stmt = &block.stmts[0];
+    let expr = match &stmt.kind {
+        StmtKind::Semi(expr) => expr,
+        other => panic!("expected println to lower into a semi statement, found {:?}", other),
+    };
+
+    let call = match &expr.kind {
+        hir::ExprKind::IntrinsicCall(call) => call,
+        other => panic!("expected intrinsic call, found {:?}", other),
+    };
+
+    assert_eq!(call.kind, IntrinsicCallKind::Println);
+    let template = match &call.payload {
+        IntrinsicCallPayload::Format { template } => template,
+        other => panic!("println payload should be format template, got {:?}", other),
+    };
+
+    assert!(
+        matches!(template.parts.first(), Some(FormatTemplatePart::Literal(lit)) if lit.contains("value=")),
+        "expected literal prefix in println template"
+    );
+    assert_eq!(template.args.len(), 2, "println forwards positional arguments");
+
+    Ok(())
+}
+
+#[test]
+fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
+    let program = transform_source(
+        r#"
+        fn main() {
+            print!("prefix: {}", 3.14);
+        }
+    "#,
+    )?;
+
+    let main_fn = find_function(&program, "main");
+    let body = main_fn.body.as_ref().expect("main has body");
+    let block = match &body.value.kind {
+        hir::ExprKind::Block(block) => block,
+        other => panic!("expected block in function body, found {:?}", other),
+    };
+    assert_eq!(block.stmts.len(), 1);
+
+    let expr = match &block.stmts[0].kind {
+        StmtKind::Semi(expr) => expr,
+        other => panic!("expected statement expression, got {:?}", other),
+    };
+
+    let call = match &expr.kind {
+        hir::ExprKind::IntrinsicCall(call) => call,
+        other => panic!("expected intrinsic call, found {:?}", other),
+    };
+
+    assert_eq!(call.kind, IntrinsicCallKind::Print);
+    match &call.payload {
+        IntrinsicCallPayload::Format { template } => {
+            assert_eq!(template.args.len(), 1);
+            assert!(
+                matches!(
+                    template.parts.first(),
+                    Some(FormatTemplatePart::Literal(lit)) if lit == "prefix: "
+                ),
+                "expected literal prefix in print template"
+            );
+        }
+        other => panic!("print payload should be format template, got {:?}", other),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
+    let program = transform_source(
+        r#"
+        struct Point { x: i32, y: i32 }
+
+        const SIZE: usize = sizeof!(Point);
+        const FIELDS: usize = field_count!(Point);
+    "#,
+    )?;
+
+    let mut saw_sizeof = false;
+    let mut saw_field_count = false;
+
+    for item in &program.items {
+        if let ItemKind::Const(konst) = &item.kind {
+            let expr = &konst.body.value;
+            if let hir::ExprKind::IntrinsicCall(call) = &expr.kind {
+                match call.kind {
+                    IntrinsicCallKind::SizeOf => {
+                        saw_sizeof = true;
+                        assert!(matches!(call.payload, IntrinsicCallPayload::Args { .. }));
+                    }
+                    IntrinsicCallKind::FieldCount => {
+                        saw_field_count = true;
+                        assert!(matches!(call.payload, IntrinsicCallPayload::Args { .. }));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    assert!(saw_sizeof, "expected sizeof! to lower into intrinsic call");
+    assert!(saw_field_count, "expected field_count! to lower into intrinsic call");
 
     Ok(())
 }
