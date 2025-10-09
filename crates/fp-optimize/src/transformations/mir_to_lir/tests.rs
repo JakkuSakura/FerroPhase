@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::span::Span;
+use fp_core::{mir::Symbol as MirSymbol, span::Span};
 use std::collections::HashMap;
 
 fn local_decl(ty: Ty) -> mir::LocalDecl {
@@ -46,8 +46,8 @@ fn builds_function_signature_and_locals() {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
-                name: "test_fn".to_string(),
-                path: vec!["test_fn".to_string()],
+                name: MirSymbol::new("test_fn"),
+                path: vec![MirSymbol::new("test_fn")],
                 def_id: None,
                 sig: mir::FunctionSig {
                     inputs: vec![param_ty.clone()],
@@ -89,7 +89,7 @@ fn lowers_general_call_and_branches() {
             func: mir::Operand::Constant(mir::Constant {
                 span: Span::new(0, 0, 0),
                 user_ty: None,
-                literal: mir::ConstantKind::Fn("foo".to_string(), return_ty.clone()),
+                literal: mir::ConstantKind::Fn(MirSymbol::new("foo"), return_ty.clone()),
             }),
             args: vec![mir::Operand::Constant(int_constant(1))],
             destination: Some((mir::Place::from_local(2), 1)),
@@ -130,8 +130,8 @@ fn lowers_general_call_and_branches() {
         items: vec![mir::Item {
             mir_id: 0,
             kind: mir::ItemKind::Function(mir::Function {
-                name: "test_fn".to_string(),
-                path: vec!["test_fn".to_string()],
+                name: MirSymbol::new("test_fn"),
+                path: vec![MirSymbol::new("test_fn")],
                 def_id: None,
                 sig: mir::FunctionSig {
                     inputs: vec![param_ty.clone()],
@@ -153,11 +153,16 @@ fn lowers_general_call_and_branches() {
 
     let entry_block = &lir_func.basic_blocks[0];
     assert_eq!(entry_block.successors, vec![1]);
-    assert_eq!(entry_block.instructions.len(), 1);
-    match &entry_block.instructions[0].kind {
+    assert_eq!(entry_block.instructions.len(), 2);
+    assert!(matches!(
+        entry_block.instructions[0].kind,
+        lir::LirInstructionKind::Alloca { .. }
+    ));
+    match &entry_block.instructions[1].kind {
         lir::LirInstructionKind::Call { function, .. } => match function {
-            lir::LirValue::Global(name, _) => assert_eq!(name, "foo"),
-            other => panic!("expected global call, got {:?}", other),
+            lir::LirValue::Function(name) => assert_eq!(name.as_str(), "foo"),
+            lir::LirValue::Global(name, _) => assert_eq!(name.as_str(), "foo"),
+            other => panic!("expected function call, got {:?}", other),
         },
         other => panic!("expected call instruction, got {:?}", other),
     }
