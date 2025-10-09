@@ -7,12 +7,12 @@ on:
     branches:
       - main
       - develop
-name: Rust tests
+name: CI
 jobs:
   run_tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: nightly-2024-07-09
@@ -22,6 +22,11 @@ jobs:
       - name: Cache rust build
         uses: Swatinem/rust-cache@v2
 
-      - name: Run fp-optimize examples
-        run: cd fp-optimize && cargo run --example generate-examples
+      - name: Cargo fmt
+        run: cargo fmt --all -- --check
 
+      - name: Cargo check
+        run: cargo check --workspace --all-targets
+
+      - name: Cargo test
+        run: cargo test --workspace --all-targets
