@@ -60,8 +60,8 @@ impl DebugInfoBuilder {
     pub fn create_function_debug_info(&mut self, name: &str, span: Span) -> String {
         let metadata = DebugMetadata {
             file: self.source_file.clone(),
-            line: span.lo, // Use span offset as line number for now
-            column: 0,     // Use 0 as column for now
+            line: span.lo,
+            column: span.hi,
             function: Some(name.to_string()),
         };
 
@@ -79,8 +79,8 @@ impl DebugInfoBuilder {
     ) -> String {
         let metadata = DebugMetadata {
             file: self.source_file.clone(),
-            line: span.lo, // Use span offset as line number for now
-            column: 0,     // Use 0 as column for now
+            line: span.lo,
+            column: span.hi,
             function: Some(function.to_string()),
         };
 
@@ -93,8 +93,8 @@ impl DebugInfoBuilder {
     pub fn create_instruction_debug_info(&mut self, instruction_id: &str, span: Span) -> String {
         let metadata = DebugMetadata {
             file: self.source_file.clone(),
-            line: span.lo, // Use span offset as line number for now
-            column: 0,     // Use 0 as column for now
+            line: span.lo,
+            column: span.hi,
             function: None,
         };
 
@@ -143,8 +143,8 @@ impl DebugLocation {
     pub fn from_span(span: Span, file: String) -> Self {
         Self {
             file,
-            line: span.lo, // Use span offset as line number for now
-            column: 0,     // Use 0 as column for now
+            line: span.lo,
+            column: span.hi,
         }
     }
 }
