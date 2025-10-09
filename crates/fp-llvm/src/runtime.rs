@@ -1,29 +1,33 @@
 use fp_core::ast::{
     DecimalType, Expr, ExprFormatString, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
-    FormatArgRef, FormatTemplatePart, Ty, TySlot, TypeInt, TypePrimitive, TypeUnit, Value,
+    FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypePrimitive,
+    TypeUnit, Value,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
-use fp_core::intrinsics::{ensure_function_decl, IntrinsicMaterializer, ParamSpec};
+use fp_core::intrinsics::{ensure_function_decl, make_function_decl, IntrinsicMaterializer};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-use tracing::info;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
 pub struct LlvmRuntimeIntrinsicMaterializer;
 
 impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
     fn prepare_file(&self, file: &mut fp_core::ast::File) {
-        ensure_function_decl(
-            file,
-            "printf",
-            vec![ParamSpec::string("fmt"), ParamSpec::any_tuple("args")],
-            Ty::Unit(TypeUnit),
-        );
+        let mut fmt_param =
+            FunctionParam::new(Ident::new("fmt"), Ty::Primitive(TypePrimitive::String));
+        fmt_param.ty_annotation = Some(fmt_param.ty.clone());
+
+        let mut args_param = FunctionParam::new(Ident::new("args"), Ty::Any(TypeAny));
+        args_param.ty_annotation = Some(args_param.ty.clone());
+        args_param.as_tuple = true;
+
+        let decl = make_function_decl("printf", vec![fmt_param, args_param], Ty::Unit(TypeUnit));
+        ensure_function_decl(file, decl);
     }
 
-    fn rewrite_intrinsic(
+    fn materialize_call(
         &self,
-        call: &ExprIntrinsicCall,
+        call: &mut ExprIntrinsicCall,
         expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         if matches!(
