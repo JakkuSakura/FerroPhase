@@ -164,10 +164,6 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub fn execute_main(&mut self) -> Option<Value> {
-        if !matches!(self.mode, InterpreterMode::RunTime) {
-            return None;
-        }
-
         let mut body_expr = self
             .functions
             .get("main")
@@ -2155,7 +2151,23 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn eval_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Value {
         match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => Value::unit(),
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                match self.render_intrinsic_call(call) {
+                    Ok(output) => {
+                        if call.kind == IntrinsicCallKind::Print {
+                            if let Some(last) = self.stdout.last_mut() {
+                                last.push_str(&output);
+                            } else {
+                                self.stdout.push(output);
+                            }
+                        } else {
+                            self.stdout.push(output);
+                        }
+                    }
+                    Err(err) => self.emit_error(err),
+                }
+                Value::unit()
+            }
             IntrinsicCallKind::DebugAssertions => Value::bool(self.debug_assertions),
             IntrinsicCallKind::Break => {
                 if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
@@ -2453,7 +2465,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    #[allow(dead_code)]
     fn render_intrinsic_call(
         &mut self,
         call: &mut ExprIntrinsicCall,
@@ -2475,7 +2486,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    #[allow(dead_code)]
     fn render_format_template(
         &mut self,
         template: &mut ExprFormatString,

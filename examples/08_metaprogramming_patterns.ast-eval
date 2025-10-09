@@ -1,32 +1,37 @@
-fn main() -> () {
-    const FIELD_COUNT: u64 = 3;
-    const TYPE_NAME: &str = "Point3D";
-    struct Point3D {
-        pub x: i64,
-        pub y: i64,
-        pub z: i64,
-    }
-    impl Point3D {
-        fn type_name() -> &str {
-            TYPE_NAME
+ast::File {
+  items:
+    priv fn main() -> () : fn() -> () : fn() -> ()
+      block (10 stmts) : ()
+        priv const FIELD_COUNT: u64 : u64
+          value 3 : u64
+        priv const TYPE_NAME: &string : &string
+          value "Point3D" : &Expr(str)
+        priv struct Point3D : Point3D{x: i64, y: i64, z: i64} {
+          x: i64
+          y: i64
+          z: i64
         }
-        fn field_count() -> u64 {
-            FIELD_COUNT
+        impl Point3D : () {
+          priv fn type_name() -> &'static Expr(str) : fn() -> &string : fn() -> &string
+            locator TYPE_NAME : &string
+          priv fn field_count() -> u64 : fn() -> u64 : fn() -> u64
+            locator FIELD_COUNT : u64
         }
-    }
-    println!(
-        "{} has {} fields",
-        Point3D::type_name(),
-        Point3D::field_count()
-    );
-    const VARIANT_A: u8 = 1;
-    const VARIANT_B: u8 = 2;
-    enum Tag {
-        A = VARIANT_A as isize,
-        B = VARIANT_B as isize,
-    }
-    let tag = Tag::A;
-    println!("tag discriminant: {}", tag as u8);
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{} has {} fields" Point3D::type_name(), Point3D::field_count()
+        priv const VARIANT_A: u8 : u8
+          value 1 : u8
+        priv const VARIANT_B: u8 : u8
+          value 2 : u8
+        priv enum Tag : Tag [A: any | B: any] {
+          A: any = (VARIANT_A) as Expr(isize)
+          B: any = (VARIANT_B) as Expr(isize)
+        }
+        let tag : unknown
+          init:
+            locator Tag::A : Tag [A: any | B: any]
+        expr_stmt ;
+          intrinsic println : ()
+            template: "tag discriminant: {}" (tag) as u8
 }
-
-// Type: ()

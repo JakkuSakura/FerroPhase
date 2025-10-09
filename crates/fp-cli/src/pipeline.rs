@@ -214,6 +214,55 @@ impl Pipeline {
         Ok(ast)
     }
 
+    #[cfg(test)]
+    pub fn parse_source_with_path_for_tests(
+        &mut self,
+        source: &str,
+        path: &Path,
+    ) -> Result<Node, CliError> {
+        let frontend = self
+            .frontends
+            .get(languages::FERROPHASE)
+            .ok_or_else(|| CliError::Compilation("Default frontend not registered".to_string()))?;
+
+        let FrontendResult {
+            ast,
+            serializer,
+            intrinsic_normalizer,
+            snapshot,
+            diagnostics,
+            ..
+        } = frontend
+            .parse(source, Some(path))
+            .map_err(|err| CliError::Compilation(err.to_string()))?;
+
+        let collected_diagnostics = diagnostics.get_diagnostics();
+        if !collected_diagnostics.is_empty() {
+            DiagnosticManager::emit(
+                &collected_diagnostics,
+                Some(STAGE_FRONTEND),
+                &DiagnosticDisplayOptions::default(),
+            );
+        }
+
+        if collected_diagnostics
+            .iter()
+            .any(|diag| diag.level == DiagnosticLevel::Error)
+        {
+            return Err(CliError::Compilation(
+                "frontend stage failed; see diagnostics for details".to_string(),
+            ));
+        }
+
+        register_threadlocal_serializer(serializer.clone());
+        self.serializer = Some(serializer.clone());
+        self.intrinsic_normalizer = intrinsic_normalizer;
+        self.frontend_snapshot = snapshot;
+        self.source_language = Some(frontend.language().to_string());
+
+        Ok(ast)
+    }
+
     pub async fn execute_with_options(
         &mut self,
         input: PipelineInput,
@@ -766,6 +815,15 @@ impl Pipeline {
         }
     }
 
+    #[cfg(test)]
+    fn stage_type_check_for_tests(
+        &self,
+        ast: &mut Node,
+        manager: &DiagnosticManager,
+    ) -> Result<(), CliError> {
+        self.stage_type_check(ast, STAGE_TYPE_ENRICH, manager)
+    }
+
     fn stage_link_binary(
         &self,
         llvm_ir_path: &Path,
@@ -1161,11 +1219,960 @@ impl Pipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PipelineTarget;
+    use fp_core::diagnostics::DiagnosticManager;
+    use fp_core::intrinsics::IntrinsicCallKind;
+    use fp_core::{ast, hir, lir};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    struct PipelineHarness {
+        pipeline: Pipeline,
+        diagnostics: DiagnosticManager,
+        options: PipelineOptions,
+    }
+
+    impl PipelineHarness {
+        fn new(target: PipelineTarget) -> Self {
+            let mut options = PipelineOptions::default();
+            options.target = target.clone();
+            options.base_path = Some(PathBuf::from("unit_test_output"));
+
+            Self {
+                pipeline: Pipeline::new(),
+                diagnostics: DiagnosticManager::new(),
+                options,
+            }
+        }
+
+        fn parse(&mut self, source: &str) -> Node {
+            self.pipeline
+                .parse_source_with_path_for_tests(source, Path::new("unit_test.fp"))
+                .expect("frontend should succeed")
+        }
+
+        fn fail_with_diagnostics(&self, stage: &str, err: CliError) -> ! {
+            let diagnostics = self.diagnostics.get_diagnostics();
+            panic!(
+                "{} must succeed: {:?}; diagnostics: {:?}",
+                stage, err, diagnostics
+            );
+        }
+
+        fn normalize(&self, ast: &mut Node) {
+            if let Err(err) = self
+                .pipeline
+                .stage_normalize_intrinsics(ast, &self.diagnostics)
+            {
+                self.fail_with_diagnostics("intrinsic normalization", err);
+            }
+        }
+
+        fn type_check(&self, ast: &mut Node) {
+            if let Err(err) = self
+                .pipeline
+                .stage_type_check_for_tests(ast, &self.diagnostics)
+            {
+                self.fail_with_diagnostics("type checking", err);
+            }
+        }
+
+        fn rerun_type_check(&self, ast: &mut Node, stage: &'static str) {
+            if let Err(err) = self
+                .pipeline
+                .stage_type_check(ast, stage, &self.diagnostics)
+            {
+                self.fail_with_diagnostics(stage, err);
+            }
+        }
+
+        fn closure_lowering(&self, ast: &mut Node) {
+            if let Err(err) = self
+                .pipeline
+                .stage_closure_lowering(ast, &self.diagnostics)
+            {
+                self.fail_with_diagnostics("closure lowering", err);
+            }
+        }
+
+        fn materialize_runtime(&self, ast: &mut Node, target: PipelineTarget) {
+            if let Err(err) = self
+                .pipeline
+                .stage_materialize_runtime_intrinsics(ast, &target, &self.diagnostics)
+            {
+                self.fail_with_diagnostics("runtime materialisation", err);
+            }
+        }
+
+        fn const_eval(&mut self, ast: &mut Node) -> ConstEvalOutcome {
+            let previous = self.options.execute_main;
+            self.options.execute_main = true;
+            let outcome = match self
+                .pipeline
+                .stage_const_eval(ast, &self.options, &self.diagnostics)
+            {
+                Ok(outcome) => outcome,
+                Err(err) => self.fail_with_diagnostics("const evaluation", err),
+            };
+            self.options.execute_main = previous;
+            outcome
+        }
+
+        fn hir(&self, ast: &Node) -> hir::Program {
+            match self.pipeline.stage_hir_generation(
+                ast,
+                &self.options,
+                None,
+                Path::new("unit_test"),
+                &self.diagnostics,
+            ) {
+                Ok(program) => program,
+                Err(err) => self.fail_with_diagnostics("AST→HIR lowering", err),
+            }
+        }
+
+        fn backend(&self, hir: &hir::Program) -> BackendArtifacts {
+            match self.pipeline.stage_backend_lowering(
+                hir,
+                &self.options,
+                Path::new("unit_test"),
+                &self.diagnostics,
+            ) {
+                Ok(artifacts) => artifacts,
+                Err(err) => self.fail_with_diagnostics("HIR→MIR→LIR lowering", err),
+            }
+        }
+
+        fn ensure_no_errors(&self) {
+            let diagnostics = self.diagnostics.get_diagnostics();
+            if diagnostics
+                .iter()
+                .any(|diag| matches!(diag.level, DiagnosticLevel::Error))
+            {
+                panic!("diagnostics contained errors: {:?}", diagnostics);
+            }
+        }
+    }
+
+    fn stdout_lines(outcome: &ConstEvalOutcome) -> Vec<String> {
+        outcome.stdout.clone()
+    }
+
+    fn assert_stdout_contains(outcome: &ConstEvalOutcome, expected: &str) {
+        let lines = stdout_lines(outcome);
+        assert!(
+            lines.iter().any(|line| line.contains(expected)),
+            "expected stdout to contain {:?}, got {:?}",
+            expected,
+            lines
+        );
+    }
+
+    fn find_intrinsic_calls(ast: &ast::Node) -> Vec<ast::ExprIntrinsicCall> {
+        struct Collector(Vec<ast::ExprIntrinsicCall>);
+
+        impl Collector {
+            fn visit_expr(&mut self, expr: &ast::Expr) {
+                match expr.kind() {
+                    ast::ExprKind::IntrinsicCall(call) => self.0.push(call.clone()),
+                    ast::ExprKind::Block(block) => {
+                        for stmt in &block.stmts {
+                            match stmt {
+                                ast::BlockStmt::Expr(expr_stmt) => {
+                                    self.visit_expr(expr_stmt.expr.as_ref())
+                                }
+                                ast::BlockStmt::Let(stmt_let) => {
+                                    if let Some(init) = &stmt_let.init {
+                                        self.visit_expr(init);
+                                    }
+                                    if let Some(on_drop) = &stmt_let.diverge {
+                                        self.visit_expr(on_drop);
+                                    }
+                                }
+                                ast::BlockStmt::Item(item) => self.visit_item(item),
+                                ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
+                            }
+                        }
+                    }
+                    ast::ExprKind::If(expr_if) => {
+                        self.visit_expr(&expr_if.cond);
+                        self.visit_expr(&expr_if.then);
+                        if let Some(elze) = &expr_if.elze {
+                            self.visit_expr(elze);
+                        }
+                    }
+                    ast::ExprKind::Loop(expr_loop) => self.visit_expr(&expr_loop.body),
+                    ast::ExprKind::While(expr_while) => {
+                        self.visit_expr(&expr_while.cond);
+                        self.visit_expr(&expr_while.body);
+                    }
+                    ast::ExprKind::Match(expr_match) => {
+                        for case in &expr_match.cases {
+                            self.visit_expr(&case.cond);
+                            self.visit_expr(&case.body);
+                        }
+                    }
+                    ast::ExprKind::Let(expr_let) => self.visit_expr(&expr_let.expr),
+                    ast::ExprKind::Assign(assign) => {
+                        self.visit_expr(&assign.target);
+                        self.visit_expr(&assign.value);
+                    }
+                    ast::ExprKind::Invoke(invoke) => {
+                        for arg in &invoke.args {
+                            self.visit_expr(arg);
+                        }
+                    }
+                    ast::ExprKind::Struct(struct_expr) => {
+                        self.visit_expr(struct_expr.name.as_ref());
+                        for field in &struct_expr.fields {
+                            if let Some(expr) = &field.value {
+                                self.visit_expr(expr);
+                            }
+                        }
+                    }
+                    ast::ExprKind::Structural(structural_expr) => {
+                        for field in &structural_expr.fields {
+                            if let Some(expr) = &field.value {
+                                self.visit_expr(expr);
+                            }
+                        }
+                    }
+                    ast::ExprKind::IntrinsicCollection(collection) => match collection {
+                        ast::ExprIntrinsicCollection::VecElements { elements } => {
+                            for elem in elements {
+                                self.visit_expr(elem);
+                            }
+                        }
+                        ast::ExprIntrinsicCollection::VecRepeat { elem, len } => {
+                            self.visit_expr(elem);
+                            self.visit_expr(len);
+                        }
+                        ast::ExprIntrinsicCollection::HashMapEntries { entries } => {
+                            for entry in entries {
+                                self.visit_expr(&entry.key);
+                                self.visit_expr(&entry.value);
+                            }
+                        }
+                    },
+                    ast::ExprKind::Array(array_expr) => {
+                        for elem in &array_expr.values {
+                            self.visit_expr(elem);
+                        }
+                    }
+                    ast::ExprKind::ArrayRepeat(repeat) => {
+                        self.visit_expr(&repeat.elem);
+                        self.visit_expr(&repeat.len);
+                    }
+                    ast::ExprKind::Tuple(tuple_expr) => {
+                        for elem in &tuple_expr.values {
+                            self.visit_expr(elem);
+                        }
+                    }
+                    ast::ExprKind::BinOp(binop) => {
+                        self.visit_expr(&binop.lhs);
+                        self.visit_expr(&binop.rhs);
+                    }
+                    ast::ExprKind::UnOp(unop) => self.visit_expr(&unop.val),
+                    ast::ExprKind::Reference(reference) => self.visit_expr(&reference.referee),
+                    ast::ExprKind::Dereference(deref) => self.visit_expr(&deref.referee),
+                    ast::ExprKind::Select(select) => self.visit_expr(&select.obj),
+                    ast::ExprKind::Index(index_expr) => {
+                        self.visit_expr(&index_expr.obj);
+                        self.visit_expr(&index_expr.index);
+                    }
+                    ast::ExprKind::Cast(cast_expr) => self.visit_expr(&cast_expr.expr),
+                    ast::ExprKind::Closure(closure) => self.visit_expr(&closure.body),
+                    ast::ExprKind::Closured(closured) => {
+                        self.visit_expr(closured.expr.as_ref());
+                    }
+                    ast::ExprKind::Try(expr_try) => self.visit_expr(&expr_try.expr),
+                    ast::ExprKind::Paren(paren) => self.visit_expr(&paren.expr),
+                    ast::ExprKind::FormatString(format) => {
+                        for arg in &format.args {
+                            self.visit_expr(arg);
+                        }
+                    }
+                    ast::ExprKind::Value(_)
+                    | ast::ExprKind::Locator(_)
+                    | ast::ExprKind::Id(_)
+                    | ast::ExprKind::Item(_)
+                    | ast::ExprKind::Any(_) => {}
+                    ast::ExprKind::Splat(splat) => self.visit_expr(&splat.iter),
+                    ast::ExprKind::SplatDict(splat) => self.visit_expr(&splat.dict),
+                    ast::ExprKind::Range(range) => {
+                        if let Some(start) = &range.start {
+                            self.visit_expr(start);
+                        }
+                        if let Some(end) = &range.end {
+                            self.visit_expr(end);
+                        }
+                        if let Some(step) = &range.step {
+                            self.visit_expr(step);
+                        }
+                    }
+                }
+            }
+
+            fn visit_item(&mut self, item: &ast::Item) {
+                match item.kind() {
+                    ast::ItemKind::DefFunction(function) => self.visit_expr(function.body.as_ref()),
+                    ast::ItemKind::DefConst(def) => self.visit_expr(&def.value),
+                    ast::ItemKind::DefStatic(def) => self.visit_expr(&def.value),
+                    ast::ItemKind::Impl(_) => {}
+                    ast::ItemKind::Module(module) => {
+                        for child in &module.items {
+                            self.visit_item(child);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut collector = Collector(Vec::new());
+        match ast.kind() {
+            ast::NodeKind::File(file) => {
+                for item in &file.items {
+                    collector.visit_item(item);
+                }
+            }
+            ast::NodeKind::Expr(expr) => collector.visit_expr(expr),
+            ast::NodeKind::Item(item) => collector.visit_item(item),
+        }
+        collector.0
+    }
 
     #[test]
     fn rust_frontend_parses_expression() {
         let mut pipeline = Pipeline::new();
-        let expr = "1 + 2";
-        assert!(pipeline.parse_source_public(expr).is_ok());
+        assert!(pipeline.parse_source_public("1 + 2").is_ok());
+    }
+
+    #[test]
+    fn example01_const_blocks_and_arithmetic() {
+        let source = r#"
+fn main() {
+    const BUFFER: i64 = 1024 * 4;
+    const FACTORIAL_5: i64 = 5 * 4 * 3 * 2 * 1;
+    let optimized = const { BUFFER / 1024 };
+    let strategy = const {
+        if FACTORIAL_5 > 100 { "large" } else { "small" }
+    };
+    println!("{} {}", optimized, strategy);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        assert!(matches!(ast.kind(), ast::NodeKind::File(_)));
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "4 large");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example02_string_processing_len_checks() {
+        let source = r#"
+fn main() {
+    const NAME: &str = "FerroPhase";
+    const VERSION: &str = "0.1.0";
+    const NAME_LEN: usize = 10;
+    const VERSION_LEN: usize = 5;
+
+    println!("name='{}' len={}", NAME, NAME_LEN);
+    println!("version='{}' len={}", VERSION, VERSION_LEN);
+
+    const IS_EMPTY: bool = NAME_LEN == 0;
+    const IS_LONG: bool = NAME_LEN > 5;
+    println!("empty={}, long={}", IS_EMPTY, IS_LONG);
+
+    const BANNER: &str = "FerroPhase v0.1.0";
+    println!("banner='{}'", BANNER);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "name='FerroPhase' len=10");
+        assert_stdout_contains(&outcome, "version='0.1.0' len=5");
+        assert_stdout_contains(&outcome, "empty=false, long=true");
+        assert_stdout_contains(&outcome, "banner='FerroPhase v0.1.0'");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example03_control_flow_const_evaluation() {
+        let source = r#"
+fn main() {
+    const TEMP: i64 = 25;
+    const WEATHER: &str = if TEMP > 30 { "hot" } else if TEMP > 20 { "warm" } else { "cold" };
+    const ACTIVITY: &str = if WEATHER == "warm" { "outdoor" } else { "indoor" };
+    println!("{} {}", WEATHER, ACTIVITY);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "warm outdoor");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example04_struct_introspection_intrinsics() {
+        let source = r#"
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+const SIZE: usize = sizeof!(Point);
+const FIELDS: usize = field_count!(Point);
+const HAS_X: bool = hasfield!(Point, "x");
+const METHODS: usize = method_count!(Point);
+
+fn main() {
+    println!("{} {} {} {}", SIZE, FIELDS, HAS_X, METHODS);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "16 2 true 0");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example05_struct_generation_with_const_switches() {
+        let source = r#"
+struct Config {
+    x: i64,
+    y: i64,
+}
+
+const FLAG_A: bool = true;
+const FLAG_B: bool = false;
+
+const CONFIG: Config = Config {
+    x: if FLAG_A { 100 } else { 10 },
+    y: if FLAG_B { 200 } else { 20 },
+};
+
+fn main() {
+    println!("{} {}", CONFIG.x, CONFIG.y);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "100 20");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example06_struct_methods_and_impls() {
+        let source = r#"
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+impl Point {
+    fn translate(&mut self, dx: i64, dy: i64) {
+        self.x += dx;
+        self.y += dy;
+    }
+
+    fn distance2(&self) -> i64 {
+        self.x * self.x + self.y * self.y
+    }
+}
+
+fn main() {
+    let mut p = Point { x: 3, y: 4 };
+    p.translate(1, 2);
+    println!("{}", p.distance2());
+}
+"#;
+        let mut pipeline = Pipeline::new();
+        let mut ast = pipeline
+            .parse_source_with_path_for_tests(source, Path::new("unit_test_methods.fp"))
+            .expect("frontend should parse struct methods");
+        let diagnostics = DiagnosticManager::new();
+
+        pipeline
+            .stage_normalize_intrinsics(&mut ast, &diagnostics)
+            .expect("normalization should succeed for struct methods");
+        pipeline
+            .stage_type_check_for_tests(&mut ast, &diagnostics)
+            .expect("type checking should succeed for struct methods");
+
+        let mut options = PipelineOptions::default();
+        options.execute_main = true;
+
+        let result = pipeline.stage_const_eval(&mut ast, &options, &diagnostics);
+        assert!(result.is_err(), "method calls are not yet supported in const eval");
+
+        let messages: Vec<_> = diagnostics
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.message.clone())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("method calls are not supported in const evaluation")),
+            "expected const-eval to report unsupported methods, got {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn example07_compile_time_validation_flags() {
+        let source = r#"
+struct Data {
+    a: i64,
+    b: i64,
+    c: [u8; 16],
+}
+
+const SIZE: usize = sizeof!(Data);
+const FIELDS: usize = field_count!(Data);
+const SIZE_OK: bool = SIZE <= 64;
+const IS_ALIGNED: bool = SIZE % 8 == 0;
+
+fn main() {
+    println!("{} {} {} {}", SIZE, FIELDS, SIZE_OK, IS_ALIGNED);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "24 3 true true");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example08_metaprogramming_constants() {
+        let source = r#"
+struct Point3D {
+    x: i64,
+    y: i64,
+    z: i64,
+}
+
+const FIELD_COUNT: usize = field_count!(Point3D);
+const TYPE_NAME: &str = type_name!(Point3D);
+
+fn main() {
+    println!("{} {}", TYPE_NAME, FIELD_COUNT);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "struct Point3D");
+        assert_stdout_contains(&outcome, " 3");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example09_higher_order_functions_lowering() {
+        let source = r#"
+fn apply(a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
+    op(a, b)
+}
+
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+fn main() {
+    println!("{}", apply(3, 4, add));
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Llvm);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        harness.closure_lowering(&mut ast);
+        harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
+        harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
+        let hir = harness.hir(&ast);
+        let backend = harness.backend(&hir);
+
+        let mut function_refs = HashSet::new();
+        for function in &backend.lir_program.functions {
+            for block in &function.basic_blocks {
+                for instr in &block.instructions {
+                    if let lir::LirInstructionKind::Call { function, .. } = &instr.kind {
+                        if let lir::LirValue::Function(name) = function {
+                            function_refs.insert(name.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            backend
+                .lir_program
+                .functions
+                .iter()
+                .any(|function| function.name.as_str().contains("add")),
+            "expected lowered program to contain function named 'add'"
+        );
+        assert!(
+            function_refs.iter().any(|name| name.contains("apply")),
+            "expected call sites to reference the apply wrapper"
+        );
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example10_print_intrinsic_types() {
+        let source = r#"
+fn main() {
+    println!("value: {}", 42);
+    println!();
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+
+        let intrinsic_calls = find_intrinsic_calls(&ast);
+        assert!(
+            intrinsic_calls
+                .iter()
+                .any(|call| call.kind == IntrinsicCallKind::Println)
+        );
+
+        let outcome = harness.const_eval(&mut ast);
+        assert!(
+            stdout_lines(&outcome)
+                .iter()
+                .any(|line| line.trim().is_empty())
+        );
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example11_function_specialisation_patterns() {
+        let source = r#"
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn double(x: i64) -> i64 { x * 2 }
+fn compose(x: i64) -> i64 { double(add(x, 1)) }
+
+fn main() {
+    println!("{}", compose(10));
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Llvm);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        harness.closure_lowering(&mut ast);
+        harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
+        harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
+        let hir = harness.hir(&ast);
+        harness.backend(&hir);
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example12_pattern_matching_guards() {
+        let source = r#"
+fn classify(n: i64) -> &'static str {
+    if n == 0 {
+        "zero"
+    } else if n < 0 {
+        "negative"
+    } else if n % 2 == 0 {
+        "even"
+    } else {
+        "odd"
+    }
+}
+
+fn main() {
+    println!("{} {} {}", classify(-5), classify(0), classify(7));
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "negative zero odd");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example13_loops_and_breaks() {
+        let source = r#"
+fn main() {
+    let mut sum = 0;
+    let mut i = 0;
+    while i < 5 {
+        sum = sum + i;
+        i = i + 1;
+    }
+    println!("{}", sum);
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Llvm);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        harness.closure_lowering(&mut ast);
+        harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
+        harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
+        let hir = harness.hir(&ast);
+        harness.backend(&hir);
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example14_type_arithmetic_struct_merge() {
+        let source = r#"
+type Foo = t! {
+    struct {
+        a: i64,
+        b: i64,
+    }
+};
+
+struct Bar {
+    c: i64,
+    d: i64,
+}
+
+type FooPlusBar = t! {
+    Foo + Bar
+};
+
+fn main() {
+    let value = FooPlusBar {
+        a: 1,
+        b: 2,
+        c: 3,
+        d: 4,
+    };
+    println!("{} {} {} {}", value.a, value.b, value.c, value.d);
+}
+"#;
+        let mut pipeline = Pipeline::new();
+        let diagnostics = DiagnosticManager::new();
+        let mut ast = pipeline
+            .parse_source_with_path_for_tests(source, Path::new("unit_test_type_arith.fp"))
+            .expect("frontend should parse type arithmetic placeholders");
+
+        pipeline
+            .stage_normalize_intrinsics(&mut ast, &diagnostics)
+            .expect("normalization should run before type arithmetic fails");
+
+        let result = pipeline.stage_type_check_for_tests(&mut ast, &diagnostics);
+        assert!(result.is_err(), "type arithmetic is not yet implemented");
+
+        let messages: Vec<_> = diagnostics
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.message.clone())
+            .collect();
+        assert!(
+            messages.iter().any(|msg| msg.contains("type inference for item not implemented")),
+            "expected placeholder diagnostics for type arithmetic, got {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn example15_enums_and_discriminants() {
+        let source = r#"
+enum Value {
+    A = 1,
+    B = 2,
+    C = 5,
+}
+
+fn main() {
+    let val = Value::C;
+    println!("{}", val as i32);
+}
+"#;
+        let mut pipeline = Pipeline::new();
+        let mut ast = pipeline
+            .parse_source_with_path_for_tests(source, Path::new("unit_test_enum.fp"))
+            .expect("frontend should produce an AST even for enums");
+        let diagnostics = DiagnosticManager::new();
+
+        pipeline
+            .stage_normalize_intrinsics(&mut ast, &diagnostics)
+            .expect("normalization should succeed before const-eval");
+        pipeline
+            .stage_type_check_for_tests(&mut ast, &diagnostics)
+            .expect("type checking should succeed before hitting interpreter limitations");
+
+        let mut options = PipelineOptions::default();
+        options.execute_main = true;
+
+        let result = pipeline.stage_const_eval(&mut ast, &options, &diagnostics);
+        assert!(result.is_err(), "enum const-eval should currently fail");
+
+        let messages: Vec<_> = diagnostics
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.message.clone())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("unresolved symbol 'Value::C'")),
+            "expected const-eval to report unresolved enum variant, got {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn example16_traits_with_default_methods() {
+        let source = r#"
+trait Shape {
+    fn area(&self) -> f64;
+
+    fn describe(&self) {
+        println!("{:.2}", self.area());
+    }
+}
+
+struct Circle {
+    radius: f64,
+}
+
+impl Shape for Circle {
+    fn area(&self) -> f64 {
+        3.14159 * self.radius * self.radius
+    }
+}
+
+fn main() {
+    let circle = Circle { radius: 5.0 };
+    circle.describe();
+}
+"#;
+        let mut pipeline = Pipeline::new();
+        let diagnostics = DiagnosticManager::new();
+        let mut ast = pipeline
+            .parse_source_with_path_for_tests(source, Path::new("unit_test_traits.fp"))
+            .expect("frontend should run even for unsupported traits");
+
+        pipeline
+            .stage_normalize_intrinsics(&mut ast, &diagnostics)
+            .expect("intrinsic normalization should still succeed");
+
+        let result = pipeline.stage_type_check_for_tests(&mut ast, &diagnostics);
+        assert!(result.is_err(), "trait typing should currently fail");
+
+        let messages: Vec<_> = diagnostics
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.message.clone())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("type inference for item not implemented")),
+            "expected trait lowering to report missing inference, got {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn example17_generics_and_trait_bounds() {
+        let source = r#"
+fn identity<T>(value: T) -> T {
+    value
+}
+
+fn main() {
+    println!("{}", identity(42));
+}
+"#;
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        harness.type_check(&mut ast);
+        let outcome = harness.const_eval(&mut ast);
+        assert_stdout_contains(&outcome, "42");
+        harness.ensure_no_errors();
+    }
+
+    #[test]
+    fn example18_comptime_collections() {
+        let source = r#"
+fn main() {
+    const THIRD: i64 = const {
+        let items = [1, 2, 3, 4];
+        items[2]
+    };
+    println!("{}", THIRD);
+}
+"#;
+        let mut pipeline = Pipeline::new();
+        let mut ast = pipeline
+            .parse_source_with_path_for_tests(source, Path::new("unit_test_collections.fp"))
+            .expect("frontend should handle const block arrays");
+        let diagnostics = DiagnosticManager::new();
+
+        pipeline
+            .stage_normalize_intrinsics(&mut ast, &diagnostics)
+            .expect("normalization must succeed before const-eval");
+        pipeline
+            .stage_type_check_for_tests(&mut ast, &diagnostics)
+            .expect("type checking should succeed for const array usage");
+
+        let mut options = PipelineOptions::default();
+        options.execute_main = true;
+
+        let result = pipeline.stage_const_eval(&mut ast, &options, &diagnostics);
+        assert!(result.is_err(), "array indexing is not yet supported during const eval");
+
+        let messages: Vec<_> = diagnostics
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.message.clone())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("expression not supported in AST interpretation")),
+            "expected const-eval to report unsupported indexing, got {:?}",
+            messages
+        );
     }
 }
