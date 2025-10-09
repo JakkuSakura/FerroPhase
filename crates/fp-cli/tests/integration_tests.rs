@@ -1,7 +1,11 @@
 //! Integration tests for the FerroPhase CLI
 
 use assert_cmd::Command;
+use fp_cli::cli::CliConfig;
+use fp_cli::commands::compile::{CompileArgs, compile_command};
 use predicates::prelude::*;
+use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 #[test]
@@ -98,4 +102,48 @@ fn test_cli_invalid_command() {
     cmd.arg("invalid_command");
 
     cmd.assert().failure();
+}
+
+async fn compile_example(example_name: &str) {
+    let temp_dir = TempDir::new().unwrap();
+    let example_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .canonicalize()
+        .expect("examples directory should resolve");
+    let source_path = temp_dir.path().join(example_name);
+    fs::copy(example_root.join(example_name), &source_path).unwrap();
+
+    let output_path = temp_dir.path().join(example_name.replace(".fp", ".out"));
+
+    let args = CompileArgs {
+        input: vec![source_path.clone()],
+        target: "binary".to_string(),
+        output: Some(output_path.clone()),
+        opt_level: 0,
+        debug: true,
+        include: Vec::new(),
+        define: Vec::new(),
+        exec: false,
+        watch: false,
+        error_tolerance: false,
+        max_errors: 0,
+        save_intermediates: false,
+        source_language: None,
+        release: false,
+    };
+
+    if let Err(err) = compile_command(args, &CliConfig::default()).await {
+        panic!("example {} failed: {:?}", example_name, err);
+    }
+
+    assert!(
+        output_path.exists(),
+        "{} should produce an output binary",
+        example_name
+    );
+}
+
+#[tokio::test]
+async fn test_compile_example_comptime_collections() {
+    compile_example("18_comptime_collections.fp").await;
 }

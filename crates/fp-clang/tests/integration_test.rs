@@ -1,6 +1,6 @@
 //! Integration tests for fp-clang
 
-use fp_clang::{ClangParser, CompileOptions, Standard};
+use fp_clang::{ClangCodegen, ClangParser, CompileOptions, Standard};
 use std::fs;
 use tempfile::TempDir;
 
@@ -26,6 +26,45 @@ int add(int a, int b) {
     assert_eq!(module.functions.len(), 1);
     assert_eq!(module.functions[0].name, "add");
     assert_eq!(module.functions[0].parameters.len(), 2);
+}
+
+#[test]
+fn test_example_parse_c_file_shapes() {
+    let temp_dir = TempDir::new().unwrap();
+    let c_file = temp_dir.path().join("example.c");
+
+    let c_code = r#"
+#include <stdio.h>
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    int result = add(5, 3);
+    printf("Result: %d\n", result);
+    return 0;
+}
+"#;
+
+    fs::write(&c_file, c_code).unwrap();
+
+    let parser = ClangParser::new().unwrap();
+    let mut options = CompileOptions::default();
+    options.standard = Some(Standard::C11);
+    options.optimization = Some("0".to_string());
+    options.debug = true;
+
+    let module = parser.parse_to_llvm_ir(&c_file, &options).unwrap();
+
+    let names: Vec<_> = module.functions.iter().map(|f| f.name.clone()).collect();
+    assert!(names.contains(&"add".to_string()));
+    assert!(names.iter().any(|name| name.contains("main")));
+    assert!(!module.global_vars.is_empty());
+
+    let ir_text = parser.compile_to_ir_text(&c_file, &options).unwrap();
+    assert!(ir_text.contains("define i32 @add"));
+    assert!(ir_text.contains("printf"));
 }
 
 #[test]
@@ -99,6 +138,58 @@ int square(int x) {
     // Verify we got a module
     assert!(!module.functions.is_empty());
     assert_eq!(module.functions[0].name, "square");
+}
+
+#[test]
+fn test_example_extract_headers_declarations() {
+    let temp_dir = TempDir::new().unwrap();
+    let c_file = temp_dir.path().join("mylib.c");
+
+    let c_code = r#"
+#include <stdarg.h>
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int subtract(int a, int b) {
+    return a - b;
+}
+
+double multiply(double a, double b) {
+    return a * b;
+}
+
+void log_message(const char* format, ...) {
+}
+
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+Point create_point(int x, int y) {
+    Point p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+"#;
+
+    fs::write(&c_file, c_code).unwrap();
+
+    let codegen = ClangCodegen::new().unwrap();
+    let options = CompileOptions::default();
+
+    let signatures = codegen.extract_declarations(&c_file, &options).unwrap();
+    assert_eq!(signatures.len(), 5);
+
+    let names: Vec<_> = signatures.iter().map(|sig| sig.name.clone()).collect();
+    assert!(names.contains(&"add".to_string()));
+    assert!(names.contains(&"subtract".to_string()));
+    assert!(names.contains(&"multiply".to_string()));
+    assert!(names.iter().any(|name| name == "log_message"));
+    assert!(signatures.iter().any(|sig| sig.is_variadic));
 }
 
 #[test]
