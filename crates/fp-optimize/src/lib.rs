@@ -9,10 +9,4 @@
 pub mod error;
 pub mod orchestrators;
 pub mod passes;
-pub mod queries;
 pub mod transformations;
-
-// Re-export key types for convenience
-pub use orchestrators::*;
-pub use passes::*;
-pub use queries::*;
