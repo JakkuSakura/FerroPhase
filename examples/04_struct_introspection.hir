@@ -29,21 +29,21 @@ hir::Program {
             printf("=== Struct Introspection ===
 ");
             printf("Point size: %d bytes
-", 16);
+", std::SizeOf(1 args));
             printf("Color size: %d bytes
-", 24);
+", std::SizeOf(1 args));
             printf("Point fields: %d
-", 2);
+", std::FieldCount(1 args));
             printf("Color fields: %d
-", 3);
+", std::FieldCount(1 args));
             printf("Point has x: %d
-", true);
+", std::HasField(2 args));
             printf("Point has z: %d
-", false);
+", std::HasField(2 args));
             printf("Point methods: %d
-", 0);
+", std::MethodCount(1 args));
             printf("Color methods: %d
-", 0);
+", std::MethodCount(1 args));
             printf("
 ✓ Introspection completed!
 ");

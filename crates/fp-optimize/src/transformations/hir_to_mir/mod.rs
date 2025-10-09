@@ -2009,6 +2009,14 @@ impl<'a> BodyBuilder<'a> {
                         ty: self.lowering.error_ty(),
                     });
                 }
+                if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
+                    let operand = mir::Operand::Constant(mir::Constant {
+                        span: expr.span,
+                        user_ty: None,
+                        literal,
+                    });
+                    return Ok(OperandInfo { operand, ty });
+                }
 
                 self.lowering.emit_error(
                     expr.span,
@@ -2099,6 +2107,317 @@ impl<'a> BodyBuilder<'a> {
                     kind: TyKind::Int(IntTy::I32),
                 },
             ),
+        }
+    }
+
+    fn lower_intrinsic_constant(
+        &mut self,
+        call: &hir::IntrinsicCallExpr,
+        span: Span,
+    ) -> Option<(mir::ConstantKind, Ty)> {
+        let args = match &call.payload {
+            IntrinsicCallPayload::Args { args } => args,
+            IntrinsicCallPayload::Format { .. } => {
+                self.lowering
+                    .emit_error(span, "intrinsic invocation expects positional arguments");
+                return None;
+            }
+        };
+
+        match call.kind {
+            IntrinsicCallKind::SizeOf => {
+                let target_expr = match args.get(0) {
+                    Some(expr) => expr,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "sizeof! intrinsic expects one argument");
+                        return None;
+                    }
+                };
+
+                let def_id = match self.resolve_struct_def_id(target_expr) {
+                    Some(id) => id,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "sizeof! only supports struct types at the moment");
+                        return None;
+                    }
+                };
+
+                let size = match self.compute_struct_size(span, def_id) {
+                    Some(value) => value,
+                    None => return None,
+                };
+
+                Some((
+                    mir::ConstantKind::UInt(size),
+                    Ty {
+                        kind: TyKind::Uint(UintTy::U64),
+                    },
+                ))
+            }
+            IntrinsicCallKind::FieldCount => {
+                let target_expr = match args.get(0) {
+                    Some(expr) => expr,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "field_count! intrinsic expects one argument");
+                        return None;
+                    }
+                };
+
+                let def_id = match self.resolve_struct_def_id(target_expr) {
+                    Some(id) => id,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "field_count! only supports struct types");
+                        return None;
+                    }
+                };
+
+                let field_count = match self.lowering.struct_defs.get(&def_id) {
+                    Some(info) => info.fields.len() as u64,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "struct metadata is unavailable during MIR lowering");
+                        return None;
+                    }
+                };
+
+                Some((
+                    mir::ConstantKind::UInt(field_count),
+                    Ty {
+                        kind: TyKind::Uint(UintTy::U64),
+                    },
+                ))
+            }
+            IntrinsicCallKind::HasField => {
+                if args.len() != 2 {
+                    self.lowering
+                        .emit_error(span, "hasfield! intrinsic expects a type and field name");
+                    return None;
+                }
+
+                let def_id = match self.resolve_struct_def_id(&args[0]) {
+                    Some(id) => id,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "hasfield! only supports struct types");
+                        return None;
+                    }
+                };
+
+                let field_name = match self.expect_string_literal(&args[1], span) {
+                    Some(name) => name,
+                    None => return None,
+                };
+
+                let has_field = match self.lowering.struct_defs.get(&def_id) {
+                    Some(info) => info.field_index.contains_key(&field_name),
+                    None => {
+                        self.lowering
+                            .emit_error(span, "struct metadata is unavailable during MIR lowering");
+                        return None;
+                    }
+                };
+
+                Some((
+                    mir::ConstantKind::Bool(has_field),
+                    Ty { kind: TyKind::Bool },
+                ))
+            }
+            IntrinsicCallKind::MethodCount => {
+                let target_expr = match args.get(0) {
+                    Some(expr) => expr,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "method_count! intrinsic expects one argument");
+                        return None;
+                    }
+                };
+
+                let def_id = match self.resolve_struct_def_id(target_expr) {
+                    Some(id) => id,
+                    None => {
+                        self.lowering
+                            .emit_error(span, "method_count! only supports struct types");
+                        return None;
+                    }
+                };
+
+                let struct_name = match self.lowering.struct_defs.get(&def_id) {
+                    Some(info) => info.name.clone(),
+                    None => {
+                        self.lowering
+                            .emit_error(span, "struct metadata is unavailable during MIR lowering");
+                        return None;
+                    }
+                };
+
+                let method_count = self
+                    .lowering
+                    .struct_methods
+                    .get(&struct_name)
+                    .map(|methods| methods.len() as u64)
+                    .unwrap_or(0);
+
+                Some((
+                    mir::ConstantKind::UInt(method_count),
+                    Ty {
+                        kind: TyKind::Uint(UintTy::U64),
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_struct_def_id(&self, expr: &hir::Expr) -> Option<hir::DefId> {
+        if let hir::ExprKind::Path(path) = &expr.kind {
+            if let Some(hir::Res::Def(def_id)) = &path.res {
+                return Some(*def_id);
+            }
+
+            if let Some(segment) = path.segments.last() {
+                let name = segment.name.as_str();
+                let mut matches = self
+                    .lowering
+                    .struct_defs
+                    .iter()
+                    .filter_map(|(def_id, info)| (info.name == name).then_some(*def_id))
+                    .collect::<Vec<_>>();
+                if matches.len() == 1 {
+                    return matches.pop();
+                }
+            }
+        }
+        None
+    }
+
+    fn compute_struct_size(&mut self, span: Span, def_id: hir::DefId) -> Option<u64> {
+        let fields = match self.lowering.struct_defs.get(&def_id) {
+            Some(info) => info.fields.clone(),
+            None => {
+                self.lowering
+                    .emit_error(span, "struct metadata is unavailable during MIR lowering");
+                return None;
+            }
+        };
+
+        let mut total = 0u64;
+        for field in fields {
+            let field_size = match self.compute_ty_size(span, &field.ty) {
+                Some(size) => size,
+                None => return None,
+            };
+            total = total.saturating_add(field_size);
+        }
+        Some(total)
+    }
+
+    fn compute_ty_size(&mut self, span: Span, ty: &Ty) -> Option<u64> {
+        match &ty.kind {
+            TyKind::Bool => Some(1),
+            TyKind::Char => Some(4),
+            TyKind::Int(int_ty) => Some(match int_ty {
+                IntTy::I8 => 1,
+                IntTy::I16 => 2,
+                IntTy::I32 => 4,
+                IntTy::I64 => 8,
+                IntTy::I128 => 16,
+                IntTy::Isize => 8,
+            }),
+            TyKind::Uint(uint_ty) => Some(match uint_ty {
+                UintTy::U8 => 1,
+                UintTy::U16 => 2,
+                UintTy::U32 => 4,
+                UintTy::U64 => 8,
+                UintTy::U128 => 16,
+                UintTy::Usize => 8,
+            }),
+            TyKind::Float(float_ty) => Some(match float_ty {
+                FloatTy::F32 => 4,
+                FloatTy::F64 => 8,
+            }),
+            TyKind::Tuple(elements) => {
+                let mut total = 0u64;
+                for elem in elements {
+                    let size = match self.compute_ty_size(span, elem) {
+                        Some(value) => value,
+                        None => return None,
+                    };
+                    total = total.saturating_add(size);
+                }
+                Some(total)
+            }
+            TyKind::Array(elem_ty, len) => {
+                let len = match self.const_kind_to_u64(span, len) {
+                    Some(value) => value,
+                    None => return None,
+                };
+                let elem_size = match self.compute_ty_size(span, elem_ty) {
+                    Some(value) => value,
+                    None => return None,
+                };
+                Some(elem_size.saturating_mul(len))
+            }
+            TyKind::Ref(_, _, _) | TyKind::RawPtr(_) | TyKind::FnPtr(_) | TyKind::FnDef(_, _) => {
+                Some(8)
+            }
+            TyKind::Never => Some(0),
+            TyKind::Error(_) => None,
+            TyKind::Slice(_) => {
+                self.lowering
+                    .emit_error(span, "size_of for slice types is not yet supported");
+                None
+            }
+            TyKind::Adt(_, _)
+            | TyKind::Dynamic(_, _)
+            | TyKind::Closure(_, _)
+            | TyKind::Generator(_, _, _)
+            | TyKind::GeneratorWitness(_)
+            | TyKind::Projection(_)
+            | TyKind::Opaque(_, _)
+            | TyKind::Param(_)
+            | TyKind::Placeholder(_)
+            | TyKind::Bound(_, _)
+            | TyKind::Infer(_) => {
+                self.lowering.emit_error(
+                    span,
+                    format!("size_of for type `{:?}` is not supported", ty.kind),
+                );
+                None
+            }
+        }
+    }
+
+    fn const_kind_to_u64(&mut self, span: Span, konst: &ConstKind) -> Option<u64> {
+        match konst {
+            ConstKind::Value(ConstValue::Scalar(Scalar::Int(int))) => Some(int.data as u64),
+            ConstKind::Value(ConstValue::Scalar(Scalar::Ptr(_))) => {
+                self.lowering.emit_error(
+                    span,
+                    "array length uses a pointer value, which is unsupported",
+                );
+                None
+            }
+            ConstKind::Value(ConstValue::ZeroSized) => Some(0),
+            _ => {
+                self.lowering
+                    .emit_error(span, "array length is not a compile-time integer constant");
+                None
+            }
+        }
+    }
+
+    fn expect_string_literal(&mut self, expr: &hir::Expr, span: Span) -> Option<String> {
+        match &expr.kind {
+            hir::ExprKind::Literal(hir::Lit::Str(value)) => Some(value.clone()),
+            _ => {
+                self.lowering
+                    .emit_error(span, "intrinsic argument must be a string literal");
+                None
+            }
         }
     }
 
@@ -2443,6 +2762,22 @@ impl<'a> BodyBuilder<'a> {
                     self.lowering
                         .emit_error(expr.span, "const block intrinsic expects an argument");
                 } else {
+                    if let Some((literal, _ty)) = self.lower_intrinsic_constant(call, expr.span) {
+                        let statement = mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                place,
+                                mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal,
+                                })),
+                            ),
+                        };
+                        self.push_statement(statement);
+                        return Ok(());
+                    }
+
                     self.lowering.emit_error(
                         expr.span,
                         format!(

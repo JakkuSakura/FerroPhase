@@ -1806,7 +1806,7 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirValue::Function(name) => {
                 let llvm_name = self.llvm_symbol_for(&name);
 
-                let fn_ty = if let Some(signature) = self.function_signatures.get(&name) {
+                let _fn_ty = if let Some(signature) = self.function_signatures.get(&name) {
                     self.function_type_from_signature(signature.clone())?
                 } else if let Some(existing) = self.llvm_ctx.get_function(&llvm_name) {
                     self.llvm_ctx.module.types.func_type(
@@ -1847,10 +1847,13 @@ impl<'ctx> LirCodegen<'ctx> {
                     ));
                 };
 
+                let ptr_ty = Type::PointerType { addr_space: 0 };
+                let ptr_ty_ref = self.llvm_ctx.module.types.get_for_type(&ptr_ty);
+
                 Ok(Operand::ConstantOperand(ConstantRef::new(
                     Constant::GlobalReference {
                         name: Name::Name(Box::new(llvm_name)),
-                        ty: fn_ty,
+                        ty: ptr_ty_ref,
                     },
                 )))
             }

@@ -1,0 +1,214 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    priv fn main() -> () : fn() -> () : fn() -> ()
+      block (34 stmts) : ()
+        priv struct Point : Point{x: f64, y: f64} {
+          x: f64
+          y: f64
+        }
+        priv struct Color : Color{r: u8, g: u8, b: u8} {
+          r: u8
+          g: u8
+          b: u8
+        }
+        priv const POINT_SIZE: u64 : u64
+          value 16 : u64
+        priv const COLOR_SIZE: u64 : u64
+          value 24 : u64
+        priv const POINT_FIELDS: u64 : u64
+          value 2 : u64
+        priv const COLOR_FIELDS: u64 : u64
+          value 3 : u64
+        priv const POINT_HAS_X: bool : bool
+          value true : bool
+        priv const POINT_HAS_Z: bool : bool
+          value false : bool
+        priv const POINT_METHODS: u64 : u64
+          value 0 : u64
+        priv const COLOR_METHODS: u64 : u64
+          value 0 : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "=== Struct Introspection ===
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Point size: %d bytes
+" : &string
+              intrinsic size_of : u64
+                args:
+                  locator Point : Point{x: f64, y: f64}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Color size: %d bytes
+" : &string
+              intrinsic size_of : u64
+                args:
+                  locator Color : Color{r: u8, g: u8, b: u8}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Point fields: %d
+" : &string
+              intrinsic field_count : u64
+                args:
+                  locator Point : Point{x: f64, y: f64}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Color fields: %d
+" : &string
+              intrinsic field_count : u64
+                args:
+                  locator Color : Color{r: u8, g: u8, b: u8}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Point has x: %d
+" : &string
+              intrinsic has_field : bool
+                args:
+                  locator Point : Point{x: f64, y: f64}
+                  value "x" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Point has z: %d
+" : &string
+              intrinsic has_field : bool
+                args:
+                  locator Point : Point{x: f64, y: f64}
+                  value "z" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Point methods: %d
+" : &string
+              intrinsic method_count : u64
+                args:
+                  locator Point : Point{x: f64, y: f64}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Color methods: %d
+" : &string
+              intrinsic method_count : u64
+                args:
+                  locator Color : Color{r: u8, g: u8, b: u8}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+✓ Introspection completed!
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+=== Transpilation Demo ===
+" : &string
+        priv const POINT_SIZE_CONST: u64 : u64
+          value 16 : u64
+        priv const COLOR_SIZE_CONST: u64 : u64
+          value 24 : u64
+        priv const TOTAL_SIZE: u64 : u64
+          value 40 : u64
+        let origin : unknown
+          init:
+            struct Point : Point{x: f64, y: f64}
+              x:
+                value 0 : f64
+              y:
+                value 0 : f64
+        let red : unknown
+          init:
+            struct Color : Color{r: u8, g: u8, b: u8}
+              r:
+                value 255 : i64
+              g:
+                value 0 : i64
+              b:
+                value 0 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Transpilation target sizes:
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  Point: %d bytes (const)
+" : &string
+              locator POINT_SIZE_CONST : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  Color: %d bytes (const)
+" : &string
+              locator COLOR_SIZE_CONST : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  Combined: %d bytes
+" : &string
+              locator TOTAL_SIZE : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Runtime instances:
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  Origin: (%f, %f)
+" : &string
+              select .x [field] : f64
+                object:
+                  locator origin : Point{x: f64, y: f64}
+              select .y [field] : f64
+                object:
+                  locator origin : Point{x: f64, y: f64}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  Red: rgb(%d, %d, %d)
+" : &string
+              select .r [field] : u8
+                object:
+                  locator red : Color{r: u8, g: u8, b: u8}
+              select .g [field] : u8
+                object:
+                  locator red : Color{r: u8, g: u8, b: u8}
+              select .b [field] : u8
+                object:
+                  locator red : Color{r: u8, g: u8, b: u8}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+✓ Introspection enables external code generation!
+" : &string
+}

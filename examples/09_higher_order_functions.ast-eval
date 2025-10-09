@@ -1,38 +1,98 @@
-use std :: fmt :: Display ;
-use std :: ops :: Add ;
-fn apply_if (cond : bool , a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> i64{
-    if cond{
-        op (a , b)
-    }
-    else 0
+ast::File {
+  items:
+    priv import std::fmt::Display : ()
+    priv import std::ops::Add : ()
+    priv fn apply_if(cond: Expr(bool), a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
+      if : i64
+        cond:
+          locator cond : bool
+        then:
+          invoke : i64
+            target: op
+            args:
+              locator a : i64
+              locator b : i64
+        else:
+          value 0 : i64
+    priv fn make_adder(n: i64) -> impl Fn : fn(i64) -> fn(i64) -> i64 : fn(i64) -> fn(i64) -> i64
+      closure (x : unknown) : fn(i64) -> i64
+        binop + : i64
+          lhs:
+            locator x : unknown
+          rhs:
+            locator n : i64
+    priv fn main() -> () : fn() -> () : fn() -> ()
+      block (11 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Generic operations:"
+        expr_stmt ;
+          invoke : ()
+            target: apply__spec0
+            args:
+              value 10 : i64
+              value 20 : i64
+              locator add__spec0 : fn(i64, i64) -> i64
+        expr_stmt ;
+          invoke : ()
+            target: apply__spec1
+            args:
+              value 1.5 : f64
+              value 2.5 : f64
+              locator add__spec1 : fn(f64, f64) -> f64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "
+Conditional:"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" apply_if(true, 5, 3, add__spec0)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" apply_if(false, 5, 3, add__spec0)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "
+Closure factory:"
+        priv const add_10: fn(i64) -> i64 : fn(i64) -> i64
+          invoke : fn(i64) -> i64
+            target: make_adder
+            args:
+              value 10 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "add_10(5) = {}" add_10(5)
+        let double : fn(i64) -> i64
+          init:
+            closure (x : i64) : fn(i64) -> i64
+              binop * : i64
+                lhs:
+                  locator x : unknown
+                rhs:
+                  value 2 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "double(7) = {}" double(7)
+    priv fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" op(a, b)
+    priv fn add__spec0(a: i64, b: i64) -> i64 : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+      binop + : unknown
+        lhs:
+          locator a : i64
+        rhs:
+          locator b : i64
+    priv fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" op(a, b)
+    priv fn add__spec1(a: f64, b: f64) -> f64 : fn(f64, f64) -> f64 : fn(f64, f64) -> f64
+      binop + : unknown
+        lhs:
+          locator a : f64
+        rhs:
+          locator b : f64
 }
-fn make_adder (n : i64) -> impl Fn{
-    | x | x + n
-}
-fn main () -> (){
-    println ! ("Generic operations:") ;
-    apply__spec0 (10 , 20 , add__spec0) ;
-    apply__spec1 (1.5 , 2.5 , add__spec1) ;
-    println ! ("\nConditional:") ;
-    println ! ("{}" , apply_if (true , 5 , 3 , add__spec0)) ;
-    println ! ("{}" , apply_if (false , 5 , 3 , add__spec0)) ;
-    println ! ("\nClosure factory:") ;
-    const add_10 : fn (i64) -> i64 = make_adder (10) ;
-    println ! ("add_10(5) = {}" , add_10 (5)) ;
-    let double = | x | x * 2 ;
-    println ! ("double(7) = {}" , double (7)) ;
-}
-fn apply__spec0 (a : i64 , b : i64 , op : fn (i64 , i64) -> i64) -> (){
-    println ! ("{}" , op (a , b)) ;
-}
-fn add__spec0 (a : i64 , b : i64) -> i64{
-    a + b
-}
-fn apply__spec1 (a : f64 , b : f64 , op : fn (f64 , f64) -> f64) -> (){
-    println ! ("{}" , op (a , b)) ;
-}
-fn add__spec1 (a : f64 , b : f64) -> f64{
-    a + b
-}
-
-// Type: ()
