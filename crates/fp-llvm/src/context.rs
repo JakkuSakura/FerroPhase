@@ -1616,7 +1616,10 @@ fn format_function_decl_signature(
         .join(", ");
 
     if is_var_arg {
-        format!("declare {} @{}({}, ...)\n", return_type_str, name, params_str)
+        format!(
+            "declare {} @{}({}, ...)\n",
+            return_type_str, name, params_str
+        )
     } else {
         format!("declare {} @{}({})\n", return_type_str, name, params_str)
     }

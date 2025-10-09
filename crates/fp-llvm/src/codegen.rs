@@ -1227,10 +1227,9 @@ impl<'ctx> LirCodegen<'ctx> {
         }
 
         if is_runtime_intrinsic {
-            if let Some(runtime_decl) = CRuntimeIntrinsics::get_intrinsic_decl(
-                &function_name,
-                &self.llvm_ctx.module.types,
-            ) {
+            if let Some(runtime_decl) =
+                CRuntimeIntrinsics::get_intrinsic_decl(&function_name, &self.llvm_ctx.module.types)
+            {
                 let already_present = self
                     .llvm_ctx
                     .module
@@ -1815,10 +1814,9 @@ impl<'ctx> LirCodegen<'ctx> {
                         existing.parameters.iter().map(|p| p.ty.clone()).collect(),
                         existing.is_var_arg,
                     )
-                } else if let Some(runtime_decl) = CRuntimeIntrinsics::get_intrinsic_decl(
-                    &name,
-                    &self.llvm_ctx.module.types,
-                ) {
+                } else if let Some(runtime_decl) =
+                    CRuntimeIntrinsics::get_intrinsic_decl(&name, &self.llvm_ctx.module.types)
+                {
                     let already_present = self
                         .llvm_ctx
                         .module
