@@ -36,11 +36,14 @@ fn propagates_unimplemented_expression_error() {
     use fp_core::ast::{Expr, ExprKind, ExprTry};
 
     let mut generator = HirGenerator::new();
-    let unsupported = ExprKind::Try(ExprTry {
+    let unsupported: Expr = ExprKind::Try(ExprTry {
         expr: Box::new(Expr::unit()),
     })
     .into();
-    let result = generator.transform(&unsupported);
+    let result = <HirGenerator as IrTransform<&Expr, fp_core::hir::Program>>::transform(
+        &mut generator,
+        &unsupported,
+    );
     assert!(result.is_err());
 }
 

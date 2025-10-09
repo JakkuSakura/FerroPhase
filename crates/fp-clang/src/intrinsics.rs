@@ -475,7 +475,14 @@ impl CRuntimeIntrinsics {
     }
 
     pub fn declare_strcmp(types: &Types) -> Function {
-        declare_c_func!("strcmp", "a", types.pointer(), "b", types.pointer(), types.i32())
+        declare_c_func!(
+            "strcmp",
+            "a",
+            types.pointer(),
+            "b",
+            types.pointer(),
+            types.i32()
+        )
     }
 
     pub fn declare_strncmp(types: &Types) -> Function {
@@ -517,7 +524,14 @@ impl CRuntimeIntrinsics {
     }
 
     pub fn declare_strcpy(types: &Types) -> Function {
-        declare_c_func!("strcpy", "dest", types.pointer(), "src", types.pointer(), types.pointer())
+        declare_c_func!(
+            "strcpy",
+            "dest",
+            types.pointer(),
+            "src",
+            types.pointer(),
+            types.pointer()
+        )
     }
 
     pub fn declare_strncpy(types: &Types) -> Function {
@@ -559,7 +573,14 @@ impl CRuntimeIntrinsics {
     }
 
     pub fn declare_strcat(types: &Types) -> Function {
-        declare_c_func!("strcat", "dest", types.pointer(), "src", types.pointer(), types.pointer())
+        declare_c_func!(
+            "strcat",
+            "dest",
+            types.pointer(),
+            "src",
+            types.pointer(),
+            types.pointer()
+        )
     }
 
     pub fn declare_strncat(types: &Types) -> Function {
@@ -601,11 +622,25 @@ impl CRuntimeIntrinsics {
     }
 
     pub fn declare_strchr(types: &Types) -> Function {
-        declare_c_func!("strchr", "s", types.pointer(), "c", types.i32(), types.pointer())
+        declare_c_func!(
+            "strchr",
+            "s",
+            types.pointer(),
+            "c",
+            types.i32(),
+            types.pointer()
+        )
     }
 
     pub fn declare_strstr(types: &Types) -> Function {
-        declare_c_func!("strstr", "haystack", types.pointer(), "needle", types.pointer(), types.pointer())
+        declare_c_func!(
+            "strstr",
+            "haystack",
+            types.pointer(),
+            "needle",
+            types.pointer(),
+            types.pointer()
+        )
     }
 
     // Math declarations shared with libm
@@ -800,7 +835,14 @@ impl CRuntimeIntrinsics {
 
     // File I/O
     pub fn declare_fopen(types: &Types) -> Function {
-        declare_c_func!("fopen", "path", types.pointer(), "mode", types.pointer(), types.pointer())
+        declare_c_func!(
+            "fopen",
+            "path",
+            types.pointer(),
+            "mode",
+            types.pointer(),
+            types.pointer()
+        )
     }
 
     pub fn declare_fclose(types: &Types) -> Function {

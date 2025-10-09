@@ -78,6 +78,18 @@ impl std::ops::Deref for Symbol {
     }
 }
 
+impl PartialEq<&str> for Symbol {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Symbol> for &str {
+    fn eq(&self, other: &Symbol) -> bool {
+        *self == other.as_str()
+    }
+}
+
 /// MIR path is a sequence of symbols
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Path {

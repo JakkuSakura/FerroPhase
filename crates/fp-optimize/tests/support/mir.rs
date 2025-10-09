@@ -38,7 +38,15 @@ pub fn function_item(body_id: BodyId) -> Item {
         output: int_ty(),
     };
 
-    let function = Function { sig, body_id };
+    let symbol = mir::Symbol::new("test_fn");
+
+    let function = Function {
+        name: symbol.clone(),
+        path: vec![symbol],
+        def_id: None,
+        sig,
+        body_id,
+    };
 
     Item {
         mir_id: 0,

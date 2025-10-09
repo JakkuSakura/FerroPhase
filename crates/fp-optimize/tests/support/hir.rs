@@ -28,7 +28,7 @@ pub fn function_item(name: &str, body: Expr) -> Item {
     };
 
     let sig = FunctionSig {
-        name: name.to_string(),
+        name: hir::Symbol::new(name),
         inputs: Vec::new(),
         output: unit_type(),
         generics: Generics {

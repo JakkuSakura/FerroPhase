@@ -37,7 +37,7 @@ fn test_simple_type_creation() -> Result<()> {
 
     match ty.kind {
         hir::TypeExprKind::Path(path) => {
-            assert_eq!(path.segments[0].name, "i32");
+            assert_eq!(path.segments[0].name.as_str(), "i32");
         }
         _ => {
             return Err(crate::error::optimization_error(
@@ -73,13 +73,13 @@ fn transform_file_with_function_and_struct() -> Result<()> {
     let program = generator.transform_file(&ast_file)?;
 
     assert_eq!(program.items.len(), 2);
-    let names: Vec<_> = program
+    let names: Vec<String> = program
         .items
         .iter()
-        .map(|item| match &item.kind {
-            hir::ItemKind::Struct(def) => def.name.clone(),
-            hir::ItemKind::Function(func) => func.sig.name.clone(),
-            _ => String::new(),
+        .filter_map(|item| match &item.kind {
+            hir::ItemKind::Struct(def) => Some(def.name.as_str().to_owned()),
+            hir::ItemKind::Function(func) => Some(func.sig.name.as_str().to_owned()),
+            _ => None,
         })
         .collect();
 
@@ -122,7 +122,7 @@ fn transform_generic_function_and_method() -> Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            hir::ItemKind::Function(func) if func.sig.name == "identity" => Some(func),
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "identity" => Some(func),
             _ => None,
         })
         .expect("identity function present");
@@ -165,7 +165,7 @@ fn transform_generic_function_and_method() -> Result<()> {
         .expect("method present");
     assert_eq!(method.sig.inputs.len(), 1);
     match &method.sig.inputs[0].pat.kind {
-        hir::PatKind::Binding { name, .. } => assert_eq!(name, "self"),
+        hir::PatKind::Binding { name, .. } => assert_eq!(name.as_str(), "self"),
         other => panic!("expected self binding, got {other:?}"),
     }
 
@@ -199,7 +199,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         .items
         .iter()
         .find_map(|item| match &item.kind {
-            hir::ItemKind::Function(func) if func.sig.name == "outer" => Some(func),
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "outer" => Some(func),
             _ => None,
         })
         .expect("outer function present");
@@ -273,6 +273,16 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     }
                 }
             },
+            hir::ExprKind::Cast(expr, _) => collect_paths(expr, out),
+            hir::ExprKind::Array(elements) => {
+                for elem in elements {
+                    collect_paths(elem, out);
+                }
+            }
+            hir::ExprKind::ArrayRepeat { elem, len } => {
+                collect_paths(elem, out);
+                collect_paths(len, out);
+            }
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}
         }
     }
@@ -313,7 +323,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     }
                 }
             }
-            hir::ItemKind::Struct(_) => {}
+            hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) => {}
         }
     }
 
@@ -324,7 +334,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
     for path in collected_paths {
         if let Some(segment) = path.segments.last() {
             name_to_paths
-                .entry(segment.name.clone())
+                .entry(segment.name.as_str().to_owned())
                 .or_default()
                 .push(path);
         }

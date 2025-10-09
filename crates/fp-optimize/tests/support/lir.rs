@@ -12,7 +12,7 @@ pub fn empty_program() -> LirProgram {
 
 pub fn return_function(name: &str) -> LirFunction {
     LirFunction {
-        name: name.to_string(),
+        name: lir::Name::new(name),
         signature: LirFunctionSignature {
             params: Vec::new(),
             return_type: LirType::I32,
@@ -20,7 +20,7 @@ pub fn return_function(name: &str) -> LirFunction {
         },
         basic_blocks: vec![LirBasicBlock {
             id: 0,
-            label: Some("entry".to_string()),
+            label: Some(lir::Name::new("entry")),
             instructions: Vec::new(),
             terminator: LirTerminator::Return(None),
             predecessors: Vec::new(),
