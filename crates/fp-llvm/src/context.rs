@@ -29,15 +29,15 @@ impl LlvmContext {
             module_name
         );
 
-        let module = Module::from_ir_str(&module_ir).unwrap_or_else(|e| {
+        let mut module = Module::from_ir_str(&module_ir).unwrap_or_else(|e| {
             // Fallback: create a basic module structure manually
             tracing::warn!(
                 "Failed to parse minimal module IR ({}), creating basic module",
                 e
             );
             Module {
-                name: module_name.to_string(),
-                source_file_name: format!("{}.ll", module_name),
+                name: String::new(),
+                source_file_name: String::new(),
                 data_layout: DataLayout::default(),
                 target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
                 functions: Vec::new(),
@@ -49,6 +49,11 @@ impl LlvmContext {
                 inline_assembly: String::new(),
             }
         });
+
+        module.name = module_name.to_string();
+        if module.source_file_name.is_empty() {
+            module.source_file_name = format!("{}.ll", module_name);
+        }
 
         Self {
             module,
