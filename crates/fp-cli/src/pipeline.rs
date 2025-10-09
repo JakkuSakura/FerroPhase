@@ -19,9 +19,14 @@ use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions, Int
 use fp_llvm::{
     LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicMaterializer,
 };
-use fp_optimize::ConstEvaluationOrchestrator;
-use fp_optimize::orchestrators::const_evaluation::ConstEvalOutcome;
-use fp_optimize::passes::materialize_intrinsics::NoopIntrinsicMaterializer;
+use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
+use fp_optimize::passes::{
+    lower_closures,
+    materialize_intrinsics,
+    normalize_intrinsics,
+    remove_generic_templates,
+    NoopIntrinsicMaterializer,
+};
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_typing::TypingDiagnosticLevel;
 use std::fs;
@@ -91,7 +96,7 @@ impl IntrinsicsMaterializer {
     }
 
     fn materialize(&self, ast: &mut Node) -> fp_core::error::Result<()> {
-        fp_optimize::materialize_intrinsics(ast, self.strategy.as_ref())
+        materialize_intrinsics(ast, self.strategy.as_ref())
     }
 }
 
@@ -432,7 +437,7 @@ impl Pipeline {
                 |pipeline| pipeline.stage_const_eval(ast, &pipeline_options, &diagnostic_manager),
             )?;
             self.last_const_eval = Some(outcome.clone());
-            fp_optimize::remove_generic_templates(ast)?;
+            remove_generic_templates(ast)?;
 
             if options.save_intermediates {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
@@ -520,7 +525,7 @@ impl Pipeline {
         self.last_const_eval = Some(outcome.clone());
 
         // Remove generic template functions after specialization
-        fp_optimize::remove_generic_templates(&mut ast)?;
+        remove_generic_templates(&mut ast)?;
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
@@ -694,7 +699,7 @@ impl Pipeline {
             return Ok(());
         }
 
-        match fp_optimize::normalize_intrinsics(ast) {
+        match normalize_intrinsics(ast) {
             Ok(()) => Ok(()),
             Err(err) => {
                 manager.add_diagnostic(
@@ -782,7 +787,7 @@ impl Pipeline {
         ast: &mut Node,
         manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
-        match fp_optimize::lower_closures(ast) {
+        match lower_closures(ast) {
             Ok(()) => Ok(()),
             Err(err) => {
                 manager.add_diagnostic(
@@ -1287,18 +1292,15 @@ mod tests {
         }
 
         fn closure_lowering(&self, ast: &mut Node) {
-            if let Err(err) = self
-                .pipeline
-                .stage_closure_lowering(ast, &self.diagnostics)
-            {
+            if let Err(err) = self.pipeline.stage_closure_lowering(ast, &self.diagnostics) {
                 self.fail_with_diagnostics("closure lowering", err);
             }
         }
 
         fn materialize_runtime(&self, ast: &mut Node, target: PipelineTarget) {
-            if let Err(err) = self
-                .pipeline
-                .stage_materialize_runtime_intrinsics(ast, &target, &self.diagnostics)
+            if let Err(err) =
+                self.pipeline
+                    .stage_materialize_runtime_intrinsics(ast, &target, &self.diagnostics)
             {
                 self.fail_with_diagnostics("runtime materialisation", err);
             }
@@ -1307,13 +1309,14 @@ mod tests {
         fn const_eval(&mut self, ast: &mut Node) -> ConstEvalOutcome {
             let previous = self.options.execute_main;
             self.options.execute_main = true;
-            let outcome = match self
-                .pipeline
-                .stage_const_eval(ast, &self.options, &self.diagnostics)
-            {
-                Ok(outcome) => outcome,
-                Err(err) => self.fail_with_diagnostics("const evaluation", err),
-            };
+            let outcome =
+                match self
+                    .pipeline
+                    .stage_const_eval(ast, &self.options, &self.diagnostics)
+                {
+                    Ok(outcome) => outcome,
+                    Err(err) => self.fail_with_diagnostics("const evaluation", err),
+                };
             self.options.execute_main = previous;
             outcome
         }
@@ -1724,7 +1727,10 @@ fn main() {
         options.execute_main = true;
 
         let result = pipeline.stage_const_eval(&mut ast, &options, &diagnostics);
-        assert!(result.is_err(), "method calls are not yet supported in const eval");
+        assert!(
+            result.is_err(),
+            "method calls are not yet supported in const eval"
+        );
 
         let messages: Vec<_> = diagnostics
             .get_diagnostics()
@@ -2006,7 +2012,9 @@ fn main() {
             .map(|diag| diag.message.clone())
             .collect();
         assert!(
-            messages.iter().any(|msg| msg.contains("type inference for item not implemented")),
+            messages
+                .iter()
+                .any(|msg| msg.contains("type inference for item not implemented")),
             "expected placeholder diagnostics for type arithmetic, got {:?}",
             messages
         );
@@ -2160,7 +2168,10 @@ fn main() {
         options.execute_main = true;
 
         let result = pipeline.stage_const_eval(&mut ast, &options, &diagnostics);
-        assert!(result.is_err(), "array indexing is not yet supported during const eval");
+        assert!(
+            result.is_err(),
+            "array indexing is not yet supported during const eval"
+        );
 
         let messages: Vec<_> = diagnostics
             .get_diagnostics()

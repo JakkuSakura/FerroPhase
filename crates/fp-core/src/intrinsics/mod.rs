@@ -6,8 +6,9 @@
 //! language before we introduce backend-specific resolvers.
 
 use crate::ast::{
-    ExprIntrinsicCall, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction,
-    ItemKind, Ty, TySlot, TypeFunction,
+    Expr, ExprIntrinsicCall, ExprIntrinsicCollection, ExprStruct, ExprStructural, File,
+    FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind, Ty, TySlot,
+    TypeFunction,
 };
 use crate::error::Result;
 
@@ -16,68 +17,72 @@ pub trait IntrinsicNormalizer {
     fn normalize(&self, _node: &mut crate::ast::Node) -> Result<()> {
         Ok(())
     }
+
+    fn normalize_call(&self, _call: &ExprIntrinsicCall) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn normalize_collection(&self, _collection: &ExprIntrinsicCollection) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn normalize_struct(&self, _struct_expr: &ExprStruct) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn normalize_structural(&self, _struct_expr: &ExprStructural) -> Result<Option<Expr>> {
+        Ok(None)
+    }
 }
 
 /// Strategy interface for backend-specific intrinsic materialisation.
 pub trait IntrinsicMaterializer {
     fn prepare_file(&self, _file: &mut File) {}
 
-    fn rewrite_intrinsic(
+    fn materialize_call(
         &self,
-        _call: &ExprIntrinsicCall,
+        _call: &mut ExprIntrinsicCall,
         _expr_ty: &TySlot,
-    ) -> Result<Option<crate::ast::Expr>> {
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_struct(
+        &self,
+        _struct_expr: &mut ExprStruct,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_structural(
+        &self,
+        _struct_expr: &mut ExprStructural,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    fn materialize_collection(
+        &self,
+        _collection: &mut ExprIntrinsicCollection,
+        _expr_ty: &TySlot,
+    ) -> Result<Option<Expr>> {
         Ok(None)
     }
 }
 
-/// Lightweight parameter description used to build function declarations when materialising
-/// runtime helpers.
-#[derive(Clone, Debug)]
-pub struct ParamSpec {
-    pub name: Ident,
-    pub ty: Ty,
-    pub as_tuple: bool,
-    pub as_dict: bool,
-}
-
-impl ParamSpec {
-    pub fn new(name: &str, ty: Ty) -> Self {
-        Self {
-            name: Ident::new(name),
-            ty,
-            as_tuple: false,
-            as_dict: false,
+fn build_function_decl_item(
+    name: &str,
+    mut params: Vec<FunctionParam>,
+    ret_ty: Ty,
+) -> ItemDeclFunction {
+    let name_ident = Ident::new(name);
+    for param in params.iter_mut() {
+        if param.ty_annotation.is_none() {
+            param.ty_annotation = Some(param.ty.clone());
         }
     }
-
-    pub fn string(name: &str) -> Self {
-        Self::new(name, Ty::Primitive(crate::ast::TypePrimitive::String))
-    }
-
-    pub fn any(name: &str) -> Self {
-        Self::new(name, Ty::Any(crate::ast::TypeAny))
-    }
-
-    pub fn any_tuple(name: &str) -> Self {
-        let mut spec = Self::any(name);
-        spec.as_tuple = true;
-        spec
-    }
-}
-
-fn build_function_decl_item(name: &str, params: Vec<ParamSpec>, ret_ty: Ty) -> ItemDeclFunction {
-    let name_ident = Ident::new(name);
-    let params: Vec<FunctionParam> = params
-        .into_iter()
-        .map(|spec| {
-            let mut param = FunctionParam::new(spec.name, spec.ty.clone());
-            param.ty_annotation = Some(spec.ty);
-            param.as_tuple = spec.as_tuple;
-            param.as_dict = spec.as_dict;
-            param
-        })
-        .collect();
 
     let ty_annotation = Ty::Function(TypeFunction {
         params: params.iter().map(|p| p.ty.clone()).collect(),
@@ -101,10 +106,15 @@ fn build_function_decl_item(name: &str, params: Vec<ParamSpec>, ret_ty: Ty) -> I
 }
 
 /// Insert a function declaration if one with the same name does not already exist.
-pub fn ensure_function_decl(file: &mut File, name: &str, params: Vec<ParamSpec>, ret_ty: Ty) {
+pub fn make_function_decl(name: &str, params: Vec<FunctionParam>, ret_ty: Ty) -> ItemDeclFunction {
+    build_function_decl_item(name, params, ret_ty)
+}
+
+pub fn ensure_function_decl(file: &mut File, decl: ItemDeclFunction) {
+    let name = decl.name.clone();
     let exists = file.items.iter().any(|item| match item.kind() {
-        ItemKind::DeclFunction(existing) if existing.name.as_str() == name => true,
-        ItemKind::DefFunction(existing) if existing.name.as_str() == name => true,
+        ItemKind::DeclFunction(existing) if existing.name == name => true,
+        ItemKind::DefFunction(existing) if existing.name == name => true,
         _ => false,
     });
 
@@ -112,7 +122,6 @@ pub fn ensure_function_decl(file: &mut File, name: &str, params: Vec<ParamSpec>,
         return;
     }
 
-    let decl = build_function_decl_item(name, params, ret_ty);
     file.items.insert(0, Item::from(decl));
 }
 
