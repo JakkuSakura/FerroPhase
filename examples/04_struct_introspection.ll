@@ -1,4 +1,4 @@
-; ModuleID = ''
+; ModuleID = 'main'
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128"
 target triple = "arm64-apple-macosx15.0.0"
 
@@ -30,7 +30,7 @@ bb1:
   %call_1 = call i32 (ptr, ...) @printf(ptr @.str.1, i64 16)
   br label %bb2
 bb2:
-  %call_2 = call i32 (ptr, ...) @printf(ptr @.str.2, i64 24)
+  %call_2 = call i32 (ptr, ...) @printf(ptr @.str.2, i64 3)
   br label %bb3
 bb3:
   %call_3 = call i32 (ptr, ...) @printf(ptr @.str.3, i64 2)

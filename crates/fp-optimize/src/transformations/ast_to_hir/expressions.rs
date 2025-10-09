@@ -37,6 +37,11 @@ impl HirGenerator {
             ExprKind::ArrayRepeat(array_repeat) => {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
+            ExprKind::Cast(cast_expr) => {
+                let operand = self.transform_expr_to_hir(cast_expr.expr.as_ref())?;
+                let ty = self.transform_type_to_hir(&cast_expr.ty)?;
+                hir::ExprKind::Cast(Box::new(operand), Box::new(ty))
+            }
             ExprKind::Any(any) => {
                 if let Some(raw_expr) = any.downcast_ref::<RawExpr>() {
                     match &raw_expr.raw {

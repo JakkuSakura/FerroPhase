@@ -37,7 +37,7 @@ lir::Program {
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
                 i2: %r2 = call c @printf(c"Color size: %d bytes
-", i64 24) : i32
+", i64 3) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i3: %r3 = call c @printf(c"Point fields: %d
