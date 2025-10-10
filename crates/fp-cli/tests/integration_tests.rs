@@ -82,8 +82,9 @@ fn test_cli_eval_simple() {
     let mut cmd = Command::cargo_bin("fp").unwrap();
     cmd.arg("eval").arg("--expr").arg("1 + 2");
 
-    // This might fail until evaluation is fully implemented, but should not crash
-    cmd.assert().code(predicate::in_iter([0, 1])); // Accept success or failure for now
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("Result: 3"));
 }
 
 #[test]
