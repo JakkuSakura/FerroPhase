@@ -97,10 +97,14 @@ fn main() {
         "Should contain main function"
     );
 
-    // Check for const values (from const evaluation)
+    // Generated struct metadata should match field counts from this fixture
     assert!(
-        output_content.contains("const POINT_SIZE"),
-        "Should contain computed const values"
+        output_content.contains("const POINT_SIZE: number = 2;"),
+        "Point struct should report its field count"
+    );
+    assert!(
+        output_content.contains("const COLOR_SIZE: number = 3;"),
+        "Color struct should report its field count"
     );
 }
 
