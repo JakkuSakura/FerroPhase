@@ -1,21 +1,24 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use fp_core::Result as CoreResult;
 use fp_core::ast::Node;
+use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
+use fp_core::Result as CoreResult;
 use fp_optimize::passes::DefaultIntrinsicNormalizer;
 use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
 
-use super::{FrontendResult, FrontendSnapshot, LanguageFrontend};
+/// Canonical identifier for the FerroPhase source language.
+pub const FERROPHASE: &str = "ferrophase";
 
-pub struct RustFrontend {
+/// Frontend that parses FerroPhase sources using the existing Rust infrastructure.
+pub struct FerroFrontend {
     parser: Mutex<RustParser>,
 }
 
-impl RustFrontend {
+impl FerroFrontend {
     pub fn new() -> Self {
         Self {
             parser: Mutex::new(RustParser::new()),
@@ -31,9 +34,9 @@ impl RustFrontend {
     }
 }
 
-impl LanguageFrontend for RustFrontend {
+impl LanguageFrontend for FerroFrontend {
     fn language(&self) -> &'static str {
-        crate::languages::FERROPHASE
+        FERROPHASE
     }
 
     fn extensions(&self) -> &'static [&'static str] {
@@ -45,6 +48,7 @@ impl LanguageFrontend for RustFrontend {
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(DefaultIntrinsicNormalizer::default());
+
         if let Some(path) = path {
             let mut parser = self.parser.lock().unwrap();
             parser.clear_diagnostics();
@@ -94,5 +98,16 @@ impl LanguageFrontend for RustFrontend {
             snapshot: None,
             diagnostics,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_identifier_is_ferrophase() {
+        let frontend = FerroFrontend::new();
+        assert_eq!(frontend.language(), FERROPHASE);
     }
 }

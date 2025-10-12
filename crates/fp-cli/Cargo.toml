@@ -18,6 +18,7 @@ fp-javascript = { path = "../fp-javascript" }
 fp-csharp = { path = "../fp-csharp" }
 fp-python = { path = "../fp-python" }
 fp-llvm = { path = "../fp-llvm" }
+fp-lang = { path = "../fp-lang" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
