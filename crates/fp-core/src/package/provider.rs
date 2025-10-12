@@ -6,7 +6,8 @@ use toml::Value;
 
 use crate::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
 use crate::package::{
-    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata, TargetFilter,
+    DependencyDescriptor, DependencyKind, PackageDescriptor, PackageId, PackageMetadata,
+    TargetFilter,
 };
 use crate::vfs::{DirEntry, FileKind, FsError, VirtualFileSystem, VirtualPath};
 
@@ -158,7 +159,8 @@ impl CargoPackageProvider {
             })
             .unwrap_or_default();
 
-        let dependencies = self.collect_dependencies(manifest, DependencyKind::Normal, "dependencies")?;
+        let dependencies =
+            self.collect_dependencies(manifest, DependencyKind::Normal, "dependencies")?;
         let mut metadata = PackageMetadata {
             edition: package_table
                 .get("edition")

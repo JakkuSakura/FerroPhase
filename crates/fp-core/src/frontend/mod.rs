@@ -1,4 +1,4 @@
-use crate::ast::{AstSerializer, Last, Node};
+use crate::ast::{AstSerializer, Node};
 use crate::diagnostics::DiagnosticManager;
 use crate::error::Result;
 use crate::intrinsics::IntrinsicNormalizer;
@@ -19,7 +19,7 @@ pub struct FrontendSnapshot {
 /// Result produced by a language frontend after normalising source code.
 #[derive(Clone)]
 pub struct FrontendResult {
-    pub last: Last,
+    pub last: Node,
     pub ast: Node,
     pub serializer: Arc<dyn AstSerializer>,
     pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,

@@ -23,6 +23,7 @@ struct ClosureInfo {
     env_struct_ty: Ty,
     call_fn_ident: Ident,
     call_ret_ty: Ty,
+    #[allow(dead_code)]
     fn_ty: Ty,
 }
 

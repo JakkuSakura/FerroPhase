@@ -1,6 +1,5 @@
 //! AST are trees, so Box<T> is fine
 
-use crate::error::Result;
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
 
@@ -22,17 +21,12 @@ pub use expr::*;
 pub use ident::*;
 pub use item::*;
 pub use pat::*;
-pub use pretty::*;
+#[allow(dead_code)]
 pub use value::*;
 
 /// Shared slot for storing optional type annotations on AST nodes.
 pub type TySlot = Option<Ty>;
 
-/// Placeholder alias so LAST callers can begin depending on a dedicated type.
-/// The alias intentionally points at the canonical AST until the lowered
-/// representation is split out.
-pub type Last = Node;
-pub type BLast = BExpr;
 common_struct! {
     pub struct File {
         pub path: PathBuf,
@@ -116,18 +110,5 @@ impl Node {
 impl From<NodeKind> for Node {
     fn from(kind: NodeKind) -> Self {
         Node::new(kind)
-    }
-}
-
-pub trait AstProvider {
-    fn get_ast_from_code(&self, cst: &str) -> Result<Node>;
-    fn get_ast_from_file_path(&self, path: &std::path::Path) -> Result<Node>;
-}
-impl<D: AstDeserializer> AstProvider for D {
-    fn get_ast_from_code(&self, cst: &str) -> Result<Node> {
-        Ok(self.deserialize_node(cst)?)
-    }
-    fn get_ast_from_file_path(&self, path: &std::path::Path) -> Result<Node> {
-        Ok(self.deserialize_file_load(path).map(Node::file)?)
     }
 }
