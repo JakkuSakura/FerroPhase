@@ -15,10 +15,11 @@ use itertools::Itertools;
 use eyre::{eyre, Context};
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path as FsPath, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use syn::parse_str;
-use syn_inline_mod::InlinerBuilder;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -116,32 +117,53 @@ impl RustParser {
 
     pub fn parse_file_recursively(&self, path: PathBuf) -> Result<File> {
         self.clear_diagnostics();
-        let builder = InlinerBuilder::new();
         let path = path
             .canonicalize()
             .with_context(|| format!("Could not find file: {}", path.display()))?;
         tracing::debug!("Parsing {}", path.display());
-        let module = builder
-            .parse_and_inline_modules(&path)
-            .with_context(|| format!("path: {}", path.display()))?;
-        let (outputs, errors) = module.into_output_and_errors();
-        let mut errors_str = String::new();
-        for err in errors {
-            errors_str.push_str(&format!("{}\n", err));
+
+        if let Some(crate_root) = find_crate_root(path.as_path()) {
+            match self.expand_with_cargo(crate_root.as_path(), path.as_path()) {
+                Ok(expanded_file) => {
+                    return match self.parse_file_content(path.clone(), expanded_file) {
+                        Ok(file) => Ok(file),
+                        Err(e) => self.error(
+                            format!("Failed to parse expanded file {}: {}", path.display(), e),
+                            File {
+                                path: path.clone(),
+                                items: Vec::new(),
+                            },
+                        ),
+                    };
+                }
+                Err(err) => {
+                    self.record_diagnostic(
+                        DiagnosticLevel::Warning,
+                        format!(
+                            "Falling back to direct parse for {} (cargo expand failed: {})",
+                            path.display(),
+                            err
+                        ),
+                    );
+                }
+            }
         }
-        if !errors_str.is_empty() {
-            return self.error(
-                format!("Errors when parsing {}: {}", path.display(), errors_str),
-                File {
-                    path: path.clone(),
-                    items: Vec::new(),
-                },
-            );
-        }
-        match self.parse_file_content(path.clone(), outputs) {
-            Ok(file) => Ok(file),
+
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("Could not read file: {}", path.display()))?;
+        match syn::parse_file(&source) {
+            Ok(syn_file) => match self.parse_file_content(path.clone(), syn_file) {
+                Ok(file) => Ok(file),
+                Err(e) => self.error(
+                    format!("Failed to parse file {}: {}", path.display(), e),
+                    File {
+                        path: path.clone(),
+                        items: Vec::new(),
+                    },
+                ),
+            },
             Err(e) => self.error(
-                format!("Failed to parse inlined file {}: {}", path.display(), e),
+                format!("Failed to parse {} as file: {}", path.display(), e),
                 File {
                     path: path.clone(),
                     items: Vec::new(),
@@ -456,4 +478,115 @@ impl AstDeserializer for RustParser {
         let code: syn::Type = parse_str(code).map_err(|e| eyre!(e.to_string()))?;
         Ok(self.parse_type(code)?)
     }
+}
+
+fn find_crate_root(path: &FsPath) -> Option<PathBuf> {
+    let mut current = if path.is_file() {
+        path.parent()?.to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+
+    loop {
+        let manifest = current.join("Cargo.toml");
+        if manifest.exists() {
+            if manifest_has_package(&manifest).unwrap_or(false) {
+                return Some(current);
+            }
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn manifest_has_package(manifest: &FsPath) -> eyre::Result<bool> {
+    let contents = fs::read_to_string(manifest)?;
+    let parsed: toml::Value = toml::from_str(&contents)?;
+    Ok(parsed
+        .get("package")
+        .and_then(|pkg| pkg.get("name"))
+        .and_then(|name| name.as_str())
+        .is_some())
+}
+
+#[derive(Clone, Debug)]
+enum ExpandTarget {
+    Lib,
+    Bin(String),
+}
+
+impl RustParser {
+    fn expand_with_cargo(
+        &self,
+        crate_root: &FsPath,
+        source_path: &FsPath,
+    ) -> eyre::Result<syn::File> {
+        let manifest = crate_root.join("Cargo.toml");
+        let package_name = read_package_name(manifest.as_path())?.ok_or_else(|| {
+            eyre!(
+                "manifest {} does not declare a [package]",
+                manifest.display()
+            )
+        })?;
+
+        let target = determine_expand_target(crate_root, source_path, &package_name);
+        let expanded = run_cargo_expand(crate_root, &target)?;
+        let syn_file = syn::parse_file(&expanded)?;
+        Ok(syn_file)
+    }
+}
+
+fn read_package_name(manifest: &FsPath) -> eyre::Result<Option<String>> {
+    let contents = fs::read_to_string(manifest)?;
+    let parsed: toml::Value = toml::from_str(&contents)?;
+    Ok(parsed
+        .get("package")
+        .and_then(|pkg| pkg.get("name"))
+        .and_then(|name| name.as_str())
+        .map(|s| s.to_string()))
+}
+
+fn determine_expand_target(
+    crate_root: &FsPath,
+    source_path: &FsPath,
+    package: &str,
+) -> ExpandTarget {
+    let relative = source_path.strip_prefix(crate_root).unwrap_or(source_path);
+    if relative == FsPath::new("src/lib.rs") {
+        ExpandTarget::Lib
+    } else if relative == FsPath::new("src/main.rs") {
+        ExpandTarget::Bin(package.to_string())
+    } else if relative.starts_with(FsPath::new("src/bin")) {
+        let name = relative
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(package)
+            .to_string();
+        ExpandTarget::Bin(name)
+    } else {
+        ExpandTarget::Lib
+    }
+}
+
+fn run_cargo_expand(crate_root: &FsPath, target: &ExpandTarget) -> eyre::Result<String> {
+    let mut command = Command::new("cargo");
+    command.arg("expand");
+    match target {
+        ExpandTarget::Lib => {}
+        ExpandTarget::Bin(name) => {
+            command.arg("--bin").arg(name);
+        }
+    }
+    command.current_dir(crate_root);
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(eyre!(
+            "cargo expand failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)?;
+    Ok(stdout)
 }
