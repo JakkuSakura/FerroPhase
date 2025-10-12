@@ -12,13 +12,12 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 serde = "1"
-syn-inline-mod = "0.6.0"
 pretty_assertions = "1.4.0"
 eyre = "0.6.12"
 itertools = "0.12.1"
 clap = { version = "4.0", features = ["derive"] }
 tracing = "0.1"
+toml = "0.8"
 
 [features]
 default = []
-
