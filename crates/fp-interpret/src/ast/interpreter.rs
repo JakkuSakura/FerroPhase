@@ -193,17 +193,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.mutations_applied = true;
     }
 
-    fn type_infer_expr(&mut self, expr: &mut Expr) {
-        // Only infer if the expression doesn't already have a concrete type
-        if expr.ty().is_none() || matches!(expr.ty(), Some(Ty::Unknown(_))) {
-            if let Some(typer) = self.typer.as_mut() {
-                if let Err(e) = typer.infer_expression(expr) {
-                    self.emit_error(format!("Type inference failed: {}", e));
-                }
-            }
-        }
-    }
-
     pub fn evaluate_expression(&mut self, expr: &mut Expr) -> Value {
         self.push_scope();
         let value = self.eval_expr(expr);
@@ -1332,23 +1321,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(last) = path.segments.last_mut() {
             *last = Ident::new(new_name.to_string());
             *locator = Locator::path(path);
-        }
-    }
-
-    /// Annotate invoke arguments with expected parameter types
-    /// This ensures generic function references are specialized correctly
-    fn annotate_invoke_args(&mut self, args: &mut Vec<Expr>, params: &[FunctionParam]) {
-        for (arg, param) in args.iter_mut().zip(params.iter()) {
-            // Only annotate if arg doesn't already have a concrete type
-            let should_annotate = arg.ty().map_or(true, |ty| matches!(ty, Ty::Unknown(_)));
-            if should_annotate {
-                eprintln!(
-                    "[annotate_invoke_args] Annotating arg {:?} with type {:?}",
-                    arg.kind(),
-                    param.ty
-                );
-                arg.set_ty(param.ty.clone());
-            }
         }
     }
 
