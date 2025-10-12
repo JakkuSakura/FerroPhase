@@ -7,7 +7,7 @@ use swc_ecma_ast::{Script, TsEnumDecl, TsEnumMemberId};
 use swc_ecma_codegen::text_writer::JsWriter;
 use swc_ecma_codegen::Emitter;
 use swc_ecma_quote::swc_common::sync::Lrc;
-use swc_ecma_quote::swc_common::{SourceMap, DUMMY_SP};
+use swc_ecma_quote::swc_common::{SourceMap, SyntaxContext, DUMMY_SP};
 
 use fp_core::ast::Ident;
 use fp_core::ast::{AstSerializer, EnumTypeVariant, Ty, TypeEnum, TypeStruct};
@@ -72,7 +72,7 @@ impl TsPrinter {
         &self.config
     }
     pub fn to_ident(&self, name: &Ident) -> swc_ecma_ast::Ident {
-        swc_ecma_ast::Ident::new(name.name.as_str().into(), DUMMY_SP)
+        swc_ecma_ast::Ident::new(name.name.as_str().into(), DUMMY_SP, SyntaxContext::empty())
     }
 
     pub fn to_enum_member(&self, name: &EnumTypeVariant) -> Result<swc_ecma_ast::TsEnumMember> {
@@ -123,9 +123,6 @@ impl TsPrinter {
                             key: Box::new(Expr::Ident(self.to_ident(&field.name))),
                             computed: false,
                             optional: false,
-                            init: None,
-                            params: vec![],
-                            type_params: None,
                             type_ann: Some(Box::new(TsTypeAnn {
                                 span: DUMMY_SP,
                                 type_ann: Box::new(ts_type),
@@ -161,6 +158,7 @@ impl TsPrinter {
                     type_name: TsEntityName::Ident(swc_ecma_ast::Ident::new(
                         rust_type.into(),
                         DUMMY_SP,
+                        SyntaxContext::empty(),
                     )),
                     type_params: None,
                 })
