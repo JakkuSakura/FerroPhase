@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod ast_inspector;
 pub mod normalization;
+pub mod package;
 pub mod parser;
 pub mod printer;
 

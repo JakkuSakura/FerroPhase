@@ -142,8 +142,9 @@ pub enum ProviderError {
 }
 ```
 
-### CargoPackageProvider
+### CargoPackageProvider (`fp_rust::package`)
 
+- Implemented in the `fp-rust` crate to keep Cargo specifics out of `fp-core`.
 - Reads workspace metadata via `cargo metadata` or by parsing `Cargo.toml`.
 - Uses the VFS to read manifests, normalizing paths into `VirtualPath`.
 - Fills `PackageDescriptor` with Cargo-specific metadata; dependencies record
@@ -151,10 +152,10 @@ pub enum ProviderError {
 - Supports `refresh()` by re-running metadata when `Cargo.toml` or lockfiles
   change.
 
-### RustModuleProvider
+### RustModuleProvider (`fp_rust::package`)
 
-- Consumes packages from `CargoPackageProvider` (or any provider returning Rust
-  sources) and scans module trees under `src/`.
+- Wraps any `PackageProvider` that exposes Rust sources (typically the Cargo
+  adapter) and scans module trees under `src/`.
 - Builds `ModuleDescriptor` objects representing Rust modules; `module_path`
   mirrors Rust’s namespace (`crate::foo::bar`).
 - Uses the VFS to read files (for e.g., doc comments, symbol extraction).
@@ -180,7 +181,7 @@ real project directories.
         ┌───────────────────────────────────┐
         │         PackageProvider           │
         │ ┌───────────────────────────────┐ │
-        │ │  CargoPackageProvider        │ │
+        │ │ Cargo (fp_rust::package) │ │
         │ └───────────────────────────────┘ │
         └───────────────────────────────────┘
                       │
@@ -188,7 +189,7 @@ real project directories.
         ┌───────────────────────────────────┐
         │          ModuleProvider           │
         │ ┌───────────────────────────────┐ │
-        │ │   RustModuleProvider         │ │
+        │ │ Rust modules (fp_rust)  │ │
         │ └───────────────────────────────┘ │
         └───────────────────────────────────┘
 ```
