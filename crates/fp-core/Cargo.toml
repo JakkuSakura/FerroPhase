@@ -19,6 +19,8 @@ tree-sitter = "0.24.3"
 tracing = "0.1"
 bitflags = "2.4"
 once_cell = "1.19"
+semver = "1"
+toml = "0.8"
 
 [dev-dependencies]
 fp-optimize = { path = "../fp-optimize" }
