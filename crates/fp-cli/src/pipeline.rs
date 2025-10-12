@@ -2,7 +2,7 @@ use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::frontend::{
-    FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend, RustFrontend,
+    FerroFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend,
 };
 use crate::languages;
 use crate::languages::detect_source_language;
@@ -21,11 +21,8 @@ use fp_llvm::{
 };
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
 use fp_optimize::passes::{
-    lower_closures,
-    materialize_intrinsics,
-    normalize_intrinsics,
+    NoopIntrinsicMaterializer, lower_closures, materialize_intrinsics, normalize_intrinsics,
     remove_generic_templates,
-    NoopIntrinsicMaterializer,
 };
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 use fp_typing::TypingDiagnosticLevel;
@@ -120,8 +117,8 @@ pub struct TranspilePreparationOptions {
 impl Pipeline {
     pub fn new() -> Self {
         let mut registry = FrontendRegistry::new();
-        let rust_frontend: Arc<dyn LanguageFrontend> = Arc::new(RustFrontend::new());
-        registry.register(rust_frontend);
+        let ferro_frontend: Arc<dyn LanguageFrontend> = Arc::new(FerroFrontend::new());
+        registry.register(ferro_frontend);
 
         Self {
             frontends: Arc::new(registry),
