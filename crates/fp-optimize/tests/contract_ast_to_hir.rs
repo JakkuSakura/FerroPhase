@@ -1,10 +1,5 @@
 use fp_core::error::Result as OptimizeResult;
-use fp_core::hir::{
-    self,
-    FormatTemplatePart,
-    ItemKind,
-    StmtKind,
-};
+use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_optimize::transformations::{HirGenerator, IrTransform};
 use fp_rust::parser::RustParser;
@@ -238,7 +233,10 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
     let stmt = &block.stmts[0];
     let expr = match &stmt.kind {
         StmtKind::Semi(expr) => expr,
-        other => panic!("expected println to lower into a semi statement, found {:?}", other),
+        other => panic!(
+            "expected println to lower into a semi statement, found {:?}",
+            other
+        ),
     };
 
     let call = match &expr.kind {
@@ -256,7 +254,11 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
         matches!(template.parts.first(), Some(FormatTemplatePart::Literal(lit)) if lit.contains("value=")),
         "expected literal prefix in println template"
     );
-    assert_eq!(template.args.len(), 2, "println forwards positional arguments");
+    assert_eq!(
+        template.args.len(),
+        2,
+        "println forwards positional arguments"
+    );
 
     Ok(())
 }
@@ -341,7 +343,10 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
     }
 
     assert!(saw_sizeof, "expected sizeof! to lower into intrinsic call");
-    assert!(saw_field_count, "expected field_count! to lower into intrinsic call");
+    assert!(
+        saw_field_count,
+        "expected field_count! to lower into intrinsic call"
+    );
 
     Ok(())
 }
