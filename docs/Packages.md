@@ -136,9 +136,9 @@ pub struct PackageMetadata {
 - `dependencies` captures the normalized dependency graph, including feature
   edges and target filters, ready for resolvers or registries.
 
-Providers such as `CargoPackageProvider` populate these structs by parsing
-`Cargo.toml`, `Ferrophase.toml`, or registry manifests and reading sources via
-the virtual filesystem abstraction.
+Providers such as `fp_rust::package::CargoPackageProvider` populate these
+structs by parsing `Cargo.toml`, `Ferrophase.toml`, or registry manifests and
+reading sources via the virtual filesystem abstraction.
 
 ## Workspaces
 
