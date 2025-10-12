@@ -709,12 +709,12 @@ dependencies = [
  "fp-core",
  "fp-csharp",
  "fp-interpret",
- "fp-javascript",
  "fp-lang",
  "fp-llvm",
  "fp-optimize",
  "fp-python",
  "fp-rust",
+ "fp-typescript",
  "fp-typing",
  "fp-wit",
  "fp-zig",
@@ -791,20 +791,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fp-javascript"
-version = "0.1.0"
-dependencies = [
- "eyre",
- "fp-core",
- "itertools 0.14.0",
- "serde_json",
- "swc_ecma_ast",
- "swc_ecma_codegen",
- "swc_ecma_parser",
- "swc_ecma_quote",
-]
-
-[[package]]
 name = "fp-lang"
 version = "0.1.0"
 dependencies = [
@@ -878,6 +864,20 @@ dependencies = [
  "tempfile",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "fp-typescript"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "fp-core",
+ "itertools 0.14.0",
+ "serde_json",
+ "swc_ecma_ast",
+ "swc_ecma_codegen",
+ "swc_ecma_parser",
+ "swc_ecma_quote",
 ]
 
 [[package]]
