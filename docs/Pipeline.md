@@ -85,7 +85,7 @@ flags for informational entries but always surfaces warnings and errors.
 
 - `FrontendRegistry` maps language identifiers and file extensions to
   `LanguageFrontend` implementations. The default registry ships with the
-  `RustFrontend`, covering FerroPhase syntax and Rust-compatible `.rs` files.
+  `FerroFrontend`, covering FerroPhase syntax and Rust-compatible `.rs` files.
 - `PipelineOptions.source_language` allows callers to override detection when an
   expression lacks a file extension.
 - Additional frontends should implement `LanguageFrontend::parse`, returning a

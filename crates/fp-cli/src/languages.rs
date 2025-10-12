@@ -14,7 +14,7 @@ pub const C: &str = "c";
 pub const JAVA: &str = "java";
 pub const KOTLIN: &str = "kotlin";
 pub const SWIFT: &str = "swift";
-pub const FERROPHASE: &str = "ferrophase";
+pub const FERROPHASE: &str = fp_lang::FERROPHASE;
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
