@@ -15,10 +15,13 @@ pub mod intrinsics;
 pub mod lir;
 pub mod mir;
 pub mod ops;
+pub mod package;
 pub mod pretty;
 pub mod printer;
 pub mod span;
 pub mod utils;
+pub mod vfs;
+pub mod module;
 
 // Re-export commonly used items for convenience
 pub use tracing;

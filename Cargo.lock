@@ -871,10 +871,12 @@ dependencies = [
  "pretty_assertions",
  "proc-macro2",
  "quote",
+ "semver 1.0.27",
  "serde",
  "serde_json",
  "syn 2.0.87",
  "thiserror 2.0.0",
+ "toml",
  "tracing",
  "tree-sitter",
 ]
