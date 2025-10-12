@@ -18,6 +18,10 @@ itertools = "0.12.1"
 clap = { version = "4.0", features = ["derive"] }
 tracing = "0.1"
 toml = "0.8"
+cargo_metadata = "0.18"
 
 [features]
 default = []
+
+[dev-dependencies]
+tempfile = "3"
