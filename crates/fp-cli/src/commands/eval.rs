@@ -197,7 +197,7 @@ mod tests {
 
         // This test might fail until the interpreter is fully implemented
         // but it demonstrates the expected interface
-        let result = eval_command(args, &config).await;
+        let _result = eval_command(args, &config).await;
         // For now, just check that it doesn't crash
         // assert!(result.is_ok());
     }
@@ -220,7 +220,7 @@ mod tests {
         };
 
         // This test might fail until the interpreter is fully implemented
-        let result = eval_command(args, &config).await;
+        let _result = eval_command(args, &config).await;
         // For now, just check that it doesn't crash with file reading
         // The evaluation itself might fail
     }

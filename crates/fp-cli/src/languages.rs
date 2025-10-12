@@ -15,6 +15,7 @@ pub const JAVA: &str = "java";
 pub const KOTLIN: &str = "kotlin";
 pub const SWIFT: &str = "swift";
 pub const FERROPHASE: &str = fp_lang::FERROPHASE;
+pub const WIT: &str = "wit";
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +87,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         extensions: &["fp"],
         transpile_supported: true,
     },
+    Language {
+        name: WIT,
+        extensions: &["wit"],
+        transpile_supported: true,
+    },
 ];
 
 /// Detect source language from file extension
@@ -126,6 +132,7 @@ pub fn get_target_extension(target: &str) -> Option<&'static str> {
         KOTLIN => Some("kt"),
         SWIFT => Some("swift"),
         FERROPHASE => Some("fp"),
+        WIT => Some("wit"),
         _ => None,
     }
 }

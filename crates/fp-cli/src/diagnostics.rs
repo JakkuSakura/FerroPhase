@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_syntax_error_creation() {
         let src = "fn main() { let x = ".to_string();
-        let span = miette::SourceSpan::new(16.into(), 1.into());
+        let span = miette::SourceSpan::new(16, 1);
         let error = syntax_error(src.clone(), span);
 
         match error {
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn test_type_error_creation() {
         let src = "let x: i32 = \"hello\";".to_string();
-        let span = miette::SourceSpan::new(13.into(), 7.into());
+        let span = miette::SourceSpan::new(13, 7);
         let message = "Cannot assign string to integer variable".to_string();
         let error = type_error(src.clone(), span, message.clone());
 

@@ -19,6 +19,8 @@ fp-csharp = { path = "../fp-csharp" }
 fp-python = { path = "../fp-python" }
 fp-llvm = { path = "../fp-llvm" }
 fp-lang = { path = "../fp-lang" }
+fp-wit = { path = "../fp-wit" }
+fp-zig = { path = "../fp-zig" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
@@ -31,45 +33,38 @@ globset = "0.4"
 # Logging and diagnostics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-miette = { version = "5.0", features = ["fancy"] }
+miette = { version = "7.6.0", features = ["fancy"] }
 
 # Serialization for configuration
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "0.9.8"
 
 # Terminal output and colors
-console = "0.15"
-indicatif = "0.17"
+console = "0.16.1"
+indicatif = "0.18.0"
 
 # Async runtime for potential future features
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "fs", "process", "time", "macros"] }
 
 # Error handling
 eyre = "0.6"
-thiserror = "1.0"
+thiserror = "2.0.17"
 
 # Additional utilities
-dirs = "5.0"
+dirs = "6.0.0"
 pathdiff = "0.2"
-syn = { version = "2.0", features = ["full"] }
 tempfile = "3.8"
 quote = "1.0"
-proc-macro2 = "1.0"
 libc = "0.2"
 
-# SWC for TypeScript code generation
-swc_ecma_ast = "0.110"
-swc_ecma_quote = "0.57"
-
 # Performance and profiling
-criterion = { version = "0.5", optional = true }
 
 [dev-dependencies]
 tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
+criterion = { version = "0.7.0" }
 
 [features]
 default = []
-benchmarks = ["criterion"]
