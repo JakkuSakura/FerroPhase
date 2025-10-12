@@ -4,7 +4,7 @@ use fp_core::error::Error as CoreError;
 use crate::CliError;
 
 use fp_csharp::CSharpSerializer;
-use fp_javascript::{JavaScriptSerializer, TypeScriptSerializer};
+use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_python::PythonSerializer;
 use fp_rust::printer::RustPrinter;
 use fp_wit::WitSerializer;
