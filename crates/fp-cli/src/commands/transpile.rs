@@ -3,7 +3,6 @@
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    languages::*,
     pipeline::{Pipeline, TranspilePreparationOptions},
     transpiler::*,
 };
@@ -130,7 +129,7 @@ async fn transpile_file(
     // Parse source
     let mut pipeline = Pipeline::new();
     let source = std::fs::read_to_string(input).map_err(|e| CliError::Io(e))?;
-    let mut ast = pipeline.parse_source_public(&source)?;
+    let mut ast = pipeline.parse_source_public(&source, Some(input))?;
 
     let prep_options = TranspilePreparationOptions {
         run_const_eval: args.const_eval,
@@ -140,12 +139,14 @@ async fn transpile_file(
     pipeline.prepare_for_transpile(&mut ast, &prep_options)?;
 
     // Use simplified transpiler
-    let target = match args.target.as_str() {
-        TYPESCRIPT | "ts" => TranspileTarget::TypeScript,
-        JAVASCRIPT | "js" => TranspileTarget::JavaScript,
-        CSHARP | "cs" | "c#" => TranspileTarget::CSharp,
-        PYTHON | "py" => TranspileTarget::Python,
-        RUST | "rs" => TranspileTarget::Rust,
+    let normalized_target = args.target.to_lowercase();
+    let target = match normalized_target.as_str() {
+        "typescript" | "ts" => TranspileTarget::TypeScript,
+        "javascript" | "js" => TranspileTarget::JavaScript,
+        "csharp" | "cs" | "c#" => TranspileTarget::CSharp,
+        "python" | "py" => TranspileTarget::Python,
+        "rust" | "rs" => TranspileTarget::Rust,
+        "wit" => TranspileTarget::Wit,
         _ => {
             return Err(CliError::InvalidInput(format!(
                 "Unsupported target: {}",
@@ -194,12 +195,14 @@ fn determine_transpile_output_path(
     if let Some(output) = output {
         Ok(output.clone())
     } else {
-        let extension = match target {
+        let normalized = target.to_lowercase();
+        let extension = match normalized.as_str() {
             "typescript" | "ts" => "ts",
             "javascript" | "js" => "js",
             "csharp" | "cs" | "c#" => "cs",
             "python" | "py" => "py",
             "rust" | "rs" => "rs",
+            "wit" => "wit",
             _ => {
                 return Err(CliError::InvalidInput(format!(
                     "Unknown target: {}",

@@ -50,6 +50,12 @@ fp run examples/01_const_eval_basics.fp
 | `17_traits.fp` | Traits | Trait bounds, default methods, impl |
 | `18_generics.fp` | Generics | Type parameters, monomorphization |
 
+### Interoperability
+
+| Example | Focus | Demonstrates |
+|---------|-------|--------------|
+| `19_wit_interface.wit` | WebAssembly Interface Types | Defining interfaces & records consumable via the WIT frontend |
+
 **Note:** Examples marked "(future)" are placeholders for upcoming features.
 
 See `docs/ConstEval.md` for background on the showcased features.

@@ -108,7 +108,7 @@ fn handle_pipeline_output(output: PipelineOutput, args: &RunArgs) -> Result<()> 
 
 fn print_ast_representation(source: &str, runtime: &str) -> Result<()> {
     let mut pipeline = Pipeline::with_runtime(runtime);
-    let ast = pipeline.parse_source_public(source)?;
+    let ast = pipeline.parse_source_public(source, None)?;
 
     let mut pretty_opts = PrettyOptions::default();
     pretty_opts.show_types = false;

@@ -42,7 +42,10 @@ pub async fn parse_command(args: ParseArgs, _config: &CliConfig) -> Result<()> {
         })?,
     };
 
-    let ast = pipeline.parse_source_public(&source)?;
+    let ast = match &input {
+        PipelineInput::File(path) => pipeline.parse_source_public(&source, Some(path.as_path()))?,
+        PipelineInput::Expression(_) => pipeline.parse_source_public(&source, None)?,
+    };
 
     let mut pretty_opts = PrettyOptions::default();
     pretty_opts.show_types = false;
