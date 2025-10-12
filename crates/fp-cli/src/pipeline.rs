@@ -3,9 +3,9 @@ use crate::codegen::CodeGenerator;
 use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::frontend::{
     FerroFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend,
+    WitFrontend,
 };
-use crate::languages;
-use crate::languages::detect_source_language;
+use crate::languages::{self, detect_source_language};
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
 use fp_core::context::SharedScopedContext;
@@ -119,6 +119,8 @@ impl Pipeline {
         let mut registry = FrontendRegistry::new();
         let ferro_frontend: Arc<dyn LanguageFrontend> = Arc::new(FerroFrontend::new());
         registry.register(ferro_frontend);
+        let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
+        registry.register(wit_frontend);
 
         Self {
             frontends: Arc::new(registry),
@@ -172,11 +174,20 @@ impl Pipeline {
         self.execute_with_options(input, options).await
     }
 
-    pub fn parse_source_public(&mut self, source: &str) -> Result<Node, CliError> {
+    pub fn parse_source_public(
+        &mut self,
+        source: &str,
+        path: Option<&Path>,
+    ) -> Result<Node, CliError> {
+        let language_key = path
+            .and_then(|path| detect_source_language(path).map(|lang| lang.name))
+            .unwrap_or(languages::FERROPHASE);
+
         let frontend = self
             .frontends
-            .get(languages::FERROPHASE)
-            .ok_or_else(|| CliError::Compilation("Default frontend not registered".to_string()))?;
+            .get(language_key)
+            .or_else(|| self.frontends.get(languages::FERROPHASE))
+            .ok_or_else(|| CliError::Compilation("No suitable frontend registered".to_string()))?;
 
         let FrontendResult {
             ast,
@@ -186,7 +197,7 @@ impl Pipeline {
             diagnostics,
             ..
         } = frontend
-            .parse(source, None)
+            .parse(source, path)
             .map_err(|err| CliError::Compilation(err.to_string()))?;
 
         let collected_diagnostics = diagnostics.get_diagnostics();
@@ -222,47 +233,7 @@ impl Pipeline {
         source: &str,
         path: &Path,
     ) -> Result<Node, CliError> {
-        let frontend = self
-            .frontends
-            .get(languages::FERROPHASE)
-            .ok_or_else(|| CliError::Compilation("Default frontend not registered".to_string()))?;
-
-        let FrontendResult {
-            ast,
-            serializer,
-            intrinsic_normalizer,
-            snapshot,
-            diagnostics,
-            ..
-        } = frontend
-            .parse(source, Some(path))
-            .map_err(|err| CliError::Compilation(err.to_string()))?;
-
-        let collected_diagnostics = diagnostics.get_diagnostics();
-        if !collected_diagnostics.is_empty() {
-            DiagnosticManager::emit(
-                &collected_diagnostics,
-                Some(STAGE_FRONTEND),
-                &DiagnosticDisplayOptions::default(),
-            );
-        }
-
-        if collected_diagnostics
-            .iter()
-            .any(|diag| diag.level == DiagnosticLevel::Error)
-        {
-            return Err(CliError::Compilation(
-                "frontend stage failed; see diagnostics for details".to_string(),
-            ));
-        }
-
-        register_threadlocal_serializer(serializer.clone());
-        self.serializer = Some(serializer.clone());
-        self.intrinsic_normalizer = intrinsic_normalizer;
-        self.frontend_snapshot = snapshot;
-        self.source_language = Some(frontend.language().to_string());
-
-        Ok(ast)
+        self.parse_source_public(source, Some(path))
     }
 
     pub async fn execute_with_options(
@@ -1545,7 +1516,7 @@ mod tests {
     #[test]
     fn rust_frontend_parses_expression() {
         let mut pipeline = Pipeline::new();
-        assert!(pipeline.parse_source_public("1 + 2").is_ok());
+        assert!(pipeline.parse_source_public("1 + 2", None).is_ok());
     }
 
     #[test]

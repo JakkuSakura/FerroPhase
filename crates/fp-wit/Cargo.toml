@@ -1,0 +1,10 @@
+[package]
+name = "fp-wit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+fp-core = { path = "../fp-core" }
+thiserror = "2.0"
+wit-parser = { version = "0.240.0", default-features = false, features = ["decoding"] }

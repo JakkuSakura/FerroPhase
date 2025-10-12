@@ -1,0 +1,19 @@
+package ferrophase:examples/wit;
+
+/// Simple calculator interface exposed via WebAssembly Interface Types.
+interface calculator {
+    record point { x: f64, y: f64 }
+
+    /// Adds two floating-point values.
+    add: func(a: f64, b: f64) -> f64;
+
+    /// Scales a value by the given factor.
+    scale: func(value: f64, factor: f64) -> f64;
+
+    /// Computes the Euclidean distance between two points.
+    distance: func(a: point, b: point) -> f64;
+}
+
+world math {
+    export calculator;
+}
