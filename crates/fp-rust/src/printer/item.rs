@@ -225,6 +225,8 @@ impl RustPrinter {
 
         let ret = self.print_return_type(sig.ret_ty.as_ref())?;
         let params_iter = params.iter();
-        Ok(quote!(fn #name #generics(#(#params_iter),*) #ret;))
+        Ok(quote!(extern "Rust" {
+            fn #name #generics(#(#params_iter),*) #ret;
+        }))
     }
 }
