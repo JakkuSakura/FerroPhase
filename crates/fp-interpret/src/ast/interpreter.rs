@@ -1800,18 +1800,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn lookup_local_type(
-        &self,
-        locator: &Locator,
-        local_types: &HashMap<String, Ty>,
-    ) -> Option<Ty> {
-        let key = Self::locator_key(locator);
-        local_types
-            .get(&key)
-            .cloned()
-            .or_else(|| local_types.get(&format!("#{}", key)).cloned())
-    }
-
     fn resolve_local_ty(
         &self,
         locator: &mut Locator,

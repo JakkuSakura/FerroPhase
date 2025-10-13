@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use fp_core::ast::AstSerializer;
 use fp_core::ast::{
     File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemDefEnum,
     ItemDefStruct, ItemDefType, Module, Node, Ty, TypeTuple, Visibility,
 };
-use fp_core::ast::AstSerializer;
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};

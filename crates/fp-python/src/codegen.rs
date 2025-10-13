@@ -3,13 +3,14 @@ use std::collections::{HashMap, HashSet};
 use eyre::eyre;
 use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, FormatArgRef, FormatTemplatePart,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, ExprUnOp, FormatArgRef, FormatTemplatePart,
     FunctionParam, Item, ItemKind, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
     TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
     ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::ops::UnOpKind;
 use itertools::Itertools;
 
 pub struct PythonSerializer;
@@ -355,6 +356,7 @@ impl PythonEmitter {
                     .collect::<Result<Vec<_>>>()?;
                 Ok(format!("({})", values.join(", ")))
             }
+            ExprKind::UnOp(unop) => self.render_unary(unop),
             ExprKind::IntrinsicCall(call) => self.render_intrinsic_expr(call),
             ExprKind::Paren(paren) => Ok(format!("({})", self.render_expr(paren.expr.as_ref())?)),
             ExprKind::Reference(reference) => self.render_expr(reference.referee.as_ref()),
@@ -366,6 +368,17 @@ impl PythonEmitter {
             .into()),
             other => Err(eyre!("Unsupported expression in transpiler: {:?}", other).into()),
         }
+    }
+
+    fn render_unary(&mut self, unop: &ExprUnOp) -> Result<String> {
+        let inner = self.render_expr(unop.val.as_ref())?;
+        let rendered = match unop.op {
+            UnOpKind::Not => format!("not ({inner})"),
+            UnOpKind::Neg => format!("-({inner})"),
+            UnOpKind::Deref => inner,
+            UnOpKind::Any(ref ident) => format!("{}({inner})", ident.as_str()),
+        };
+        Ok(rendered)
     }
 
     fn render_invoke(&mut self, invoke: &ExprInvoke) -> Result<String> {
