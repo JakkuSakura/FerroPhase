@@ -3,6 +3,59 @@ use itertools::Itertools;
 use proc_macro2::TokenStream;
 use quote::*;
 
+const RUST_KEYWORDS: &[&str] = &[
+    "as",
+    "break",
+    "const",
+    "continue",
+    "crate",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "fn",
+    "for",
+    "if",
+    "impl",
+    "in",
+    "let",
+    "loop",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "pub",
+    "ref",
+    "return",
+    "self",
+    "Self",
+    "static",
+    "struct",
+    "super",
+    "trait",
+    "true",
+    "type",
+    "unsafe",
+    "use",
+    "where",
+    "while",
+    "async",
+    "await",
+    "dyn",
+    "abstract",
+    "become",
+    "box",
+    "do",
+    "final",
+    "macro",
+    "override",
+    "priv",
+    "typeof",
+    "unsized",
+    "virtual",
+    "yield",
+];
+
 use crate::{RawExpr, RawExprMacro, RawItemMacro, RawStmtMacro};
 use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator, ParameterPath, ParameterPathSegment, Path};
@@ -189,7 +242,8 @@ impl RustPrinter {
         Ok(fallback_layout(code))
     }
     pub fn print_ident(&self, i: &Ident) -> TokenStream {
-        match i.as_str() {
+        let raw = i.as_str();
+        match raw {
             "+" => quote!(+),
             "*" => quote!(*),
             ">" => quote!(>),
@@ -199,7 +253,9 @@ impl RustPrinter {
             "==" => quote!(==),
             "!=" => quote!(!=),
             "|" => quote!(|),
-            a => format_ident!("{}", a).into_token_stream(),
+            "self" | "Self" => format_ident!("{}", raw).into_token_stream(),
+            a if RUST_KEYWORDS.contains(&a) => format_ident!("r#{}", raw).into_token_stream(),
+            _ => format_ident!("{}", raw).into_token_stream(),
         }
     }
     pub fn print_pat_ident(&self, i: &PatternIdent) -> Result<TokenStream> {

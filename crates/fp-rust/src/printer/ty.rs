@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use fp_core::ast::{
-    DecimalType, ExprInvoke, StructuralField, Ty, TypeArray, TypeInt, TypePrimitive, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeVec,
+    DecimalType, ExprInvoke, StructuralField, Ty, TypeArray, TypeEnum, TypeInt, TypePrimitive,
+    TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeVec,
 };
 use fp_core::bail;
 use fp_core::error::Result;
@@ -14,7 +14,7 @@ impl RustPrinter {
         let ty = match v {
             Ty::Function(f) => self.print_func_type(f)?,
             Ty::Primitive(p) => self.print_primitive_type(*p)?,
-            Ty::Struct(s) => self.print_struct_type(s)?,
+            Ty::Struct(s) => self.print_struct_ident(s),
             Ty::Structural(s) => self.print_structural_type(s)?,
             Ty::Expr(e) => self.print_expr(e)?,
             Ty::Slice(t) => self.print_type_slice(t)?,
@@ -28,6 +28,8 @@ impl RustPrinter {
             Ty::Unknown(_) => quote!(_),
             Ty::Reference(r) => self.print_type_ref(r)?,
             Ty::Value(v) => self.print_value(&v.value)?,
+            Ty::Tuple(t) => self.print_type_tuple(t)?,
+            Ty::Enum(e) => self.print_type_enum_ref(e),
             _ => bail!("Not supported {:?}", v),
         };
         Ok(ty)
@@ -70,6 +72,10 @@ impl RustPrinter {
         Ok(quote!(struct #name {
             #(#fields), *
         }))
+    }
+
+    fn print_struct_ident(&self, s: &TypeStruct) -> TokenStream {
+        self.print_ident(&s.name)
     }
 
     pub fn print_field(&self, field: &StructuralField) -> Result<TokenStream> {
@@ -116,5 +122,28 @@ impl RustPrinter {
     pub fn print_type_vec(&self, ty: &TypeVec) -> Result<TokenStream> {
         let elem = self.print_type(ty.ty.as_ref())?;
         Ok(quote!(Vec<#elem>))
+    }
+
+    pub fn print_type_tuple(&self, tuple: &TypeTuple) -> Result<TokenStream> {
+        let elems: Vec<_> = tuple
+            .types
+            .iter()
+            .map(|ty| self.print_type(ty))
+            .try_collect()?;
+
+        let tokens = match elems.len() {
+            0 => quote!(()),
+            1 => {
+                let elem = &elems[0];
+                quote!((#elem,))
+            }
+            _ => quote!((#(#elems),*)),
+        };
+
+        Ok(tokens)
+    }
+
+    fn print_type_enum_ref(&self, enum_ty: &TypeEnum) -> TokenStream {
+        self.print_ident(&enum_ty.name)
     }
 }
