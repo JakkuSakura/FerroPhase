@@ -151,6 +151,11 @@ impl Pipeline {
         }
     }
 
+    pub fn set_serializer(&mut self, serializer: Arc<dyn AstSerializer>) {
+        register_threadlocal_serializer(serializer.clone());
+        self.serializer = Some(serializer);
+    }
+
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.default_runtime = runtime_name.to_string();
     }

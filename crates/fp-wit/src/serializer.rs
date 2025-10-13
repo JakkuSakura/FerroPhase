@@ -1,122 +1,229 @@
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use std::mem;
 
 use fp_core::ast::{
-    self, AstSerializer, Expr, ExprKind, FunctionSignature, Ident, Item, ItemImpl, ItemKind,
-    Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive, Visibility,
+    self, AstSerializer, Expr, ExprInvokeTarget, ExprKind, FunctionSignature, Ident, Item,
+    ItemImpl, ItemKind, Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive, Value, Visibility,
 };
 use fp_core::error::{Error as CoreError, Result};
 
 /// Serializes FerroPhase AST nodes into WIT source text.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct WitSerializer;
+#[derive(Debug, Clone)]
+pub struct WitSerializer {
+    options: WitOptions,
+}
 
 impl WitSerializer {
     pub fn new() -> Self {
-        Self
+        Self::with_options(WitOptions::default())
     }
+
+    pub fn with_options(options: WitOptions) -> Self {
+        Self { options }
+    }
+
+    pub fn with_world_mode(world_mode: WorldMode) -> Self {
+        let mut options = WitOptions::default();
+        options.world_mode = world_mode;
+        Self::with_options(options)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WitOptions {
+    pub package: String,
+    pub root_interface: String,
+    pub world_mode: WorldMode,
+}
+
+impl Default for WitOptions {
+    fn default() -> Self {
+        Self {
+            package: "ferrophase:generated".to_string(),
+            root_interface: "ferrophase".to_string(),
+            world_mode: WorldMode::PerPackage,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum WorldMode {
+    Single { world_name: String },
+    PerPackage,
 }
 
 impl AstSerializer for WitSerializer {
     fn serialize_node(&self, node: &Node) -> Result<String> {
-        let mut emitter = WitEmitter::new();
+        let mut emitter = WitEmitter::new(self.options.clone());
         emitter.emit_node(node)?;
         Ok(emitter.finish())
     }
 }
 
+#[derive(Clone)]
+struct ReceiverContext {
+    namespace: Option<String>,
+    type_name: String,
+}
+
 struct WitEmitter {
+    options: WitOptions,
     root: InterfaceBuilder,
-    interfaces: Vec<String>,
-    exports: Vec<String>,
+    interfaces: HashMap<String, InterfaceBuilder>,
+    exports: HashSet<String>,
+    interface_packages: HashMap<String, String>,
 }
 
 impl WitEmitter {
-    fn new() -> Self {
+    fn new(options: WitOptions) -> Self {
+        let root_name = options.root_interface.clone();
         Self {
-            root: InterfaceBuilder::new("ferrophase".to_string()),
-            interfaces: Vec::new(),
-            exports: Vec::new(),
+            options,
+            root: InterfaceBuilder::new(root_name.clone(), root_name),
+            interfaces: HashMap::new(),
+            exports: HashSet::new(),
+            interface_packages: HashMap::new(),
         }
     }
 
     fn emit_node(&mut self, node: &Node) -> Result<()> {
         match node.kind() {
             NodeKind::File(file) => {
-                let mut root = mem::take(&mut self.root);
                 for item in &file.items {
-                    self.emit_into_builder(item, None, &mut root)?;
+                    self.emit_item(item, None, None, None, None)?;
                 }
-                self.root = root;
                 Ok(())
             }
-            NodeKind::Item(item) => {
-                let mut root = mem::take(&mut self.root);
-                let result = self.emit_into_builder(item, None, &mut root);
-                self.root = root;
-                result
-            }
+            NodeKind::Item(item) => self.emit_item(item, None, None, None, None),
             NodeKind::Expr(_) => Err(CoreError::from(
                 "WIT serialization expects a file or module-level item".to_string(),
             )),
         }
     }
 
-    fn emit_into_builder(
+    fn emit_item(
         &mut self,
         item: &Item,
         scope: Option<String>,
-        builder: &mut InterfaceBuilder,
+        current_interface: Option<String>,
+        current_package: Option<String>,
+        receiver_ctx: Option<ReceiverContext>,
     ) -> Result<()> {
         let scope_ref = scope.as_deref();
         match item.kind() {
             ItemKind::Module(module) => {
-                let interface_name = interface_name(scope.as_deref(), &module.name);
-                let mut child = InterfaceBuilder::new(interface_name.clone());
+                let interface_name = interface_name(scope_ref, &module.name);
+                let package = if scope.is_none() {
+                    interface_name.clone()
+                } else {
+                    current_package
+                        .clone()
+                        .or_else(|| {
+                            scope_ref.and_then(|name| self.interface_packages.get(name).cloned())
+                        })
+                        .unwrap_or_else(|| interface_name.clone())
+                };
+                self.interface_packages
+                    .entry(interface_name.clone())
+                    .or_insert_with(|| package.clone());
                 for inner in &module.items {
-                    self.emit_into_builder(inner, Some(interface_name.clone()), &mut child)?;
+                    self.emit_item(
+                        inner,
+                        Some(interface_name.clone()),
+                        Some(interface_name.clone()),
+                        Some(package.clone()),
+                        None,
+                    )?;
                 }
-                if child.has_entries() {
-                    if !self.exports.contains(&interface_name) {
-                        self.exports.push(interface_name.clone());
-                    }
-                    self.interfaces.push(child.finish());
+                if self
+                    .interfaces
+                    .get(&interface_name)
+                    .map(|builder| builder.has_entries())
+                    .unwrap_or(false)
+                {
+                    self.exports.insert(interface_name);
+                } else {
+                    self.interfaces.remove(&interface_name);
                 }
                 Ok(())
             }
             ItemKind::Impl(impl_block) => {
-                if let Some(interface_name) = impl_interface_name(scope.as_deref(), impl_block) {
-                    let mut child = InterfaceBuilder::new(interface_name.clone());
+                if let Some(interface_name) = impl_interface_name(scope_ref, impl_block) {
+                    let package = current_package
+                        .clone()
+                        .or_else(|| {
+                            scope_ref.and_then(|name| self.interface_packages.get(name).cloned())
+                        })
+                        .unwrap_or_else(|| interface_name.clone());
+                    self.interface_packages
+                        .entry(interface_name.clone())
+                        .or_insert_with(|| package.clone());
+                    let type_name = locator_to_ident_from_expr(&impl_block.self_ty)
+                        .map(|ident| sanitize_type_identifier(ident.as_str()))
+                        .unwrap_or_else(|| "self".to_string());
+                    let receiver = ReceiverContext {
+                        namespace: scope_ref.map(|s| s.to_string()),
+                        type_name,
+                    };
                     for inner in &impl_block.items {
-                        self.emit_into_builder(inner, Some(interface_name.clone()), &mut child)?;
+                        self.emit_item(
+                            inner,
+                            Some(interface_name.clone()),
+                            Some(interface_name.clone()),
+                            Some(package.clone()),
+                            Some(receiver.clone()),
+                        )?;
                     }
-                    if child.has_entries() {
-                        if !self.exports.contains(&interface_name) {
-                            self.exports.push(interface_name.clone());
-                        }
-                        self.interfaces.push(child.finish());
+                    if self
+                        .interfaces
+                        .get(&interface_name)
+                        .map(|builder| builder.has_entries())
+                        .unwrap_or(false)
+                    {
+                        self.exports.insert(interface_name);
+                    } else {
+                        self.interfaces.remove(&interface_name);
                     }
                 }
                 Ok(())
             }
             ItemKind::DefStruct(def) => {
-                builder.add_struct(def);
+                self.builder_for(current_interface.as_deref(), current_package.as_deref())
+                    .add_struct(def);
                 Ok(())
             }
             ItemKind::DefEnum(def) => {
-                builder.add_enum(def);
+                self.builder_for(current_interface.as_deref(), current_package.as_deref())
+                    .add_enum(def);
                 Ok(())
             }
             ItemKind::DefType(def) => {
-                builder.add_alias(def);
+                self.builder_for(current_interface.as_deref(), current_package.as_deref())
+                    .add_alias(def);
                 Ok(())
             }
             ItemKind::DefFunction(def) => {
-                builder.add_function(&def.sig, &def.name, def.visibility, scope_ref);
+                self.builder_for(current_interface.as_deref(), current_package.as_deref())
+                    .add_function(
+                        &def.sig,
+                        &def.name,
+                        def.visibility,
+                        receiver_ctx.as_ref(),
+                        current_package.as_deref(),
+                        scope_ref,
+                    );
                 Ok(())
             }
             ItemKind::DeclFunction(decl) => {
-                builder.add_function(&decl.sig, &decl.name, Visibility::Public, scope_ref);
+                self.builder_for(current_interface.as_deref(), current_package.as_deref())
+                    .add_function(
+                        &decl.sig,
+                        &decl.name,
+                        Visibility::Public,
+                        receiver_ctx.as_ref(),
+                        current_package.as_deref(),
+                        scope_ref,
+                    );
                 Ok(())
             }
             ItemKind::Expr(_)
@@ -132,37 +239,93 @@ impl WitEmitter {
         }
     }
 
+    fn builder_for(
+        &mut self,
+        interface: Option<&str>,
+        package: Option<&str>,
+    ) -> &mut InterfaceBuilder {
+        match interface {
+            Some(name) => {
+                let package_name = package
+                    .map(|s| s.to_string())
+                    .or_else(|| self.interface_packages.get(name).cloned())
+                    .unwrap_or_else(|| name.to_string());
+                self.interface_packages
+                    .entry(name.to_string())
+                    .or_insert_with(|| package_name.clone());
+                self.interfaces
+                    .entry(name.to_string())
+                    .or_insert_with(|| InterfaceBuilder::new(name.to_string(), package_name))
+            }
+            None => &mut self.root,
+        }
+    }
+
     fn finish(mut self) -> String {
+        let mut rendered: Vec<RenderedInterface> = self
+            .interfaces
+            .drain()
+            .map(|(_, builder)| builder.finish())
+            .collect();
+
         if self.root.has_entries() {
             let root_name = self.root.name().to_string();
-            if !self.exports.contains(&root_name) {
-                self.exports.push(root_name.clone());
-            }
-            self.interfaces.insert(0, self.root.finish());
+            self.exports.insert(root_name.clone());
+            rendered.push(self.root.finish());
         }
 
-        self.interfaces.sort();
-        self.interfaces.dedup();
-
-        self.exports.sort();
-        self.exports.dedup();
+        rendered.sort_by(|a, b| a.name.cmp(&b.name));
+        rendered.dedup_by(|a, b| a.name == b.name);
 
         let mut output = String::new();
-        let _ = writeln!(output, "package ferrophase:generated;\n");
+        let _ = writeln!(output, "package {};\n", self.options.package);
 
-        for interface in self.interfaces {
-            output.push_str(&interface);
-            if !interface.ends_with('\n') {
+        for interface in &rendered {
+            output.push_str(&interface.source);
+            if !interface.source.ends_with('\n') {
                 output.push('\n');
             }
         }
 
-        if !self.exports.is_empty() {
-            let _ = writeln!(output, "world ferrophase {{");
-            for export in self.exports {
-                let _ = writeln!(output, "    export {export};");
+        let package_by_interface: HashMap<_, _> = rendered
+            .iter()
+            .map(|ri| (ri.name.clone(), ri.package.clone()))
+            .collect();
+
+        match &self.options.world_mode {
+            WorldMode::Single { world_name } => {
+                let mut exports: Vec<String> = self.exports.into_iter().collect();
+                exports.sort();
+                if !exports.is_empty() {
+                    let _ = writeln!(output, "world {world_name} {{");
+                    for export in exports {
+                        let _ = writeln!(output, "    export {export};");
+                    }
+                    let _ = writeln!(output, "}}");
+                }
             }
-            let _ = writeln!(output, "}}");
+            WorldMode::PerPackage => {
+                let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+                for export in &self.exports {
+                    if let Some(package) = package_by_interface.get(export) {
+                        grouped
+                            .entry(package.clone())
+                            .or_default()
+                            .push(export.clone());
+                    }
+                }
+                let mut packages: Vec<_> = grouped.into_iter().collect();
+                packages.sort_by(|a, b| a.0.cmp(&b.0));
+                for (package, mut exports) in packages {
+                    exports.sort();
+                    let world_name = sanitize_identifier(&format!("{package}-world"));
+                    let _ = writeln!(output, "world {world_name} {{");
+                    for export in exports {
+                        let _ = writeln!(output, "    export {export};");
+                    }
+                    let _ = writeln!(output, "}}\n");
+                }
+            }
         }
 
         output
@@ -172,14 +335,22 @@ impl WitEmitter {
 #[derive(Debug)]
 struct InterfaceBuilder {
     name: String,
+    package: String,
     entries: Vec<InterfaceEntry>,
+    seen_functions: HashSet<String>,
+    uses: HashMap<String, HashSet<String>>,
+    defined_types: HashSet<String>,
 }
 
 impl InterfaceBuilder {
-    fn new(name: String) -> Self {
+    fn new(name: String, package: String) -> Self {
         Self {
             name,
+            package,
             entries: Vec::new(),
+            seen_functions: HashSet::new(),
+            uses: HashMap::new(),
+            defined_types: HashSet::new(),
         }
     }
 
@@ -192,42 +363,55 @@ impl InterfaceBuilder {
     }
 
     fn add_struct(&mut self, def: &ast::ItemDefStruct) {
-        let fields = def
-            .value
-            .fields
-            .iter()
-            .map(|field| (ident_to_wit(&field.name), ty_to_wit(&field.value)))
-            .collect();
-        self.entries.push(InterfaceEntry::Record {
-            name: ident_to_wit(&def.name),
-            fields,
-        });
+        let package_name = self.package.clone();
+        let mut fields = Vec::new();
+        for field in &def.value.fields {
+            let wit_ty = ty_to_wit(&field.value);
+            self.register_type_use(&field.value, &wit_ty, Some(package_name.as_str()), None);
+            fields.push((sanitize_identifier(field.name.as_str()), wit_ty));
+        }
+        let name = sanitize_type_identifier(def.name.as_str());
+        self.defined_types.insert(name.clone());
+        self.entries.push(InterfaceEntry::Record { name, fields });
     }
 
     fn add_enum(&mut self, def: &ast::ItemDefEnum) {
-        let cases = def
-            .value
-            .variants
-            .iter()
-            .map(|variant| {
-                let assoc = match &variant.value {
-                    ast::Ty::Unit(_) => None,
-                    other => Some(ty_to_wit(other)),
-                };
-                (ident_to_wit(&variant.name), assoc)
-            })
-            .collect();
-        self.entries.push(InterfaceEntry::Variant {
-            name: ident_to_wit(&def.name),
-            cases,
-        });
+        let name = sanitize_type_identifier(def.name.as_str());
+        if ENUMS_AS_STRINGS.contains(&name.as_str()) {
+            self.defined_types.insert(name.clone());
+            self.entries.push(InterfaceEntry::Alias {
+                name,
+                target: "string".to_string(),
+            });
+            return;
+        }
+        let package_name = self.package.clone();
+        let mut cases = Vec::new();
+        for variant in &def.value.variants {
+            let assoc = match &variant.value {
+                ast::Ty::Unit(_) => None,
+                other => {
+                    let wit_ty = ty_to_wit(other);
+                    self.register_type_use(other, &wit_ty, Some(package_name.as_str()), None);
+                    Some(wit_ty)
+                }
+            };
+            cases.push((ident_to_wit(&variant.name), assoc));
+        }
+        self.defined_types.insert(name.clone());
+        self.entries.push(InterfaceEntry::Variant { name, cases });
     }
 
     fn add_alias(&mut self, def: &ast::ItemDefType) {
-        self.entries.push(InterfaceEntry::Alias {
-            name: ident_to_wit(&def.name),
-            target: ty_to_wit(&def.value),
-        });
+        let name = sanitize_type_identifier(def.name.as_str());
+        let target = ty_to_wit(&def.value);
+        let package_name = self.package.clone();
+        self.register_type_use(&def.value, &target, Some(package_name.as_str()), None);
+        if name == target {
+            return;
+        }
+        self.defined_types.insert(name.clone());
+        self.entries.push(InterfaceEntry::Alias { name, target });
     }
 
     fn add_function(
@@ -235,13 +419,26 @@ impl InterfaceBuilder {
         sig: &FunctionSignature,
         name: &Ident,
         _visibility: Visibility,
+        receiver_ctx: Option<&ReceiverContext>,
+        current_package: Option<&str>,
         receiver_scope: Option<&str>,
     ) {
         let mut params = Vec::new();
         if sig.receiver.is_some() {
-            let ty = receiver_scope
-                .map(sanitize_identifier)
-                .unwrap_or_else(|| "self".to_string());
+            let ty = receiver_ctx
+                .map(|ctx| ctx.type_name.clone())
+                .unwrap_or_else(|| {
+                    receiver_scope
+                        .map(sanitize_identifier)
+                        .unwrap_or_else(|| "self".to_string())
+                });
+            if let Some(ctx) = receiver_ctx {
+                if let Some(namespace) = &ctx.namespace {
+                    if namespace != &self.name {
+                        self.add_use(namespace, &ctx.type_name);
+                    }
+                }
+            }
             params.push(("self".to_string(), ty));
         }
 
@@ -251,24 +448,44 @@ impl InterfaceBuilder {
             } else {
                 ident_to_wit(&param.name)
             };
-            params.push((pname, ty_to_wit_with_self(&param.ty, receiver_scope)));
+            let wit_ty = ty_to_wit_with_self(&param.ty, receiver_scope);
+            self.register_type_use(&param.ty, &wit_ty, current_package, receiver_ctx);
+            params.push((pname, wit_ty));
         }
 
-        let result = sig
-            .ret_ty
-            .as_ref()
-            .map(|ty| ty_to_wit_with_self(ty, receiver_scope));
+        let result = sig.ret_ty.as_ref().map(|ty| {
+            let wit_ty = ty_to_wit_with_self(ty, receiver_scope);
+            self.register_type_use(ty, &wit_ty, current_package, receiver_ctx);
+            wit_ty
+        });
+
+        let function_name = ident_to_wit(name);
+        if !self.seen_functions.insert(function_name.clone()) {
+            return;
+        }
 
         self.entries.push(InterfaceEntry::Function {
-            name: ident_to_wit(name),
+            name: function_name,
             params,
             result,
         });
     }
 
-    fn finish(self) -> String {
+    fn finish(mut self) -> RenderedInterface {
+        self.ensure_aliases();
+
         let mut out = String::new();
         let _ = writeln!(out, "interface {} {{", self.name);
+        if !self.uses.is_empty() {
+            let mut namespaces: Vec<_> = self.uses.into_iter().collect();
+            namespaces.sort_by(|a, b| a.0.cmp(&b.0));
+            for (namespace, names) in namespaces {
+                let mut items: Vec<_> = names.into_iter().collect();
+                items.sort();
+                let joined = items.join(", ");
+                let _ = writeln!(out, "    use {namespace}.{{{joined}}};\n");
+            }
+        }
         for entry in self.entries {
             match entry {
                 InterfaceEntry::Record { name, fields } => {
@@ -316,13 +533,366 @@ impl InterfaceBuilder {
             }
         }
         let _ = writeln!(out, "}}\n");
-        out
+        RenderedInterface {
+            name: self.name,
+            package: self.package,
+            source: out,
+        }
     }
 }
 
 impl Default for InterfaceBuilder {
     fn default() -> Self {
-        Self::new(String::new())
+        Self::new(String::new(), String::new())
+    }
+}
+
+impl InterfaceBuilder {
+    fn add_use(&mut self, namespace: &str, name: &str) {
+        let entry = self
+            .uses
+            .entry(namespace.to_string())
+            .or_insert_with(HashSet::new);
+        entry.insert(name.to_string());
+    }
+
+    fn register_type_use(
+        &mut self,
+        ty: &Ty,
+        _wit_ty: &str,
+        current_package: Option<&str>,
+        receiver_ctx: Option<&ReceiverContext>,
+    ) {
+        let mut references = Vec::new();
+        collect_type_references(ty, &mut references);
+
+        for (namespace, name) in references {
+            if Some(namespace.as_str()) == current_package {
+                continue;
+            }
+            if receiver_ctx
+                .and_then(|ctx| ctx.namespace.as_deref())
+                .map(|ns| ns == namespace)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if namespace == self.name {
+                continue;
+            }
+            if namespace.is_empty() || !namespace.starts_with("fp-") {
+                continue;
+            }
+            self.add_use(&namespace, &name);
+        }
+    }
+
+    fn rewrite_type_usages(&mut self, target: &str, replacement: &str) {
+        for entry in &mut self.entries {
+            match entry {
+                InterfaceEntry::Record { fields, .. } => {
+                    for (_, ty) in fields {
+                        *ty = rewrite_type_token(target, replacement, ty);
+                    }
+                }
+                InterfaceEntry::Variant { cases, .. } => {
+                    for (_, assoc) in cases {
+                        if let Some(ty) = assoc {
+                            *ty = rewrite_type_token(target, replacement, ty);
+                        }
+                    }
+                }
+                InterfaceEntry::Alias { target: alias_target, .. } => {
+                    *alias_target = rewrite_type_token(target, replacement, alias_target);
+                }
+                InterfaceEntry::Function { params, result, .. } => {
+                    for (_, ty) in params {
+                        *ty = rewrite_type_token(target, replacement, ty);
+                    }
+                    if let Some(res_ty) = result {
+                        *res_ty = rewrite_type_token(target, replacement, res_ty);
+                    }
+                }
+            }
+        }
+    }
+
+    fn ensure_aliases(&mut self) {
+        let mut referenced = HashSet::new();
+        for entry in &self.entries {
+            collect_entry_types(entry, &mut referenced);
+        }
+
+        if referenced.is_empty() {
+            return;
+        }
+
+        let function_names: HashSet<String> = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                InterfaceEntry::Function { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let mut alias_types = Vec::new();
+        for ty in referenced {
+            if !self.needs_alias(&ty) {
+                continue;
+            }
+            if function_names.contains(&ty) {
+                self.rewrite_type_usages(&ty, "string");
+                continue;
+            }
+            alias_types.push(ty);
+        }
+
+        if alias_types.is_empty() {
+            return;
+        }
+
+        alias_types.sort();
+        for ty in alias_types.into_iter().rev() {
+            self.entries.insert(
+                0,
+                InterfaceEntry::Alias {
+                    name: ty.clone(),
+                    target: "string".to_string(),
+                },
+            );
+            self.defined_types.insert(ty);
+        }
+    }
+
+    fn needs_alias(&self, ty: &str) -> bool {
+        if ty.is_empty() {
+            return false;
+        }
+        if is_builtin_wit_type(ty) {
+            return false;
+        }
+        if self.defined_types.contains(ty) {
+            return false;
+        }
+        if self
+            .uses
+            .values()
+            .any(|names| names.contains(ty))
+        {
+            return false;
+        }
+        if ty.chars().all(|ch| ch.is_ascii_digit()) {
+            return false;
+        }
+        true
+    }
+}
+
+#[derive(Debug)]
+struct RenderedInterface {
+    name: String,
+    package: String,
+    source: String,
+}
+
+fn collect_entry_types(entry: &InterfaceEntry, out: &mut HashSet<String>) {
+    match entry {
+        InterfaceEntry::Record { fields, .. } => {
+            for (_, ty) in fields {
+                collect_type_tokens(ty, out);
+            }
+        }
+        InterfaceEntry::Variant { cases, .. } => {
+            for (_, assoc) in cases {
+                if let Some(ty) = assoc {
+                    collect_type_tokens(ty, out);
+                }
+            }
+        }
+        InterfaceEntry::Alias { target, .. } => {
+            collect_type_tokens(target, out);
+        }
+        InterfaceEntry::Function { params, result, .. } => {
+            for (_, ty) in params {
+                collect_type_tokens(ty, out);
+            }
+            if let Some(ty) = result {
+                collect_type_tokens(ty, out);
+            }
+        }
+    }
+}
+
+fn collect_type_tokens(ty: &str, out: &mut HashSet<String>) {
+    let mut current = String::new();
+    for ch in ty.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            out.insert(current.clone());
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        out.insert(current);
+    }
+}
+
+fn rewrite_type_token(target: &str, replacement: &str, ty: &str) -> String {
+    if !ty.contains(target) {
+        return ty.to_string();
+    }
+
+    let mut result = String::with_capacity(ty.len());
+    let mut current = String::new();
+    for ch in ty.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            current.push(ch);
+        } else {
+            if !current.is_empty() {
+                if current == target {
+                    result.push_str(replacement);
+                } else {
+                    result.push_str(&current);
+                }
+                current.clear();
+            }
+            result.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        if current == target {
+            result.push_str(replacement);
+        } else {
+            result.push_str(&current);
+        }
+    }
+    result
+}
+
+const BUILTIN_WIT_TYPES: &[&str] = &[
+    "bool",
+    "string",
+    "char",
+    "s8",
+    "s16",
+    "s32",
+    "s64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "f32",
+    "f64",
+    "tuple",
+    "list",
+    "option",
+    "result",
+    "future",
+    "stream",
+    "func",
+];
+
+fn is_builtin_wit_type(name: &str) -> bool {
+    BUILTIN_WIT_TYPES.contains(&name)
+}
+
+const ENUMS_AS_STRINGS: &[&str] = &["scheme-type"];
+
+fn collect_type_references(ty: &Ty, out: &mut Vec<(String, String)>) {
+    match ty {
+        Ty::Reference(reference) => collect_type_references(&reference.ty, out),
+        Ty::Vec(vec_ty) => collect_type_references(vec_ty.ty.as_ref(), out),
+        Ty::Array(array) => collect_type_references(array.elem.as_ref(), out),
+        Ty::Slice(slice) => collect_type_references(slice.elem.as_ref(), out),
+        Ty::Tuple(tuple) => tuple
+            .types
+            .iter()
+            .for_each(|ty| collect_type_references(ty, out)),
+        Ty::Expr(expr) => collect_type_references_expr(expr, out),
+        Ty::Value(_) => {}
+        _ => {}
+    }
+}
+
+fn collect_type_references_expr(expr: &Expr, out: &mut Vec<(String, String)>) {
+    match expr.kind() {
+        ExprKind::Locator(locator) => {
+            if let Some((namespace, name)) = locator_namespace_and_name(locator) {
+                out.push((namespace, name));
+            }
+        }
+        ExprKind::Invoke(invoke) => {
+            match &invoke.target {
+                ExprInvokeTarget::Function(locator) => {
+                    if let Some((namespace, name)) = locator_namespace_and_name(locator) {
+                        out.push((namespace, name));
+                    }
+                }
+                ExprInvokeTarget::Type(ty) => collect_type_references(ty, out),
+                ExprInvokeTarget::Expr(inner) => collect_type_references_expr(inner, out),
+                _ => {}
+            }
+            for arg in &invoke.args {
+                collect_type_references_expr(arg, out);
+            }
+        }
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::Type(ty) => collect_type_references(ty, out),
+            _ => {}
+        },
+        _ => {}
+    }
+}
+
+fn locator_namespace_and_name(locator: &Locator) -> Option<(String, String)> {
+    match locator {
+        Locator::Path(path) => {
+            if path.segments.is_empty() {
+                return None;
+            }
+            let mut segments: Vec<String> = path
+                .segments
+                .iter()
+                .map(|seg| sanitize_identifier(seg.as_str()))
+                .collect();
+            if segments.len() < 2 {
+                return None;
+            }
+            let name = segments.pop()?;
+            let namespace = segments.join("-");
+            if namespace.starts_with("fp-core-error")
+                || namespace.starts_with("fp-core-ast")
+                || namespace.starts_with("fp-core-span")
+            {
+                return None;
+            }
+            Some((namespace, name))
+        }
+        Locator::ParameterPath(path) => {
+            if path.segments.is_empty() {
+                return None;
+            }
+            let mut segments: Vec<String> = path
+                .segments
+                .iter()
+                .map(|seg| sanitize_identifier(seg.ident.as_str()))
+                .collect();
+            if segments.len() < 2 {
+                return None;
+            }
+            let name = segments.pop()?;
+            let namespace = segments.join("-");
+            if namespace.starts_with("fp-core-error")
+                || namespace.starts_with("fp-core-ast")
+                || namespace.starts_with("fp-core-span")
+            {
+                return None;
+            }
+            Some((namespace, name))
+        }
+        _ => None,
     }
 }
 
@@ -359,16 +929,81 @@ fn ident_to_wit(ident: &Ident) -> String {
     sanitize_identifier(ident.as_str())
 }
 
+const WIT_KEYWORDS: &[&str] = &[
+    "as",
+    "async",
+    "bool",
+    "case",
+    "component",
+    "const",
+    "consume",
+    "enum",
+    "export",
+    "extern",
+    "f32",
+    "f64",
+    "flags",
+    "func",
+    "future",
+    "handle",
+    "import",
+    "include",
+    "interface",
+    "list",
+    "option",
+    "own",
+    "package",
+    "record",
+    "repeat",
+    "resource",
+    "result",
+    "s8",
+    "s16",
+    "s32",
+    "s64",
+    "stream",
+    "string",
+    "tuple",
+    "type",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "union",
+    "use",
+    "variant",
+    "world",
+];
+
 fn sanitize_identifier(raw: &str) -> String {
     let mut result = String::new();
+    let mut prev_is_alnum = false;
     for ch in raw.chars() {
-        let mapped = match ch {
-            'a'..='z' | '0'..='9' => ch,
-            'A'..='Z' => ch.to_ascii_lowercase(),
-            '_' | '-' => '-',
-            _ => '-',
-        };
-        result.push(mapped);
+        match ch {
+            'a'..='z' | '0'..='9' => {
+                result.push(ch);
+                prev_is_alnum = true;
+            }
+            'A'..='Z' => {
+                if prev_is_alnum && !result.ends_with('-') {
+                    result.push('-');
+                }
+                result.push(ch.to_ascii_lowercase());
+                prev_is_alnum = true;
+            }
+            '_' | '-' => {
+                if !result.ends_with('-') {
+                    result.push('-');
+                }
+                prev_is_alnum = false;
+            }
+            _ => {
+                if !result.ends_with('-') {
+                    result.push('-');
+                }
+                prev_is_alnum = false;
+            }
+        }
     }
     while result.contains("--") {
         result = result.replace("--", "-");
@@ -380,7 +1015,25 @@ fn sanitize_identifier(raw: &str) -> String {
     if result.chars().next().unwrap().is_ascii_digit() {
         result.insert(0, '_');
     }
+    if WIT_KEYWORDS.contains(&result.as_str()) {
+        result.push_str("-value");
+    }
     result
+}
+
+fn sanitize_type_identifier(raw: &str) -> String {
+    let ident = sanitize_identifier(raw);
+    match ident.as_str() {
+        "bool-value" if raw.eq_ignore_ascii_case("bool") => "bool".to_string(),
+        "char-value" if raw.eq_ignore_ascii_case("char") => "char".to_string(),
+        "string-value" if raw.eq_ignore_ascii_case("string") => "string".to_string(),
+        _ if raw.eq_ignore_ascii_case("str") => "string".to_string(),
+        "option-value" if raw.eq_ignore_ascii_case("option") => "option".to_string(),
+        "result-value" if raw.eq_ignore_ascii_case("result") => "result".to_string(),
+        "list-value" if raw.eq_ignore_ascii_case("list") => "list".to_string(),
+        "tuple-value" if raw.eq_ignore_ascii_case("tuple") => "tuple".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn impl_interface_name(parent: Option<&str>, impl_block: &ItemImpl) -> Option<String> {
@@ -400,6 +1053,13 @@ fn locator_to_ident(locator: &Locator) -> Option<&Ident> {
     match locator {
         Locator::Ident(ident) => Some(ident),
         Locator::Path(path) => path.segments.last(),
+        _ => None,
+    }
+}
+
+fn locator_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
+    match expr.kind() {
+        ExprKind::Locator(locator) => locator_to_ident(locator),
         _ => None,
     }
 }
@@ -454,9 +1114,9 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
             let inner = ty_to_wit_with_self(slice.elem.as_ref(), self_name);
             format!("list<{inner}>")
         }
-        Ty::Struct(s) => ident_to_wit(&s.name),
-        Ty::Enum(e) => ident_to_wit(&e.name),
-        Ty::Unit(_) => "unit".to_string(),
+        Ty::Struct(s) => normalize_type_name(sanitize_type_identifier(s.name.as_str())),
+        Ty::Enum(e) => normalize_type_name(sanitize_type_identifier(e.name.as_str())),
+        Ty::Unit(_) => "tuple<>".to_string(),
         Ty::Any(_) | Ty::AnyBox(_) => "string".to_string(),
         Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "string".to_string()),
         Ty::Value(_) => "string".to_string(),
@@ -469,15 +1129,89 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
 
 fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
     match expr.kind() {
-        ExprKind::Locator(locator) => match locator {
-            Locator::Ident(ident) if ident.as_str() == "Self" => self_name.map(sanitize_identifier),
-            Locator::Ident(ident) => Some(sanitize_identifier(ident.as_str())),
-            Locator::Path(path) => path
-                .segments
-                .last()
-                .map(|ident| sanitize_identifier(ident.as_str())),
+        ExprKind::Locator(locator) => locator_to_wit_type(locator, self_name),
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::Type(ty) => Some(ty_to_wit_with_self(ty, self_name)),
             _ => None,
         },
+        ExprKind::Invoke(invoke) => {
+            let base = match &invoke.target {
+                ExprInvokeTarget::Function(locator) => locator_to_wit_type(locator, self_name),
+                ExprInvokeTarget::Type(ty) => Some(ty_to_wit_with_self(ty, self_name)),
+                ExprInvokeTarget::Expr(inner) => expr_to_wit_type(inner, self_name),
+                _ => None,
+            }?;
+
+            let mut args = Vec::new();
+            for arg in &invoke.args {
+                if let Some(arg_ty) = expr_to_wit_type(arg, self_name) {
+                    args.push(arg_ty);
+                } else if let Some(ty) = arg.ty() {
+                    args.push(ty_to_wit_with_self(ty, self_name));
+                }
+            }
+
+            if args.is_empty() {
+                Some(base)
+            } else {
+                Some(format!("{base}<{}>", args.join(", ")))
+            }
+        }
         _ => None,
+    }
+}
+
+fn locator_to_wit_type(locator: &Locator, self_name: Option<&str>) -> Option<String> {
+    match locator {
+        Locator::Ident(ident) if ident.as_str() == "Self" => {
+            self_name.map(|name| sanitize_identifier(name))
+        }
+        Locator::Ident(ident) => {
+            if matches!(ident.as_str(), "Error" | "Span") {
+                return Some("string".to_string());
+            }
+            Some(normalize_type_name(sanitize_type_identifier(
+                ident.as_str(),
+            )))
+        }
+        Locator::Path(path) => {
+            if let Some(first) = path.segments.first() {
+                if matches!(first.as_str(), "std" | "core" | "alloc") {
+                    if path
+                        .segments
+                        .last()
+                        .map(|ident| ident.as_str())
+                        .map(|name| name == "Error")
+                        .unwrap_or(false)
+                    {
+                        return Some("string".to_string());
+                    }
+                }
+            }
+            let segments: Vec<String> = path
+                .segments
+                .iter()
+                .map(|seg| sanitize_identifier(seg.as_str()))
+                .collect();
+            if matches!(segments.first().map(String::as_str), Some("clap-complete")) {
+                return Some("string".to_string());
+            }
+            if segments.len() >= 2 && segments[0] == "fp-core" {
+                if matches!(segments[1].as_str(), "error" | "ast" | "span") {
+                    return Some("string".to_string());
+                }
+            }
+            path.segments
+                .last()
+                .map(|ident| normalize_type_name(sanitize_type_identifier(ident.as_str())))
+        }
+        _ => None,
+    }
+}
+
+fn normalize_type_name(name: String) -> String {
+    match name.as_str() {
+        "pathbuf" | "path" | "path-buf" => "string".to_string(),
+        _ => name,
     }
 }
