@@ -6,9 +6,9 @@ use syn::parse::ParseStream;
 use syn::{parse_quote, FieldsNamed, Token};
 
 use fp_core::ast::{
-    DecimalType, Expr, ExprBinOp, ExprKind, StructuralField, Ty, TypeAny, TypeArray, TypeBounds,
-    TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
-    TypeVec,
+    DecimalType, Expr, ExprBinOp, ExprInvoke, ExprInvokeTarget, ExprKind, StructuralField, Ty,
+    TypeAny, TypeArray, TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice,
+    TypeStruct, TypeStructural, TypeVec, Value,
 };
 use fp_core::ast::{Ident, Path};
 use fp_core::ops::BinOpKind;
@@ -40,6 +40,10 @@ impl RustParser {
             syn::Type::Path(p) => {
                 if let Some(vec_ty) = self.parse_vec_type(&p)? {
                     vec_ty
+                } else if let Some(option_ty) = self.parse_option_type(&p)? {
+                    option_ty
+                } else if let Some(result_ty) = self.parse_result_type(&p)? {
+                    result_ty
                 } else {
                     let s = p.path.to_token_stream().to_string();
                     fn int(ty: TypeInt) -> Ty {
@@ -107,6 +111,71 @@ impl RustParser {
         }
 
         Ok(None)
+    }
+
+    fn parse_option_type(&self, type_path: &syn::TypePath) -> Result<Option<Ty>> {
+        if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
+            let segment = &type_path.path.segments[0];
+            if segment.ident == "Option" {
+                let inner_ty = self
+                    .first_type_argument(&segment.arguments)?
+                    .unwrap_or_else(|| Ty::Any(TypeAny));
+                let locator = self.parse_locator(type_path.path.clone())?;
+                let invoke = ExprInvoke {
+                    target: ExprInvokeTarget::Function(locator),
+                    args: vec![Expr::value(Value::Type(inner_ty))],
+                };
+                return Ok(Some(Ty::expr(Expr::from(invoke))));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn parse_result_type(&self, type_path: &syn::TypePath) -> Result<Option<Ty>> {
+        if type_path.qself.is_none() && type_path.path.segments.len() == 1 {
+            let segment = &type_path.path.segments[0];
+            if segment.ident == "Result" {
+                let args = self.type_arguments(&segment.arguments)?;
+                let locator = self.parse_locator(type_path.path.clone())?;
+
+                let invoke_args = if args.is_empty() {
+                    vec![Expr::value(Value::Type(Ty::Any(TypeAny)))]
+                } else {
+                    args.into_iter()
+                        .map(|ty| Expr::value(Value::Type(ty)))
+                        .collect()
+                };
+
+                let invoke = ExprInvoke {
+                    target: ExprInvokeTarget::Function(locator),
+                    args: invoke_args,
+                };
+                return Ok(Some(Ty::expr(Expr::from(invoke))));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn first_type_argument(&self, arguments: &syn::PathArguments) -> Result<Option<Ty>> {
+        self.type_arguments(arguments)
+            .map(|args| args.into_iter().next())
+    }
+
+    fn type_arguments(&self, arguments: &syn::PathArguments) -> Result<Vec<Ty>> {
+        match arguments {
+            syn::PathArguments::AngleBracketed(args) => args
+                .args
+                .iter()
+                .filter_map(|arg| match arg {
+                    syn::GenericArgument::Type(ty) => Some(self.parse_type_internal(ty.clone())),
+                    _ => None,
+                })
+                .collect(),
+            syn::PathArguments::None => Ok(Vec::new()),
+            _ => Ok(Vec::new()),
+        }
     }
 
     fn parse_type_slice_internal(&self, s: syn::TypeSlice) -> Result<Ty> {

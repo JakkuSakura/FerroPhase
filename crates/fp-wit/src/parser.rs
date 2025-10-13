@@ -4,11 +4,11 @@ use std::fs;
 use std::path::Path;
 
 use fp_core::ast::{
-    DecimalType, EnumTypeVariant, Expr, Ident, StructuralField, Ty, TypeAny, TypeArray, TypeEnum,
-    TypeInt, TypePrimitive, TypeStruct, TypeTuple, TypeUnit, TypeVec, Value,
+    DecimalType, Expr, Ident, StructuralField, Ty, TypeAny, TypeArray, TypeInt, TypePrimitive,
+    TypeStruct, TypeTuple, TypeVec, Value,
 };
 use wit_parser::{
-    Function, Interface, Package, Resolve, Type, TypeDef, TypeDefKind, TypeId, Variant,
+    Function, Interface, Package, Resolve, Type, TypeDef, TypeDefKind, TypeId,
 };
 
 use crate::error::{WitError, WitResult};
@@ -204,62 +204,10 @@ impl<'a> Lowering<'a> {
                     })
                     .collect::<WitResult<_>>()?,
             })),
-            TypeDefKind::Variant(variant) => self.lower_variant(typedef, type_id, variant),
-            TypeDefKind::Enum(enum_) => Ok(Ty::Enum(TypeEnum {
-                name: type_name_or_fallback(typedef, type_id),
-                variants: enum_
-                    .cases
-                    .iter()
-                    .map(|case| EnumTypeVariant {
-                        name: make_ident(&case.name),
-                        value: Ty::Unit(TypeUnit),
-                        discriminant: None,
-                    })
-                    .collect(),
-            })),
-            TypeDefKind::Option(inner) => Ok(Ty::Enum(TypeEnum {
-                name: type_name_or_fallback(typedef, type_id),
-                variants: vec![
-                    EnumTypeVariant {
-                        name: make_ident("none"),
-                        value: Ty::Unit(TypeUnit),
-                        discriminant: None,
-                    },
-                    EnumTypeVariant {
-                        name: make_ident("some"),
-                        value: self.lower_type(inner)?,
-                        discriminant: None,
-                    },
-                ],
-            })),
-            TypeDefKind::Result(result) => {
-                let ok_ty = result
-                    .ok
-                    .as_ref()
-                    .map(|ty| self.lower_type(ty))
-                    .transpose()?;
-                let err_ty = result
-                    .err
-                    .as_ref()
-                    .map(|ty| self.lower_type(ty))
-                    .transpose()?;
-
-                Ok(Ty::Enum(TypeEnum {
-                    name: type_name_or_fallback(typedef, type_id),
-                    variants: vec![
-                        EnumTypeVariant {
-                            name: make_ident("ok"),
-                            value: ok_ty.unwrap_or(Ty::Unit(TypeUnit)),
-                            discriminant: None,
-                        },
-                        EnumTypeVariant {
-                            name: make_ident("err"),
-                            value: err_ty.unwrap_or(Ty::Unit(TypeUnit)),
-                            discriminant: None,
-                        },
-                    ],
-                }))
-            }
+            TypeDefKind::Variant(_) => Ok(Ty::Primitive(TypePrimitive::String)),
+            TypeDefKind::Enum(_) => Ok(Ty::Primitive(TypePrimitive::String)),
+            TypeDefKind::Option(_) => Ok(Ty::Primitive(TypePrimitive::String)),
+            TypeDefKind::Result(_) => Ok(Ty::Primitive(TypePrimitive::String)),
             TypeDefKind::List(inner) => Ok(Ty::Vec(TypeVec {
                 ty: Box::new(self.lower_type(inner)?),
             })),
@@ -292,33 +240,6 @@ impl<'a> Lowering<'a> {
             .collect()
     }
 
-    fn lower_variant(
-        &mut self,
-        typedef: &TypeDef,
-        type_id: TypeId,
-        variant: &Variant,
-    ) -> WitResult<Ty> {
-        let variants = variant
-            .cases
-            .iter()
-            .map(|case| {
-                let value = match &case.ty {
-                    Some(ty) => self.lower_type(ty)?,
-                    None => Ty::Unit(TypeUnit),
-                };
-                Ok(EnumTypeVariant {
-                    name: make_ident(&case.name),
-                    value,
-                    discriminant: None,
-                })
-            })
-            .collect::<WitResult<_>>()?;
-
-        Ok(Ty::Enum(TypeEnum {
-            name: type_name_or_fallback(typedef, type_id),
-            variants,
-        }))
-    }
 }
 
 fn type_name_or_fallback(typedef: &TypeDef, type_id: TypeId) -> Ident {
@@ -455,6 +376,7 @@ fn normalize_package_line(line: &str) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fp_core::ast::TypeEnum;
 
     const SIMPLE_WIT: &str = r#"
 package test:math;
