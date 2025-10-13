@@ -7,7 +7,7 @@ use fp_csharp::CSharpSerializer;
 use fp_python::PythonSerializer;
 use fp_rust::printer::RustPrinter;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
-use fp_wit::WitSerializer;
+use fp_wit::{WitOptions, WitSerializer};
 use fp_zig::ZigSerializer;
 
 /// Supported transpilation targets for the CLI.
@@ -33,6 +33,7 @@ pub struct TranspileResult {
 pub struct Transpiler {
     target: TranspileTarget,
     emit_type_defs: bool,
+    wit_options: Option<WitOptions>,
 }
 
 impl Transpiler {
@@ -40,7 +41,13 @@ impl Transpiler {
         Self {
             target,
             emit_type_defs,
+            wit_options: None,
         }
+    }
+
+    pub fn with_wit_options(mut self, options: WitOptions) -> Self {
+        self.wit_options = Some(options);
+        self
     }
 
     pub fn transpile(&self, node: &Node) -> Result<TranspileResult, CliError> {
@@ -108,7 +115,10 @@ impl Transpiler {
     }
 
     fn transpile_wit(&self, node: &Node) -> Result<TranspileResult, CliError> {
-        let serializer = WitSerializer::new();
+        let serializer = match &self.wit_options {
+            Some(options) => WitSerializer::with_options(options.clone()),
+            None => WitSerializer::new(),
+        };
         let code = serializer.serialize_node(node).map_err(map_error)?;
         Ok(TranspileResult {
             code,

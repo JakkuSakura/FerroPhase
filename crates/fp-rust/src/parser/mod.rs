@@ -282,13 +282,14 @@ impl RustParser {
         }
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
-        let items = code
-            .content
-            .unwrap()
-            .1
-            .into_iter()
-            .map(|item| self.parse_item_internal(item))
-            .try_collect()?;
+        let items = if let Some((_, inner)) = code.content {
+            inner
+                .into_iter()
+                .map(|item| self.parse_item_internal(item))
+                .try_collect()?
+        } else {
+            Vec::new()
+        };
         Ok(Module {
             name: parse_ident(code.ident),
             items,

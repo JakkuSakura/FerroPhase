@@ -132,7 +132,7 @@ pub fn get_target_extension(target: &str) -> Option<&'static str> {
         CSHARP | "cs" | "c#" => Some("cs"),
         PYTHON | "py" => Some("py"),
         GO => Some("go"),
-        ZIG | "zig" => Some("zig"),
+        ZIG => Some("zig"),
         RUST => Some("rs"),
         CPP => Some("cpp"),
         C => Some("c"),
