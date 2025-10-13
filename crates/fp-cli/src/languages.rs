@@ -9,6 +9,7 @@ pub const CSHARP: &str = "csharp";
 pub const PYTHON: &str = "python";
 pub const GO: &str = "go";
 pub const RUST: &str = "rust";
+pub const ZIG: &str = "zig";
 pub const CPP: &str = "cpp";
 pub const C: &str = "c";
 pub const JAVA: &str = "java";
@@ -55,6 +56,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: GO,
         extensions: &["go"],
+        transpile_supported: true,
+    },
+    Language {
+        name: ZIG,
+        extensions: &["zig"],
         transpile_supported: true,
     },
     Language {
@@ -112,6 +118,7 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
                 (JAVASCRIPT, "js") => true,
                 (CSHARP, "cs" | "c#") => true,
                 (PYTHON, "py") => true,
+                (ZIG, "zig") => true,
                 _ => false,
             }
     })
@@ -125,6 +132,7 @@ pub fn get_target_extension(target: &str) -> Option<&'static str> {
         CSHARP | "cs" | "c#" => Some("cs"),
         PYTHON | "py" => Some("py"),
         GO => Some("go"),
+        ZIG | "zig" => Some("zig"),
         RUST => Some("rs"),
         CPP => Some("cpp"),
         C => Some("c"),

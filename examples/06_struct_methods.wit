@@ -1,0 +1,42 @@
+package ferrophase:generated;
+
+interface ferrophase {
+    record point {
+        x: s64,
+        y: s64,
+    }
+
+    record rectangle {
+        width: s64,
+        height: s64,
+    }
+
+    main: func() -> unit;
+
+}
+
+interface point {
+    new: func(x: s64, y: s64) -> point;
+
+    translate: func(self: point, dx: s64, dy: s64) -> unit;
+
+    distance2: func(self: point, other: point) -> s64;
+
+}
+
+interface rectangle {
+    new: func(width: s64, height: s64) -> rectangle;
+
+    area: func(self: rectangle) -> s64;
+
+    perimeter: func(self: rectangle) -> s64;
+
+    is-square: func(self: rectangle) -> bool;
+
+}
+
+world ferrophase {
+    export ferrophase;
+    export point;
+    export rectangle;
+}

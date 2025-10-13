@@ -228,6 +228,54 @@ fn main() {
 }
 
 #[tokio::test]
+async fn test_transpile_zig_with_println() {
+    let temp_dir = TempDir::new().unwrap();
+    let input_file = temp_dir.path().join("test.fp");
+    let output_file = temp_dir.path().join("test.zig");
+
+    let test_code = r#"
+fn main() {
+    println!("Hello, world!");
+}
+"#;
+
+    fs::write(&input_file, test_code).unwrap();
+
+    let args = TranspileArgs {
+        input: vec![input_file],
+        target: "zig".to_string(),
+        output: Some(output_file.clone()),
+        const_eval: true,
+        preserve_structs: true,
+        type_defs: false,
+        pretty: true,
+        source_maps: false,
+        watch: false,
+    };
+
+    let config = CliConfig::default();
+
+    let result = transpile_command(args, &config).await;
+    assert!(result.is_ok(), "Transpilation should succeed for Zig");
+
+    assert!(output_file.exists(), "Output file should be created");
+
+    let output_content = fs::read_to_string(&output_file).unwrap();
+    assert!(
+        output_content.contains("pub fn main"),
+        "Zig output should define main function"
+    );
+    assert!(
+        output_content.contains("std.debug.print"),
+        "Zig output should route println! through std.debug.print"
+    );
+    assert!(
+        !output_content.contains("@panic"),
+        "Zig output should not include panic fallback for handled bodies"
+    );
+}
+
+#[tokio::test]
 async fn test_transpile_typescript_with_type_definitions() {
     let temp_dir = TempDir::new().unwrap();
     let input_file = temp_dir.path().join("test.fp");
