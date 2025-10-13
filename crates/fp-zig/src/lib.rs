@@ -7,11 +7,13 @@
 //! implementation of full expression lowering is still underway.
 
 use eyre::Result;
+use fp_core::ast::FormatTemplatePart;
 use fp_core::ast::{
-    AstSerializer, Expr, ExprKind, File, FunctionParam, Item, ItemKind, Node, NodeKind,
-    StructuralField, Ty, TypeEnum, TypePrimitive, TypeStruct, Value, ValueBool, ValueDecimal,
-    ValueInt, ValueString, Visibility,
+    AstSerializer, BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke, ExprKind, File,
+    FunctionParam, Item, ItemKind, Locator, Node, NodeKind, StructuralField, Ty, TypeEnum,
+    TypePrimitive, TypeStruct, Value, ValueBool, ValueDecimal, ValueInt, ValueString, Visibility,
 };
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 
 /// Public entry point that implements `AstSerializer` so the CLI can pick it up.
 pub struct ZigSerializer;
@@ -186,22 +188,143 @@ impl ZigEmitter {
             visibility, def.name.name, params, ret_ty
         ));
         self.indent += 1;
-        if def.sig.params.is_empty() {
+        let body_emitted = self.emit_function_body(def)?;
+        if !body_emitted {
+            for param in &def.sig.params {
+                self.push_line(&format!("_ = {};", param.name.as_str()));
+            }
             self.push_comment("TODO: translate function body");
-        } else {
-            let placeholders = def
-                .sig
-                .params
-                .iter()
-                .map(|param| param.name.as_str())
-                .collect::<Vec<_>>();
-            self.push_line(&format!("_ = .{{ {} }};", placeholders.join(", ")));
-            self.push_comment("TODO: translate function body");
+            self.push_line("@panic(\"FerroPhase Zig backend: body not generated yet\");");
         }
-        self.push_line("@panic(\"FerroPhase Zig backend: body not generated yet\");");
         self.indent -= 1;
         self.push_line("}");
         Ok(())
+    }
+
+    fn emit_function_body(&mut self, def: &fp_core::ast::ItemDefFunction) -> Result<bool> {
+        let body_expr = def.body.as_ref();
+        match body_expr.kind() {
+            ExprKind::Block(block) => self.emit_block(block),
+            _ => {
+                if let Some(rendered) = self.render_expr(body_expr) {
+                    if rendered.is_empty() {
+                        self.push_line("return;");
+                    } else {
+                        self.push_line(&format!("return {};", rendered));
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+        }
+    }
+
+    fn emit_block(&mut self, block: &ExprBlock) -> Result<bool> {
+        let mut emitted = false;
+        for stmt in &block.stmts {
+            if self.emit_stmt(stmt)? {
+                emitted = true;
+            }
+        }
+        Ok(emitted)
+    }
+
+    fn emit_stmt(&mut self, stmt: &BlockStmt) -> Result<bool> {
+        match stmt {
+            BlockStmt::Let(stmt_let) => {
+                if let Some(ident) = stmt_let.pat.as_ident() {
+                    if let Some(init) = &stmt_let.init {
+                        if let Some(value) = self.render_expr(init) {
+                            self.push_line(&format!("var {} = {};", ident.name, value));
+                        } else {
+                            self.push_comment("TODO: unsupported initializer in Zig backend");
+                        }
+                    } else {
+                        self.push_line(&format!("var {} = undefined;", ident.name));
+                    }
+                } else {
+                    self.push_comment(
+                        "TODO: complex patterns in let bindings are not supported yet",
+                    );
+                }
+                Ok(true)
+            }
+            BlockStmt::Expr(expr_stmt) => {
+                let expr = expr_stmt.expr.as_ref();
+                if let ExprKind::IntrinsicCall(call) = expr.kind() {
+                    if self.emit_intrinsic_statement(call)? {
+                        return Ok(true);
+                    }
+                }
+
+                if let ExprKind::Block(block_expr) = expr.kind() {
+                    return self.emit_block(block_expr);
+                }
+
+                if let Some(rendered) = self.render_expr(expr) {
+                    if expr_stmt.has_value() {
+                        if rendered.is_empty() {
+                            self.push_line("return;");
+                        } else {
+                            self.push_line(&format!("return {};", rendered));
+                        }
+                    } else if !rendered.is_empty() {
+                        self.push_line(&format!("{};", rendered));
+                    }
+                    return Ok(true);
+                }
+
+                if expr_stmt.has_value() {
+                    self.push_line("return;");
+                    return Ok(true);
+                }
+
+                self.push_comment("TODO: unsupported expression statement in Zig backend");
+                Ok(true)
+            }
+            BlockStmt::Item(item) => {
+                self.emit_item(item.as_ref())?;
+                Ok(true)
+            }
+            BlockStmt::Noop => Ok(false),
+            BlockStmt::Any(_) => {
+                self.push_comment("TODO: placeholder statements are not supported in Zig backend");
+                Ok(true)
+            }
+        }
+    }
+
+    fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<bool> {
+        match call.kind() {
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                let newline = matches!(call.kind(), IntrinsicCallKind::Println);
+                if let Some(rendered) = self.render_print_call(call, newline) {
+                    self.push_line(&rendered);
+                    return Ok(true);
+                }
+            }
+            IntrinsicCallKind::Return => {
+                if let IntrinsicCallPayload::Args { args } = &call.payload {
+                    if let Some(expr) = args.first() {
+                        if let Some(rendered) = self.render_expr(expr) {
+                            if rendered.is_empty() {
+                                self.push_line("return;");
+                            } else {
+                                self.push_line(&format!("return {};", rendered));
+                            }
+                        } else {
+                            self.push_line("return;");
+                        }
+                    } else {
+                        self.push_line("return;");
+                    }
+                    return Ok(true);
+                }
+            }
+            _ => {}
+        }
+        Ok(false)
     }
 
     fn emit_module(&mut self, module: &fp_core::ast::Module) -> Result<()> {
@@ -250,7 +373,107 @@ impl ZigEmitter {
     fn render_expr(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
             ExprKind::Value(value) => self.render_value(value),
+            ExprKind::Locator(locator) => Some(self.render_locator(locator)),
+            ExprKind::Select(select) => {
+                let target = self.render_expr(select.obj.as_ref())?;
+                Some(format!("{}.{}", target, select.field.name))
+            }
+            ExprKind::Invoke(invoke) => self.render_invoke(invoke),
+            ExprKind::IntrinsicCall(call) => self.render_intrinsic_expr(call),
             _ => None,
+        }
+    }
+
+    fn render_locator(&self, locator: &Locator) -> String {
+        match locator {
+            Locator::Ident(ident) => ident.name.clone(),
+            _ => format!("{}", locator).replace("::", "."),
+        }
+    }
+
+    fn render_invoke(&self, invoke: &ExprInvoke) -> Option<String> {
+        use fp_core::ast::ExprInvokeTarget;
+
+        let target = match &invoke.target {
+            ExprInvokeTarget::Function(locator) => self.render_locator(locator),
+            ExprInvokeTarget::Expr(expr) => self.render_expr(expr.as_ref())?,
+            ExprInvokeTarget::Method(select) => {
+                let receiver = self.render_expr(select.obj.as_ref())?;
+                format!("{}.{}", receiver, select.field.name)
+            }
+            _ => return None,
+        };
+
+        let mut args = Vec::new();
+        for arg in &invoke.args {
+            args.push(self.render_expr(arg)?);
+        }
+
+        Some(format!("{}({})", target, args.join(", ")))
+    }
+
+    fn render_intrinsic_expr(&self, _call: &ExprIntrinsicCall) -> Option<String> {
+        None
+    }
+
+    fn render_print_call(&self, call: &ExprIntrinsicCall, newline: bool) -> Option<String> {
+        let (mut format_string, args) = self.render_print_payload(call)?;
+        if newline && !format_string.ends_with('\n') {
+            format_string.push('\n');
+        }
+        let literal = format!("\"{}\"", escape_zig_string(&format_string));
+        let arg_tuple = if args.is_empty() {
+            ".{}".to_string()
+        } else {
+            format!(".{{ {} }}", args.join(", "))
+        };
+        Some(format!("std.debug.print({}, {});", literal, arg_tuple))
+    }
+
+    fn render_print_payload(&self, call: &ExprIntrinsicCall) -> Option<(String, Vec<String>)> {
+        match &call.payload {
+            IntrinsicCallPayload::Format { template } => {
+                if !template.kwargs.is_empty() {
+                    return None;
+                }
+                let mut fmt = String::new();
+                for part in &template.parts {
+                    match part {
+                        FormatTemplatePart::Literal(literal) => fmt.push_str(literal),
+                        FormatTemplatePart::Placeholder(_) => fmt.push_str("{any}"),
+                    }
+                }
+                let mut args = Vec::new();
+                for expr in &template.args {
+                    args.push(self.render_expr(expr)?);
+                }
+                Some((fmt, args))
+            }
+            IntrinsicCallPayload::Args { args } => {
+                let mut rendered_args = Vec::new();
+                for expr in args {
+                    rendered_args.push(self.render_expr(expr)?);
+                }
+
+                if args.len() == 1 {
+                    if let ExprKind::Value(value) = args[0].kind() {
+                        if let Value::String(str_val) = value.as_ref() {
+                            return Some((str_val.value.clone(), Vec::new()));
+                        }
+                    }
+                }
+
+                let fmt = if rendered_args.is_empty() {
+                    String::new()
+                } else {
+                    std::iter::repeat("{any}")
+                        .take(rendered_args.len())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+
+                Some((fmt, rendered_args))
+            }
         }
     }
 
@@ -363,6 +586,10 @@ fn render_float(value: f64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn escape_zig_string(raw: &str) -> String {
+    raw.chars().flat_map(|c| c.escape_default()).collect()
 }
 
 #[cfg(test)]
