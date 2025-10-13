@@ -7,7 +7,10 @@ use crate::{
     transpiler::*,
 };
 use console::style;
+use fp_rust::{parse_cargo_workspace, printer::RustPrinter};
+use fp_wit::{WitOptions, WorldMode};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::info;
 
 /// Arguments for the transpile command
@@ -22,6 +25,7 @@ pub struct TranspileArgs {
     pub pretty: bool,
     pub source_maps: bool,
     pub watch: bool,
+    pub single_world: bool,
 }
 
 /// Execute the transpile command
@@ -99,6 +103,7 @@ async fn transpile_with_watch(args: TranspileArgs, config: &CliConfig) -> Result
                     pretty: args.pretty,
                     source_maps: args.source_maps,
                     watch: false,
+                    single_world: args.single_world,
                 },
                 config,
             )
@@ -128,15 +133,36 @@ async fn transpile_file(
 
     // Parse source
     let mut pipeline = Pipeline::new();
-    let source = std::fs::read_to_string(input).map_err(|e| CliError::Io(e))?;
-    let mut ast = pipeline.parse_source_public(&source, Some(input))?;
+    let is_cargo_manifest = input
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case("Cargo.toml"))
+        .unwrap_or(false);
+
+    let is_wit_input = input
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("wit"))
+        .unwrap_or(false);
+
+    let (mut ast, base_path) = if is_cargo_manifest {
+        let node = parse_cargo_workspace(input)?;
+        pipeline.set_serializer(Arc::new(RustPrinter::new_with_rustfmt()));
+        (node, input.parent().map(|dir| dir.to_path_buf()))
+    } else {
+        let source = std::fs::read_to_string(input).map_err(CliError::Io)?;
+        let node = pipeline.parse_source_public(&source, Some(input))?;
+        (node, None)
+    };
 
     let prep_options = TranspilePreparationOptions {
         run_const_eval: args.const_eval,
         save_intermediates: false,
-        base_path: None,
+        base_path,
     };
-    pipeline.prepare_for_transpile(&mut ast, &prep_options)?;
+    if !is_cargo_manifest && !is_wit_input {
+        pipeline.prepare_for_transpile(&mut ast, &prep_options)?;
+    }
 
     // Use simplified transpiler
     let normalized_target = args.target.to_lowercase();
@@ -156,7 +182,16 @@ async fn transpile_file(
         }
     };
 
-    let transpiler = Transpiler::new(target, args.type_defs);
+    let mut transpiler = Transpiler::new(target, args.type_defs);
+    if matches!(target, TranspileTarget::Wit) {
+        let mut options = WitOptions::default();
+        if args.single_world {
+            options.world_mode = WorldMode::Single {
+                world_name: options.root_interface.clone(),
+            };
+        }
+        transpiler = transpiler.with_wit_options(options);
+    }
     let result = transpiler.transpile(&ast)?;
 
     // Write output
