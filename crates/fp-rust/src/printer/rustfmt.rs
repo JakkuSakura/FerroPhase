@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 pub fn format_code(s: &str) -> Result<String> {
     let mut fmt = Command::new("rustfmt")
-        .args(&["--edition", "2021"])
+        .args(&["--edition", "2024"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
