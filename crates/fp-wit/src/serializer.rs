@@ -2,8 +2,8 @@ use std::fmt::Write;
 use std::mem;
 
 use fp_core::ast::{
-    self, AstSerializer, FunctionSignature, Ident, Item, ItemKind, Node, NodeKind, Ty, TypeInt,
-    TypePrimitive, Visibility,
+    self, AstSerializer, Expr, ExprKind, FunctionSignature, Ident, Item, ItemImpl, ItemKind,
+    Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive, Visibility,
 };
 use fp_core::error::{Error as CoreError, Result};
 
@@ -68,6 +68,7 @@ impl WitEmitter {
         scope: Option<String>,
         builder: &mut InterfaceBuilder,
     ) -> Result<()> {
+        let scope_ref = scope.as_deref();
         match item.kind() {
             ItemKind::Module(module) => {
                 let interface_name = interface_name(scope.as_deref(), &module.name);
@@ -80,6 +81,21 @@ impl WitEmitter {
                         self.exports.push(interface_name.clone());
                     }
                     self.interfaces.push(child.finish());
+                }
+                Ok(())
+            }
+            ItemKind::Impl(impl_block) => {
+                if let Some(interface_name) = impl_interface_name(scope.as_deref(), impl_block) {
+                    let mut child = InterfaceBuilder::new(interface_name.clone());
+                    for inner in &impl_block.items {
+                        self.emit_into_builder(inner, Some(interface_name.clone()), &mut child)?;
+                    }
+                    if child.has_entries() {
+                        if !self.exports.contains(&interface_name) {
+                            self.exports.push(interface_name.clone());
+                        }
+                        self.interfaces.push(child.finish());
+                    }
                 }
                 Ok(())
             }
@@ -96,11 +112,11 @@ impl WitEmitter {
                 Ok(())
             }
             ItemKind::DefFunction(def) => {
-                builder.add_function(&def.sig, &def.name, def.visibility);
+                builder.add_function(&def.sig, &def.name, def.visibility, scope_ref);
                 Ok(())
             }
             ItemKind::DeclFunction(decl) => {
-                builder.add_function(&decl.sig, &decl.name, Visibility::Public);
+                builder.add_function(&decl.sig, &decl.name, Visibility::Public, scope_ref);
                 Ok(())
             }
             ItemKind::Expr(_)
@@ -109,7 +125,6 @@ impl WitEmitter {
             | ItemKind::DeclConst(_)
             | ItemKind::DeclStatic(_)
             | ItemKind::DeclType(_)
-            | ItemKind::Impl(_)
             | ItemKind::DefConst(_)
             | ItemKind::DefStatic(_)
             | ItemKind::DefStructural(_)
@@ -177,10 +192,6 @@ impl InterfaceBuilder {
     }
 
     fn add_struct(&mut self, def: &ast::ItemDefStruct) {
-        if matches!(def.visibility, Visibility::Private) {
-            return;
-        }
-
         let fields = def
             .value
             .fields
@@ -194,10 +205,6 @@ impl InterfaceBuilder {
     }
 
     fn add_enum(&mut self, def: &ast::ItemDefEnum) {
-        if matches!(def.visibility, Visibility::Private) {
-            return;
-        }
-
         let cases = def
             .value
             .variants
@@ -217,35 +224,40 @@ impl InterfaceBuilder {
     }
 
     fn add_alias(&mut self, def: &ast::ItemDefType) {
-        if matches!(def.visibility, Visibility::Private) {
-            return;
-        }
         self.entries.push(InterfaceEntry::Alias {
             name: ident_to_wit(&def.name),
             target: ty_to_wit(&def.value),
         });
     }
 
-    fn add_function(&mut self, sig: &FunctionSignature, name: &Ident, visibility: Visibility) {
-        if matches!(visibility, Visibility::Private) {
-            return;
+    fn add_function(
+        &mut self,
+        sig: &FunctionSignature,
+        name: &Ident,
+        _visibility: Visibility,
+        receiver_scope: Option<&str>,
+    ) {
+        let mut params = Vec::new();
+        if sig.receiver.is_some() {
+            let ty = receiver_scope
+                .map(sanitize_identifier)
+                .unwrap_or_else(|| "self".to_string());
+            params.push(("self".to_string(), ty));
         }
 
-        let params = sig
-            .params
-            .iter()
-            .enumerate()
-            .map(|(idx, param)| {
-                let pname = if param.name.as_str().is_empty() {
-                    format!("arg{idx}")
-                } else {
-                    ident_to_wit(&param.name)
-                };
-                (pname, ty_to_wit(&param.ty))
-            })
-            .collect();
+        for (idx, param) in sig.params.iter().enumerate() {
+            let pname = if param.name.as_str().is_empty() {
+                format!("arg{idx}")
+            } else {
+                ident_to_wit(&param.name)
+            };
+            params.push((pname, ty_to_wit_with_self(&param.ty, receiver_scope)));
+        }
 
-        let result = sig.ret_ty.as_ref().map(ty_to_wit);
+        let result = sig
+            .ret_ty
+            .as_ref()
+            .map(|ty| ty_to_wit_with_self(ty, receiver_scope));
 
         self.entries.push(InterfaceEntry::Function {
             name: ident_to_wit(name),
@@ -288,7 +300,11 @@ impl InterfaceBuilder {
                 InterfaceEntry::Alias { name, target } => {
                     let _ = writeln!(out, "    type {name} = {target};\n");
                 }
-                InterfaceEntry::Function { name, params, result } => {
+                InterfaceEntry::Function {
+                    name,
+                    params,
+                    result,
+                } => {
                     let params_str = params
                         .iter()
                         .map(|(param, ty)| format!("{param}: {ty}"))
@@ -367,7 +383,32 @@ fn sanitize_identifier(raw: &str) -> String {
     result
 }
 
+fn impl_interface_name(parent: Option<&str>, impl_block: &ItemImpl) -> Option<String> {
+    if impl_block.trait_ty.is_some() {
+        return None;
+    }
+
+    let target = match impl_block.self_ty.kind() {
+        ExprKind::Locator(locator) => locator_to_ident(locator).cloned(),
+        _ => None,
+    }?;
+
+    Some(interface_name(parent, &target))
+}
+
+fn locator_to_ident(locator: &Locator) -> Option<&Ident> {
+    match locator {
+        Locator::Ident(ident) => Some(ident),
+        Locator::Path(path) => path.segments.last(),
+        _ => None,
+    }
+}
+
 fn ty_to_wit(ty: &Ty) -> String {
+    ty_to_wit_with_self(ty, None)
+}
+
+fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
     match ty {
         Ty::Primitive(p) => match p {
             TypePrimitive::Bool => "bool".to_string(),
@@ -391,36 +432,52 @@ fn ty_to_wit(ty: &Ty) -> String {
             },
             TypePrimitive::List => "list<string>".to_string(),
         },
-        Ty::Reference(reference) => ty_to_wit(&reference.ty),
+        Ty::Reference(reference) => ty_to_wit_with_self(&reference.ty, self_name),
         Ty::Tuple(tuple) => {
             let inner = tuple
                 .types
                 .iter()
-                .map(ty_to_wit)
+                .map(|ty| ty_to_wit_with_self(ty, self_name))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("tuple<{inner}>")
         }
         Ty::Vec(vec_ty) => {
-            let inner = ty_to_wit(vec_ty.ty.as_ref());
+            let inner = ty_to_wit_with_self(vec_ty.ty.as_ref(), self_name);
             format!("list<{inner}>")
         }
         Ty::Array(array) => {
-            let inner = ty_to_wit(array.elem.as_ref());
+            let inner = ty_to_wit_with_self(array.elem.as_ref(), self_name);
             format!("list<{inner}>")
         }
         Ty::Slice(slice) => {
-            let inner = ty_to_wit(slice.elem.as_ref());
+            let inner = ty_to_wit_with_self(slice.elem.as_ref(), self_name);
             format!("list<{inner}>")
         }
         Ty::Struct(s) => ident_to_wit(&s.name),
         Ty::Enum(e) => ident_to_wit(&e.name),
         Ty::Unit(_) => "unit".to_string(),
         Ty::Any(_) | Ty::AnyBox(_) => "string".to_string(),
-        Ty::Expr(_) | Ty::Value(_) => "string".to_string(),
+        Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "string".to_string()),
+        Ty::Value(_) => "string".to_string(),
         Ty::Unknown(_) | Ty::Nothing(_) => "string".to_string(),
         Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "string".to_string(),
         Ty::Structural(_) => "string".to_string(),
         Ty::Function(_) => "func".to_string(),
+    }
+}
+
+fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
+    match expr.kind() {
+        ExprKind::Locator(locator) => match locator {
+            Locator::Ident(ident) if ident.as_str() == "Self" => self_name.map(sanitize_identifier),
+            Locator::Ident(ident) => Some(sanitize_identifier(ident.as_str())),
+            Locator::Path(path) => path
+                .segments
+                .last()
+                .map(|ident| sanitize_identifier(ident.as_str())),
+            _ => None,
+        },
+        _ => None,
     }
 }

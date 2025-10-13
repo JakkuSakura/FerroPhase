@@ -145,6 +145,7 @@ async fn transpile_file(
         "javascript" | "js" => TranspileTarget::JavaScript,
         "csharp" | "cs" | "c#" => TranspileTarget::CSharp,
         "python" | "py" => TranspileTarget::Python,
+        "zig" => TranspileTarget::Zig,
         "rust" | "rs" => TranspileTarget::Rust,
         "wit" => TranspileTarget::Wit,
         _ => {
@@ -201,6 +202,7 @@ fn determine_transpile_output_path(
             "javascript" | "js" => "js",
             "csharp" | "cs" | "c#" => "cs",
             "python" | "py" => "py",
+            "zig" => "zig",
             "rust" | "rs" => "rs",
             "wit" => "wit",
             _ => {

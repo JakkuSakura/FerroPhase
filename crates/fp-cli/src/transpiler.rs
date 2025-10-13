@@ -4,10 +4,11 @@ use fp_core::error::Error as CoreError;
 use crate::CliError;
 
 use fp_csharp::CSharpSerializer;
-use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_python::PythonSerializer;
 use fp_rust::printer::RustPrinter;
+use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_wit::WitSerializer;
+use fp_zig::ZigSerializer;
 
 /// Supported transpilation targets for the CLI.
 #[derive(Debug, Clone, Copy)]
@@ -16,6 +17,7 @@ pub enum TranspileTarget {
     JavaScript,
     CSharp,
     Python,
+    Zig,
     Rust,
     Wit,
 }
@@ -47,6 +49,7 @@ impl Transpiler {
             TranspileTarget::JavaScript => self.transpile_javascript(node),
             TranspileTarget::CSharp => self.transpile_csharp(node),
             TranspileTarget::Python => self.transpile_python(node),
+            TranspileTarget::Zig => self.transpile_zig(node),
             TranspileTarget::Rust => self.transpile_rust(node),
             TranspileTarget::Wit => self.transpile_wit(node),
         }
@@ -79,6 +82,15 @@ impl Transpiler {
 
     fn transpile_python(&self, node: &Node) -> Result<TranspileResult, CliError> {
         let serializer = PythonSerializer;
+        let code = serializer.serialize_node(node).map_err(map_error)?;
+        Ok(TranspileResult {
+            code,
+            type_defs: None,
+        })
+    }
+
+    fn transpile_zig(&self, node: &Node) -> Result<TranspileResult, CliError> {
+        let serializer = ZigSerializer;
         let code = serializer.serialize_node(node).map_err(map_error)?;
         Ok(TranspileResult {
             code,
