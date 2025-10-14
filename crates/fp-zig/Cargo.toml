@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 fp-core = { path = "../fp-core" }
 eyre = "0.6"
+tree-sitter = "0.24"
+tree-sitter-zig = "1.1"
