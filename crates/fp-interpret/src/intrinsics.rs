@@ -359,7 +359,7 @@ pub fn intrinsic_type_name() -> IntrinsicFunction {
         }
 
         let type_name = match &args[0] {
-            Value::Type(ast_type) => format!("{}", ast_type),
+            Value::Type(ast_type) => render_type_name(ast_type),
             other => match other {
                 Value::Int(_) => "i64".to_string(),
                 Value::Bool(_) => "bool".to_string(),
@@ -372,6 +372,14 @@ pub fn intrinsic_type_name() -> IntrinsicFunction {
 
         Ok(Value::string(type_name))
     })
+}
+
+fn render_type_name(ty: &Ty) -> String {
+    match ty {
+        Ty::Struct(struct_ty) => format!("struct {}", struct_ty.name),
+        Ty::Enum(enum_ty) => format!("enum {}", enum_ty.name),
+        _ => format!("{}", ty),
+    }
 }
 
 /// create_struct! intrinsic - create a new struct type dynamically
