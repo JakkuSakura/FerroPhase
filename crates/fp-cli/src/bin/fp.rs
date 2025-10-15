@@ -22,9 +22,10 @@
 //! fp repl
 //! ```
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueHint};
 use console::style;
 use fp_cli::{Result, cli::CliConfig, commands, diagnostics::setup_error_reporting};
+use fp_typescript::frontend::TsParseMode;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -223,12 +224,35 @@ struct EvalArgs {
 #[derive(Args)]
 struct ParseArgs {
     /// Expression to parse
-    #[arg(short, long, conflicts_with = "file")]
+    #[arg(short, long, conflicts_with = "files")]
     expr: Option<String>,
 
-    /// File containing code to parse
-    #[arg(short, long)]
-    file: Option<PathBuf>,
+    /// File(s) containing code to parse
+    #[arg(value_hint = ValueHint::FilePath)]
+    files: Vec<PathBuf>,
+
+    /// TypeScript parse mode (strict errors vs loose recovery)
+    #[arg(long = "parse-mode", default_value = "strict", value_enum)]
+    parse_mode: ParseModeArg,
+
+    /// Resolve and parse imported modules
+    #[arg(long)]
+    resolve_imports: bool,
+}
+
+#[derive(Copy, Clone, Debug, clap::ValueEnum)]
+enum ParseModeArg {
+    Strict,
+    Loose,
+}
+
+impl From<ParseModeArg> for TsParseMode {
+    fn from(value: ParseModeArg) -> Self {
+        match value {
+            ParseModeArg::Strict => TsParseMode::Strict,
+            ParseModeArg::Loose => TsParseMode::Loose,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -380,7 +404,9 @@ async fn main() -> Result<()> {
         Commands::Parse(args) => {
             let parse_args = commands::parse::ParseArgs {
                 expr: args.expr,
-                file: args.file,
+                files: args.files,
+                parse_mode: args.parse_mode.into(),
+                resolve_imports: args.resolve_imports,
             };
             commands::parse_command(parse_args, &config).await
         }

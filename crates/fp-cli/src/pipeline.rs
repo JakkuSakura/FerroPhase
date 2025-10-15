@@ -3,7 +3,7 @@ use crate::codegen::CodeGenerator;
 use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::frontend::{
     FerroFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend,
-    WitFrontend,
+    TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_core::ast::register_threadlocal_serializer;
@@ -25,6 +25,7 @@ use fp_optimize::passes::{
     remove_generic_templates,
 };
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
+use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
 use std::fs;
 use std::io::{self, Write};
@@ -105,6 +106,8 @@ pub struct Pipeline {
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
+    typescript_frontend: Option<Arc<TypeScriptFrontend>>,
+    typescript_parse_mode: TsParseMode,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -121,6 +124,9 @@ impl Pipeline {
         registry.register(ferro_frontend);
         let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
         registry.register(wit_frontend);
+        let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
+        let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
+        registry.register(ts_frontend);
 
         Self {
             frontends: Arc::new(registry),
@@ -130,6 +136,8 @@ impl Pipeline {
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
+            typescript_frontend: Some(ts_frontend_concrete),
+            typescript_parse_mode: TsParseMode::Loose,
         }
     }
 
@@ -148,6 +156,8 @@ impl Pipeline {
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
+            typescript_frontend: None,
+            typescript_parse_mode: TsParseMode::Loose,
         }
     }
 
@@ -162,6 +172,13 @@ impl Pipeline {
 
     pub fn last_const_eval_outcome(&self) -> Option<&ConstEvalOutcome> {
         self.last_const_eval.as_ref()
+    }
+
+    pub fn set_typescript_parse_mode(&mut self, mode: TsParseMode) {
+        if let Some(frontend) = &self.typescript_frontend {
+            frontend.set_parse_mode(mode);
+        }
+        self.typescript_parse_mode = mode;
     }
 
     pub fn take_last_const_eval_stdout(&mut self) -> Option<Vec<String>> {
@@ -214,10 +231,19 @@ impl Pipeline {
             );
         }
 
-        if collected_diagnostics
+        let has_errors = collected_diagnostics
             .iter()
-            .any(|diag| diag.level == DiagnosticLevel::Error)
+            .any(|diag| diag.level == DiagnosticLevel::Error);
+
+        let treat_as_errors = if language_key == languages::TYPESCRIPT
+            && matches!(self.typescript_parse_mode, TsParseMode::Loose)
         {
+            false
+        } else {
+            has_errors
+        };
+
+        if treat_as_errors {
             return Err(CliError::Compilation(
                 "frontend stage failed; see diagnostics for details".to_string(),
             ));

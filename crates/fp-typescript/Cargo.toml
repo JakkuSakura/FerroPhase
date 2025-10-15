@@ -9,9 +9,16 @@ edition = "2021"
 fp-core = { path = "../fp-core" }
 eyre = "0.6.12"
 itertools = "0.14.0"
+serde = { version = "1.0", features = ["derive"] }
+semver = "1.0"
+walkdir = "2.5.0"
 
 swc_ecma_ast = "15.0.0"
 swc_ecma_quote = "24.0.0"
 swc_ecma_codegen = "17.0.2"
 swc_ecma_parser = "24.0.3"
 serde_json = "1.0"
+swc_common = "14.0.4"
+
+[dev-dependencies]
+tempfile = "3.10.1"

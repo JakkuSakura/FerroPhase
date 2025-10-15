@@ -602,7 +602,10 @@ impl InterfaceBuilder {
                         }
                     }
                 }
-                InterfaceEntry::Alias { target: alias_target, .. } => {
+                InterfaceEntry::Alias {
+                    target: alias_target,
+                    ..
+                } => {
                     *alias_target = rewrite_type_token(target, replacement, alias_target);
                 }
                 InterfaceEntry::Function { params, result, .. } => {
@@ -675,11 +678,7 @@ impl InterfaceBuilder {
         if self.defined_types.contains(ty) {
             return false;
         }
-        if self
-            .uses
-            .values()
-            .any(|names| names.contains(ty))
-        {
+        if self.uses.values().any(|names| names.contains(ty)) {
             return false;
         }
         if ty.chars().all(|ch| ch.is_ascii_digit()) {
@@ -772,26 +771,8 @@ fn rewrite_type_token(target: &str, replacement: &str, ty: &str) -> String {
 }
 
 const BUILTIN_WIT_TYPES: &[&str] = &[
-    "bool",
-    "string",
-    "char",
-    "s8",
-    "s16",
-    "s32",
-    "s64",
-    "u8",
-    "u16",
-    "u32",
-    "u64",
-    "f32",
-    "f64",
-    "tuple",
-    "list",
-    "option",
-    "result",
-    "future",
-    "stream",
-    "func",
+    "bool", "string", "char", "s8", "s16", "s32", "s64", "u8", "u16", "u32", "u64", "f32", "f64",
+    "tuple", "list", "option", "result", "future", "stream", "func",
 ];
 
 fn is_builtin_wit_type(name: &str) -> bool {
