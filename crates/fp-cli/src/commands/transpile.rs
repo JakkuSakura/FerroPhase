@@ -26,6 +26,7 @@ pub struct TranspileArgs {
     pub source_maps: bool,
     pub watch: bool,
     pub single_world: bool,
+    pub resolve_imports: bool,
 }
 
 /// Execute the transpile command
@@ -104,6 +105,7 @@ async fn transpile_with_watch(args: TranspileArgs, config: &CliConfig) -> Result
                     source_maps: args.source_maps,
                     watch: false,
                     single_world: args.single_world,
+                    resolve_imports: args.resolve_imports,
                 },
                 config,
             )
@@ -145,6 +147,8 @@ async fn transpile_file(
         .map(|ext| ext.eq_ignore_ascii_case("wit"))
         .unwrap_or(false);
 
+    let mut source_cache: Option<String> = None;
+
     let (mut ast, base_path) = if is_cargo_manifest {
         let node = parse_cargo_workspace(input)?;
         pipeline.set_serializer(Arc::new(RustPrinter::new_with_rustfmt()));
@@ -152,8 +156,31 @@ async fn transpile_file(
     } else {
         let source = std::fs::read_to_string(input).map_err(CliError::Io)?;
         let node = pipeline.parse_source_public(&source, Some(input))?;
+        source_cache = Some(source);
         (node, None)
     };
+
+    if args.resolve_imports {
+        if let (Some(ref source), Some(frontend)) =
+            (source_cache.as_ref(), pipeline.typescript_frontend())
+        {
+            let outcome = frontend
+                .parse_dependencies(input, source, true)
+                .map_err(|err| CliError::Compilation(err.to_string()))?;
+            for warning in outcome.warnings {
+                eprintln!("{warning}");
+            }
+            if !outcome.modules.is_empty() {
+                let count = outcome.modules.len();
+                info!(
+                    "Resolved {} imported module{} for {}",
+                    count,
+                    if count == 1 { "" } else { "s" },
+                    input.display()
+                );
+            }
+        }
+    }
 
     let prep_options = TranspilePreparationOptions {
         run_const_eval: args.const_eval,
