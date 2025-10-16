@@ -21,6 +21,7 @@ use swc_ecma_parser::error::Error as SwcError;
 use swc_ecma_parser::lexer::Lexer;
 use swc_ecma_parser::{Parser, Syntax, TsSyntax};
 
+use crate::resolution::{is_typescript_like_source, resolve_imports};
 use crate::ts::serializer::TypeScriptSerializer;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -31,6 +32,12 @@ pub enum TsParseMode {
 
 const LANGUAGE_KEY: &str = "typescript";
 const EXTENSIONS: &[&str] = &["ts", "tsx"];
+
+#[derive(Debug, Default)]
+pub struct DependencyParseOutcome {
+    pub modules: Vec<(PathBuf, Node)>,
+    pub warnings: Vec<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportReferenceKind {
@@ -77,6 +84,42 @@ impl TypeScriptFrontend {
 
     pub fn parse_mode(&self) -> TsParseMode {
         *self.parse_mode.read().unwrap()
+    }
+
+    pub fn parse_dependencies(
+        &self,
+        path: &Path,
+        source: &str,
+        resolve: bool,
+    ) -> CoreResult<DependencyParseOutcome> {
+        if !resolve || !is_typescript_like_source(path) {
+            return Ok(DependencyParseOutcome::default());
+        }
+
+        let resolved = resolve_imports(path, source);
+        let mut outcome = DependencyParseOutcome {
+            modules: Vec::new(),
+            warnings: resolved.warnings,
+        };
+
+        let mode = self.parse_mode();
+        for module in resolved.modules {
+            match self.parse(&module.source, Some(module.path.as_path())) {
+                Ok(result) => outcome.modules.push((module.path, result.ast)),
+                Err(err) => {
+                    if matches!(mode, TsParseMode::Loose) {
+                        outcome.warnings.push(format!(
+                            "Warning: failed to parse resolved import {} ({err})",
+                            module.path.display()
+                        ));
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Ok(outcome)
     }
 }
 

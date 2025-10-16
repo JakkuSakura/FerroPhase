@@ -35,7 +35,7 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     },
     Language {
         name: TYPESCRIPT,
-        extensions: &["ts"],
+        extensions: &["ts", "tsx", "js", "jsx", "mjs", "mts", "cts"],
         transpile_supported: true,
     },
     Language {

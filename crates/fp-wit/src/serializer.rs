@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use fp_core::ast::{
-    self, AstSerializer, Expr, ExprInvokeTarget, ExprKind, FunctionSignature, Ident, Item,
-    ItemImpl, ItemKind, Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive, Value, Visibility,
+    self, AstSerializer, AttrMeta, Attribute, Expr, ExprInvokeTarget, ExprKind, FunctionSignature,
+    Ident, Item, ItemImpl, ItemKind, Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive, Value,
+    Visibility,
 };
 use fp_core::error::{Error as CoreError, Result};
 
@@ -57,6 +58,37 @@ impl AstSerializer for WitSerializer {
         let mut emitter = WitEmitter::new(self.options.clone());
         emitter.emit_node(node)?;
         Ok(emitter.finish())
+    }
+}
+
+fn collect_doc_strings(attrs: &[Attribute]) -> Vec<String> {
+    let mut docs = Vec::new();
+    for attr in attrs {
+        if let AttrMeta::NameValue(name_value) = &attr.meta {
+            if name_value.name.last().as_str() == "doc" {
+                if let Some(text) = expr_to_string(&name_value.value) {
+                    for line in text.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            docs.push(String::new());
+                        } else {
+                            docs.push(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    docs
+}
+
+fn expr_to_string(expr: &Expr) -> Option<String> {
+    match expr.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(s) => Some(s.value.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -203,11 +235,13 @@ impl WitEmitter {
                 Ok(())
             }
             ItemKind::DefFunction(def) => {
+                let docs = collect_doc_strings(&def.attrs);
                 self.builder_for(current_interface.as_deref(), current_package.as_deref())
                     .add_function(
                         &def.sig,
                         &def.name,
                         def.visibility,
+                        docs,
                         receiver_ctx.as_ref(),
                         current_package.as_deref(),
                         scope_ref,
@@ -220,6 +254,7 @@ impl WitEmitter {
                         &decl.sig,
                         &decl.name,
                         Visibility::Public,
+                        Vec::new(),
                         receiver_ctx.as_ref(),
                         current_package.as_deref(),
                         scope_ref,
@@ -372,7 +407,11 @@ impl InterfaceBuilder {
         }
         let name = sanitize_type_identifier(def.name.as_str());
         self.defined_types.insert(name.clone());
-        self.entries.push(InterfaceEntry::Record { name, fields });
+        self.entries.push(InterfaceEntry::Record {
+            name,
+            fields,
+            docs: Vec::new(),
+        });
     }
 
     fn add_enum(&mut self, def: &ast::ItemDefEnum) {
@@ -382,6 +421,7 @@ impl InterfaceBuilder {
             self.entries.push(InterfaceEntry::Alias {
                 name,
                 target: "string".to_string(),
+                docs: Vec::new(),
             });
             return;
         }
@@ -399,7 +439,11 @@ impl InterfaceBuilder {
             cases.push((ident_to_wit(&variant.name), assoc));
         }
         self.defined_types.insert(name.clone());
-        self.entries.push(InterfaceEntry::Variant { name, cases });
+        self.entries.push(InterfaceEntry::Variant {
+            name,
+            cases,
+            docs: Vec::new(),
+        });
     }
 
     fn add_alias(&mut self, def: &ast::ItemDefType) {
@@ -411,7 +455,11 @@ impl InterfaceBuilder {
             return;
         }
         self.defined_types.insert(name.clone());
-        self.entries.push(InterfaceEntry::Alias { name, target });
+        self.entries.push(InterfaceEntry::Alias {
+            name,
+            target,
+            docs: Vec::new(),
+        });
     }
 
     fn add_function(
@@ -419,6 +467,7 @@ impl InterfaceBuilder {
         sig: &FunctionSignature,
         name: &Ident,
         _visibility: Visibility,
+        docs: Vec<String>,
         receiver_ctx: Option<&ReceiverContext>,
         current_package: Option<&str>,
         receiver_scope: Option<&str>,
@@ -468,6 +517,7 @@ impl InterfaceBuilder {
             name: function_name,
             params,
             result,
+            docs,
         });
     }
 
@@ -488,7 +538,8 @@ impl InterfaceBuilder {
         }
         for entry in self.entries {
             match entry {
-                InterfaceEntry::Record { name, fields } => {
+                InterfaceEntry::Record { name, fields, docs } => {
+                    write_docs(&mut out, 4, &docs);
                     if fields.is_empty() {
                         let _ = writeln!(out, "    record {name} {{}}\n");
                     } else {
@@ -499,7 +550,8 @@ impl InterfaceBuilder {
                         let _ = writeln!(out, "    }}\n");
                     }
                 }
-                InterfaceEntry::Variant { name, cases } => {
+                InterfaceEntry::Variant { name, cases, docs } => {
+                    write_docs(&mut out, 4, &docs);
                     if cases.is_empty() {
                         let _ = writeln!(out, "    variant {name} {{}}\n");
                     } else {
@@ -514,14 +566,17 @@ impl InterfaceBuilder {
                         let _ = writeln!(out, "    }}\n");
                     }
                 }
-                InterfaceEntry::Alias { name, target } => {
+                InterfaceEntry::Alias { name, target, docs } => {
+                    write_docs(&mut out, 4, &docs);
                     let _ = writeln!(out, "    type {name} = {target};\n");
                 }
                 InterfaceEntry::Function {
                     name,
                     params,
                     result,
+                    docs,
                 } => {
+                    write_docs(&mut out, 4, &docs);
                     let params_str = params
                         .iter()
                         .map(|(param, ty)| format!("{param}: {ty}"))
@@ -662,6 +717,7 @@ impl InterfaceBuilder {
                 InterfaceEntry::Alias {
                     name: ty.clone(),
                     target: "string".to_string(),
+                    docs: Vec::new(),
                 },
             );
             self.defined_types.insert(ty);
@@ -693,6 +749,20 @@ struct RenderedInterface {
     name: String,
     package: String,
     source: String,
+}
+
+fn write_docs(out: &mut String, indent: usize, docs: &[String]) {
+    if docs.is_empty() {
+        return;
+    }
+    let prefix = " ".repeat(indent);
+    for doc in docs {
+        if doc.is_empty() {
+            let _ = writeln!(out, "{prefix}///");
+        } else {
+            let _ = writeln!(out, "{prefix}/// {}", doc);
+        }
+    }
 }
 
 fn collect_entry_types(entry: &InterfaceEntry, out: &mut HashSet<String>) {
@@ -768,6 +838,44 @@ fn rewrite_type_token(target: &str, replacement: &str, ty: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fp_core::ast::{
+        AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, Expr, File as AstFile, Ident, Item,
+        ItemDefFunction, Node, NodeKind, Path, Value,
+    };
+    use std::path::PathBuf;
+
+    fn doc_attr(text: &str) -> Attribute {
+        Attribute {
+            style: AttrStyle::Outer,
+            meta: AttrMeta::NameValue(AttrMetaNameValue {
+                name: Path::from_ident(Ident::new("doc")),
+                value: Expr::value(Value::string(text.to_string())).into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn function_docs_are_serialized() {
+        let mut func = ItemDefFunction::new_simple(Ident::new("greet"), Expr::unit().into());
+        func.attrs.push(doc_attr("Greets the caller"));
+
+        let item = Item::from(func);
+        let file = AstFile {
+            path: PathBuf::new(),
+            items: vec![item],
+        };
+        let node = Node::from(NodeKind::File(file));
+
+        let serializer = WitSerializer::new();
+        let wit = serializer.serialize_node(&node).expect("serialize to wit");
+
+        assert!(wit.contains("/// Greets the caller"));
+    }
 }
 
 const BUILTIN_WIT_TYPES: &[&str] = &[
@@ -882,19 +990,23 @@ enum InterfaceEntry {
     Record {
         name: String,
         fields: Vec<(String, String)>,
+        docs: Vec<String>,
     },
     Variant {
         name: String,
         cases: Vec<(String, Option<String>)>,
+        docs: Vec<String>,
     },
     Alias {
         name: String,
         target: String,
+        docs: Vec<String>,
     },
     Function {
         name: String,
         params: Vec<(String, String)>,
         result: Option<String>,
+        docs: Vec<String>,
     },
 }
 
