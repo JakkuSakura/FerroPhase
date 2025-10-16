@@ -108,8 +108,8 @@ impl TypeScriptPackageProvider {
                 continue;
             }
 
-            let virtual_path = VirtualPath::from_path(&path);
             let relative = path.strip_prefix(&self.root).unwrap_or(&path);
+            let virtual_path = VirtualPath::from_path(relative);
             let module_path = module_path_from_file(relative);
             let module_id = ModuleId::new(format!(
                 "{}::{}",

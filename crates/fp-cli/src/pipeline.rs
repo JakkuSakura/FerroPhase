@@ -181,6 +181,14 @@ impl Pipeline {
         self.typescript_parse_mode = mode;
     }
 
+    pub fn typescript_parse_mode(&self) -> TsParseMode {
+        self.typescript_parse_mode
+    }
+
+    pub fn typescript_frontend(&self) -> Option<Arc<TypeScriptFrontend>> {
+        self.typescript_frontend.as_ref().map(Arc::clone)
+    }
+
     pub fn take_last_const_eval_stdout(&mut self) -> Option<Vec<String>> {
         self.last_const_eval
             .as_mut()
