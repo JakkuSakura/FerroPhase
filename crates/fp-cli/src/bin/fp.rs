@@ -196,6 +196,10 @@ struct TranspileArgs {
     /// Generate a single WIT world instead of per-package worlds
     #[arg(long)]
     single_world: bool,
+
+    /// Disable resolving and parsing imported modules
+    #[arg(long = "no-resolve")]
+    no_resolve: bool,
 }
 
 #[derive(Args)]
@@ -235,9 +239,9 @@ struct ParseArgs {
     #[arg(long = "parse-mode", default_value = "strict", value_enum)]
     parse_mode: ParseModeArg,
 
-    /// Resolve and parse imported modules
-    #[arg(long)]
-    resolve_imports: bool,
+    /// Disable resolving and parsing imported modules
+    #[arg(long = "no-resolve")]
+    no_resolve: bool,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -387,6 +391,7 @@ async fn main() -> Result<()> {
                 source_maps: args.source_maps,
                 watch: args.watch,
                 single_world: args.single_world,
+                resolve_imports: !args.no_resolve,
             };
             commands::transpile_command(transpile_args, &config).await
         }
@@ -406,7 +411,7 @@ async fn main() -> Result<()> {
                 expr: args.expr,
                 files: args.files,
                 parse_mode: args.parse_mode.into(),
-                resolve_imports: args.resolve_imports,
+                resolve_imports: !args.no_resolve,
             };
             commands::parse_command(parse_args, &config).await
         }
