@@ -84,8 +84,12 @@ flags for informational entries but always surfaces warnings and errors.
 ## Multi-Language Frontends
 
 - `FrontendRegistry` maps language identifiers and file extensions to
-  `LanguageFrontend` implementations. The default registry ships with the
-  `FerroFrontend`, covering FerroPhase syntax and Rust-compatible `.rs` files.
+  `LanguageFrontend` implementations. The default registry ships with:
+  - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`).
+  - `TypeScriptFrontend` for TypeScript/JavaScript families.
+  - `WitFrontend` for WebAssembly Interface Types.
+  - `SqlFrontend` for `.sql` sources (query documents).
+  - `PrqlFrontend` for `.prql` pipelines with a best-effort SQL projection.
 - `PipelineOptions.source_language` allows callers to override detection when an
   expression lacks a file extension.
 - Additional frontends should implement `LanguageFrontend::parse`, returning a

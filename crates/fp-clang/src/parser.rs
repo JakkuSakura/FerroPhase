@@ -1,6 +1,6 @@
 //! Clang parser for C/C++ source files
 
-use crate::{ClangError, CompileOptions, Result};
+use crate::{ast::TranslationUnit, clang_ast_lowering, ClangError, CompileOptions, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
@@ -52,20 +52,7 @@ impl ClangParser {
         source_file: &Path,
         options: &CompileOptions,
     ) -> Result<String> {
-        if !source_file.exists() {
-            return Err(ClangError::FileNotFound(source_file.to_path_buf()));
-        }
-
-        // Validate file extension
-        let ext = source_file
-            .extension()
-            .and_then(|e| e.to_str())
-            .ok_or_else(|| ClangError::InvalidExtension("No extension".to_string()))?;
-
-        match ext {
-            "c" | "cc" | "cpp" | "cxx" | "c++" | "C" | "h" | "hpp" | "hxx" => {}
-            _ => return Err(ClangError::InvalidExtension(ext.to_string())),
-        }
+        Self::ensure_valid_source_file(source_file)?;
 
         // Build clang command
         let mut cmd = Command::new(&self.clang_path);
@@ -125,9 +112,7 @@ impl ClangParser {
         output_file: &Path,
         options: &CompileOptions,
     ) -> Result<()> {
-        if !source_file.exists() {
-            return Err(ClangError::FileNotFound(source_file.to_path_buf()));
-        }
+        Self::ensure_valid_source_file(source_file)?;
 
         // Build clang command
         let mut cmd = Command::new(&self.clang_path);
@@ -175,6 +160,76 @@ impl ClangParser {
         }
 
         Ok(())
+    }
+
+    /// Parse a C/C++ source file into fp-clang's AST representation
+    pub fn parse_translation_unit(
+        &self,
+        source_file: &Path,
+        options: &CompileOptions,
+    ) -> Result<TranslationUnit> {
+        Self::ensure_valid_source_file(source_file)?;
+        let json = self.dump_ast_json(source_file, options)?;
+        clang_ast_lowering::lower_translation_unit_from_json(&json, source_file)
+    }
+
+    fn dump_ast_json(&self, source_file: &Path, options: &CompileOptions) -> Result<String> {
+        Self::ensure_valid_source_file(source_file)?;
+
+        let mut cmd = Command::new(&self.clang_path);
+
+        if let Some(std) = &options.standard {
+            cmd.arg(std.as_flag());
+        }
+
+        if let Some(opt) = &options.optimization {
+            cmd.arg(format!("-O{}", opt));
+        }
+
+        if options.debug {
+            cmd.arg("-g");
+        }
+
+        for inc in &options.include_dirs {
+            cmd.arg("-I").arg(inc);
+        }
+
+        for flag in &options.flags {
+            cmd.arg(flag);
+        }
+
+        cmd.arg("-Xclang")
+            .arg("-ast-dump=json")
+            .arg("-fsyntax-only")
+            .arg(source_file);
+
+        debug!("Running clang command: {:?}", cmd);
+
+        let output = cmd.output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!("Clang AST dump failed: {}", stderr);
+            return Err(ClangError::CompilationFailed(stderr.to_string()));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    fn ensure_valid_source_file(source_file: &Path) -> Result<()> {
+        if !source_file.exists() {
+            return Err(ClangError::FileNotFound(source_file.to_path_buf()));
+        }
+
+        let ext = source_file
+            .extension()
+            .and_then(|e| e.to_str())
+            .ok_or_else(|| ClangError::InvalidExtension("No extension".to_string()))?;
+
+        match ext {
+            "c" | "cc" | "cpp" | "cxx" | "c++" | "C" | "h" | "hpp" | "hxx" => Ok(()),
+            _ => Err(ClangError::InvalidExtension(ext.to_string())),
+        }
     }
 
     /// Parse LLVM IR text into an llvm_ir::Module

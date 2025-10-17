@@ -4,6 +4,7 @@ use crate::ast::{
 };
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::bail;
+use crate::query::QueryDocument;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ pub trait AstSerializer: Send + Sync {
             NodeKind::Item(item) => self.serialize_item(item),
             NodeKind::Expr(expr) => self.serialize_expr(expr),
             NodeKind::File(file) => self.serialize_file(file),
+            NodeKind::Query(query) => self.serialize_query(query),
         }
     }
     fn serialize_expr(&self, node: &Expr) -> Result<String, crate::Error> {
@@ -75,6 +77,9 @@ pub trait AstSerializer: Send + Sync {
     }
     fn serialize_def_function(&self, node: &ItemDefFunction) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_def_function")
+    }
+    fn serialize_query(&self, node: &QueryDocument) -> Result<String, crate::Error> {
+        bail!("not implemented: serialize_query")
     }
 }
 

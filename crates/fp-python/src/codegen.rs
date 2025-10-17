@@ -64,6 +64,10 @@ impl PythonEmitter {
                     self.push_line(&rendered);
                 }
             }
+            NodeKind::Query(_) => {
+                self.ensure_blank_line();
+                self.push_line("# Query documents are not yet supported for Python output");
+            }
         }
         Ok(())
     }

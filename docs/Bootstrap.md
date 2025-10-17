@@ -44,16 +44,40 @@
 
 ## JSON Snapshot Workflow
 
-1. **Stage 0 (full toolchain)**: run the existing `fp` CLI (built without the `bootstrap` feature, using the standard dependency stack) to produce:
-   - `*.ast.json` — serialized `Node` with `ty` metadata,
-   - optional `*.hir.json` / `*.mir.json`,
-   - `const_eval.json` capturing specialized functions and diagnostics.
+1. **Stage 0 (full toolchain)**: run the existing `fp` CLI (ideally built with the `bootstrap` feature enabled so snapshot helpers are available) to produce:
+   - `*.ast.json` — serialized `Node` with `ty` metadata (exported by setting `FERROPHASE_BOOTSTRAP_SNAPSHOT=1`),
+   - optional `*.hir.json` / `*.mir.json` (future work).
 2. **Stage 1 (bootstrap)**: rebuild `fp` with `--features bootstrap`, export `FERROPHASE_BOOTSTRAP=1`, and rerun the CLI to:
-   - reconstruct `Node` using `serde_json`,
-   - stitch const-eval mutations into the AST,
-   - run intrinsic normalization / closure lowering / MIR lowering using the dependency-light path,
-   - validate or emit intermediate dumps instead of invoking heavyweight backends.
+   - detect `.json` inputs emitted in Stage 0 and reconstruct `Node` values using the built-in snapshot loader,
+   - run intrinsic normalization / typing / const evaluation / lowering using the dependency-light path,
+   - emit the usual artifacts (`.rs`, `.ll`, binaries) using the same backends as Stage 0.
 3. **Stage 2 (self-host)**: once FerroPhase can regenerate the Stage 0 snapshots, a script can orchestrate `cargo run --release` (standard mode) to seed JSON artefacts, rebuild with `--features bootstrap`, and invoke the bootstrap flow so the new binary proves it can process its own inputs.
+
+### Reference command sequence
+
+```
+# Stage 0 – emit snapshots with the full toolchain
+cargo build --release
+FERROPHASE_BOOTSTRAP_SNAPSHOT=1 target/release/fp compile \
+  examples/05_struct_generation.fp --target rust --output /tmp/out.rs
+
+# Stage 1 – rebuild in bootstrap mode and replay snapshots
+cargo build --release --no-default-features --features bootstrap
+FERROPHASE_BOOTSTRAP=1 target/release/fp compile \
+  examples/05_struct_generation.ast.json --target rust --output /tmp/out.rs
+FERROPHASE_BOOTSTRAP=1 target/release/fp compile \
+  examples/05_struct_generation.ast.json --target llvm --output /tmp/out.ll
+```
+
+For convenience, `scripts/bootstrap.sh` automates these steps (including the bootstrap rebuild). Example:
+
+```
+scripts/bootstrap.sh --target rust examples/05_struct_generation.fp
+scripts/bootstrap.sh --target llvm examples/05_struct_generation.fp
+scripts/bootstrap.sh --target binary examples/05_struct_generation.fp
+```
+
+When using the bootstrap binary, default features (and therefore optional dependencies like `miette`) stay disabled. Pass `--no-default-features --features bootstrap` to ensure the smaller dependency surface.
 
 ## Proposed Implementation Plan
 
@@ -65,12 +89,12 @@
    - Introduce an environment variable (`FERROPHASE_BOOTSTRAP`) that switches the CLI into snapshot-replay mode at runtime.
    - Flow this flag through `PipelineOptions` so stages can adjust behaviour (prefer JSON artefacts, use alternate serializers) while still exercising the full pipeline.
 3. **Introduce JSON loaders**
-   - Implement `JsonAstLoader` and `JsonConstSnapshot` utilities.
-   - Extend `PipelineInput` with a `PreTypedJson` variant that skips frontends/type inference when `FERROPHASE_BOOTSTRAP` is set.
-   - Route CLI commands to these loaders instead of invoking external frontends/backends.
+   - Provide `fp_core::ast::json` helpers (done) so bootstrap builds can import/export ASTs without touching external parsers.
+   - Allow the CLI pipeline to recognise `.json` inputs when `FERROPHASE_BOOTSTRAP=1` (done) and reuse the standard stages on reconstructed trees.
+   - Extend the snapshot format with schema/tool metadata so later phases can validate compatibility (done: `.ast.json` carries version + frontend AST only).
+   - Expose an opt-in export path via `FERROPHASE_BOOTSTRAP_SNAPSHOT=1` so Stage 0 flows can emit fresh snapshots alongside existing intermediates (done).
 4. **Record and replay const evaluation**
-   - Extend `ConstEvaluationOrchestrator` to export/import snapshots (AST deltas, stdout, diagnostics).
-   - Allow bootstrap mode to apply these deltas without executing the interpreter.
+   - Optional future work: persist AST deltas or interpreter outputs if we want to avoid re-running const evaluation during bootstrap.
 5. **Automation script**
    - Provide a repository script that orchestrates the Stage 0 → Stage 1 cycle: build `fp` normally, emit snapshots, rebuild with `--features bootstrap`, set the env var, and run validation steps.
 6. **Stretch goals**

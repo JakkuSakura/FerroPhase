@@ -58,6 +58,9 @@ pub fn parse_cargo_workspace(manifest_path: &Path) -> CoreResult<Node> {
                 NodeKind::File(file) => entry.extend(file.items.iter().cloned()),
                 NodeKind::Item(item) => entry.push(item.clone()),
                 NodeKind::Expr(expr) => entry.push(Item::from(ItemKind::Expr(expr.clone()))),
+                NodeKind::Query(_) => {
+                    // Queries are not represented in Rust workspace aggregation.
+                }
             }
         }
     }

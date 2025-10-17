@@ -32,6 +32,9 @@ impl CodeGenerator {
             NodeKind::Item(item) => printer
                 .serialize_item(item)
                 .map_err(|e| CliError::Compilation(format!("Failed to generate Rust code: {}", e))),
+            NodeKind::Query(_) => Err(CliError::Compilation(
+                "Query documents cannot be converted to Rust code".to_string(),
+            )),
         }
     }
 }

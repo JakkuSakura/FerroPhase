@@ -130,6 +130,9 @@ impl WitEmitter {
             NodeKind::Expr(_) => Err(CoreError::from(
                 "WIT serialization expects a file or module-level item".to_string(),
             )),
+            NodeKind::Query(_) => Err(CoreError::from(
+                "WIT serialization does not support query documents".to_string(),
+            )),
         }
     }
 
