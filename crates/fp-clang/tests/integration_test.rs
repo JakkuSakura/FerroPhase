@@ -1,6 +1,9 @@
 //! Integration tests for fp-clang
 
-use fp_clang::{ClangCodegen, ClangParser, CompileOptions, Standard};
+use fp_clang::{
+    ast::{Declaration, Type},
+    ClangCodegen, ClangParser, CompileOptions, Standard,
+};
 use std::fs;
 use tempfile::TempDir;
 
@@ -26,6 +29,204 @@ int add(int a, int b) {
     assert_eq!(module.functions.len(), 1);
     assert_eq!(module.functions[0].name, "add");
     assert_eq!(module.functions[0].parameters.len(), 2);
+}
+
+#[test]
+fn test_parse_translation_unit_basic() {
+    let temp_dir = TempDir::new().unwrap();
+    let c_file = temp_dir.path().join("ast_sample.c");
+
+    let c_code = r#"
+typedef int MyInt;
+
+struct Point {
+    int x;
+    int y;
+};
+
+enum Color {
+    Red = 1,
+    Green,
+    Blue,
+};
+
+int add(int a, int b) {
+    return a + b;
+}
+"#;
+
+    fs::write(&c_file, c_code).unwrap();
+
+    let parser = ClangParser::new().unwrap();
+    let options = CompileOptions::default();
+    let translation_unit = parser.parse_translation_unit(&c_file, &options).unwrap();
+
+    assert_eq!(translation_unit.file_path, c_file.to_string_lossy());
+
+    let mut saw_function = false;
+    let mut saw_struct = false;
+    let mut saw_enum = false;
+    let mut saw_typedef = false;
+
+    for decl in &translation_unit.declarations {
+        match decl {
+            Declaration::Function(func) if func.name == "add" => {
+                saw_function = true;
+                assert_eq!(func.parameters.len(), 2);
+                assert!(func.is_definition);
+            }
+            Declaration::Struct(strukt) if strukt.name.as_deref() == Some("Point") => {
+                saw_struct = true;
+                assert_eq!(strukt.fields.len(), 2);
+            }
+            Declaration::Enum(enm) if enm.name.as_deref() == Some("Color") => {
+                saw_enum = true;
+                assert_eq!(enm.enumerators.len(), 3);
+            }
+            Declaration::Typedef(td) if td.name == "MyInt" => {
+                saw_typedef = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_function);
+    assert!(saw_struct);
+    assert!(saw_enum);
+    assert!(saw_typedef);
+}
+
+#[test]
+fn test_parse_translation_unit_references() {
+    let temp_dir = TempDir::new().unwrap();
+    let cpp_file = temp_dir.path().join("refs.cpp");
+
+    let cpp_code = r#"
+int& identity_ref(int& value) {
+    return value;
+}
+
+const int& identity_cref(const int& value) {
+    return value;
+}
+
+int&& forward_ref(int&& value) {
+    return static_cast<int&&>(value);
+}
+"#;
+
+    fs::write(&cpp_file, cpp_code).unwrap();
+
+    let parser = ClangParser::new().unwrap();
+    let mut options = CompileOptions::default();
+    options.standard = Some(Standard::Cxx11);
+
+    let translation_unit = parser.parse_translation_unit(&cpp_file, &options).unwrap();
+
+    let identity_ref = find_function(&translation_unit, "identity_ref");
+    match &identity_ref.return_type {
+        Type::Reference { base, is_rvalue } => {
+            assert!(!is_rvalue);
+            assert!(matches!(base.as_ref(), Type::Int));
+        }
+        other => panic!("unexpected return type: {:?}", other),
+    }
+
+    match &identity_ref.parameters[0].param_type {
+        Type::Reference { base, is_rvalue } => {
+            assert!(!is_rvalue);
+            assert!(matches!(base.as_ref(), Type::Int));
+        }
+        other => panic!("unexpected parameter type: {:?}", other),
+    }
+
+    let identity_cref = find_function(&translation_unit, "identity_cref");
+    match &identity_cref.parameters[0].param_type {
+        Type::Reference { base, is_rvalue } => {
+            assert!(!is_rvalue);
+            match base.as_ref() {
+                Type::Qualified { base, is_const, .. } => {
+                    assert!(*is_const);
+                    assert!(matches!(base.as_ref(), Type::Int));
+                }
+                other => panic!("unexpected base type: {:?}", other),
+            }
+        }
+        other => panic!("unexpected parameter type: {:?}", other),
+    }
+
+    let forward_ref = find_function(&translation_unit, "forward_ref");
+    match &forward_ref.return_type {
+        Type::Reference { base, is_rvalue } => {
+            assert!(*is_rvalue);
+            assert!(matches!(base.as_ref(), Type::Int));
+        }
+        other => panic!("unexpected return type: {:?}", other),
+    }
+
+    match &forward_ref.parameters[0].param_type {
+        Type::Reference { base, is_rvalue } => {
+            assert!(*is_rvalue);
+            assert!(matches!(base.as_ref(), Type::Int));
+        }
+        other => panic!("unexpected parameter type: {:?}", other),
+    }
+}
+
+fn find_function<'a>(
+    translation_unit: &'a fp_clang::ast::TranslationUnit,
+    name: &str,
+) -> &'a fp_clang::ast::FunctionDecl {
+    translation_unit
+        .declarations
+        .iter()
+        .find_map(|decl| match decl {
+            Declaration::Function(func) if func.name == name => Some(func),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("function {} not found", name))
+}
+
+#[test]
+fn test_parse_function_pointer_types() {
+    let temp_dir = TempDir::new().unwrap();
+    let c_file = temp_dir.path().join("func_ptr.c");
+
+    let c_code = r#"
+int invoke(int (*fn)(int, int), int a, int b) {
+    return fn(a, b);
+}
+
+int add(int x, int y) {
+    return x + y;
+}
+"#;
+
+    fs::write(&c_file, c_code).unwrap();
+
+    let parser = ClangParser::new().unwrap();
+    let options = CompileOptions::default();
+
+    let translation_unit = parser.parse_translation_unit(&c_file, &options).unwrap();
+
+    let invoke = find_function(&translation_unit, "invoke");
+    let ptr_param = &invoke.parameters[0].param_type;
+    match ptr_param {
+        Type::Pointer(inner) => match inner.as_ref() {
+            Type::Function {
+                return_type,
+                params,
+                is_variadic,
+            } => {
+                assert!(matches!(return_type.as_ref(), Type::Int));
+                assert_eq!(params.len(), 2);
+                assert!(params.iter().all(|p| matches!(p, Type::Int)));
+                assert!(!is_variadic);
+            }
+            other => panic!("unexpected pointer target: {:?}", other),
+        },
+        other => panic!("expected pointer to function, got {:?}", other),
+    }
 }
 
 #[test]

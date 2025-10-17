@@ -26,6 +26,8 @@ pub struct PipelineOptions {
     pub execute_main: bool,
     /// Run pipeline in bootstrap mode (requires `FERROPHASE_BOOTSTRAP` and bootstrap feature)
     pub bootstrap_mode: bool,
+    /// Emit bootstrap snapshots (JSON) for downstream replay
+    pub emit_bootstrap_snapshot: bool,
 }
 
 /// Compilation targets
@@ -108,6 +110,7 @@ impl Default for PipelineOptions {
             release: false,
             execute_main: false,
             bootstrap_mode: false,
+            emit_bootstrap_snapshot: false,
         }
     }
 }
@@ -151,6 +154,7 @@ impl From<&PipelineConfig> for PipelineOptions {
             release: false,
             execute_main: false,
             bootstrap_mode: false,
+            emit_bootstrap_snapshot: false,
         }
     }
 }

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "tool_version": "0.0.0-bootstrap",
+  "created_ms": 0,
+  "ast": {
+    "ty": null,
+    "File": {
+      "path": "examples/bootstrap_stub.fp",
+      "items": []
+    }
+  }
+}

@@ -20,6 +20,9 @@ impl TypedAstInspector {
             NodeKind::Expr(expr) => {
                 Self::inspect_expr(expr, &mut output, 0);
             }
+            NodeKind::Query(query) => {
+                writeln!(output, "Query document: {}", query.to_string_render()).ok();
+            }
         }
         output
     }

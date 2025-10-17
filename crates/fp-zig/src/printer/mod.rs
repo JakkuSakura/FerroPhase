@@ -47,6 +47,12 @@ impl ZigEmitter {
                     self.push_comment(&format!("Original expression: {}", rendered));
                 }
             }
+            NodeKind::Query(_) => {
+                self.ensure_header();
+                self.push_placeholder_comment(
+                    "query documents are not yet supported for Zig output",
+                );
+            }
         }
         Ok(())
     }

@@ -2,7 +2,6 @@ use crate::ast::{
     Expr, ExprClosured, ExprKind, Ident, Path, RuntimeValue, Ty, Value, ValueFunction, Visibility,
 };
 use crate::collections::ConcurrentMap;
-use itertools::Itertools;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
 
@@ -109,10 +108,8 @@ impl ScopedContext {
     }
 
     pub fn insert_value(&self, key: impl Into<Ident>, value: Value) {
-        self.storages
-            .entry(key.into())
-            .or_default()
-            .set_value(value);
+        let store = self.storages.get_or_insert_default(key.into());
+        store.set_value(value);
     }
 
     pub fn insert_expr(&self, key: impl Into<Ident>, value: Expr) {
@@ -120,14 +117,12 @@ impl ScopedContext {
     }
 
     pub fn insert_runtime_value(&self, key: impl Into<Ident>, value: RuntimeValue) {
-        self.storages
-            .entry(key.into())
-            .or_default()
-            .set_runtime_value(value);
+        let store = self.storages.get_or_insert_default(key.into());
+        store.set_runtime_value(value);
     }
 
     pub fn get_runtime_value(&self, key: &Ident) -> Option<RuntimeValue> {
-        self.storages.get(key)?.runtime_value()
+        self.storages.get_cloned(key)?.runtime_value()
     }
 
     pub fn get_runtime_value_recursive(&self, path: &Path) -> Option<RuntimeValue> {
@@ -153,15 +148,14 @@ impl ScopedContext {
 
     pub fn print_local_values(&self) -> Result<(), crate::Error> {
         debug!("Values in {}", self.path);
-        for key in self.storages.iter() {
-            let (k, v) = key.pair();
+        self.storages.for_each(|k, v| {
             v.with_storage(|v| {
                 let value = v.value.as_ref().unwrap_or(&Value::UNDEFINED);
 
                 let ty = v.ty.as_ref().unwrap_or(&Ty::UNKNOWN);
                 debug!("{}: val:{} ty:{}", k, value, ty)
             })
-        }
+        });
         Ok(())
     }
 
@@ -228,7 +222,7 @@ impl SharedScopedContext {
                 this = this.root().clone();
                 continue;
             }
-            let v = this.childs.get(seg)?.clone();
+            let v = this.childs.get_cloned(seg)?;
             this = Self(v);
         }
 
@@ -247,9 +241,8 @@ impl SharedScopedContext {
         if key.segments.len() == 1 {
             // TODO: when calling function, use context of its own
             // if access_local {
-            let value = self.storages.get(&key.segments[0]);
-            if let Some(value) = value {
-                return Some(value.value().clone());
+            if let Some(value) = self.storages.get_cloned(&key.segments[0]) {
+                return Some(value);
             }
             // }
             return self
@@ -259,15 +252,14 @@ impl SharedScopedContext {
 
         let (paths, key) = key.segments.split_at(key.segments.len() - 1);
         let this = self.get_module_recursive(Path::new(paths.to_owned()))?;
-        let value = this.storages.get(&key[0])?.value().clone();
-        Some(value)
+        this.storages.get_cloned(&key[0])
     }
     pub fn get_value(&self, key: impl Into<Path>) -> Option<Value> {
         let storage = self.get_storage(key, true)?;
         storage.value()
     }
     pub fn insert_value_with_ctx(&self, key: impl Into<Ident>, value: Value) {
-        let store = self.storages.entry(key.into()).or_default();
+        let store = self.storages.get_or_insert_default(key.into());
         store.with_storage(|store| {
             store.value = Some(value);
             store.closure = Some(self.clone().0);
@@ -275,7 +267,7 @@ impl SharedScopedContext {
     }
 
     pub fn insert_runtime_value_with_ctx(&self, key: impl Into<Ident>, value: RuntimeValue) {
-        let store = self.storages.entry(key.into()).or_default();
+        let store = self.storages.get_or_insert_default(key.into());
         store.with_storage(|store| {
             store.runtime_value = Some(value);
             store.closure = Some(self.clone().0);
@@ -311,7 +303,7 @@ impl SharedScopedContext {
     }
     /// insert type inference
     pub fn insert_type(&self, key: impl Into<Ident>, ty: Ty) {
-        let store = self.storages.entry(key.into()).or_default();
+        let store = self.storages.get_or_insert_default(key.into());
         store.set_ty(ty)
     }
     pub fn get_expr(&self, key: impl Into<Path>) -> Option<Expr> {
@@ -385,13 +377,12 @@ impl SharedScopedContext {
         } else {
             vec![]
         };
-        values.extend(
-            self.storages
-                .iter()
-                .map(|x| x.key().clone())
-                .sorted()
-                .map(|x| self.path.with_ident(x)),
-        );
+        let mut local_keys: Vec<_> = Vec::new();
+        self.storages.for_each(|k, _| {
+            local_keys.push(k.clone());
+        });
+        local_keys.sort();
+        values.extend(local_keys.into_iter().map(|x| self.path.with_ident(x)));
         values
     }
 }

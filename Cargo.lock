@@ -342,6 +342,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "clang-ast"
+version = "0.1.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d76fac0a007075fa8d38a6ec08df340bea2035cc0a6e9b0f6594bff1627692b"
+dependencies = [
+ "foldhash",
+ "serde_core",
+]
+
+[[package]]
 name = "clap"
 version = "4.5.48"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -670,6 +680,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "form_urlencoded"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -683,6 +699,7 @@ name = "fp-clang"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clang-ast",
  "eyre",
  "fp-core",
  "llvm-ir",
@@ -712,8 +729,10 @@ dependencies = [
  "fp-lang",
  "fp-llvm",
  "fp-optimize",
+ "fp-prql",
  "fp-python",
  "fp-rust",
+ "fp-sql",
  "fp-typescript",
  "fp-typing",
  "fp-wit",
@@ -838,6 +857,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-prql"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+]
+
+[[package]]
 name = "fp-python"
 version = "0.1.0"
 dependencies = [
@@ -867,6 +893,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-sql"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+]
+
+[[package]]
 name = "fp-typescript"
 version = "0.1.0"
 dependencies = [
@@ -890,9 +923,6 @@ name = "fp-typing"
 version = "0.1.0"
 dependencies = [
  "fp-core",
- "fp-rust",
- "proc-macro2",
- "syn 2.0.106",
  "tracing",
 ]
 
