@@ -219,7 +219,7 @@ async fn transpile_file(
                 let resolved_modules_count = outcome.modules.len();
                 if let Some(bucket) = module_bucket.as_mut() {
                     for (module_path, node) in outcome.modules {
-                        info!(path = %module_path.display(), "Parsing resolved import");
+                        tracing::debug!(path = %module_path.display(), "Parsing resolved import");
                         if let NodeKind::File(dep_file) = node.kind() {
                             merge_module_items(
                                 bucket,

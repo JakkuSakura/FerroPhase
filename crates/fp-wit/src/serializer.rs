@@ -3,8 +3,8 @@ use std::fmt::Write;
 
 use fp_core::ast::{
     self, AstSerializer, AttrMeta, Attribute, Expr, ExprInvokeTarget, ExprKind, FunctionSignature,
-    Ident, Item, ItemImpl, ItemKind, Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive, Value,
-    Visibility,
+    Ident, Item, ItemImpl, ItemKind, Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive,
+    TypeStructural, Value, Visibility,
 };
 use fp_core::error::{Error as CoreError, Result};
 
@@ -375,6 +375,8 @@ struct InterfaceBuilder {
     seen_functions: HashSet<String>,
     uses: HashMap<String, HashSet<String>>,
     defined_types: HashSet<String>,
+    structural_types: HashMap<String, String>,
+    structural_sequence: usize,
 }
 
 impl InterfaceBuilder {
@@ -386,6 +388,8 @@ impl InterfaceBuilder {
             seen_functions: HashSet::new(),
             uses: HashMap::new(),
             defined_types: HashSet::new(),
+            structural_types: HashMap::new(),
+            structural_sequence: 0,
         }
     }
 
@@ -401,7 +405,14 @@ impl InterfaceBuilder {
         let package_name = self.package.clone();
         let mut fields = Vec::new();
         for field in &def.value.fields {
-            let wit_ty = ty_to_wit(&field.value);
+            let field_hint = format!("{}-{}", def.name.as_str(), field.name.as_str());
+            let wit_ty = self.wit_type_for(
+                &field.value,
+                Some(&field_hint),
+                None,
+                Some(package_name.as_str()),
+                None,
+            );
             self.register_type_use(&field.value, &wit_ty, Some(package_name.as_str()), None);
             fields.push((sanitize_identifier(field.name.as_str()), wit_ty));
         }
@@ -431,7 +442,14 @@ impl InterfaceBuilder {
             let assoc = match &variant.value {
                 ast::Ty::Unit(_) => None,
                 other => {
-                    let wit_ty = ty_to_wit(other);
+                    let variant_hint = format!("{}-{}", def.name.as_str(), variant.name.as_str());
+                    let wit_ty = self.wit_type_for(
+                        other,
+                        Some(&variant_hint),
+                        None,
+                        Some(package_name.as_str()),
+                        None,
+                    );
                     self.register_type_use(other, &wit_ty, Some(package_name.as_str()), None);
                     Some(wit_ty)
                 }
@@ -448,8 +466,15 @@ impl InterfaceBuilder {
 
     fn add_alias(&mut self, def: &ast::ItemDefType) {
         let name = sanitize_type_identifier(def.name.as_str());
-        let target = ty_to_wit(&def.value);
         let package_name = self.package.clone();
+        let alias_hint = format!("{}-alias", def.name.as_str());
+        let target = self.wit_type_for(
+            &def.value,
+            Some(&alias_hint),
+            None,
+            Some(package_name.as_str()),
+            None,
+        );
         self.register_type_use(&def.value, &target, Some(package_name.as_str()), None);
         if name == target {
             return;
@@ -497,13 +522,27 @@ impl InterfaceBuilder {
             } else {
                 ident_to_wit(&param.name)
             };
-            let wit_ty = ty_to_wit_with_self(&param.ty, receiver_scope);
+            let param_hint = format!("{}-{}", name.as_str(), pname);
+            let wit_ty = self.wit_type_for(
+                &param.ty,
+                Some(&param_hint),
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            );
             self.register_type_use(&param.ty, &wit_ty, current_package, receiver_ctx);
             params.push((pname, wit_ty));
         }
 
         let result = sig.ret_ty.as_ref().map(|ty| {
-            let wit_ty = ty_to_wit_with_self(ty, receiver_scope);
+            let result_hint = format!("{}-result", name.as_str());
+            let wit_ty = self.wit_type_for(
+                ty,
+                Some(&result_hint),
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            );
             self.register_type_use(ty, &wit_ty, current_package, receiver_ctx);
             wit_ty
         });
@@ -519,6 +558,204 @@ impl InterfaceBuilder {
             result,
             docs,
         });
+    }
+
+    fn wit_type_for(
+        &mut self,
+        ty: &Ty,
+        hint: Option<&str>,
+        receiver_scope: Option<&str>,
+        current_package: Option<&str>,
+        receiver_ctx: Option<&ReceiverContext>,
+    ) -> String {
+        match ty {
+            Ty::Primitive(p) => match p {
+                TypePrimitive::Bool => "bool".to_string(),
+                TypePrimitive::Char => "char".to_string(),
+                TypePrimitive::String => "string".to_string(),
+                TypePrimitive::Int(int_ty) => match int_ty {
+                    TypeInt::I8 => "s8".to_string(),
+                    TypeInt::I16 => "s16".to_string(),
+                    TypeInt::I32 => "s32".to_string(),
+                    TypeInt::I64 => "s64".to_string(),
+                    TypeInt::U8 => "u8".to_string(),
+                    TypeInt::U16 => "u16".to_string(),
+                    TypeInt::U32 => "u32".to_string(),
+                    TypeInt::U64 => "u64".to_string(),
+                    TypeInt::BigInt => "s64".to_string(),
+                },
+                TypePrimitive::Decimal(dec) => match dec {
+                    ast::DecimalType::F32 => "f32".to_string(),
+                    ast::DecimalType::F64 => "f64".to_string(),
+                    _ => "f64".to_string(),
+                },
+                TypePrimitive::List => "list<string>".to_string(),
+            },
+            Ty::Reference(reference) => self.wit_type_for(
+                reference.ty.as_ref(),
+                hint,
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            ),
+            Ty::Tuple(tuple) => {
+                let mut parts = Vec::new();
+                for (idx, inner) in tuple.types.iter().enumerate() {
+                    let nested_hint = hint.map(|base| format!("{base}-item{idx}"));
+                    let wit = self.wit_type_for(
+                        inner,
+                        nested_hint.as_deref(),
+                        receiver_scope,
+                        current_package,
+                        receiver_ctx,
+                    );
+                    parts.push(wit);
+                }
+                format!("tuple<{}>", parts.join(", "))
+            }
+            Ty::Vec(vec_ty) => {
+                let nested_hint = hint.map(|base| format!("{base}-item"));
+                let inner = self.wit_type_for(
+                    vec_ty.ty.as_ref(),
+                    nested_hint.as_deref(),
+                    receiver_scope,
+                    current_package,
+                    receiver_ctx,
+                );
+                format!("list<{inner}>")
+            }
+            Ty::Array(array) => {
+                let nested_hint = hint.map(|base| format!("{base}-item"));
+                let inner = self.wit_type_for(
+                    array.elem.as_ref(),
+                    nested_hint.as_deref(),
+                    receiver_scope,
+                    current_package,
+                    receiver_ctx,
+                );
+                format!("list<{inner}>")
+            }
+            Ty::Slice(slice) => {
+                let nested_hint = hint.map(|base| format!("{base}-item"));
+                let inner = self.wit_type_for(
+                    slice.elem.as_ref(),
+                    nested_hint.as_deref(),
+                    receiver_scope,
+                    current_package,
+                    receiver_ctx,
+                );
+                format!("list<{inner}>")
+            }
+            Ty::Struct(s) => normalize_type_name(sanitize_type_identifier(s.name.as_str())),
+            Ty::Enum(e) => normalize_type_name(sanitize_type_identifier(e.name.as_str())),
+            Ty::Unit(_) => "tuple<>".to_string(),
+            Ty::Structural(structural) => self.ensure_structural_type(
+                structural,
+                hint,
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            ),
+            Ty::Any(_) | Ty::AnyBox(_) | Ty::Unknown(_) | Ty::Nothing(_) => "json".to_string(),
+            Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "json".to_string(),
+            Ty::Value(_) => "json".to_string(),
+            Ty::Function(_) => "func".to_string(),
+            Ty::Expr(expr) => {
+                expr_to_wit_type(expr, receiver_scope).unwrap_or_else(|| "json".to_string())
+            }
+        }
+    }
+
+    fn ensure_structural_type(
+        &mut self,
+        structural: &TypeStructural,
+        hint: Option<&str>,
+        receiver_scope: Option<&str>,
+        current_package: Option<&str>,
+        receiver_ctx: Option<&ReceiverContext>,
+    ) -> String {
+        let fingerprint = InterfaceBuilder::structural_fingerprint(structural);
+        if let Some(existing) = self.structural_types.get(&fingerprint) {
+            return existing.clone();
+        }
+
+        let name = self.next_structural_name(hint);
+        self.structural_types.insert(fingerprint, name.clone());
+        self.defined_types.insert(name.clone());
+
+        let mut fields = Vec::new();
+        for field in &structural.fields {
+            let field_name = sanitize_identifier(field.name.as_str());
+            let nested_hint = format!("{name}-{field_name}");
+            let wit = self.wit_type_for(
+                &field.value,
+                Some(&nested_hint),
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            );
+            self.register_type_use(&field.value, &wit, current_package, receiver_ctx);
+            fields.push((field_name, wit));
+        }
+
+        self.entries.insert(
+            0,
+            InterfaceEntry::Record {
+                name: name.clone(),
+                fields,
+                docs: Vec::new(),
+            },
+        );
+
+        name
+    }
+
+    fn next_structural_name(&mut self, hint: Option<&str>) -> String {
+        let mut base = hint
+            .map(|h| sanitize_type_identifier(h))
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| format!("struct-{}", self.structural_sequence + 1));
+
+        if base.is_empty() {
+            base = format!("struct-{}", self.structural_sequence + 1);
+        }
+
+        let mut candidate = base.clone();
+        let mut counter = 1;
+        while self.defined_types.contains(&candidate)
+            || self
+                .structural_types
+                .values()
+                .any(|existing| existing == &candidate)
+        {
+            counter += 1;
+            candidate = format!("{base}-{counter}");
+        }
+
+        self.structural_sequence += 1;
+        candidate
+    }
+
+    fn structural_fingerprint(structural: &TypeStructural) -> String {
+        if structural.fields.is_empty() {
+            return "<empty>".to_string();
+        }
+        let mut parts = Vec::new();
+        for field in &structural.fields {
+            parts.push(format!(
+                "{}:{}",
+                field.name.as_str(),
+                InterfaceBuilder::ty_fingerprint(&field.value)
+            ));
+        }
+        parts.join("|")
+    }
+
+    fn ty_fingerprint(ty: &Ty) -> String {
+        match ty {
+            Ty::Structural(structural) => InterfaceBuilder::structural_fingerprint(structural),
+            _ => format!("{ty:?}"),
+        }
     }
 
     fn finish(mut self) -> RenderedInterface {
@@ -712,11 +949,12 @@ impl InterfaceBuilder {
 
         alias_types.sort();
         for ty in alias_types.into_iter().rev() {
+            let target = InterfaceBuilder::alias_default_target(&ty).to_string();
             self.entries.insert(
                 0,
                 InterfaceEntry::Alias {
                     name: ty.clone(),
-                    target: "string".to_string(),
+                    target,
                     docs: Vec::new(),
                 },
             );
@@ -741,6 +979,18 @@ impl InterfaceBuilder {
             return false;
         }
         true
+    }
+
+    fn alias_default_target(name: &str) -> &'static str {
+        match name {
+            "string" | "str" => "string",
+            "strings" => "list<string>",
+            "bool" | "boolean" => "bool",
+            "int" | "num" => "f64",
+            "ints" | "nums" => "list<f64>",
+            "json" => "any",
+            _ => "any",
+        }
     }
 }
 
@@ -880,7 +1130,7 @@ mod tests {
 
 const BUILTIN_WIT_TYPES: &[&str] = &[
     "bool", "string", "char", "s8", "s16", "s32", "s64", "u8", "u16", "u32", "u64", "f32", "f64",
-    "tuple", "list", "option", "result", "future", "stream", "func",
+    "tuple", "list", "option", "result", "future", "stream", "func", "any",
 ];
 
 fn is_builtin_wit_type(name: &str) -> bool {
@@ -1157,10 +1407,6 @@ fn locator_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
     }
 }
 
-fn ty_to_wit(ty: &Ty) -> String {
-    ty_to_wit_with_self(ty, None)
-}
-
 fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
     match ty {
         Ty::Primitive(p) => match p {
@@ -1210,12 +1456,12 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
         Ty::Struct(s) => normalize_type_name(sanitize_type_identifier(s.name.as_str())),
         Ty::Enum(e) => normalize_type_name(sanitize_type_identifier(e.name.as_str())),
         Ty::Unit(_) => "tuple<>".to_string(),
-        Ty::Any(_) | Ty::AnyBox(_) => "string".to_string(),
-        Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "string".to_string()),
-        Ty::Value(_) => "string".to_string(),
-        Ty::Unknown(_) | Ty::Nothing(_) => "string".to_string(),
-        Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "string".to_string(),
-        Ty::Structural(_) => "string".to_string(),
+        Ty::Any(_) | Ty::AnyBox(_) => "json".to_string(),
+        Ty::Expr(expr) => expr_to_wit_type(expr, self_name).unwrap_or_else(|| "json".to_string()),
+        Ty::Value(_) => "json".to_string(),
+        Ty::Unknown(_) | Ty::Nothing(_) => "json".to_string(),
+        Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "json".to_string(),
+        Ty::Structural(_) => "json".to_string(),
         Ty::Function(_) => "func".to_string(),
     }
 }
