@@ -24,6 +24,8 @@ pub struct PipelineOptions {
     pub release: bool,
     /// Execute `main` during const evaluation instead of running backend
     pub execute_main: bool,
+    /// Run pipeline in bootstrap mode (requires `FERROPHASE_BOOTSTRAP` and bootstrap feature)
+    pub bootstrap_mode: bool,
 }
 
 /// Compilation targets
@@ -105,6 +107,7 @@ impl Default for PipelineOptions {
             error_tolerance: ErrorToleranceOptions::default(),
             release: false,
             execute_main: false,
+            bootstrap_mode: false,
         }
     }
 }
@@ -147,6 +150,7 @@ impl From<&PipelineConfig> for PipelineOptions {
             error_tolerance: ErrorToleranceOptions::default(),
             release: false,
             execute_main: false,
+            bootstrap_mode: false,
         }
     }
 }

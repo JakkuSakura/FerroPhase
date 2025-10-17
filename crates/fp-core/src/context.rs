@@ -1,7 +1,7 @@
 use crate::ast::{
     Expr, ExprClosured, ExprKind, Ident, Path, RuntimeValue, Ty, Value, ValueFunction, Visibility,
 };
-use dashmap::DashMap;
+use crate::collections::ConcurrentMap;
 use itertools::Itertools;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
@@ -66,8 +66,8 @@ pub struct ScopedContext {
     #[allow(dead_code)]
     ident: Ident,
     path: Path,
-    storages: DashMap<Ident, SharedValueSlot>,
-    childs: DashMap<Ident, Arc<Self>>,
+    storages: ConcurrentMap<Ident, SharedValueSlot>,
+    childs: ConcurrentMap<Ident, Arc<Self>>,
     buffer: Mutex<Vec<String>>,
     #[allow(dead_code)]
     visibility: Visibility,
