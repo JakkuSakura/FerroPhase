@@ -4,7 +4,7 @@ use std::sync::{Arc, RwLock};
 use fp_core::ast::{
     Expr, ExprBlock, File, FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst,
     ItemDefConst, ItemDefFunction, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, Node, NodeKind, Ty, Value, Visibility,
+    ItemImportTree, Module as AstModule, Node, NodeKind, Ty, Value, Visibility,
 };
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::{Error as CoreError, Result as CoreResult};
@@ -13,9 +13,10 @@ use swc_common::input::StringInput;
 use swc_common::{sync::Lrc, FileName, SourceMap, DUMMY_SP};
 use swc_ecma_ast::EsVersion;
 use swc_ecma_ast::{
-    Decl, ExportAll, ExportDecl, ExportSpecifier, Expr as TsExpr, FnDecl, ImportDecl,
-    ImportSpecifier, Lit, Module, ModuleDecl, ModuleExportName, ModuleItem, NamedExport, Param,
-    Pat, VarDecl, VarDeclKind,
+    ClassDecl, ClassExpr, ClassMember, Constructor, Decl, ExportAll, ExportDecl, ExportSpecifier,
+    Expr as TsExpr, FnDecl, ImportDecl, ImportSpecifier, Lit, MethodKind, Module, ModuleDecl,
+    ModuleExportName, ModuleItem, NamedExport, Param, ParamOrTsParamProp, Pat, PropName, VarDecl,
+    VarDeclKind,
 };
 use swc_ecma_parser::error::Error as SwcError;
 use swc_ecma_parser::lexer::Lexer;
@@ -464,23 +465,111 @@ fn lower_export_default_decl(default_decl: &swc_ecma_ast::ExportDefaultDecl) -> 
                 Vec::new()
             }
         }
-        swc_ecma_ast::DefaultDecl::Class(_) | swc_ecma_ast::DefaultDecl::TsInterfaceDecl(_) => {
-            Vec::new()
+        swc_ecma_ast::DefaultDecl::Class(class_expr) => {
+            lower_class_expr(class_expr, Visibility::Public)
         }
+        swc_ecma_ast::DefaultDecl::TsInterfaceDecl(_) => Vec::new(),
     }
 }
 
 fn lower_decl(decl: &Decl, visibility: Visibility) -> Vec<Item> {
     match decl {
         Decl::Fn(fn_decl) => lower_fn_decl(fn_decl, visibility).into_iter().collect(),
+        Decl::Class(class_decl) => lower_class_decl(class_decl, visibility),
         Decl::Var(var_decl) => lower_var_decl(var_decl, visibility),
         Decl::TsTypeAlias(_)
-        | Decl::Class(_)
         | Decl::Using(_)
         | Decl::TsInterface(_)
         | Decl::TsEnum(_)
         | Decl::TsModule(_) => Vec::new(),
     }
+}
+
+fn lower_class_decl(class_decl: &ClassDecl, visibility: Visibility) -> Vec<Item> {
+    let name = sanitize_ident(&class_decl.ident.sym.to_string());
+    lower_class_like(Some(name), &class_decl.class, visibility)
+}
+
+fn lower_class_expr(class_expr: &ClassExpr, visibility: Visibility) -> Vec<Item> {
+    let name = class_expr
+        .ident
+        .as_ref()
+        .map(|ident| sanitize_ident(&ident.sym.to_string()));
+    lower_class_like(name, &class_expr.class, visibility)
+}
+
+fn lower_class_like(
+    name: Option<String>,
+    class: &swc_ecma_ast::Class,
+    visibility: Visibility,
+) -> Vec<Item> {
+    let Some(class_name) = name.filter(|n| !n.is_empty()) else {
+        return Vec::new();
+    };
+
+    let mut items = Vec::new();
+    for member in &class.body {
+        if let Some(item) = lower_class_member(member) {
+            items.push(item);
+        }
+    }
+
+    if items.is_empty() {
+        return Vec::new();
+    }
+
+    vec![Item::from(AstModule {
+        name: Ident::new(class_name),
+        items,
+        visibility,
+    })]
+}
+
+fn lower_class_member(member: &ClassMember) -> Option<Item> {
+    match member {
+        ClassMember::Constructor(constructor) => Some(lower_constructor(constructor)),
+        ClassMember::Method(method) => lower_class_method(method),
+        ClassMember::ClassProp(_)
+        | ClassMember::PrivateMethod(_)
+        | ClassMember::PrivateProp(_)
+        | ClassMember::TsIndexSignature(_)
+        | ClassMember::Empty(_)
+        | ClassMember::AutoAccessor(_)
+        | ClassMember::StaticBlock(_) => None,
+    }
+}
+
+fn lower_constructor(constructor: &Constructor) -> Item {
+    let params: Vec<Param> = constructor
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            ParamOrTsParamProp::Param(param) => Some(param.clone()),
+            ParamOrTsParamProp::TsParamProp(_) => None,
+        })
+        .collect();
+    lower_function_from_parts(
+        "new",
+        &params,
+        constructor.body.as_ref(),
+        Visibility::Public,
+    )
+}
+
+fn lower_class_method(method: &swc_ecma_ast::ClassMethod) -> Option<Item> {
+    let base_name = prop_name_to_string(&method.key)?;
+    let method_name = match method.kind {
+        MethodKind::Method => base_name,
+        MethodKind::Getter => format!("get_{}", base_name),
+        MethodKind::Setter => format!("set_{}", base_name),
+    };
+
+    Some(lower_function_from_parts(
+        method_name,
+        &method.function.params,
+        method.function.body.as_ref(),
+        Visibility::Public,
+    ))
 }
 
 fn lower_fn_decl(fn_decl: &FnDecl, visibility: Visibility) -> Option<Item> {
@@ -526,6 +615,32 @@ fn lower_function_params(params: &[Param]) -> Vec<FunctionParam> {
 
 fn lower_function_body(_body: &swc_ecma_ast::BlockStmt) -> Expr {
     Expr::block(ExprBlock::new())
+}
+
+fn lower_function_from_parts(
+    name: impl AsRef<str>,
+    params: &[Param],
+    body: Option<&swc_ecma_ast::BlockStmt>,
+    visibility: Visibility,
+) -> Item {
+    let name_ident = Ident::new(sanitize_ident(name.as_ref()));
+    let mut sig = FunctionSignature::unit();
+    sig.name = Some(name_ident.clone());
+    sig.params = lower_function_params(params);
+
+    let body_expr = body
+        .map(|block| lower_function_body(block))
+        .unwrap_or_else(Expr::unit);
+
+    Item::from(ItemDefFunction {
+        ty_annotation: None,
+        attrs: Vec::new(),
+        name: name_ident,
+        ty: None,
+        sig,
+        body: Box::new(body_expr),
+        visibility,
+    })
 }
 
 fn lower_var_decl(var_decl: &VarDecl, visibility: Visibility) -> Vec<Item> {
@@ -575,6 +690,16 @@ fn pat_to_ident(pat: &Pat) -> Option<Ident> {
         Pat::Assign(assign) => pat_to_ident(&assign.left),
         Pat::Rest(rest) => pat_to_ident(&rest.arg),
         _ => None,
+    }
+}
+
+fn prop_name_to_string(name: &PropName) -> Option<String> {
+    match name {
+        PropName::Ident(ident) => Some(sanitize_ident(&ident.sym.to_string())),
+        PropName::Str(str_) => Some(sanitize_ident(&str_.value)),
+        PropName::Num(num) => Some(sanitize_ident(&num.value.to_string())),
+        PropName::BigInt(bigint) => Some(sanitize_ident(&bigint.value.to_string())),
+        PropName::Computed(_) => None,
     }
 }
 
@@ -807,5 +932,39 @@ mod tests {
             .collect();
         assert_eq!(type_only_refs.len(), 1);
         assert_eq!(type_only_refs[0].spec, "./bar");
+    }
+
+    #[test]
+    fn lowers_class_exports_to_module_functions() {
+        let frontend = TypeScriptFrontend::new(TsParseMode::Strict);
+        let source = r#"
+            export default class Binance {
+                fetchMarkets(market: string) { return market; }
+                get status() { return "ok"; }
+                set status(value: string) {}
+            }
+        "#;
+
+        let result = frontend.parse(source, None).expect("class lowering failed");
+        let node = result.ast;
+        let file = match node.kind() {
+            NodeKind::File(file) => file,
+            _ => panic!("expected file node"),
+        };
+        let module = file
+            .items
+            .iter()
+            .find_map(|item| item.as_module())
+            .expect("expected module for class");
+        assert_eq!(module.name.as_str(), "Binance");
+        let mut method_names: Vec<_> = module
+            .items
+            .iter()
+            .filter_map(|item| item.get_ident().map(|ident| ident.as_str().to_string()))
+            .collect();
+        method_names.sort();
+        assert!(method_names.contains(&"fetchMarkets".to_string()));
+        assert!(method_names.contains(&"get_status".to_string()));
+        assert!(method_names.contains(&"set_status".to_string()));
     }
 }
